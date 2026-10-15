@@ -1,6 +1,7 @@
 //! Body/index/edge row staging helpers shared by the put and update paths.
 
 use heed::RwTxn;
+use zeroize::Zeroize;
 
 use super::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::edge::EdgeKind;
@@ -48,16 +49,29 @@ pub(in crate::batch) fn stage_entity_body_row(
     }
     crate::ingest::reindex_identity_hints(store, wtxn, id, Some((entity_type, data)))?;
     crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(entity_type);
-    payload.extend_from_slice(&occurred.start.to_be_bytes());
-    payload.extend_from_slice(&occurred.end.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
-    crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload)?;
-    store.port_stage_entity_row(wtxn, id, &payload)?;
+    let mut payload = RowEnvelope(Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len()));
+    payload.0.push(entity_type);
+    payload.0.extend_from_slice(&occurred.start.to_be_bytes());
+    payload.0.extend_from_slice(&occurred.end.to_be_bytes());
+    payload.0.extend_from_slice(&learned_at.to_be_bytes());
+    payload.0.extend_from_slice(data);
+    crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
+    store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     Ok(())
+}
+
+/// One entity row as staged: the metadata header, then the body. A custody
+/// record's body carries its value (ARCH-0069 S1), so the row is wiped when
+/// staging is done with it, on every path.
+struct RowEnvelope(Vec<u8>);
+
+impl Drop for RowEnvelope {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        wiped_rows::saw(&self.0);
+        self.0.zeroize();
+    }
 }
 
 /// Stages the type and temporal index rows every materialized entity carries
@@ -342,6 +356,7 @@ pub(super) fn stage_post_put_embeddings(
         cleared_pending_embedding = store.clear_pending_embedding(wtxn, id)?;
         let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
         had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
+        crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
         crate::hnsw::hnsw_deindex(store, wtxn, id)?;
     }
     let pending_embedding_token =
@@ -385,6 +400,12 @@ pub(super) fn validate_domain_carriers(
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
+    }
+    if matches!(
+        entity_type,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+    ) {
+        crate::memory::guard_import_stamp(store, txn, id, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
@@ -551,4 +572,41 @@ pub(super) fn stage_task_and_turn(
         crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, id)?;
     }
     Ok(())
+}
+
+/// The staged-row wipe hook, so a test can see that a row holding a value
+/// went through [`RowEnvelope`]'s wipe.
+#[cfg(test)]
+pub(crate) mod wiped_rows {
+    use std::cell::RefCell;
+
+    thread_local! {
+        // Per thread: a put stages its rows on the thread that writes.
+        static WATCH: RefCell<Option<(Vec<u8>, usize)>> = const { RefCell::new(None) };
+    }
+
+    /// Counts, from now on, the staged rows this thread wipes that hold
+    /// `needle`.
+    pub(crate) fn watch(needle: &[u8]) {
+        WATCH.with_borrow_mut(|watch| *watch = Some((needle.to_vec(), 0)));
+    }
+
+    pub(super) fn saw(row: &[u8]) {
+        WATCH.with_borrow_mut(|watch| {
+            let Some((needle, count)) = watch else {
+                return;
+            };
+            if row
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+            {
+                *count += 1;
+            }
+        });
+    }
+
+    /// How many staged rows holding the watched bytes this thread wiped.
+    pub(crate) fn count() -> usize {
+        WATCH.with_borrow(|watch| watch.as_ref().map_or(0, |(_, count)| *count))
+    }
 }

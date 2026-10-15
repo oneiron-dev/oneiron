@@ -1,5 +1,9 @@
 // Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
 #![allow(clippy::unwrap_used)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 //! Managed serve mode: the engine as a supervised child process (ONE-1595).
 //!
 //! What each area is pinned by, and why that row is the discriminator:
@@ -14,6 +18,9 @@
 //!   drives a real dup'd, bound unix listener through axum and then checks the
 //!   socket's inode: an engine that unlinked and rebound would pass an
 //!   `exists()` check and still have stranded every queued connection.
+//!   `an_inherited_tcp_listener_is_refused_before_any_accept` is its negative:
+//!   the descriptor's family is read back, and the supervisor's own copy
+//!   shows the queued connection was never taken.
 //!   `aliased_descriptors_are_refused_before_any_of_them_is_adopted` is the
 //!   other half of the same ownership claim, on the inputs rather than the
 //!   path: every adoption path here assumes it alone owns its descriptor.
@@ -52,6 +59,11 @@
 //! - **spawn order** — `ready_byte_lands_only_after_sockets_credentials_and_gates`
 //!   runs the real `serve_managed` boot over real descriptors, because the ready
 //!   byte is the supervisor's only evidence that any of the ordering held.
+//! - **oversight** — `a_managed_start_signs_the_three_oversight_receipts` boots
+//!   the real binary and reads the receipts back from the vault it left, since
+//!   no route a supervisor reaches exposes them;
+//!   `a_managed_start_that_cannot_sign_its_receipts_never_reports_ready` boots
+//!   over a vault whose emission refuses and reads the typed error back.
 
 use std::os::fd::{IntoRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -67,7 +79,7 @@ use oneiron_server::managed::{
     WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
     read_managed_credentials, serve_managed,
 };
-use oneiron_server::server::SyncServer;
+use oneiron_server::server::{OversightStartError, SyncServer};
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
     MAX_CTL_LINE, READY_BYTE, Schedule, TOKEN_LEN, read_credentials, validate_wake_entries,
@@ -608,6 +620,36 @@ async fn a_dupd_inherited_listener_serves_http_and_its_path_survives() {
         inode_before,
         "the child must never rebind an inherited socket path"
     );
+}
+
+/// Ticket 6 (C2 review r1 F1): the inherited descriptor's family is read
+/// from the socket, not taken from the variant's name. Adopted as a unix
+/// listener, a TCP listener's accept turns some network peers into
+/// connections on the managed socket, which carries the supervisor's
+/// authority. The supervisor keeps its own copy of the listener here, so a
+/// connection queued before the refusal is still in its backlog afterwards:
+/// the engine never accepted it.
+#[tokio::test]
+async fn an_inherited_tcp_listener_is_refused_before_any_accept() {
+    let supervisor_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let queued = std::net::TcpStream::connect(supervisor_listener.local_addr().unwrap()).unwrap();
+    let inherited = supervisor_listener.try_clone().unwrap().into_raw_fd();
+
+    let error = ServeListener::InheritedFd(inherited)
+        .bind()
+        .await
+        .expect_err("a TCP listener is not the managed unix socket");
+    assert!(
+        matches!(&error, ManagedError::ListenFdNotUnix { fd, .. } if *fd == inherited),
+        "unexpected: {error}"
+    );
+    assert!(error.to_string().contains(HYPNOS_LISTEN_FD), "{error}");
+
+    supervisor_listener.set_nonblocking(true).unwrap();
+    let (accepted, _) = supervisor_listener
+        .accept()
+        .expect("the queued connection was never accepted by the engine");
+    assert_eq!(accepted.peer_addr().unwrap(), queued.local_addr().unwrap());
 }
 
 #[tokio::test]
@@ -1392,6 +1434,45 @@ fn managed_failure_signal_environment_is_refused_before_configuration() {
     }
 }
 
+/// `--trusted-proxies` is refused in managed mode, and so is its environment
+/// layer: a set `ONEIRON_TRUSTED_PROXIES`, even empty, is an explicit request
+/// managed serve would otherwise ignore (#1445 review, CodeRabbit).
+#[test]
+fn managed_trusted_proxies_environment_is_refused_before_configuration() {
+    const CHILD_CASE: &str = "W7_TEST_MANAGED_PROXIES_ENV";
+    const PROXIES: &str = "ONEIRON_TRUSTED_PROXIES";
+    if std::env::var_os(CHILD_CASE).is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
+            .expect_err("an explicit environment layer is not argv");
+        assert!(
+            matches!(error, ManagedError::ConflictingEnvironment { env, .. } if env == PROXIES)
+        );
+        return;
+    }
+    // Isolate environment changes in children, not in the parallel test process.
+    for value in ["127.0.0.1", ""] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "managed_trusted_proxies_environment_is_refused_before_configuration",
+            ])
+            .env_remove("ONEIRON_PRIVACY_POSTURE")
+            .env_remove("ONEIRON_HOSTED_KMS_KEY_REF")
+            .env_remove("ONEIRON_CONFIG")
+            .env_remove("ONEIRON_FAILURE_SIGNAL_EXPORT")
+            .env_remove("ONEIRON_FAILURE_SIGNAL_TRAINING")
+            .env(CHILD_CASE, "1")
+            .env(PROXIES, value)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated managed configuration assertion failed"
+        );
+    }
+}
+
 #[tokio::test]
 async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     use axum::body::{Body, Bytes};
@@ -1457,4 +1538,146 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     ));
     fixture.shutdown.trigger();
     fixture.task.await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Oversight — every vault signs its three receipts, managed ones included
+// ---------------------------------------------------------------------------
+
+/// A managed start signs the three healer oversight receipts, as a plain
+/// serve does (ARCH-0066 §8-§9: per vault, from day one). Managed serve
+/// returned before the plain path's emission, so a managed vault never had
+/// one. The receipts land before the ready byte, so a supervisor's hard stop
+/// right after ready still leaves them committed.
+///
+/// A child process over real argv, because the receipts are read back by
+/// opening the vault, and the serving process holds it exclusively until it
+/// exits.
+#[test]
+fn a_managed_start_signs_the_three_oversight_receipts() {
+    use oneiron::failure_ladder::oversight::OversightKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run = sockets_dir(dir.path());
+    {
+        let vault = open_vault(&run.join("data"));
+        vault
+            .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
+            .unwrap();
+        assert!(vault.healer_oversight_receipts().unwrap().is_empty());
+    }
+
+    let frame_path = run.join("creds");
+    let mut frame = Vec::new();
+    write_credentials(&mut frame, &[0x11; DEK_LEN], &[0x22; TOKEN_LEN]).unwrap();
+    std::fs::write(&frame_path, &frame).unwrap();
+    let ready_path = run.join("ready");
+    let stderr_path = run.join("stderr");
+    // The frame on stdin and the ready file on stdout, as in
+    // `boot_with_aliased_listen_fd`; tracing quieted so stdout is the ready byte.
+    let mut argv = with_flag_value(&managed_argv(&run), "--credentials-fd", "0");
+    argv = with_flag_value(&argv, "--ready-fd", "1");
+    argv.extend(["--log-level".to_owned(), "error".to_owned()]);
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_oneiron-server"))
+        .arg("serve")
+        .args(&argv)
+        .env_remove(HYPNOS_LISTEN_FD)
+        .stdin(std::fs::File::open(&frame_path).unwrap())
+        .stdout(std::fs::File::create(&ready_path).unwrap())
+        .stderr(std::fs::File::create(&stderr_path).unwrap())
+        .spawn()
+        .unwrap();
+    let stderr = || std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while !std::fs::read(&ready_path).unwrap().contains(&READY_BYTE) {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!(
+                "managed boot exited {status} before ready; stderr: {}",
+                stderr()
+            );
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no ready byte; stderr: {}",
+            stderr()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+
+    let vault = open_vault(&run.join("data"));
+    let receipts = vault.healer_oversight_receipts().unwrap();
+    let kinds: Vec<_> = receipts
+        .iter()
+        .map(|(receipt, _)| receipt.counts.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            OversightKind::Coverage,
+            OversightKind::ReviewLatency,
+            OversightKind::EscalationRate
+        ],
+        "stderr: {}",
+        stderr()
+    );
+    for (receipt, verified) in &receipts {
+        assert!(verified, "{receipt:?}");
+    }
+}
+
+/// A managed vault that cannot sign its first oversight receipts never
+/// reports ready (ARCH-0066 §9: every vault carries them from day one). The
+/// start used to log the refusal and write the ready byte anyway, and the
+/// control socket it served first kept running after a refused start.
+#[tokio::test]
+async fn a_managed_start_that_cannot_sign_its_receipts_never_reports_ready() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = sockets_dir(dir.path());
+    {
+        let vault = open_vault(&run.join("data"));
+        vault
+            .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
+            .unwrap();
+        // A stored review older than its proposal: the emission's own
+        // transaction refuses to count it.
+        vault
+            .put_healer_activity_for_test(&"ab".repeat(16), 2_000, Some(1_000))
+            .unwrap();
+    }
+
+    let (args, ready_path) = managed_boot_args(&run);
+    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
+    let boot = tokio::spawn(async move { serve_managed(&args, managed).await });
+    // Until the boot ends, the ready file stays empty.
+    while !boot.is_finished() {
+        assert!(
+            std::fs::read(&ready_path).unwrap().is_empty(),
+            "a vault that signed no receipts reported ready"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let error = boot.await.unwrap().unwrap_err();
+
+    assert!(
+        matches!(
+            error.downcast_ref::<OversightStartError>(),
+            Some(OversightStartError::Refused(
+                oneiron::Error::CorruptedIndex(_)
+            ))
+        ),
+        "unexpected: {error:#}"
+    );
+    assert!(std::fs::read(&ready_path).unwrap().is_empty());
+    // A refused start leaves nothing serving: no supervisor verb reaches the
+    // vault the boot gave up on, and the vault is released unsigned.
+    assert!(
+        tokio::net::UnixStream::connect(run.join("ctl.sock"))
+            .await
+            .is_err(),
+        "the control socket is still served after a refused start"
+    );
+    let vault = open_vault(&run.join("data"));
+    assert!(vault.healer_oversight_receipts().unwrap().is_empty());
 }

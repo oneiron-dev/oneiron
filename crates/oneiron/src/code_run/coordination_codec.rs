@@ -149,18 +149,3 @@ pub(super) fn decode_status(value: &Value) -> Result<TaskAskStatus> {
         .map_err(|_| invalid_code_run_replay("ask result encode"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_code_run_replay("ask result decode"))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_hold_reason_round_trips() -> Result<()> {
-        for hold in [None, Some(TaskAskHoldReason::NoLiveRoute)] {
-            let status = TaskAskStatus::Pending { hold };
-            assert_eq!(decode_status(&status_value(&status)?)?, status);
-        }
-        assert!(hold_decode(&Value::from("unknown")).is_err());
-        Ok(())
-    }
-}

@@ -13,6 +13,9 @@ use crate::sync::ingest::{TombstoneStep, classify_tombstone};
 /// returns `deferred_error`.
 pub(super) struct TombstonePassOutcome {
     pub(super) purge_failures: Vec<EntityId>,
+    /// Each failed replay's tombstone value, for the fence its delete earns
+    /// if the protection gates admit it.
+    pub(super) unapplied: Vec<(EntityId, Vec<u8>)>,
     pub(super) cleared: Vec<EntityId>,
     pub(super) receiver_scrub_candidates: Vec<EntityId>,
     pub(super) deferred_error: Option<Error>,
@@ -25,7 +28,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     let vault = ctx.vault;
     let window_key = ctx.window_key;
     let entities_map = &ctx.entities_map;
-    let tombstones_map = &ctx.tombstones_map;
+    let tombstones_map = ctx.tombstones.map();
     let marked = &ledger.marked;
     let protected_admissions = &ledger.protected_admissions;
     let terminal_quarantines = &mut ledger.terminal_quarantines;
@@ -49,6 +52,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     // tombstone's success must never discharge another entity's retry.
     // (`marked` is the up-front snapshot loaded before the entity pass.)
     let mut purge_failures: Vec<EntityId> = Vec::new();
+    let mut unapplied: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut cleared: Vec<EntityId> = Vec::new();
     let mut receiver_scrub_candidates: Vec<EntityId> = Vec::new();
     let mut tombstone_error: Option<Error> = None;
@@ -87,7 +91,14 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
                 && window_key.world().is_some()
                 && let Some(raw) = map_get_bytes(entities_map, &id.to_hex())
                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault, &txn, ctx.doc, &id, &raw, window_key, false,
+                    vault,
+                    &txn,
+                    ctx.doc,
+                    &ctx.tombstones,
+                    &id,
+                    &raw,
+                    window_key,
+                    false,
                 )?
             {
                 return Ok(crate::sync::types::TombstoneResidence::Match);
@@ -122,7 +133,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
                 if window_key.world().is_some()
-                    && let Err(error) = vault.with_write_txn(|txn| {
+                    && let Err(error) = vault.with_write_txn_grouped(|txn| {
                         vault.store.sync_state.put(
                             txn,
                             &format!("m:dw:{}", id.to_hex()),
@@ -166,9 +177,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
                 // live. Flag THIS entity for durable retry; the pass keeps
                 // going so one failure cannot starve other tombstones.
                 purge_failures.push(id);
+                unapplied.push((id, value.to_vec()));
                 tracing::error!(
                     entity = %id.to_hex(),
-                    error = %err,
+                    kind = ?err.kind(),
                     "forward remat: tombstone replay FAILED — hard-deleted content may still be live (GDPR SLA breach signal)"
                 );
             }
@@ -177,6 +189,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     ledger.count = count;
     TombstonePassOutcome {
         purge_failures,
+        unapplied,
         cleared,
         receiver_scrub_candidates,
         deferred_error: tombstone_error,

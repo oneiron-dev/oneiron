@@ -34,8 +34,9 @@
 //! with its connection key; the slip is parsed once, at connect, only to hash
 //! it into that proof, and every authority decision is the server's. It does not
 //! emulate a facade verb out of lower-level storage routes. It does not mint
-//! or simulate a retrieval lease, so `Effort::High` returns the engine's own
-//! `LEASE_REQUIRED`.
+//! or simulate a retrieval lease: embedded, `Effort::High` returns the
+//! engine's own `LEASE_REQUIRED`; remote, the server decides how it serves
+//! high, xhigh and max.
 
 #![forbid(unsafe_code)]
 
@@ -49,13 +50,14 @@ mod remote;
 use std::fmt;
 use std::path::Path;
 
-use oneiron::memory::{Effort, MemoryError};
+use oneiron::memory::{MemoryError, RecallEffort};
 
 pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
-    MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES,
-    MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_dimensions, check_limit,
-    check_payload_bytes, check_query, check_unix_seconds,
+    MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_EXPORT_BYTES,
+    MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len,
+    check_deadline_ms_number, check_dimensions, check_limit, check_payload_bytes, check_query,
+    check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
@@ -106,12 +108,13 @@ pub fn stamp_occurred_at(supplied: Option<f64>) -> Result<u64, MemoryError> {
     }
 }
 
-/// Parses the `effort` token, which is the engine's own vocabulary.
-pub fn parse_effort(value: &str) -> Result<Effort, MemoryError> {
-    Effort::parse(value).ok_or_else(|| {
+/// Parses the `effort` token, which is the engine's own vocabulary: the five
+/// levels, or `call` for call mode.
+pub fn parse_effort(value: &str) -> Result<RecallEffort, MemoryError> {
+    RecallEffort::parse(value).ok_or_else(|| {
         crate::error::bad_request(
             format!("unknown recall effort {value:?}"),
-            &["Use one of: light, medium, high, xhigh, max."],
+            &["Use one of: light, medium, high, xhigh, max, call."],
         )
     })
 }
@@ -205,6 +208,26 @@ impl OneironClient {
                 ],
             )),
         }
+    }
+
+    /// A new handle whose every verb runs as a turn in `room_ref`
+    /// (ARCH-0067 §8). It names only the room. Each verb is one turn: the
+    /// engine reads the roster as it stands at that call, runs the verb inside
+    /// that roster's Scope, and refuses any verb that would read around the
+    /// room.
+    pub fn in_room_turn(&self, room_ref: &str) -> Result<Self, MemoryError> {
+        let room = oneiron::EntityId::from_hex(room_ref).map_err(|_| {
+            crate::error::bad_request(
+                "invalid room reference",
+                &["Name the room as its 32-hex id."],
+            )
+        })?;
+        Ok(Self {
+            backend: match &self.backend {
+                Backend::Embedded(embedded) => Backend::Embedded(embedded.in_room_turn(room)?),
+                Backend::Remote(remote) => Backend::Remote(remote.in_room_turn(room)?),
+            },
+        })
     }
 
     /// Whether this handle talks to a remote server.

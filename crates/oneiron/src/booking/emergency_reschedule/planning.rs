@@ -240,12 +240,15 @@ pub(crate) fn solve_live(
         now_utc,
         synthetic_config: Some(config),
     }
-    .solve(&SolveRequest {
-        event_type: booking.event_type.clone(),
-        window,
-        constraint: booking.context.constraint.clone(),
-        visitor_tz: booking.context.visitor_tz.clone(),
-    })
+    .solve_moving(
+        &SolveRequest {
+            event_type: booking.event_type.clone(),
+            window,
+            constraint: booking.context.constraint.clone(),
+            visitor_tz: booking.context.visitor_tz.clone(),
+        },
+        booking.calendar.event_ref,
+    )
 }
 
 /// Plans every independently usable booking. Existing persisted plans, including

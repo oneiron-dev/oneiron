@@ -36,8 +36,6 @@ use self::blueprint::*;
 #[cfg(test)]
 use super::lease::{CheckoutMaterializationOptions, CheckoutTaskClass};
 #[cfg(test)]
-use crate::batch::secret_scan::scan_file_content;
-#[cfg(test)]
 use crate::codebase::RepoRef;
 #[cfg(test)]
 use crate::error::Error;

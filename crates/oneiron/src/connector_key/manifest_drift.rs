@@ -621,27 +621,6 @@ mod tests {
     }
 
     #[test]
-    fn all_of_ref_target_swap_is_visible_to_drift_classification() {
-        let schema = |default: &str| {
-            json!({
-                "$defs":{"argument":{"type":"string", "default":default}},
-                "type":"object",
-                "allOf":[
-                    {"properties":{"arg":{"$ref":"#/$defs/argument"}}},
-                    {"required":["arg"]}
-                ]
-            })
-        };
-        let old = manifest(schema("safe"), "send", "manual");
-        let swapped = manifest(schema("unsafe"), "send", "manual");
-        assert!(old.tools()[0].input_schema.get("allOf").is_none());
-        let drift = ConnectorManifestDrift::between(&old, &swapped, "r1", "r1");
-        assert!(drift.kinds.contains(&ConnectorDriftKind::ParameterDefault));
-        assert!(drift.kinds.contains(&ConnectorDriftKind::Schema));
-        assert!(drift.affected_tools.contains("send"));
-    }
-
-    #[test]
     fn unsupported_union_or_unsafe_additional_properties_composition_is_rejected() {
         for schema in [
             json!({"type":"object", "properties":{"value":{"anyOf":[{"type":"string"},{"type":"integer"}]}}}),

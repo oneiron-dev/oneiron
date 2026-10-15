@@ -89,17 +89,10 @@ mod tests;
 #[cfg(test)]
 use self::storage::*;
 #[cfg(test)]
-use crate::edit_distance::delta::AmendmentDelta;
-#[cfg(test)]
-use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 #[cfg(test)]
 use crate::error::Error;
 #[cfg(test)]
-use crate::receipt::{
-    FIELD_AMENDMENT_DELTA, FIELD_ESCALATION_BUDGET_BAND, FIELD_ESCALATION_CITED_RECEIPTS,
-    FIELD_ESCALATION_QUESTION, FIELD_ESCALATION_RATIONALE, FIELD_ESCALATION_RULING,
-    FIELD_ESCALATION_SCOPE, FIELD_ESCALATION_TRIGGER, FIELD_TASK_REF, ReceiptKind, ReceiptQuery,
-    ReceiptRecord,
-};
+use crate::receipt::{FIELD_ESCALATION_CITED_RECEIPTS, ReceiptKind, ReceiptQuery, ReceiptRecord};
 #[cfg(test)]
 use crate::vault::Vault;

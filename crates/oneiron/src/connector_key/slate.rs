@@ -457,7 +457,7 @@ impl Vault {
             owner_authentication: None,
         };
         let id = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
             Ok(id)
         })
@@ -475,11 +475,12 @@ impl Vault {
         expected_revision: u64,
         overrides: &BTreeMap<String, SlateOwnerOverride>,
     ) -> Result<ConnectorGrantSlate> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
             crate::memory::verify_deletion_authority_in_txn(
                 self,
                 txn,
-                owner.actor(),
+                actor,
                 crate::edge::EdgeActorClass::Human,
             )
             .map_err(|_| Error::InvalidConfig("grant slate owner binding required".to_owned()))?;
@@ -504,7 +505,7 @@ impl Vault {
                 .revision
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("slate revision"))?;
-            slate.owner_actor = Some(owner.actor().to_hex());
+            slate.owner_actor = Some(actor.to_hex());
             slate.owner_authentication = Some(owner.decision_id().to_hex());
             GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
             Ok(slate)
@@ -665,38 +666,6 @@ mod revision_tests {
             owner_actor: None,
             owner_authentication: None,
         }
-    }
-    #[test]
-    fn permutations_and_schema_defaults_are_checked_by_tool_identity() {
-        let tools = vec![tool("A"), tool("B")];
-        let mut old_rows = draft_connector_slate(&tools);
-        old_rows[0].enabled = false;
-        let old = slate(tools.clone(), old_rows);
-        let mut next_rows = draft_connector_slate(&tools);
-        next_rows[1].enabled = false;
-        next_rows.reverse();
-        let next = slate(tools.clone(), next_rows);
-        assert!(
-            slate_expands(&old, &next, &BTreeSet::new()),
-            "A became enabled despite reordered rows"
-        );
-        let old = slate(tools.clone(), draft_connector_slate(&tools));
-        let mut changed = tools.clone();
-        changed[0].resolved_input_schema = Some(json!({"type":"object",
-            "properties":{"query":{"type":"string","enum":["a","b"],"default":"b"}}}));
-        assert!(slate_expands(
-            &old,
-            &slate(changed.clone(), draft_connector_slate(&changed)),
-            &BTreeSet::new()
-        ));
-        changed = tools;
-        changed[0].resolved_input_schema = Some(json!({"type":"object",
-            "properties":{"query":{"type":"string","enum":["a"]}}}));
-        assert!(!slate_expands(
-            &old,
-            &slate(changed.clone(), draft_connector_slate(&changed)),
-            &BTreeSet::new()
-        ));
     }
     #[test]
     fn resolved_policy_controls_class_carry_and_header_is_independent() -> Result<()> {

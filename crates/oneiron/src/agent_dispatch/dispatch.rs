@@ -371,10 +371,7 @@ impl<'a> AgentDispatcher<'a> {
     /// Loads a dispatch target's LIVE stored row and applies the dispatchability
     /// predicate. Fails closed on a missing, non-`AGENT_DEF`, malformed,
     /// inactive, unapproved, or disabled row.
-    pub(super) fn dispatchable_definition(
-        &self,
-        target: &AgentDispatchTarget,
-    ) -> Result<AgentDefinition> {
+    pub fn dispatchable_definition(&self, target: &AgentDispatchTarget) -> Result<AgentDefinition> {
         let txn = self.vault.store.env.read_txn()?;
         self.dispatchable_definition_in_txn(&txn, target)
     }

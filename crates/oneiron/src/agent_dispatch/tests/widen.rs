@@ -504,6 +504,14 @@ fn workflow_widen_parks_whole_composition_and_replays_one_wrapper_after_reopen()
     } = case;
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a
+    // fresh one.
+    let owner = vault.authenticate_owner(
+        owner.actor(),
+        owner.principal_ref(),
+        true,
+        GateDecisionId::now(),
+    )?;
     let dispatcher = AgentDispatcher::new(&vault);
     let AgentDispatchOutcome::WorkflowExisting(replayed) =
         dispatcher.approve_context_widen(&owner, &proposal, 6)?
@@ -722,40 +730,39 @@ fn workflow_widen_revalidates_settled_siblings_and_keeps_structural_refusals() -
     Ok(())
 }
 
-#[test]
-fn parked_widen_replay_obeys_live_project_depth_before_dispatch() -> Result<()> {
-    let (_dir, vault) = open_board_vault();
-    let approver = owner(&vault, test_id(0xA0))?;
-    let row = put_row(&vault, 0xB3, "widen.depth", AgentCeiling::Auto)?;
-    chat_turn(&vault)?;
-    let board = board(&vault, approver.actor(), row);
-    let dispatcher = AgentDispatcher::new(&vault);
-    let parent = dispatched(dispatcher.dispatch_with_context(
-        input(row, board, "parent"),
-        AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
-    )?);
-    let proposal = proposed(dispatcher.dispatch_with_context(
-        input(row, parent.attempt.id, "project-depth-widen"),
-        request(),
-    )?);
-    let writer = crate::write_envelope::WriteActor::new(approver.actor(), EdgeActorClass::Human);
-    crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB5)?;
-    let root = vault.root_project()?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 4, 0xB5)?;
-    let before = AttemptQueue::new(&vault).list()?.len();
-    assert_eq!(
-        dispatcher
-            .approve_context_widen(&approver, &proposal, 5)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::InvalidAgentDispatchInput
-    );
-    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
-    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 10, &writer, 6, 0xB5)?;
-    let landed = dispatched(dispatcher.approve_context_widen(&approver, &proposal, 7)?);
-    assert_eq!(
-        landed.input.depth_remaining,
-        Some(parent.input.depth_remaining.unwrap() - 1)
-    );
-    Ok(())
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_lands_no_widen() -> Result<()> {
+        let (_dir, vault) = open_board_vault();
+        let owner = owner(&vault, test_id(0xA0))?;
+        let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
+        chat_turn(&vault)?;
+        let board = board(&vault, owner.actor(), row);
+        let dispatcher = AgentDispatcher::new(&vault);
+        let parent = dispatched(dispatcher.dispatch_with_context(
+            input(row, board, "parent"),
+            AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
+        )?);
+        let proposal = proposed(
+            dispatcher.dispatch_with_context(input(row, parent.attempt.id, "child"), request())?,
+        );
+        let before = AttemptQueue::new(&vault).list()?;
+        // The other vault holds the board owner's PERSON too: only the
+        // proof's vault binding tells them apart.
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), &owner.actor().to_hex());
+
+        assert_eq!(
+            dispatcher
+                .approve_context_widen(&foreign, &proposal, 4)
+                .expect_err("another vault's proof")
+                .kind(),
+            ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(AttemptQueue::new(&vault).list()?, before);
+        dispatched(dispatcher.approve_context_widen(&owner, &proposal, 5)?);
+        Ok(())
+    }
 }

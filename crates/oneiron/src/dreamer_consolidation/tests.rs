@@ -23,14 +23,18 @@ use crate::{
 
 use super::*;
 
-mod contradictions;
 mod failure_rules;
+mod imported_review;
 mod late_budget;
 mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
+mod scope_summaries;
 mod support;
+mod turn_wake;
+mod weave_grant;
+mod witnessed_turns;
 use support::ExpiringBackend;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -47,8 +51,18 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault).expect("owner-pinned test egress");
-    grant_fixture_reads(&vault).expect("explicit consolidation read grant");
+    install_shipped_policy(&vault).expect("shipped policy");
     (dir, vault)
+}
+
+/// `open_test_vault_with` clears the seeded policy. These passes run under
+/// the shipped one, whose Dreamer read row (ARCH-0026) they need.
+fn install_shipped_policy(vault: &Vault) -> Result<()> {
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest()?,
+    )
 }
 
 fn authorize_test_inference(vault: &Vault) -> Result<()> {
@@ -74,36 +88,6 @@ fn test_inference_host() -> crate::llm::HostInferenceContext<'static> {
         },
         extraction_egress: Some(&allow_fixture_extraction),
     }
-}
-
-fn grant_fixture_reads(vault: &Vault) -> Result<()> {
-    let actor = vault.dreamer_authority()?;
-    let bytes = crate::gate::default_policy_manifest()?;
-    let Value::Map(mut entries) =
-        rmpv::decode::read_value(&mut bytes.as_slice()).expect("default policy map")
-    else {
-        unreachable!()
-    };
-    entries.push((
-        "scoped_grants".into(),
-        Value::Array(vec![Value::Map(vec![
-            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
-            ("actor_class".into(), "system".into()),
-            ("effector".into(), "core:read".into()),
-            (
-                "scope".into(),
-                crate::federation::scope_codec::encode_scope_value(
-                    &crate::federation::scope_codec::read_preset(),
-                )?,
-            ),
-            ("receipt_required".into(), false.into()),
-        ])]),
-    ));
-    crate::test_util::put_policy_manifest_bytes(
-        vault,
-        crate::gate::default_policy_manifest_id()?,
-        &super::support::encode_value(&Value::Map(entries))?,
-    )
 }
 
 fn occurred(at: u64) -> TimeRange {
@@ -390,13 +374,13 @@ fn bootstrap_round_on_empty_vault() -> Result<()> {
     assert_eq!(first_round[1].learned_at, 10);
 
     // Repeated rounds converge: each advances past what it scanned.
-    advance_watermark(&vault, scope, 10)?;
+    advance_watermark(&vault, scope, 10, &first_round)?;
     let watermark = read_watermark(&vault, scope)?;
     let second_round = scan_dirty_turns(&vault, scope, &watermark, 2)?;
     assert_eq!(second_round.len(), 1);
     assert_eq!(second_round[0].learned_at, 15);
 
-    advance_watermark(&vault, scope, 15)?;
+    advance_watermark(&vault, scope, 15, &second_round)?;
     let watermark = read_watermark(&vault, scope)?;
     assert!(scan_dirty_turns(&vault, scope, &watermark, 2)?.is_empty());
     Ok(())
@@ -902,7 +886,7 @@ fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
     let scope = DreamerConsolidationScope::Meso;
     let conversation = seed_session(&vault, 0x30, 1);
     let dirty = seed_turn(&vault, &conversation, "user", "dirty", 900);
-    advance_watermark(&vault, scope, 800)?;
+    advance_watermark(&vault, scope, 800, &[])?;
 
     let session = minted(vault.mint_session(1_000)?);
     let mut wake = meso_wake(&vault);
@@ -1172,12 +1156,14 @@ fn partition_round_hash_conformance() {
             turn_id: ordered_turn_id(0x49, 1),
             role: DreamerTurnRole::User,
             learned_at: 900,
+            carrier: None,
             conversation: None,
         },
         WorkingSetTurn {
             turn_id: ordered_turn_id(0x49, 2),
             role: DreamerTurnRole::Assistant,
             learned_at: 900,
+            carrier: None,
             conversation: None,
         },
     ];
@@ -1254,16 +1240,18 @@ fn bucket_hash_conformance() {
         rel: None,
         world: None,
         facet: None,
+        project: crate::claim::default_project_id(),
     };
     // Pinned known-answer vector for the domain-separated hash.
     assert_eq!(
         bytes_to_hex_lower(&key.bucket_hash()),
-        "d317aabf2d943d106457feac194b64d955b825777bce237ae930232d76b2be6b",
+        "5869b6cc37062dbae6c480a3f4bc93f7ebc53b3a9b86bbdee67153f98b63b2c0",
         "bucket hash known-answer vector"
     );
 
     // Identical content hashes identically regardless of construction path.
     let rebuilt = ConsolidationBucketKey {
+        project: crate::claim::default_project_id(),
         facet: None,
         world: None,
         predicate_root: String::from("profile"),
@@ -1277,6 +1265,9 @@ fn bucket_hash_conformance() {
     let mut other = key.clone();
     other.predicate_root = "preference".to_owned();
     assert_ne!(key.bucket_hash(), other.bucket_hash());
+    let mut other_project = key.clone();
+    other_project.project = subject;
+    assert_ne!(key.bucket_hash(), other_project.bucket_hash());
     let partition = ConsolidationPartitionKey {
         conversation_ref: subject,
         world_ref: None,
@@ -1483,6 +1474,8 @@ fn predicate_root_never_bucket_key_conflict_key_confusion() {
 struct ScriptedBackend {
     calls: AtomicUsize,
     script: Mutex<VecDeque<LlmResult<crate::LlmResponse>>>,
+    /// The model each call named, in order.
+    models: Mutex<Vec<String>>,
 }
 
 impl ScriptedBackend {
@@ -1490,17 +1483,26 @@ impl ScriptedBackend {
         Self {
             calls: AtomicUsize::new(0),
             script: Mutex::new(script.into_iter().collect()),
+            models: Mutex::new(Vec::new()),
         }
+    }
+
+    fn models(&self) -> Vec<String> {
+        self.models.lock().expect("models mutex").clone()
     }
 }
 
 impl LlmBackend for ScriptedBackend {
     fn generate<'a>(
         &'a self,
-        _request: LlmRequest,
+        request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.models
+            .lock()
+            .expect("models mutex")
+            .push(request.model.as_str().to_owned());
         let next = self
             .script
             .lock()
@@ -1581,6 +1583,7 @@ fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Re
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1666,6 +1669,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1906,8 +1910,6 @@ fn admitted_attempt_fixture<'a>(
     Vec<EntityId>,
     EntityId,
 )> {
-    let scope = DreamerConsolidationScope::Micro;
-    let node_id = crate::identity::load_or_mint_client_id(vault)?;
     let conversation = seed_session(vault, session_seed, 1);
     let mut turns = Vec::new();
     for (index, (speaker, text)) in texts.iter().enumerate() {
@@ -1919,6 +1921,16 @@ fn admitted_attempt_fixture<'a>(
             10 + index as u64,
         ));
     }
+    Ok((admit_seeded_attempt(vault, store)?, turns, conversation))
+}
+
+/// Enqueues the already-seeded dirty turns and admits their one attempt.
+fn admit_seeded_attempt<'a>(
+    vault: &'a Vault,
+    store: &DreamerRunnerStore<'a>,
+) -> Result<crate::dreamer_runner::DreamerAdmittedAttempt> {
+    let scope = DreamerConsolidationScope::Micro;
+    let node_id = crate::identity::load_or_mint_client_id(vault)?;
     let watermark = read_watermark(vault, scope)?;
     let dirty = scan_dirty_turns(vault, scope, &watermark, 10)?;
     enqueue_partition_attempts(vault, scope, &dirty, &watermark, "run-1", 20)?;
@@ -1941,7 +1953,7 @@ fn admitted_attempt_fixture<'a>(
     else {
         panic!("expected admitted consolidation attempt");
     };
-    Ok((*admitted, turns, conversation))
+    Ok(*admitted)
 }
 
 #[test]
@@ -1988,6 +2000,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
         );
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2029,6 +2042,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
         // Neither the conflict-free extraction nor the merge is lost.
         backend.clock.store(0, Ordering::SeqCst);
         let mut resumed = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2077,6 +2091,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2135,6 +2150,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2310,6 +2326,7 @@ fn wake_prepared_wake_rereads_original_bytes_and_refuses_write_drift() -> Result
         admitted.status.attempt.id,
         None,
         Some(&pin),
+        None,
     )?;
     let citation = SwarmEvidenceRef::whole_turn(turn);
     let original = resources.verify_evidence_refs(&[citation])?;
@@ -2532,6 +2549,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2598,6 +2616,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2675,6 +2694,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let run = |now_ms: u64| -> Result<Vec<EntityId>> {
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2748,6 +2768,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     let run = |now_ms: u64| -> Result<Vec<EntityId>> {
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2873,6 +2894,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -3038,6 +3060,7 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
             None,
             None,
             rel,
+            crate::claim::default_project_id(),
             None,
         )
         .unwrap()
@@ -3098,6 +3121,7 @@ fn queued_session_end_miner_executes_under_system_authority() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

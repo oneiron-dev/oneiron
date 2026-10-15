@@ -4,7 +4,7 @@ use super::dedupe;
 use super::replay::{
     effect_result, gate_rejection, replay_record, send_pending, suppression_result,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::types::BEFORE_NEW_ADMISSION;
 use super::types::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
@@ -34,7 +34,7 @@ fn parked_refusal(
     intent_id: crate::outbound_intent_ledger::IntentId,
     prepared: &PreparedEffect,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let (decision_id, decision, _) =
@@ -49,6 +49,81 @@ fn parked_refusal(
 
 /// Executes every outbound effect in ledger-read → replay → gate → debit →
 /// durable-Pending → transport order.
+/// Holds a send its admission ceiling stops: the decision is recorded and
+/// nothing is admitted. Held before admission, so the owner's approval stays
+/// unspent. A live denial is not the ceiling's to hold: it comes back as the
+/// denial it is, with no ceiling count, as on every other path.
+fn ceiling_hold(
+    vault: &Vault,
+    mut wtxn: heed::RwTxn<'_>,
+    intent_id: crate::outbound_intent_ledger::IntentId,
+    prepared: &PreparedEffect,
+    count: u32,
+) -> Result<OutboundEffectResult, OutboundEffectError> {
+    let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    let (decision_id, decision) =
+        gate::record_held_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
+    wtxn.commit().map_err(Error::from)?;
+    vault.store.notify_attempt_observers();
+    let denied = decision.outcome() == GateOutcome::Deny;
+    let mut result = gate_rejection(intent_id, decision_id, decision);
+    result.ceiling_count = (!denied).then_some(count);
+    Ok(result)
+}
+
+/// An exact retry keeps its paid admission while the ceiling's window still
+/// counts it. A Pending retry whose admission aged out of that window is a
+/// send in today's window, so once governance has let it out, under the same
+/// writer lock, it meets the ceiling: held at a full ceiling, keeping its
+/// Pending row, and otherwise renewed before transport, so a concurrent send
+/// counts it. Governance answers first, so the ceiling only ever adds a hold
+/// to a send that would go out; a send governance stops gets the same answer
+/// at a full ceiling as below it. Returns the hold, or `None` with the
+/// transaction settled.
+pub(super) fn aged_admission_ceiling(
+    vault: &Vault,
+    mut wtxn: heed::RwTxn<'_>,
+    prepared: &PreparedEffect,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    now_ms: u64,
+) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
+    let Some(ceiling) = prepared.admission_ceiling else {
+        return Ok(None);
+    };
+    // The row as it stands under this lock, not the snapshot the replay
+    // began from: a renewal rewrites it.
+    let Some(stored) = read_intent_record_in_txn(vault, &wtxn, &record.id)? else {
+        return Ok(None);
+    };
+    if stored.state != IntentState::Pending
+        || stored.created_ms.max(stored.updated_ms) >= ceiling.since_ms
+    {
+        return Ok(None);
+    }
+    let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
+        vault,
+        &wtxn,
+        &prepared.server,
+        &prepared.tool,
+        ceiling.since_ms,
+        Some(stored.attempt_id),
+    )?;
+    let count = ceiling.prior.max(admitted);
+    if count >= ceiling.cap {
+        let mut held = ceiling_hold(vault, wtxn, stored.id, prepared, count)?;
+        if held.ceiling_count.is_some() {
+            let pending = effect_result(&stored, None, true, None);
+            held.resolution = pending.resolution;
+            held.dispatch = pending.dispatch;
+        }
+        return Ok(Some(held));
+    }
+    crate::outbound_intent_ledger::renew_admission_in_txn(vault, &mut wtxn, &stored, now_ms)?;
+    wtxn.commit().map_err(Error::from)?;
+    Ok(None)
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -63,7 +138,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         OutboundEffectCommand::Resume(intent_id) => *intent_id,
     };
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if matches!(&command, OutboundEffectCommand::New(_)) {
         BEFORE_NEW_ADMISSION.with(|hook| {
             if let Some(hook) = hook.take() {
@@ -71,8 +146,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             }
         });
     }
-    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     if let OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) = &command {
+        if let Some(owner) = &prepared.owner_proof {
+            owner.revalidate_in_txn(vault, &wtxn)?;
+        }
         if let Some((actor, actor_class)) = prepared.verified_actor {
             if vault.port_tombstone_is_deleted(&wtxn, &actor)? {
                 return Err(IntentLedgerError::InvalidBoundActor);
@@ -256,6 +334,25 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         force_sync(vault)?;
         return suppression_result(vault, &suppressed, false);
+    }
+
+    // A count bound reads the ledger under THIS writer lock, after an exact
+    // retry has replayed and a semantic duplicate has been suppressed above,
+    // so only a new send meets it: the call is held like a parked send, with
+    // its decision recorded and nothing admitted.
+    if let Some(ceiling) = prepared.admission_ceiling {
+        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
+            vault,
+            &wtxn,
+            &prepared.server,
+            &prepared.tool,
+            ceiling.since_ms,
+            None,
+        )?;
+        let count = ceiling.prior.max(admitted);
+        if count >= ceiling.cap {
+            return ceiling_hold(vault, wtxn, intent_id, &prepared, count);
+        }
     }
 
     let (budget_accounting, budget_charge, exhausted) = charge_once(

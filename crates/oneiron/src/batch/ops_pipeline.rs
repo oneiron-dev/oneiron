@@ -328,6 +328,25 @@ pub(crate) fn apply_ops_with_gate_mode(
 /// index keys.
 ///
 /// [`JournalRole`]: crate::session_overlay::JournalRole
+///
+/// # One write of a row per apply
+///
+/// `view` reads the overlay as it was when it was built, so an op here does
+/// not see the ones staged before it in the same call. The witness door
+/// applies one entry per call, each on a fresh view, so that each op reads
+/// the ones before it. A call that writes one row twice (two of its `Put`,
+/// `Text` and `Vector`) is refused before anything stages: its second write
+/// would build on the row as it was before the first. A put's index, in
+/// particular, could not publish the revision the put staged.
+///
+/// A room indexes what it stages at once and runs no idle pass. So the apply
+/// that indexes a row the room put publishes the row's revision (its indexed
+/// revision becomes its live one), and hides the row's text or vector that
+/// it did not restage when they describe another body. When neither base's
+/// indexed body nor its live one is the room's, it hides base's vector of
+/// the row even when base has none yet, since base may still embed that
+/// body. Base keeps its deferred-index interval.
+///
 /// # The op list IS the journal
 ///
 /// This entry takes [`JournalEntry`] values, not bare [`BatchOp`]s: staging a
@@ -356,6 +375,29 @@ pub(crate) fn apply_ops_session(
     }
     let overlay = route.overlay();
 
+    // One write of a row per apply (see above), refused before a byte stages.
+    let mut rows = HashSet::new();
+    let mut texts = HashSet::new();
+    let mut vectors = HashSet::new();
+    for entry in &entries {
+        let id = match &entry.op {
+            BatchOp::Put { id, .. } => id,
+            BatchOp::Text { id, .. } => {
+                texts.insert(*id);
+                id
+            }
+            BatchOp::Vector { id, .. } => {
+                vectors.insert(*id);
+                id
+            }
+            _ => continue,
+        };
+        if !rows.insert(*id) {
+            return Err(Error::InvariantViolation(
+                "a session apply writes a row once; its next write takes an apply of its own",
+            ));
+        }
+    }
     for entry in entries {
         match &entry.op {
             BatchOp::Put {
@@ -368,8 +410,10 @@ pub(crate) fn apply_ops_session(
                 // Same registry discipline as base: a room is not a place
                 // where unknown or engine-authored type bytes become writable.
                 // Promote replays these rows into base, so a byte that would
-                // be rejected there is rejected here.
+                // be rejected there is rejected here, and so is an id a base
+                // provisional entity holds.
                 crate::registry::validate_public_entity_type(*entity_type)?;
+                crate::tagging::refuse_held_id_in_txn(view, wtxn, id)?;
                 // D18, on the same terms: a CLAIM body is structurally
                 // validated before a byte of it is staged. The type-byte gate
                 // above is not enough — it admits the byte, not the shape.
@@ -390,30 +434,37 @@ pub(crate) fn apply_ops_session(
                         view, wtxn, &body,
                     )?;
                 }
+                // The overlay is a write target, not a weaker store. A MESSAGE
+                // keeps the same canonical-body and stable-id rules as base:
+                // exact executor retries are idempotent, while a same-id
+                // divergent retry is refused before any overlay mutation or
+                // journal entry stages.
                 if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
-                    // The overlay is a write target, not a weaker MESSAGE
-                    // store. Keep the same canonical-body and stable-id
-                    // immutability rules as base: exact executor retries are
-                    // idempotent, while a same-id divergent retry is refused
-                    // before any overlay mutation or journal entry stages.
                     crate::gate::validate_canonical_witness_message_body(data)?;
-                    if let Some(raw) =
-                        crate::ports::EntityStoreRead::port_entity_raw(view, &*wtxn, id)?
+                }
+                // Every row keeps its type, as on base (`apply_put`, which
+                // reads the old row wiped too): promote would refuse the
+                // retype, and the revision capture would keep the old row, a
+                // custody body included, as the new one's indexed revision
+                // for a union read to serve.
+                if let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw_wiped(view, &*wtxn, id)?
+                {
+                    let header = EntityMetadataHeader::parse(&raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    if header.entity_type != *entity_type {
+                        return Err(Error::Registry(RegistryError::EntityTypeImmutable {
+                            id: *id,
+                            existing: header.entity_type,
+                            attempted: *entity_type,
+                        }));
+                    }
+                    if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                        && &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice()
                     {
-                        let header = EntityMetadataHeader::parse(&raw)
-                            .ok_or(Error::CorruptedIndex("entity header"))?;
-                        if header.entity_type != *entity_type {
-                            return Err(Error::Registry(RegistryError::EntityTypeImmutable {
-                                id: *id,
-                                existing: header.entity_type,
-                                attempted: *entity_type,
-                            }));
-                        }
-                        if &raw[ENTITY_METADATA_HEADER_LEN..] != data.as_slice() {
-                            return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
-                                "an existing MESSAGE id is bound to its original canonical body",
-                            )));
-                        }
+                        return Err(Error::Record(RecordError::InvalidWitnessMessageBody(
+                            "an existing MESSAGE id is bound to its original canonical body",
+                        )));
                     }
                 }
                 // The ENTRY's stamps, not the op's: they are the witnessing
@@ -457,8 +508,13 @@ pub(crate) fn apply_ops_session(
             BatchOp::Text { id, fields } => {
                 crate::bm25::index_text(view, wtxn, analyzer, id, fields)?;
             }
-            BatchOp::Vector { id, vector, .. } => {
-                stage_vector_row(view, config, wtxn, id, vector)?;
+            BatchOp::Vector {
+                id,
+                vector,
+                provenance,
+                ..
+            } => {
+                stage_vector_row(view, config, wtxn, id, vector, provenance.as_ref())?;
                 // `pending_rebuild` can only come back false: the legacy arm
                 // that would set it needs a base `&Store` this call does not
                 // have. Passing a local sink states that and keeps the shared
@@ -485,7 +541,62 @@ pub(crate) fn apply_ops_session(
         }
         overlay.stage_journal_entry(entry)?;
     }
+    // The apply that indexes a row the room put publishes its revision, and
+    // hides an index of another body that it did not restage (see above). A
+    // vector the room staged describes the body it indexed last, so it stands
+    // until the body changes (Sol R23).
+    for id in texts.union(&vectors) {
+        if !view.entities.stages_row(id.as_bytes()) {
+            continue;
+        }
+        let changed = crate::vault::entity_revision::publish_room_revision(view, wtxn, id)?;
+        if changed && !texts.contains(id) {
+            crate::bm25::deindex_text(view, wtxn, id)?;
+        }
+        if !vectors.contains(id) && (changed || !view.vectors.stages_row(id.as_bytes())) {
+            hide_vector_of_another_body(view, wtxn, id)?;
+        }
+    }
     Ok(())
+}
+
+/// Leaves `id`, a row the room holds and has not given a vector for its
+/// body, only a vector of that body. A vector base holds was embedded from
+/// its indexed body, so the room serves base's when that body is the room's
+/// (Sol R22), in place of a mask or a vector the room staged for an earlier
+/// body (Sol R23). One base writes later (an embedding or its idle pass,
+/// which can land before the room's segment commits) is embedded from its
+/// live body, so while that body is another too the room hides the row
+/// before base writes one (Sol R19, R21).
+fn hide_vector_of_another_body(
+    view: &crate::store::SessionStoreView<'_>,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let room = crate::ports::EntityStoreRead::port_entity_raw(view, wtxn, id)?
+        .ok_or(Error::CorruptedIndex("staged row without entity"))?;
+    let body = room.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    let base = view.read().base();
+    let vectors = &view.vectors;
+    let (held, later) = crate::vault::entity_revision::vectors_embed_body(base, wtxn, id, body)?;
+    if held {
+        if !vectors.hides(id.as_bytes()) && !vectors.stages_row(id.as_bytes()) {
+            return Ok(());
+        }
+        let Some(raw) = base.vectors.get(wtxn, id.as_bytes())? else {
+            vectors.delete(wtxn, id.as_bytes())?;
+            return crate::embed::record_embedding_device_in_txn(view, wtxn, id, None);
+        };
+        let raw = raw.into_owned();
+        vectors.put(wtxn, id.as_bytes(), &raw)?;
+        return crate::embed::copy_embedding_device_in_txn(base, view, wtxn, id);
+    }
+    if later {
+        vectors.delete(wtxn, id.as_bytes())?;
+    } else {
+        vectors.hide_base_row(id.as_bytes())?;
+    }
+    crate::embed::record_embedding_device_in_txn(view, wtxn, id, None)
 }
 
 pub(super) fn contains_text_op(ops: &[BatchOp]) -> bool {

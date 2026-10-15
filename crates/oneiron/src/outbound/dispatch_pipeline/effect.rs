@@ -25,7 +25,10 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) attempt_id: AttemptId,
     pub(super) idempotency_supported: bool,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
     pub(super) parked: Option<OutboundDispatchOutcome>,
+    /// The seat's count bound, rechecked under the admission writer lock.
+    pub(super) admission_ceiling: Option<crate::outbound_chokepoint::AdmissionCeiling>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
 }
 
@@ -42,7 +45,9 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         attempt_id,
         idempotency_supported,
         verified_actor,
+        owner_proof,
         parked,
+        admission_ceiling,
         suppression_receipt,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
@@ -57,8 +62,14 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
         verified_actor,
+        owner_proof,
         dedupe_key: request.intent.dedupe_key.clone(),
         suppression_receipt,
+        admission_ceiling: if parked.is_none() {
+            admission_ceiling
+        } else {
+            None
+        },
     };
     let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
     let mut transport = DispatchChokepointTransport::new(vault, request, verb_contract, sink);
@@ -99,6 +110,10 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         }
     };
     let resolution = effect_result.resolution;
+    // A ceiling reached under the writer lock parks the send as Held.
+    let parked = parked.or(effect_result
+        .ceiling_count
+        .map(|_| OutboundDispatchOutcome::Held));
     let outcome = if effect_result.dedupe_suppressed {
         OutboundDispatchOutcome::Suppressed
     } else {
@@ -121,6 +136,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         outcome,
         execution: transport.execution,
         suppression_receipt: effect_result.suppression_receipt,
+        ceiling_count: effect_result.ceiling_count,
     })
 }
 

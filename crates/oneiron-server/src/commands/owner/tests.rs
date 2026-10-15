@@ -20,3 +20,231 @@ fn a_failed_export_write_leaves_no_file_and_the_same_out_retries() {
     );
     assert_eq!(std::fs::read(&out).unwrap(), b"the whole export");
 }
+
+#[test]
+fn doctor_reports_the_vault_beside_a_serve_setting_that_does_not_resolve() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    drop(oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap());
+    let backups = root.path().join("kept-backups");
+    let config = root.path().join("oneiron.toml");
+    // A server setting doctor never reads fails validation; the backup
+    // section is sound.
+    std::fs::write(
+        &config,
+        format!(
+            "ephemeral_timeout_ms = 0\n[backup]\ndir = {:?}\nkeep = 3\n",
+            backups.display().to_string()
+        ),
+    )
+    .unwrap();
+    let report = doctor_report(DoctorArgs {
+        path: vault_path.clone(),
+        dimensions: None,
+        map_size: None,
+        dict_search_paths: None,
+        config: Some(config),
+        vectors_from: None,
+        vectors_runtime: None,
+    })
+    .expect("doctor reports despite the bad setting");
+    let location = &report["location"];
+    assert_eq!(
+        location["vault"],
+        vault_path.canonicalize().unwrap().display().to_string()
+    );
+    assert_eq!(location["backups"]["dir"], backups.display().to_string());
+    assert_eq!(location["backups"]["keep"], 3);
+    assert!(report.get("unreadable_fields").is_some(), "{report}");
+    let errors = report["config_errors"].as_array().expect("errors listed");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].as_str().unwrap().contains("ephemeral_timeout_ms"),
+        "{errors:?}"
+    );
+}
+
+/// ASTRA-9A-2-R2 F4: a serve setting of the wrong type elsewhere in the file
+/// does not hide the configured backups: doctor reads the `[backup]` table on
+/// its own and finds the backup there.
+#[test]
+fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let backups = root.path().join("kept-backups");
+    {
+        let vault =
+            oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap();
+        let plan = BackupPlan::new(&vault_path, backups.clone(), 3);
+        backup::take(&vault, &plan).unwrap();
+    }
+    let config = root.path().join("oneiron.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "ephemeral_timeout_ms = \"oops\"\n[backup]\ndir = {:?}\nkeep = 3\n",
+            backups.display().to_string()
+        ),
+    )
+    .unwrap();
+    let report = doctor_report(DoctorArgs {
+        path: vault_path,
+        dimensions: None,
+        map_size: None,
+        dict_search_paths: None,
+        config: Some(config),
+        vectors_from: None,
+        vectors_runtime: None,
+    })
+    .expect("doctor reports despite the mistyped setting");
+    let location = &report["location"]["backups"];
+    assert_eq!(location["dir"], backups.display().to_string(), "{report}");
+    assert_eq!(location["count"], 1, "{report}");
+    let errors = report["config_errors"].as_array().expect("errors listed");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str().unwrap().contains("ephemeral_timeout_ms")),
+        "{errors:?}"
+    );
+}
+
+/// ARCH-0036 (owner, 2026-10-11): doctor counts the stored vectors by the
+/// device and runtime that computed them, an unmarked one as unknown, and
+/// `--vectors-from` lists exactly the ids one device computed. Bug repro:
+/// doctor opened every vault under no model, which a vault holding vectors
+/// refuses, so it reported none of them; it reports this one although the
+/// config names another model.
+#[test]
+fn doctor_counts_vectors_by_device_and_lists_one_devices_ids() {
+    use oneiron::embed::{EmbeddingDevice, EmbeddingProvenance};
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 1024;
+    vault_config.embedding_model = Some("test/model@v1".to_owned());
+    let unit = |axis: usize| {
+        let mut vector = vec![0.0; 1024];
+        vector[axis] = 1.0;
+        vector
+    };
+    let on_cuda = oneiron::EntityId::now();
+    {
+        let vault = oneiron::Vault::open_owned(&vault_path, vault_config).unwrap();
+        vault
+            .batch()
+            .vector_with_provenance(
+                &on_cuda,
+                &unit(0),
+                EmbeddingProvenance::new(EmbeddingDevice::Cuda, "candle 0.11.0 q8_0"),
+            )
+            .vector_with_provenance(
+                &oneiron::EntityId::now(),
+                &unit(1),
+                EmbeddingProvenance::new(EmbeddingDevice::Cpu, "candle 0.11.0 q8_0 x86_64"),
+            )
+            .vector(&oneiron::EntityId::now(), &unit(2))
+            .commit()
+            .unwrap();
+    }
+    // The default local embedder, whose model is not the vault's.
+    let config = root.path().join("oneiron.toml");
+    std::fs::write(
+        &config,
+        "dimensions = 1024\n\n[embedder]\ndimensions = 1024\n",
+    )
+    .unwrap();
+    let report = doctor_report(DoctorArgs {
+        path: vault_path,
+        dimensions: None,
+        map_size: None,
+        dict_search_paths: None,
+        config: Some(config),
+        vectors_from: Some(EmbeddingDevice::Cuda),
+        vectors_runtime: None,
+    })
+    .unwrap();
+    assert_eq!(
+        report["vector_provenance"],
+        serde_json::json!([
+            {"device": "cpu", "runtime": "candle 0.11.0 q8_0 x86_64", "vectors": 1},
+            {"device": "cuda", "runtime": "candle 0.11.0 q8_0", "vectors": 1},
+            {"device": "unknown", "runtime": "unknown", "vectors": 1},
+        ]),
+        "{report}"
+    );
+    assert_eq!(
+        report["vectors_from"]["ids"],
+        serde_json::json!([on_cuda.to_hex()]),
+        "{report}"
+    );
+}
+
+/// The CLI registers on a stopped vault through the engine door the route
+/// uses, as the local owner, and rotation runs beside it. Neither output
+/// carries the value.
+#[test]
+fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    drop(oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap());
+    let config = root.path().join("oneiron.toml");
+    std::fs::write(&config, "").unwrap();
+    let serve = ServeArgs {
+        config: Some(config),
+        vault_path: Some(vault_path.clone()),
+        ..ServeArgs::default()
+    };
+
+    let value = read_secret_value(&b"cli synthetic value"[..]).unwrap();
+    let registered = register_secret(
+        SecretRegisterArgs {
+            name: "cli-token".to_owned(),
+            class: SecretClass::CustodyPortable,
+            rung: 1,
+            device_only: false,
+            bindings: vec!["deploy=read".to_owned()],
+            repo: None,
+            git_ref: "refs/heads/main".to_owned(),
+            serve: serve.clone(),
+        },
+        &value,
+    )
+    .unwrap();
+    assert_eq!(registered.name, "cli-token");
+    assert_eq!(registered.rotation_generation, 0);
+    assert_eq!(registered.bindings.len(), 1);
+    assert_eq!(registered.bindings[0].effector, "deploy");
+    assert_eq!(registered.bindings[0].tier_ceiling, 1);
+    assert_eq!(registered.bindings[0].scopes, ["read"]);
+    let printed = serde_json::to_string(&registered).unwrap();
+    assert!(!printed.contains("cli synthetic value"), "{printed}");
+
+    // The command closed the vault: the next one opens it, as the owner does.
+    let rotated = rotate_secret(
+        SecretRotateArgs {
+            name: "cli-token".to_owned(),
+            serve,
+        },
+        &read_secret_value(&b"cli synthetic rotated"[..]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!((rotated.from_generation, rotated.to_generation), (0, 1));
+    assert!(
+        !serde_json::to_string(&rotated)
+            .unwrap()
+            .contains("cli synthetic")
+    );
+
+    let vault = oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap();
+    let id = vault
+        .resolve_secret_ref("cli-token")
+        .unwrap()
+        .expect("in custody");
+    let stored = vault.get_secret_metadata(&id).unwrap().unwrap();
+    assert_eq!(stored.rotation_generation, 1);
+    assert!(
+        read_secret_value(&b""[..]).is_err(),
+        "an empty stdin is refused"
+    );
+}

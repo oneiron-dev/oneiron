@@ -60,7 +60,7 @@ impl Vault {
             format!("skill.hub.configure:{}:{binding}:{learned_at}", id.to_hex()),
         )?)
         .digest();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let receipt = self.approve_once_in_txn(txn, owner, effect)?;
             let authorization =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?

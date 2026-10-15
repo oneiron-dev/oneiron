@@ -84,7 +84,7 @@ pub(in crate::sync) use self::writes_batch::{
 };
 
 #[cfg(test)]
-pub(in crate::sync) use self::reassert_drain::{INJECT_PURGE_FAILURES, INJECT_PURGE_FAILURES_SKIP};
+pub(crate) use self::reassert_drain::{INJECT_PURGE_FAILURES, INJECT_PURGE_FAILURES_SKIP};
 // Test-only paths (named from `*_tests.rs` / `tests.rs` suites, never from
 // shipped code): same `gate/mod.rs` precedent — gate them `cfg(test)` so the
 // plain-lib build sees no unreferenced re-export.
@@ -104,9 +104,7 @@ use self::remat_markers::{remat_marker_key, set_remat_marker};
 // private ones here so `tests.rs` resolves exactly as it did before the
 // split.
 #[cfg(test)]
-use self::{
-    remat_markers::replay_remat_marker_provenance_key, retention_reports::enforce_retention_in_txn,
-};
+use self::remat_markers::replay_remat_marker_provenance_key;
 #[cfg(test)]
 use crate::error::Error;
 #[cfg(test)]

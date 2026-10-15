@@ -32,14 +32,16 @@ pub(super) fn verify_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &AuthenticatedOwner,
-) -> Result<()> {
+) -> Result<EntityId> {
+    let actor = owner.revalidate_in_txn(vault, txn)?;
     crate::memory::verify_deletion_authority_in_txn(
         vault,
         txn,
-        owner.actor(),
+        actor,
         crate::edge::EdgeActorClass::Human,
     )
-    .map_err(|_| invalid("live owner authority required"))
+    .map_err(|_| invalid("live owner authority required"))?;
+    Ok(actor)
 }
 impl Vault {
     pub fn set_signing_principals(
@@ -50,7 +52,7 @@ impl Vault {
         if principals.len() > 256 {
             return Err(invalid("too many signing principals"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let mut seen = BTreeSet::new();
             for row in principals {
@@ -88,7 +90,7 @@ impl Vault {
             .collect())
     }
 }
-pub(super) fn automated_signing_allowed(
+pub(crate) fn automated_signing_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: Option<&str>,
@@ -118,7 +120,7 @@ pub(super) fn automated_signing_allowed(
 
 /// The send-with-approval rung requires the authenticated Human to dispatch
 /// the reviewed command on the normal rail. It is not autonomous agent send.
-pub(super) fn automated_outbound_allowed(
+pub(crate) fn automated_outbound_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: Option<&str>,

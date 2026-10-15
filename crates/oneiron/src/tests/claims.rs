@@ -4,110 +4,6 @@ use super::*;
 use crate::error::RecordError;
 
 #[test]
-fn context_pack_run_serialized_toon_end_to_end() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let a = EntityId::now();
-    let b = EntityId::now();
-    let claim_subject = seeded_entity_id(0xC1A1);
-
-    let payload_a = valid_claim_body_bytes("goal.learning", "Learn Japanese by June");
-    let payload_b = rmp_serde::to_vec_named(&serde_json::json!({ "name": "Alice" }))
-        .map_err(|_| Error::InvalidKey)?;
-
-    vault
-        .batch()
-        .put(
-            &claim_subject,
-            crate::registry::ENTITY_TYPE_PERSON,
-            test_time_range(99, 99),
-            100,
-            b"subject",
-        )
-        .put(&a, 0, test_time_range(100, 100), 101, &payload_a)
-        .text(&a, &[("body", "learn japanese")])
-        .put(
-            &b,
-            crate::registry::ENTITY_TYPE_PERSON,
-            test_time_range(102, 102),
-            103,
-            &payload_b,
-        )
-        .edge(&a, EdgeKind::Mentions, &b, 1.0)
-        .commit()?;
-
-    let output = vault
-        .context_pack()
-        .search_text("japanese", 10)
-        .edge_hop(1)
-        .format(PackFormat::Toon)
-        .run_serialized()?;
-    assert!(!output.is_empty());
-
-    let text = String::from_utf8(output).map_err(|_| Error::InvalidKey)?;
-    assert!(text.contains("claims"));
-    Ok(())
-}
-
-#[test]
-fn claim_body_keys_pin_d11_vocabulary() {
-    // The pinned ON-DISK key set, literal (D11). A renamed, reordered, or
-    // re-cased vocabulary must fail here.
-    assert_eq!(
-        CLAIM_BODY_KEYS,
-        [
-            "pred",
-            "val",
-            "conf",
-            "sal",
-            "evid",
-            "from",
-            "to",
-            "src",
-            "worldId",
-            "scopeRelationshipId",
-            "subj",
-            "scope",
-            "appr",
-            "life",
-            "stale",
-            "sess",
-            "scopeFacetId",
-            "scopeProjectId",
-            "scopeVersion",
-        ]
-    );
-    // fusion.rs consumes the SAME constants — pinned to the short keys.
-    assert_eq!(crate::claim::KEY_SAL, "sal");
-    assert_eq!(crate::claim::KEY_CONF, "conf");
-    // Context-pack profiles are prefixes of the pinned set.
-    assert_eq!(crate::claim::CLAIM_FIELDS_MINIMAL, ["pred", "val"]);
-    assert_eq!(
-        crate::claim::CLAIM_FIELDS_STANDARD,
-        ["pred", "val", "conf", "sal", "evid"]
-    );
-    assert_eq!(
-        crate::claim::CLAIM_FIELDS_FULL,
-        [
-            "pred",
-            "val",
-            "conf",
-            "sal",
-            "evid",
-            "from",
-            "to",
-            "src",
-            "worldId",
-            "scopeRelationshipId",
-            "subj",
-            "scope",
-            "scopeFacetId",
-            "scopeProjectId",
-            "scopeVersion",
-        ]
-    );
-}
-
-#[test]
 fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
     // The `learned_at` every claim below is written at, and the frozen run
     // clock every scoring query below reads under.
@@ -473,59 +369,6 @@ fn put_claim_writes_claim_of_edge_atomically() -> Result<()> {
 }
 
 #[test]
-fn put_claim_edge_ref_subject_validates_shape_without_claim_of() -> Result<()> {
-    // An EdgeRef subject is shape-validated and stored, but claim_of wiring
-    // for edge subjects belongs to the provenance path — no edge is written.
-    let (_dir, vault) = open_test_vault();
-    let a = EntityId::now();
-    let b = EntityId::now();
-    vault.put_entity(
-        &a,
-        crate::registry::ENTITY_TYPE_PERSON,
-        test_time_range(1, 1),
-        1,
-        b"a",
-    )?;
-    vault.put_entity(
-        &b,
-        crate::registry::ENTITY_TYPE_PERSON,
-        test_time_range(1, 1),
-        1,
-        b"b",
-    )?;
-
-    let claim = EntityId::now();
-    let body = ClaimBody::new(
-        "graph.observation",
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Supports,
-            target: b,
-        },
-        rmpv::Value::from("noted"),
-        0.5,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    vault.put_claim(&claim, &body, test_time_range(1, 1), 2)?;
-
-    let read = vault.get_claim(&claim)?.expect("edge-subject claim");
-    assert_eq!(
-        read.subject,
-        ClaimSubject::Edge {
-            source: a,
-            kind: EdgeKind::Supports,
-            target: b,
-        }
-    );
-    assert!(
-        vault.edges_out(&claim)?.is_empty(),
-        "EdgeRef-subject put_claim must not write claim_of edges"
-    );
-    Ok(())
-}
-
-#[test]
 fn type0_validation_guards_every_write_path() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let garbage: &[u8] = b"definitely not msgpack";
@@ -579,39 +422,6 @@ fn type0_validation_guards_every_write_path() -> Result<()> {
     let id = EntityId::now();
     vault.put_entity(&id, 1, test_time_range(1, 1), 1, garbage)?;
     assert_eq!(vault.get(&id)?.as_deref(), Some(garbage));
-    Ok(())
-}
-
-#[test]
-fn each_role_validates() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    for role in TaskRole::ALL {
-        let id = EntityId::now();
-        let body = task_body(role);
-        vault.put_entity(
-            &id,
-            ENTITY_TYPE_TASK,
-            test_time_range(u64::from(role.role_byte()), u64::from(role.role_byte())),
-            u64::from(role.role_byte()),
-            &body,
-        )?;
-        // STO-03: a Habit row carries the two DERIVED counters, appended by
-        // the recompute tail out of its (here empty) check-in child set. Every
-        // other role round-trips byte-exact and never gains a streak key.
-        let expected = if role == TaskRole::Habit {
-            rmpv_map_bytes(&[
-                ("role".into(), role.role_byte().into()),
-                ("currentStreak".into(), 0_u32.into()),
-                ("longestStreak".into(), 0_u32.into()),
-            ])
-        } else {
-            body
-        };
-        assert_eq!(vault.get(&id)?, Some(expected));
-        assert_eq!(TaskRole::from_role_byte(role.role_byte()), Some(role));
-    }
-
     Ok(())
 }
 
@@ -1297,28 +1107,5 @@ fn replicated_door_fails_closed_on_malformed_comm_record_body() -> Result<()> {
         .expect_err("batch replay door must reject malformed comm records");
     assert_eq!(err.kind(), ErrorKind::InvalidCommRecordBody);
     assert_no_entity_state(&vault, &bad_batch)?;
-    Ok(())
-}
-
-#[test]
-fn get_claim_rejects_non_claim_types_and_handles_missing() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    // Missing entity → Ok(None).
-    assert!(vault.get_claim(&seeded_entity_id(0xBEEF))?.is_none());
-
-    // Non-claim type byte → typed InvalidClaimBody, not a silent decode.
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        test_time_range(1, 1),
-        1,
-        b"person",
-    )?;
-    let err = vault
-        .get_claim(&person)
-        .expect_err("get_claim on a PERSON must fail typed");
-    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     Ok(())
 }

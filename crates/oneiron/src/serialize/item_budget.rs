@@ -12,15 +12,6 @@ use super::token_budget::{
 };
 use super::types::ValueDepthLimit;
 
-#[cfg(test)]
-pub(super) fn apply_item_budget(
-    entity: &mut PreparedEntity,
-    max_item_tokens: usize,
-    stats: &mut PackStats,
-) -> bool {
-    apply_item_budget_with_depth_limit(entity, max_item_tokens, stats, None)
-}
-
 pub(super) fn apply_item_budget_with_depth_limit(
     entity: &mut PreparedEntity,
     max_item_tokens: usize,

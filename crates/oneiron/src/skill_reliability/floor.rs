@@ -98,7 +98,7 @@ pub fn set_skill_reliability_floor(vault: &Vault, floor: f32) -> Result<()> {
     if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
         return Err(invalid("reliability floor must be finite in [0, 1]"));
     }
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         FLOOR.put(&vault.store, wtxn, &(), &ReliabilityFloorRow(floor))?;
         Ok(())
     })
@@ -127,7 +127,7 @@ pub fn check_reliability_floor(
     at: u64,
 ) -> Result<Option<EntityId>> {
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill, None)? {
             Some(posterior) => posterior,
             None => tally_outcomes(vault, wtxn, skill, None)?.posterior(prior),
@@ -153,7 +153,7 @@ pub fn check_reliability_floor_for_executor(
 ) -> Result<Option<EntityId>> {
     super::read::validate_executor(executor)?;
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let posterior =
             match resolved_reliability_posterior_in_txn(vault, wtxn, skill, Some(executor))? {
                 Some(posterior) => posterior,

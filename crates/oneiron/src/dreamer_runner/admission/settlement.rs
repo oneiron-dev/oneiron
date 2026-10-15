@@ -56,14 +56,15 @@ impl DreamerRunnerStore<'_> {
         }
     }
 
-    /// Retire paid-step receipts when their attempt can no longer replay.
+    /// Retire paid-step receipts, and the listing its extraction pinned,
+    /// when their attempt can no longer replay.
     pub(crate) fn cleanup_step_receipts_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         attempt_id: AttemptId,
     ) -> Result<()> {
         BUDGET_STEP_CHARGE.delete_from(&self.vault.store, wtxn, attempt_id.as_bytes())?;
-        Ok(())
+        crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, wtxn, attempt_id)
     }
 
     /// Settle real usage, pin charged step identities, and park atomically.
@@ -79,7 +80,7 @@ impl DreamerRunnerStore<'_> {
                 "checkpoint park target differs from settlement",
             ));
         }
-        let settled = self.vault.with_write_txn(|wtxn| {
+        let settled = self.vault.with_write_txn_grouped(|wtxn| {
             let settled = self.settle_budget_in_txn(wtxn, input.clone())?;
             if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
                 return Err(invalid_dreamer_runner(

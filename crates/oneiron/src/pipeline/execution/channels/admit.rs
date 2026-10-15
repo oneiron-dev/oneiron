@@ -8,7 +8,9 @@ use crate::pipeline::trace::{
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity,
 };
-use crate::store::{RetrievalScoreComponent, RetrievalSignal, RetrievalTraceChannelRecord, Store};
+use crate::store::{
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTraceChannelRecord, StoreRead,
+};
 use heed::RoTxn;
 use std::collections::HashMap;
 
@@ -66,12 +68,24 @@ impl ChannelAccumulator {
         &mut self,
         signal: impl Into<AdmitSignal>,
         results: Vec<ScoredEntity>,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         filter_config: PipelineFilterConfig<'_>,
         metadata_cache: &mut EntityMetadataCache,
     ) -> Result<usize> {
         let signal = signal.into();
+        // Before any score, trace or list sees it: a row a device-local world
+        // keeps never enters a run for a caller off this device.
+        let mut results = results;
+        if let Some(flagged) = filter_config.device_local {
+            let mut admitted = Vec::with_capacity(results.len());
+            for scored in results {
+                if !crate::settings::device_local_keeps_among(store, rtxn, flagged, &scored.id)? {
+                    admitted.push(scored);
+                }
+            }
+            results = admitted;
+        }
         add_signal_score_components(&mut self.signal_components, signal.components, &results);
         if self.capture {
             let trace_results = filter_retrieval_trace_scores(

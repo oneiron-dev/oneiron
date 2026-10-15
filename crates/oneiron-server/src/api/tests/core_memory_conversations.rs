@@ -316,6 +316,26 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(hard_user_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&hard_user_body, "BAD_REQUEST");
 
+    // ARCH-0038 ladder: erase is the owner's own act and never a memory
+    // verb, so its names refuse instead of deleting.
+    for erase_name in ["erase", "purge"] {
+        let (erase_status, erase_body) = route_json_auth(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/memory/verbs/{erase_name}"),
+                json!({ "id": remembered.to_hex() }),
+            ),
+        )
+        .await;
+        assert_eq!(erase_status, StatusCode::FORBIDDEN, "{erase_body:#}");
+        assert_error_envelope(&erase_body, "FORBIDDEN");
+        assert!(
+            server.vault.get(&remembered).expect("read").is_some(),
+            "{erase_name} must not delete"
+        );
+    }
+
     let (forget_status, forget_body) = route_json_auth(
         server.clone(),
         json_request(
@@ -557,6 +577,7 @@ async fn v1_core_conversation_routes_create_list_and_read_turns() {
         server.clone(),
         Request::builder()
             .uri("/v1/core/conversations?view=full")
+            .header(AUTHORIZATION, owner_reader_bearer(&server))
             .body(Body::empty())
             .expect("request"),
     )
@@ -1138,7 +1159,11 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
     ] {
         let (status, response) = route_json(
             server.clone(),
-            Request::builder().uri(path).body(Body::empty()).unwrap(),
+            Request::builder()
+                .uri(path)
+                .header(AUTHORIZATION, owner_reader_bearer(&server))
+                .body(Body::empty())
+                .unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{response}");
@@ -1154,10 +1179,12 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
             rows.iter().find(|row| row["id"] == empty_id).unwrap()["lastMessageSnippet"].is_null()
         );
     }
+    let bearer = owner_reader_bearer(&server);
     let (status, standard) = route_json(
         server,
         Request::builder()
             .uri("/v1/core/conversations?view=standard&limit=10")
+            .header(AUTHORIZATION, bearer)
             .body(Body::empty())
             .unwrap(),
     )
@@ -1209,10 +1236,12 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
             occurred_at: at,
         })
         .unwrap();
+    let bearer = owner_reader_bearer(&server);
     let (status, response) = route_json(
         server,
         Request::builder()
             .uri("/v1/core/conversations?limit=10")
+            .header(AUTHORIZATION, bearer)
             .body(Body::empty())
             .unwrap(),
     )

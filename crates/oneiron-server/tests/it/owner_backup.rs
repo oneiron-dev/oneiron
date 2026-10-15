@@ -8,11 +8,15 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, entity_type_registry_entry};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::Value;
 
+/// Runs the binary with its temp directory in the test's own directory, which
+/// a restore accepts on any host (`restore_tempdir`): a rehearsal's scratch
+/// copy is made there.
 fn oneiron(config: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_oneiron"))
         .args(args)
         .arg("--config")
         .arg(config)
+        .env("TMPDIR", config.parent().expect("the test directory"))
         .env_remove("ONEIRON_VAULT_PATH")
         .env_remove("ONEIRON_BACKUP_DIR")
         .output()
@@ -49,7 +53,7 @@ fn add_person(path: &Path, body: &[u8]) -> EntityId {
 
 #[test]
 fn backup_rehearse_restore_and_doctor_through_the_cli() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = oneiron::test_support::restore_tempdir();
     let vault_path = dir.path().join("vault");
     let config = dir.path().join("oneiron.toml");
     let init = Command::new(env!("CARGO_BIN_EXE_oneiron"))
@@ -106,6 +110,22 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     drop(vault);
     let previous = Path::new(restored["previous_vault"].as_str().unwrap());
     assert!(open(previous).get(&later).unwrap().is_some());
+    // It shares the restored vault's key custody, so it is archived: it reads
+    // but takes no write until the owner activates it beside the vault.
+    let write = open(previous).put_entity(
+        &EntityId::now(),
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"into the archive",
+    );
+    assert!(write.is_err());
+    let activated = json(&oneiron(
+        &config,
+        &["restore", "--activate", previous.to_str().unwrap()],
+    ));
+    assert_eq!(activated["vault"], previous.to_str().unwrap());
+    add_person(previous, b"after the activation");
 
     // Where the data lives: path, size, last backup, last export.
     let export_file = dir.path().join("vault.md");
@@ -139,6 +159,12 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     assert_eq!(location["backups"]["keep"], 3);
     assert_eq!(location["last_export"]["format"], "md");
     assert_eq!(location["secret_scan"], "on");
+    // The restore the vault came from is on record (OF-296); the rehearsal,
+    // which restored into scratch, is not.
+    let restores = location["backups"]["restores"].as_array().unwrap();
+    assert_eq!(restores.len(), 1, "{restores:?}");
+    assert_eq!(restores[0]["checkpoint_id"], taken["checkpoint_id"]);
+    assert_eq!(restores[0]["reason"], "restore");
 }
 
 #[test]
@@ -160,4 +186,50 @@ fn secret_scan_switch_from_the_cli_is_receipted() {
     assert_eq!(state["changes"].as_array().unwrap().len(), 1);
     let receipt = json(&oneiron(&config, &["secret-scan", "on"]));
     assert_eq!(receipt["revision"], 2);
+}
+
+/// First try, 2026-10-10: `doctor --config` refused a vault `init` made 1024
+/// wide with a larger map unless `--dimensions` and `--map-size` were passed
+/// again. It opens the vault as `serve` and `import` do, from the config, and
+/// a flag still overrides.
+#[test]
+fn doctor_opens_the_vault_with_the_configs_dimensions_and_map_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    let map_size = (1_u64 << 34).to_string();
+    let init = Command::new(env!("CARGO_BIN_EXE_oneiron"))
+        .args(["init", vault_path.to_str().unwrap()])
+        .args(["--config", config.to_str().unwrap()])
+        .args(["--embedder", "none", "--dimensions", "1024"])
+        .args(["--map-size", &map_size])
+        .env_remove("ONEIRON_VAULT_PATH")
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let doctor = |flags: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_oneiron"))
+            .args(["doctor", vault_path.to_str().unwrap()])
+            .args(["--config", config.to_str().unwrap()])
+            .args(flags)
+            .env_remove("ONEIRON_VAULT_PATH")
+            .output()
+            .unwrap()
+    };
+
+    let report = json(&doctor(&[]));
+    assert!(report.get("config_errors").is_none(), "{report}");
+    assert_eq!(
+        report["location"]["vault"],
+        vault_path.canonicalize().unwrap().to_str().unwrap()
+    );
+    json(&doctor(&["--dimensions", "1024"]));
+    assert!(
+        !doctor(&["--dimensions", "4096"]).status.success(),
+        "the flag, not the config, is what opens the vault"
+    );
 }

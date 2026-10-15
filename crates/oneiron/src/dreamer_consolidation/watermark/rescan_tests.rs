@@ -53,7 +53,7 @@ fn prefilter_rescan_zero_includes_time_zero_and_survives_reopen() {
         vec![later],
         "bootstrap is unchanged"
     );
-    advance_watermark(&vault, MESO, 10).expect("consume all turns");
+    advance_watermark(&vault, MESO, 10, &[]).expect("consume all turns");
     assert!(dirty_ids(&vault, MESO).is_empty());
 
     reopen_prefilter_rescan(&vault, MESO, 0).expect("full rescan");
@@ -66,7 +66,7 @@ fn prefilter_rescan_zero_includes_time_zero_and_survives_reopen() {
     assert_eq!(dirty_ids(&vault, MESO), vec![first, same_second, later]);
 
     // An administrative complete-second zero is still different from a reset.
-    advance_watermark(&vault, MESO, 0).expect("complete second zero");
+    advance_watermark(&vault, MESO, 0, &[]).expect("complete second zero");
     assert!(!read_watermark(&vault, MESO).expect("complete").before_first);
     assert_eq!(dirty_ids(&vault, MESO), vec![later]);
 }
@@ -88,7 +88,7 @@ fn prefilter_rescan_is_inclusive_and_scope_local() {
     for scope in scopes {
         for from in [0, 1, 7, u64::MAX] {
             for other in scopes {
-                advance_watermark(&vault, other, u64::MAX).expect("consume all");
+                advance_watermark(&vault, other, u64::MAX, &[]).expect("consume all");
             }
             reopen_prefilter_rescan(&vault, scope, from).expect("inclusive rescan");
             let reset = read_watermark(&vault, scope).expect("reset");
@@ -117,7 +117,7 @@ fn prefilter_rescan_zero_keeps_cap_fence_and_compound_settlement() {
         .map(|ordinal| seed_turn(&vault, ordinal as u64, 0))
         .collect();
     let later = seed_turn(&vault, ids.len() as u64, 1);
-    advance_watermark(&vault, MESO, 10).expect("consume all");
+    advance_watermark(&vault, MESO, 10, &[]).expect("consume all");
     reopen_prefilter_rescan(&vault, MESO, 0).expect("full rescan");
     let reset = read_watermark(&vault, MESO).expect("reset");
     assert!(

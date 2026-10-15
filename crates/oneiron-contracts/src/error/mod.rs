@@ -122,6 +122,7 @@ pub enum ErrorKind {
     InvalidSkillBody,
     SkillEditGateRetry,
     SkillContentAnchorTypeMismatch,
+    SkillPackageUnavailable,
     InvalidAgentDefBody,
     AgentDefinitionNotFound,
     AgentDefinitionDisabled,
@@ -176,7 +177,9 @@ pub enum ErrorKind {
     InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
+    IndexedTextTooLarge,
     UpstreamToolFailure,
+    RetrievalStageCut,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -189,6 +192,8 @@ pub enum ErrorKind {
     SyncEngineError,
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
+    #[cfg(feature = "sync")]
+    HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
     KillSwitchDisabled,
     OffRecordSessionAlreadyExists,
@@ -202,6 +207,10 @@ pub enum ErrorKind {
     OffRecordGuestTurnRefRejected,
     OffRecordTalkOnly,
     OffRecordTurnNotInJournal,
+    OffRecordPromoteAuthorMissing,
+    OffRecordNotInRoom,
+    OffRecordSavingStopped,
+    OffRecordCopyConflict,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
     #[cfg(feature = "sync")]
@@ -220,6 +229,8 @@ pub enum ErrorKind {
     IdentityTopologyEventDivergence,
     AuthorityLogAppendOnlyViolation,
     AuthorityLogStoreKeyMismatch,
+    AuthorityLogSignerPending,
+    AuthorityLogFull,
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,
@@ -228,6 +239,8 @@ pub enum ErrorKind {
     SecretTierDenied,
     SecretDoorPolicyRefused,
     SecretRefNotFound,
+    SecretWiderThanManifest,
+    SecretManifestNotFound,
     SecretLeaseNotFound,
     SecretLeaseNotActive,
     SecretLeasePathNotDeclared,
@@ -268,6 +281,8 @@ pub enum ErrorKind {
     GitHttpInvalidRepoName,
     GitHttpRepoNotFound,
     GitHttpServeFailed,
+    GitHttpExchangeIdle,
+    GitHttpRepositoryBusy,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
     VaultCleanupRestoreNotArchived,
@@ -290,6 +305,7 @@ pub enum ErrorKind {
     HeadAdvanceOffTrunk,
     InvalidConversationDag,
     InvalidScopeSummary,
+    InvalidPairingScope,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,
@@ -306,10 +322,12 @@ pub enum ErrorKind {
     InvalidMachineClaimProof,
     MachineClaimHistoryIncomplete,
     RemoteMachineHistoryPending,
+    EngineIdentitiesNotProvisioned,
     SideTableRow,
     SideTableKeyUndeclared,
     ScopedReadOwnerNotLive,
     EmbeddingTransformChanged,
+    ArchivedVault,
 }
 
 /// Crate error type.
@@ -387,6 +405,11 @@ pub enum Error {
     /// validation. The code is caller-safe and pre-sanitized by the adapter.
     #[error("upstream tool failure: tool={tool}, code={code}")]
     UpstreamToolFailure { tool: &'static str, code: String },
+    /// A retrieval stage reached its share of the retrieval's deadline at
+    /// a checkpoint. The stage that raised it catches it and drops its own
+    /// partial work, so it never leaves the retrieval it was raised in.
+    #[error("retrieval stage cut at its deadline")]
+    RetrievalStageCut,
     /// Artifact-domain failure, see [`ArtifactError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -537,6 +560,7 @@ impl Error {
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
+            Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
             Self::Code(inner) => inner.kind(),

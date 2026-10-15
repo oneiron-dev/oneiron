@@ -25,7 +25,7 @@ use super::vet::vet_gate_decision_record;
 /// the Store door decodes with its current custody root after this typed read.
 pub(super) const LEDGER: SideTable<GateDecisionId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_LEDGER);
-const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
+pub(super) const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_CUSTODY_ROOT);
 
 /// Presence marker literal byte `b"1"`, matching the marker already on disk
@@ -47,7 +47,7 @@ const GRANT_REF_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
     SideTable::new(&side_table::GATE_DECISION_GRANT_REF_INDEX);
 
 /// Claim-keyed secondary index; the value is an empty marker on disk.
-const CLAIM_INDEX: SideTable<Vec<u8>, (), Raw> =
+pub(super) const CLAIM_INDEX: SideTable<Vec<u8>, (), Raw> =
     SideTable::new(&side_table::GATE_DECISION_CLAIM_INDEX);
 
 const CLAIM_INDEX_BACKFILL_COMPLETE: SideTable<(), [u8; 1], Raw> =
@@ -60,7 +60,7 @@ const ATTEMPT_RUN_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
 /// strips `base_prefix` (the module's existing hand-spelled prefix constant,
 /// byte-identical to the table's declaration) from a key the module's
 /// existing builder already produced in full.
-fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
+pub(super) fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
     full[base_prefix.len()..].to_vec()
 }
 
@@ -68,7 +68,7 @@ fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
 /// [`SideTable::scan_from`]/[`SideTable::iter_from`] returns for a scan
 /// scoped to one string component (so the suffix still carries that
 /// component's own encoding ahead of the id).
-fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
+pub(super) fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
     bytes
         .len()
         .checked_sub(16)
@@ -190,30 +190,6 @@ impl Store {
         Ok(())
     }
 
-    /// Removes the run sidecar for a test fixture's intentionally deleted
-    /// primary attempt row in the same transaction. Readers remain fail-closed
-    /// when a dangling sidecar is observed.
-    #[cfg(test)]
-    pub(crate) fn delete_attempt_run_index_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        run_id: Option<&str>,
-        attempt_id: &[u8; 16],
-    ) -> Result<()> {
-        let Some(run_id) = run_id else {
-            return Ok(());
-        };
-        ATTEMPT_RUN_INDEX.delete(
-            self,
-            wtxn,
-            &suffix_of(
-                attempt_run_index_key(run_id, attempt_id),
-                ATTEMPT_RUN_INDEX_PREFIX,
-            ),
-        )?;
-        Ok(())
-    }
-
     pub(crate) fn attempt_ids_for_run_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -235,8 +211,8 @@ impl Store {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
         if record.claim_id.is_some() {
             // The first claim-bound append pins a path to LIVE exterior custody
-            // in the same LMDB transaction as the value. Restoring the image
-            // elsewhere reuses that path, never a backed-up key copy.
+            // in the same LMDB transaction as the value. A restore in this vault's
+            // place reuses that path; a side restore forks it (checkpoint_custody).
             let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
             match CUSTODY_ROOT.get(self, &*wtxn, &())? {
                 Some(bound) if bound != expected => {
@@ -378,7 +354,107 @@ impl Store {
                 return Err(Error::CorruptedIndex("gate decision claim erasure"));
             }
         }
+        self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
         Ok(changed)
+    }
+
+    /// Erase destroys the claim's exterior key in the same act (ARCH-0038
+    /// #erasure-completeness): a restored pre-erase image must not decrypt
+    /// the rows this erase redacted. The retirement intent commits with the
+    /// redaction, marked as an erase's so no later hold can defer it; the
+    /// caller's post-commit finisher destroys the key. A future receipt that
+    /// batch preflight staged in this transaction stays readable: it moves
+    /// to the generation after the retired one before the intent lands.
+    fn stage_erased_claim_key_retirement_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<()> {
+        if cfg!(not(unix)) {
+            // No exterior custody exists here, so no claim key can either.
+            return Ok(());
+        }
+        if self.core.gate_custody_archived() {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
+        let root = &self.core.gate_custody_root;
+        let overflow = || Error::ArithmeticOverflow("gate decision key generation");
+        let first = orcb::key_generation(root, claim_id)?;
+        // An earlier erase whose key is not destroyed yet may already have
+        // moved kept receipts one generation up.
+        let mut through = None;
+        let mut generation = first;
+        while orcb::key_published(root, claim_id, generation)? {
+            through = Some(generation);
+            generation = generation.checked_add(1).ok_or_else(overflow)?;
+        }
+        let pending = super::retention::RETIRE_PENDING.get(self, &*wtxn, claim_id)?;
+        let Some(through) = through.max(pending) else {
+            return Ok(());
+        };
+        let next = through.checked_add(1).ok_or_else(overflow)?;
+        for record in self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)? {
+            if record.redacted_at.is_none() {
+                LEDGER.put(
+                    self,
+                    wtxn,
+                    &record.decision_id,
+                    &orcb::encode_hot_at(root, &record, next)?,
+                )?;
+            }
+        }
+        super::retention::RETIRE_PENDING.put(self, wtxn, claim_id, &through)?;
+        super::retention::ERASE_PENDING.put(self, wtxn, claim_id, &[1])
+    }
+
+    /// Drops the rows a restore must not bring back: a checkpoint row whose
+    /// key generation was retired after the image was taken, with every
+    /// index row and the pending ask that named it. Runs in the restore's
+    /// own transaction, before the restored ledger is first read.
+    pub(crate) fn drop_erased_gate_decisions_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        erased: &[(GateDecisionId, [u8; 16])],
+    ) -> Result<()> {
+        if erased.is_empty() {
+            return Ok(());
+        }
+        let ids: std::collections::HashSet<GateDecisionId> =
+            erased.iter().map(|(id, _)| *id).collect();
+        let grant_keys: Vec<Vec<u8>> = GRANT_REF_INDEX
+            .scan_keys(self, &*wtxn, &[])?
+            .into_iter()
+            .filter(|key| {
+                tail_id(key, "gate decision grant ref index")
+                    .is_ok_and(|tail| ids.contains(&GateDecisionId::from_bytes(tail)))
+            })
+            .collect();
+        for key in &grant_keys {
+            GRANT_REF_INDEX.delete(self, wtxn, key)?;
+        }
+        for (decision_id, claim_id) in erased {
+            CLAIM_INDEX.delete(
+                self,
+                wtxn,
+                &suffix_of(
+                    gate_decision_claim_index_key(claim_id, *decision_id),
+                    GATE_DECISION_CLAIM_INDEX_PREFIX,
+                ),
+            )?;
+            self.delete_gate_retention_context_in_txn(wtxn, *decision_id)?;
+            self.delete_gate_decision_claim_refs_in_txn(wtxn, *decision_id)?;
+            self.discard_unapplied_preflight_marker_in_txn(wtxn, *decision_id)?;
+            LEDGER.delete(self, wtxn, decision_id)?;
+            let id = crate::entity_id::EntityId::from_bytes(*claim_id)
+                .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
+            if self
+                .pending_gate_consent_in_txn(&*wtxn, &id)?
+                .is_some_and(|pending| ids.contains(&pending.decision_id))
+            {
+                self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+            }
+        }
+        Ok(())
     }
 
     /// Returns every gate decision carrying this grant reference, newest
@@ -725,6 +801,11 @@ fn append_gate_decision_row_in_txn(
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
     let value = if let Some(claim) = record.claim_id {
+        // An archived vault's custody is its replacement's; it mints no key
+        // there.
+        if store.gate_custody_archived() {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
         // A committed age sweep may still be retiring this partition's
         // exterior key. No new ciphertext may reuse it in that interval.
         if super::retention::RETIRE_PENDING.contains(store, &*wtxn, &claim)? {

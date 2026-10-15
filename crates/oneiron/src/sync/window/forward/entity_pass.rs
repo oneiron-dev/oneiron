@@ -7,11 +7,13 @@ use super::super::loro_support::map_for_each_value_bytes_deferring;
 use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
+use crate::EntityId;
 use crate::error::Result;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,
-    waits_for_sibling_row,
+    EntityStep, IngestCtx, RefusalRetry, Residence, authority_parent_order,
+    ingest_entity_in_savepoint, is_authority_row, note_born, waits_for_sibling_row, watches,
 };
+use loro::{LoroValue, ValueOrContainer};
 
 /// Run the entity pass: iterate the window `entities` map, ingest each value in its own write
 /// transaction, then scrub local-only companion carriers from the document.
@@ -23,7 +25,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         vault,
         ctx.window_key.as_str(),
         ctx.lease_vault_id,
-        &ctx.tombstones_map,
+        &ctx.tombstones,
     )
     .with_residence(Residence::Forward {
         doc: ctx.doc,
@@ -31,9 +33,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     });
     let mut entity_error = None;
     let mut companion_scrubs = Vec::new();
-    // Ask facts and project home rooms verify against a sibling row: visit them last.
-    let later = waits_for_sibling_row;
-    map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
+    let mut visit = |key: &str, value: Option<&[u8]>| {
         if entity_error.is_some() {
             return;
         }
@@ -42,10 +42,23 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             entity_error = Some(err);
             return;
         }
-        let step = match vault
-            .with_write_txn(|wtxn| ingest_entity_in_savepoint(&ingest, wtxn, key, value))
-        {
-            Ok(step) => step,
+        // A row a federated import watches, written where none was stored, is
+        // its birth once this transaction commits.
+        let watched = EntityId::from_hex(key).ok().filter(|id| watches(vault, id));
+        let step = match vault.with_write_txn_grouped(|wtxn| {
+            let unborn = match &watched {
+                Some(id) => vault.store.entities.get(wtxn, id.as_bytes())?.is_none(),
+                None => false,
+            };
+            let step = ingest_entity_in_savepoint(&ingest, wtxn, key, value)?;
+            Ok((step, unborn))
+        }) {
+            Ok((step, unborn)) => {
+                if unborn && let (Some(id), Some(blob)) = (step.written(), value) {
+                    note_born(vault, id, blob);
+                }
+                step
+            }
             Err(err) => {
                 entity_error = Some(err);
                 return;
@@ -61,14 +74,22 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 };
                 match refusal.retry {
                     RefusalRetry::Terminal => ledger.terminal_quarantines.push(id),
-                    RefusalRetry::Retry => {}
-                    RefusalRetry::DependencyPending => {
+                    // Still owed: no other outcome at this id in the pass, such as a
+                    // refused tombstone naming it, may discharge its marker.
+                    RefusalRetry::Retry | RefusalRetry::DependencyPending => {
                         ledger.pending_entity_dependencies.insert(id);
                     }
                 }
             }
             EntityStep::LocalOnlyCompanion(id) => {
                 companion_scrubs.push(CompanionCrdtScrub::new(key, id));
+            }
+            // A marked delete-protected row already stored byte for byte: the admission
+            // its marker waits for landed (observer B took a later carrier, or a pass
+            // committed it and stopped before settling), so it settles as a terminal
+            // refusal does, clearing only a proven replay marker.
+            EntityStep::Protected { id, wrote: false } if ledger.marked.contains(&id.to_hex()) => {
+                ledger.terminal_quarantines.push(id);
             }
             step => {
                 if let Some(id) = step.written() {
@@ -81,6 +102,32 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                 }
             }
+        }
+    };
+    // AUTHORITY_LOG rows land first, parents before children: a signer's
+    // enrollment lands before the rows it signs, which its door would
+    // otherwise hold until the next pass, and every later row judges
+    // against the newest roster.
+    let mut authority = Vec::new();
+    ctx.entities_map.for_each(|key, value| {
+        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
+            && is_authority_row(&bytes)
+        {
+            authority.push((key.to_owned(), bytes));
+        }
+    });
+    let rows: Vec<(&str, &[u8])> = authority
+        .iter()
+        .map(|(key, bytes)| (key.as_str(), &bytes[..]))
+        .collect();
+    for at in authority_parent_order(&rows) {
+        visit(rows[at].0, Some(rows[at].1));
+    }
+    // Ask facts and project home rooms verify against a sibling row: visit them last.
+    let later = waits_for_sibling_row;
+    map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
+        if !value.is_some_and(is_authority_row) {
+            visit(key, value);
         }
     });
     if let Some(err) = entity_error {

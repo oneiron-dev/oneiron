@@ -26,6 +26,7 @@
 mod body;
 mod lifecycle;
 mod provenance;
+mod references;
 mod store_keys;
 mod version_codec;
 mod versions;
@@ -38,10 +39,15 @@ pub use self::body::{
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
+pub(crate) use self::references::{claimed_hash_rows_exist, record_version_claim};
+#[cfg(feature = "sync")]
+pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
-pub use self::versions::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, CalcEngineStamp};
+pub use self::versions::{
+    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,
+};
 
 #[cfg(test)]
 mod tests;
@@ -59,9 +65,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
-use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::error::Result;
 #[cfg(test)]
 use crate::temporal::TimeRange;
 #[cfg(test)]

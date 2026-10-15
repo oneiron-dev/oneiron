@@ -262,6 +262,8 @@ pub(crate) struct EmbeddedClient {
     shared: Arc<SharedVault>,
     actor: EntityId,
     actor_class: EdgeActorClass,
+    /// The room turn every verb runs in, when the host opened one.
+    room_turn: Option<EntityId>,
 }
 
 impl EmbeddedClient {
@@ -279,6 +281,7 @@ impl EmbeddedClient {
             shared,
             actor,
             actor_class: EdgeActorClass::Human,
+            room_turn: None,
         })
     }
 
@@ -290,11 +293,18 @@ impl EmbeddedClient {
     /// class. The SDK neither parses the key nor decides who may be an actor.
     pub(crate) fn as_actor(&self, actor_key: &str) -> Result<Self, MemoryError> {
         self.ensure_dispatch_pid()?;
+        if self.room_turn.is_some() {
+            return Err(crate::error::bad_request(
+                "a room turn handle cannot rebind its actor",
+                &["Rebind from the handle the turn was opened on."],
+            ));
+        }
         let (actor, actor_class) = parse_actor_key(self.shared.vault(), actor_key)?;
         Ok(Self {
             shared: Arc::clone(&self.shared),
             actor,
             actor_class,
+            room_turn: None,
         })
     }
 
@@ -323,6 +333,32 @@ impl EmbeddedClient {
         self.shared.vault().memory(self.actor, self.actor_class)
     }
 
+    /// The same handle with every verb run as a turn in `room`. The engine
+    /// checks the room now, so a room the actor cannot read fails here, and
+    /// again at each verb, which reads the roster as it stands then.
+    pub(crate) fn in_room_turn(&self, room: EntityId) -> Result<Self, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        refuse_other_room(self.room_turn, room)?;
+        self.memory().for_room_turn(room)?;
+        Ok(Self {
+            room_turn: Some(room),
+            ..self.clone()
+        })
+    }
+
+    /// One SDK verb, inside this handle's room turn when it has one.
+    pub(crate) fn invoke(
+        &self,
+        verb: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
+        let memory = self.memory();
+        match self.room_turn {
+            Some(room) => memory.for_room_turn(room)?.invoke(verb, input),
+            None => oneiron::task_verb::sdk::invoke(&memory, verb, input),
+        }
+    }
+
     /// The shared entry, for the reopen-identity contract test.
     pub(crate) fn shared(&self) -> &Arc<SharedVault> {
         &self.shared
@@ -342,6 +378,20 @@ impl EmbeddedClient {
     /// The PID recorded by this vault's lease.
     pub(crate) fn lease_pid(&self) -> u32 {
         self.shared.lease_pid()
+    }
+}
+
+/// A handle already in one room's turn opens no other room's.
+pub(crate) fn refuse_other_room(
+    bound: Option<EntityId>,
+    room: EntityId,
+) -> Result<(), MemoryError> {
+    match bound {
+        Some(bound) if bound != room => Err(crate::error::bad_request(
+            "room differs from the bound room turn",
+            &["Open the other room's turn from an unbound handle."],
+        )),
+        _ => Ok(()),
     }
 }
 

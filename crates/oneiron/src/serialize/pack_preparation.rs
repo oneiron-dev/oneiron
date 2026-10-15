@@ -188,23 +188,6 @@ fn prepare_pack_with_l2(
     prepared
 }
 
-#[cfg(test)]
-pub(super) fn budget_split_sections(
-    results_source: &PreparedGroups,
-    neighbors_source: &PreparedGroups,
-    allocation: &TokenAllocation,
-    token_budget: usize,
-) -> (PreparedGroups, PreparedGroups) {
-    budget_split_sections_with_depth_limit(
-        results_source,
-        neighbors_source,
-        allocation,
-        token_budget,
-        DEFAULT_CONTEXT_PACK_TOKENIZER,
-        None,
-    )
-}
-
 fn budget_split_sections_with_depth_limit(
     results_source: &PreparedGroups,
     neighbors_source: &PreparedGroups,
@@ -314,7 +297,8 @@ fn prepare_entities(
                     if !should_include_projected_field(entity.entity_type, &key, value) {
                         continue;
                     }
-                    let safe_value = super::credential_nulling::null_credentials(&key, value);
+                    let safe_value =
+                        super::credential_nulling::null_context_credentials(&key, value);
                     let value = normalize_value(
                         &key,
                         &safe_value,
@@ -348,13 +332,24 @@ fn prepare_entities(
                     stats.critical_over_budget = true;
                 }
             }
-            apply_item_budget_with_depth_limit(
+            let kept = apply_item_budget_with_depth_limit(
                 &mut prepared,
                 config.max_item_tokens,
                 stats,
                 value_depth_limit,
-            )
-            .then_some(prepared)
+            );
+            // Read whole once its fields are final: fields that read as a
+            // secret together leave none of them, keys included. They were
+            // read in their stored encoding where they were hydrated, so this
+            // read takes their text.
+            if kept
+                && crate::batch::secret_scan::release_reads_json_text(&Value::Object(
+                    prepared.fields.iter().cloned().collect(),
+                ))
+            {
+                prepared.fields.clear();
+            }
+            kept.then_some(prepared)
         })
         .collect()
 }

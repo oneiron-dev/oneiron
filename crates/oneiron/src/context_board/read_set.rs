@@ -66,6 +66,10 @@ pub struct ChangedLine {
     /// This session's own proposal outcomes and connector changes. They
     /// render ahead of lifecycle rows and share their cap.
     pub events: Vec<ChangedEvent>,
+    /// The rows `overflow` and `install_overflow` count but the line does
+    /// not render, as [`ChangedLine::named_rows`] names them, so a host that
+    /// keeps the line can re-admit what it counted.
+    pub overflow_rows: Vec<String>,
     /// What a successful delivery of this line acknowledges.
     pub delivery: ChangedDelivery,
 }
@@ -210,9 +214,15 @@ impl SessionReadSet {
             })
             .collect();
         let overflow = changed.len().saturating_sub(cap);
+        let overflow_rows = changed
+            .iter()
+            .skip(cap)
+            .flat_map(|(id, now)| lifecycle_refs(id, now))
+            .collect();
         ChangedLine {
             rows: changed.into_iter().take(cap).collect(),
             overflow,
+            overflow_rows,
             ..ChangedLine::default()
         }
     }
@@ -377,7 +387,54 @@ impl ChangedEvent {
     }
 }
 
+/// The rows one lifecycle row names: the row, and its successor if it was
+/// superseded. An installed pack's row is the pack's name, however it reads,
+/// and names no row: its source is named apart.
+pub(super) fn lifecycle_refs(id: &str, state: &ServedLifecycle) -> Vec<String> {
+    row_refs(id, state).map(str::to_owned).collect()
+}
+
+fn row_refs<'a>(id: &'a str, state: &'a ServedLifecycle) -> impl Iterator<Item = &'a str> {
+    let own = (!matches!(state, ServedLifecycle::Installed(_))).then_some(id);
+    let successor = match state {
+        ServedLifecycle::Superseded(next) => Some(next.as_str()),
+        _ => None,
+    };
+    own.into_iter().chain(successor)
+}
+
+impl ChangedEvent {
+    /// The row this event names that still exists: a proposal's own claim
+    /// unless it was erased, a connector's key unless it was removed.
+    pub fn named_row(&self) -> Option<&str> {
+        match self {
+            Self::Proposal { id, change } if change.to != "erased" => Some(id),
+            Self::Connector { change, mount, .. } if *change != ConnectorChange::Removed => {
+                Some(&mount.key)
+            }
+            Self::Proposal { .. } | Self::Connector { .. } => None,
+        }
+    }
+}
+
 impl ChangedLine {
+    /// Every row this line names or counts: each lifecycle row and its
+    /// successor (never an installed pack's name), each install receipt's
+    /// skill, each event's row, and each row its overflow counts. A ref may
+    /// carry a `kind:` prefix.
+    pub fn named_rows(&self) -> impl Iterator<Item = &str> {
+        let lifecycle = self.rows.iter().flat_map(|(id, state)| row_refs(id, state));
+        let installs = self
+            .install_rows
+            .iter()
+            .map(|receipt| receipt.entity.as_str());
+        let events = self.events.iter().filter_map(ChangedEvent::named_row);
+        lifecycle
+            .chain(installs)
+            .chain(events)
+            .chain(self.overflow_rows.iter().map(String::as_str))
+    }
+
     pub fn render(&self) -> Vec<String> {
         let mut lines = Vec::new();
         let count = self.rows.len() + self.events.len();

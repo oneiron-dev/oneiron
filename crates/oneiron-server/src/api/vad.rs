@@ -408,7 +408,7 @@ pub(crate) fn vad_annotation_core_error(error: oneiron::Error) -> ApiError {
             }
             ErrorKind::EntityNotFound => ApiError::not_found("entity", None),
             _ => {
-                tracing::error!(error = %error, "VAD annotation operation failed");
+                tracing::error!(kind = ?error.kind(), "VAD annotation operation failed");
                 ApiError::internal_server_error("VAD annotation operation failed")
             }
         },

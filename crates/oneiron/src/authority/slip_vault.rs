@@ -3,6 +3,7 @@ use super::*;
 use crate::Vault;
 use crate::error::Result;
 use crate::federation::Scope;
+use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::{Signer, SigningKey};
@@ -10,6 +11,8 @@ use std::collections::BTreeSet;
 use zeroize::Zeroizing;
 
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
+/// The attestation a host's own root roster row carries.
+pub(super) const HOST_ROOT_ATTESTATION: &str = "HostRoot";
 
 /// Cached minted host-root capability-slip token for one host signing key. Key: `:` + hex64.
 const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
@@ -42,6 +45,19 @@ impl HostSlipIssuer {
     #[must_use]
     pub fn binding_key(&self) -> [u8; 32] {
         self.signing.verifying_key().to_bytes()
+    }
+    /// The roster row this host's key holds as the vault's root.
+    pub(super) fn root_device(&self) -> DeviceAuthority {
+        DeviceAuthority {
+            key: self.public_key(),
+            transport_key_binding: self.binding_key(),
+            attestation: AuthorityAttestation {
+                kind: HOST_ROOT_ATTESTATION.into(),
+                evidence: Vec::new(),
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        }
     }
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
         self.signing.sign(transcript).to_bytes()
@@ -111,6 +127,18 @@ impl HostSlipIssuer {
     }
 }
 
+impl AuthorityFold {
+    /// Whether the slip minted as `id` is live at `instant`: live in this
+    /// fold, and minted for a lifetime that holds `instant`.
+    pub(crate) fn slip_is_live_at(&self, id: &[u8; 32], instant: VaultInstant) -> bool {
+        let now = instant.secs();
+        self.slip_is_live(id)
+            && self.slips.mints.get(id).is_some_and(|mint| {
+                now >= mint.action.claims.issued_at && now < mint.action.claims.expires_at
+            })
+    }
+}
+
 impl Vault {
     /// Rechecks a verified capability against one vault clock/authority snapshot.
     pub fn capability_slip_is_live(&self, verified: &VerifiedSlip) -> Result<bool> {
@@ -152,24 +180,30 @@ impl Vault {
         id: &[u8; 32],
     ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let now = self.instant_in_txn(txn)?.secs();
-        Ok(fold.slip_is_live(id)
-            && fold.slips.mints.get(id).is_some_and(|mint| {
-                now >= mint.action.claims.issued_at && now < mint.action.claims.expires_at
-            }))
+        let now = self.instant_in_txn(txn)?;
+        Ok(fold.slip_is_live_at(id, now))
     }
 
     /// Bootstrap Genesis + host root slip atomically, and only on a truly empty
     /// log. A rooted vault must already recognize this host. A rejected cached
     /// root is never silently replaced (revocation stays terminal).
     pub fn ensure_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<CapabilitySlip> {
+        let mut txn = self.store.env.write_txn()?;
+        let slip = self.ensure_host_root_slip_in_txn(&mut txn, issuer)?;
+        txn.commit()?;
+        Ok(slip)
+    }
+    pub(super) fn ensure_host_root_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+    ) -> Result<CapabilitySlip> {
         if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
             return Err(invalid_authority());
         }
-        let mut txn = self.store.env.write_txn()?;
         let cache_key = format!(":{}", blake3::hash(&issuer.binding_key()).to_hex());
-        let now = self.instant_in_txn(&txn)?.secs();
-        let mut fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut fold = self.authority_fold_readonly_in_txn(txn)?;
         let mut pending = Vec::new();
         if fold.append_sequences.is_empty() {
             let recovery = blake3::derive_key("oneiron/host-genesis-recovery/v2", issuer.secret());
@@ -178,16 +212,7 @@ impl Vault {
                 0,
                 Vec::new(),
                 AuthorityOp::Genesis {
-                    device: DeviceAuthority {
-                        key: issuer.public_key(),
-                        transport_key_binding: issuer.binding_key(),
-                        attestation: AuthorityAttestation {
-                            kind: "HostRoot".into(),
-                            evidence: Vec::new(),
-                        },
-                        tier: AuthorityTier::Software,
-                        roles: ROLE_OWNER | ROLE_ADMIN,
-                    },
+                    device: issuer.root_device(),
                     genesis_nonce: random_slip_id(),
                     recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
                     tier_floor: AuthorityTier::Software,
@@ -200,7 +225,7 @@ impl Vault {
             fold = fold_authority_log(&pending);
         }
         require_host(&fold, issuer)?;
-        if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, &txn, &cache_key)? {
+        if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, txn, &cache_key)? {
             let slip = CapabilitySlip::from_token(&token)?;
             slip.verify_authority(&issuer.public_key(), &fold, now)?;
 
@@ -243,12 +268,10 @@ impl Vault {
                 )
             })
             .collect();
-        self.put_authority_log_entries_in_txn(&mut txn, &rows)?;
-        let fresh = self.authority_view_readonly_in_txn(&txn)?;
+        self.put_authority_log_entries_in_txn(txn, &rows)?;
+        let fresh = self.authority_view_readonly_in_txn(txn)?;
         slip.verify_authority(&issuer.public_key(), &fresh, now)?;
-        HOST_ROOT_SLIP_CACHE.put(&self.store, &mut txn, &cache_key, &slip.to_token()?)?;
-
-        txn.commit()?;
+        HOST_ROOT_SLIP_CACHE.put(&self.store, txn, &cache_key, &slip.to_token()?)?;
         Ok(slip)
     }
     /// Proves the local retained host secret through its actual logged root slip.
@@ -313,7 +336,11 @@ impl Vault {
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let challenge = super::slip_replay::request_challenge(
+            timestamp,
+            nonce,
+            super::slip_replay::request_now_in_txn(self, &txn)?,
+        )?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         slip.verify(host_public_key, &fold, now, &challenge, signature)
     }
@@ -328,9 +355,10 @@ impl Vault {
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
+        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, request_now)?;
         let key = &fold
             .slips
             .mints
@@ -347,7 +375,7 @@ impl Vault {
             &verified.claims().binding_key,
             nonce,
             timestamp,
-            now,
+            request_now,
         )?;
         txn.commit()?;
         Ok(verified)
@@ -363,7 +391,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let challenge = super::slip_replay::request_challenge(
+            timestamp,
+            nonce,
+            super::slip_replay::request_now_in_txn(self, &txn)?,
+        )?;
         let key = &fold
             .slips
             .mints
@@ -447,6 +479,41 @@ impl Vault {
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
         self.revoke_capability_slip_once(issuer, slip_id).map(drop)
     }
+    /// Revokes, in one transaction, every live unexpired slip `holder_ref`
+    /// holds other than `keep`, and returns their ids: a credential that
+    /// replaces a holder's earlier ones, rather than standing beside them.
+    pub fn revoke_held_capability_slips(
+        &self,
+        issuer: &HostSlipIssuer,
+        holder_ref: &str,
+        keep: [u8; 32],
+    ) -> Result<Vec<[u8; 32]>> {
+        let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let held: Vec<[u8; 32]> = fold
+            .slips
+            .mints
+            .iter()
+            .filter(|(id, mint)| {
+                **id != keep
+                    && mint.action.claims.holder_ref == holder_ref
+                    && now < mint.action.claims.expires_at
+                    && fold.slip_is_live(id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for slip_id in &held {
+            self.append_slip_op_in_txn(
+                &mut txn,
+                issuer,
+                AuthorityOp::SlipRevoke { slip_id: *slip_id },
+            )?;
+        }
+        txn.commit()?;
+        Ok(held)
+    }
     /// Appends a signed revocation once per slip id. `true` means this call
     /// appended the first explicit revoke; expiry, ancestor revocation, or an
     /// absent mint does not prevent a first tombstone for a late mint.
@@ -476,11 +543,12 @@ impl Vault {
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
+        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge =
-            super::slip_replay::request_challenge(request_timestamp, request_nonce, now)?;
+            super::slip_replay::request_challenge(request_timestamp, request_nonce, request_now)?;
         let verified = slip.verify(&issuer.public_key(), &fold, now, &challenge, signature)?;
         super::slip_replay::record_nonce(
             self,
@@ -488,7 +556,7 @@ impl Vault {
             &verified.claims().binding_key,
             request_nonce,
             request_timestamp,
-            now,
+            request_now,
         )?;
         if verified.claims().single_use {
             self.append_slip_op_in_txn(
@@ -534,7 +602,7 @@ impl Vault {
         Ok(())
     }
 }
-fn next_entry(
+pub(super) fn next_entry(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,
     op: AuthorityOp,
@@ -557,7 +625,7 @@ fn next_entry(
         now,
     )
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Vault {
     /// Binds a test owner person as the human owner under the host root, so
     /// owner verbs keep working once a fixture roots its vault.
@@ -565,6 +633,16 @@ impl Vault {
         &self,
         issuer: &HostSlipIssuer,
         person: crate::EntityId,
+    ) -> Result<()> {
+        self.bind_host_actor_for_test(issuer, person, "human")
+    }
+
+    /// Binds `person` at `class` under the host root.
+    pub(crate) fn bind_host_actor_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+        class: &str,
     ) -> Result<()> {
         let fold = self.authority_fold()?;
         let now = self.now_recorded_at();
@@ -574,7 +652,7 @@ impl Vault {
             AuthorityOp::BindActor {
                 authority_key: issuer.public_key(),
                 actor_ref: person,
-                actor_class: "human".into(),
+                actor_class: class.into(),
                 epoch: 1,
             },
             now,
@@ -584,6 +662,29 @@ impl Vault {
             end: now,
         };
         self.put_authority_log_entries(&[(bind, at, now)])?;
+        Ok(())
+    }
+
+    /// Revokes the actor the host root binds, as unbinding the owner does;
+    /// the host root and the slips it minted stay live.
+    #[cfg(test)]
+    pub(crate) fn revoke_host_actor_for_test(&self, issuer: &HostSlipIssuer) -> Result<()> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        let revoke = next_entry(
+            issuer,
+            &fold,
+            AuthorityOp::RevokeActor {
+                authority_key: issuer.public_key(),
+                epoch: 1,
+            },
+            now,
+        )?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(revoke, at, now)])?;
         Ok(())
     }
 }

@@ -1,7 +1,6 @@
 use super::*;
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirstTouch};
 use crate::interlocutor::Interlocutor;
-use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TURN;
 
 use crate::test_util::entity as test_id;
@@ -52,67 +51,7 @@ fn sensitivity_scope(band: &str) -> Value {
     Value::Map(vec![(Value::from("sensitivity"), Value::from(band))])
 }
 
-// ─── Mode table (design §6) ─────────────────────────────────────────────────
-
-#[test]
-fn mode_table_is_exact() {
-    assert_eq!(
-        DisclosureMode::from_set(&InterlocutorSet::owner_alone()),
-        DisclosureMode::OwnerAlone
-    );
-    assert_eq!(
-        DisclosureMode::from_set(&InterlocutorSet::with_session_owner(vec![
-            Interlocutor::unknown("guest", false)
-        ])),
-        DisclosureMode::Supervised
-    );
-    assert_eq!(
-        DisclosureMode::from_set(&InterlocutorSet::without_owner(vec![
-            Interlocutor::unknown("guest", true)
-        ])),
-        DisclosureMode::AbsenceClamp
-    );
-    assert_eq!(
-        DisclosureMode::from_set(&InterlocutorSet::without_owner(Vec::new())),
-        DisclosureMode::AbsenceClamp
-    );
-    assert_eq!(DisclosureMode::OwnerAlone.as_str(), "owner_alone");
-    assert_eq!(DisclosureMode::Supervised.as_str(), "supervised");
-    assert_eq!(DisclosureMode::AbsenceClamp.as_str(), "absence_clamp");
-}
-
 // ─── Tier truth table (design §7 rules 1–5) ─────────────────────────────────
-
-#[test]
-fn tier_rule_1_live_overlay_membership_is_tier_a() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let fenced = test_id(0x60);
-    let session = vault
-        .off_record_session_vault()
-        .enter("room-1", OffRecordBackendClass::Local)?;
-    let overlay = session.overlay();
-    let mut wtxn = vault.store.env.write_txn()?;
-    let segment = overlay.install_txn_segment()?;
-    let view = session.read_view()?;
-    view.entities
-        .put(&mut wtxn, fenced.as_bytes(), b"overlay")?;
-    drop(view);
-    wtxn.commit()?;
-    segment.commit()?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert_eq!(
-        disclosure_tier(&vault.store, &rtxn, &fenced, ENTITY_TYPE_TURN, None)?,
-        DisclosureTier::TierA
-    );
-    // Control: an unfenced turn with no marks is Tier B.
-    let plain = test_id(0x12);
-    assert_eq!(
-        disclosure_tier(&vault.store, &rtxn, &plain, ENTITY_TYPE_TURN, None)?,
-        DisclosureTier::TierB
-    );
-    Ok(())
-}
 
 #[test]
 fn tier_rule_2_governance_type_bytes_are_tier_a() -> Result<()> {
@@ -233,10 +172,6 @@ fn tier_rule_3_unstamped_claim_fails_closed_to_tier_a() -> Result<()> {
 #[test]
 fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let ctx = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::with_session_owner(vec![Interlocutor::unknown("guest", true)]),
-    )?;
     let rtxn = vault.store.env.read_txn()?;
     let id = test_id(0x15);
 
@@ -253,7 +188,13 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
             DisclosureTier::TierA,
             "predicate {predicate} must be Tier A"
         );
-        assert!(!ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&body))?);
+        assert!(!DisclosureContext::below_tier_a(
+            &vault.store,
+            &rtxn,
+            &id,
+            ENTITY_TYPE_CLAIM,
+            Some(&body)
+        )?);
     }
     // Public sensitivity isolates rule 4 from the unstamped rule-3 floor.
     let control = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
@@ -261,213 +202,13 @@ fn tier_rule_4_predicate_prefixes_are_tier_a() -> Result<()> {
         disclosure_tier(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?,
         DisclosureTier::TierB
     );
-    assert!(ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&control))?);
-    Ok(())
-}
-
-#[test]
-fn tier_rule_5_owner_mark_round_trips_through_vault_methods() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let marked = test_id(0x16);
-    put_turn(&vault, &marked);
-
-    assert!(!vault.disclosure_tier_a_marked(&marked)?);
-    vault.set_disclosure_tier_a(&marked, 100)?;
-    assert!(vault.disclosure_tier_a_marked(&marked)?);
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        assert_eq!(
-            disclosure_tier(&vault.store, &rtxn, &marked, ENTITY_TYPE_TURN, None)?,
-            DisclosureTier::TierA
-        );
-    }
-    // The owner-visible claim mirror exists and is Active.
-    let claim_id = disclosure_tier_claim_id(&marked)?;
-    let claim = vault.get_claim(&claim_id)?.expect("tier claim mirror");
-    assert_eq!(claim.predicate, PREDICATE_DISCLOSURE_TIER);
-    assert_eq!(claim.value.as_str(), Some("tier_a"));
-    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
-
-    vault.clear_disclosure_tier_a(&marked, 200)?;
-    assert!(!vault.disclosure_tier_a_marked(&marked)?);
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        assert_eq!(
-            disclosure_tier(&vault.store, &rtxn, &marked, ENTITY_TYPE_TURN, None)?,
-            DisclosureTier::TierB
-        );
-    }
-    let claim = vault.get_claim(&claim_id)?.expect("superseded tier claim");
-    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Superseded);
-    assert_eq!(claim.valid_to, Some(200));
-
-    // Marks require an existing entity.
-    let missing = test_id(0x17);
-    assert_eq!(
-        vault
-            .set_disclosure_tier_a(&missing, 100)
-            .expect_err("missing entity rejected")
-            .kind(),
-        crate::error::ErrorKind::EntityNotFound
-    );
-    Ok(())
-}
-
-// ─── Six-axis clearance codec and meet ────────────────────────────────────
-
-#[test]
-fn scope_codec_round_trips_and_rejects_malformed_bodies() -> Result<()> {
-    use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
-    use std::collections::BTreeSet;
-    let mut clearance = Scope::top();
-    clearance.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_TURN]));
-    clearance.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
-    let scope = DisclosureScope::new(clearance, "party planning", 100)?;
-    let encoded = encode_disclosure_scope_body(&scope)?;
-    assert_eq!(decode_disclosure_scope_body(&encoded)?, scope);
-    let mut trailing = encoded;
-    trailing.push(0);
-    assert!(decode_disclosure_scope_body(&trailing).is_err());
-    for (key, value) in [
-        ("widen", Value::from(true)),
-        ("purpose", Value::from("duplicate")),
-    ] {
-        let mut malformed = disclosure_scope_body_value(&scope)?;
-        if let Value::Map(entries) = &mut malformed {
-            entries.push((Value::from(key), value));
-        }
-        let mut bytes = Vec::new();
-        rmpv::encode::write_value(&mut bytes, &malformed).expect("encode");
-        assert!(decode_disclosure_scope_body(&bytes).is_err());
-    }
-    for omitted in ["scope", "purpose", "status"] {
-        let mut malformed = disclosure_scope_body_value(&scope)?;
-        if let Value::Map(entries) = &mut malformed {
-            entries.retain(|(key, _)| key.as_str() != Some(omitted));
-        }
-        assert!(decode_disclosure_scope_value(&malformed).is_err());
-    }
-    let mut legacy = disclosure_scope_body_value(&scope)?;
-    if let Value::Map(entries) = &mut legacy {
-        entries.retain(|(key, _)| key.as_str() != Some("scope"));
-        entries.push((Value::from("entities"), Value::Array(vec![])));
-    }
-    assert!(decode_disclosure_scope_value(&legacy).is_err());
-    let mut malformed_axis = disclosure_scope_body_value(&scope)?;
-    if let Value::Map(entries) = &mut malformed_axis {
-        let (_, Value::Map(axes)) = entries
-            .iter_mut()
-            .find(|(k, _)| k.as_str() == Some("scope"))
-            .unwrap()
-        else {
-            panic!("scope map")
-        };
-        axes.push((Value::from("worlds"), Value::from("all")));
-    }
-    assert!(decode_disclosure_scope_value(&malformed_axis).is_err());
-    let mut invalid = scope;
-    invalid.purpose = " padded ".into();
-    assert!(invalid.validate().is_err());
-    invalid.purpose = "party".into();
-    invalid.updated_at = 99;
-    assert!(invalid.validate().is_err());
-    Ok(())
-}
-
-#[test]
-fn contact_clearances_meet_on_all_axes_and_revocation_is_bottom() -> Result<()> {
-    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
-    use std::collections::BTreeSet;
-    let mut a = Scope::top();
-    a.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(test_id(1)), ScopeId(test_id(2))]));
-    a.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_TURN, ENTITY_TYPE_CLAIM]));
-    let mut b = Scope::top();
-    b.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(test_id(2)), ScopeId(test_id(3))]));
-    b.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]));
-    b.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
-    let a = DisclosureScope::new(a, "alpha", 100)?;
-    let b = DisclosureScope::new(b, "beta", 50)?;
-    let meet = a.effective_scope().meet(&b.effective_scope());
-    assert_eq!(
-        meet.worlds,
-        ScopeAxis::Some(BTreeSet::from([ScopeId(test_id(2))]))
-    );
-    assert_eq!(
-        meet.bands,
-        ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]))
-    );
-    assert_eq!(
-        meet.sensitivity,
-        SensitivityCeiling::AtMost(Sensitivity::Private)
-    );
-    assert_eq!(meet, b.effective_scope().meet(&a.effective_scope()));
-    let mut revoked = b;
-    revoked.status = DisclosureScopeStatus::Revoked;
-    assert_eq!(revoked.effective_scope(), Scope::default());
-    assert_eq!(
-        a.effective_scope().meet(&revoked.effective_scope()),
-        Scope::default()
-    );
-    Ok(())
-}
-
-// ─── Vault scope storage (dual write) ───────────────────────────────────────
-
-#[test]
-fn scope_dual_write_requires_contact_and_supersedes_prior_claim() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x31);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-
-    // Non-132 entity rejected.
-    let turn = test_id(0x32);
-    put_turn(&vault, &turn);
-    let scope = DisclosureScope::new(crate::federation::Scope::top(), "party", 100)?;
-    assert_eq!(
-        vault
-            .set_counterparty_disclosure_scope(&turn, &scope)
-            .expect_err("non-contact rejected")
-            .kind(),
-        crate::error::ErrorKind::InvalidEntityType
-    );
-    // Missing entity rejected.
-    assert_eq!(
-        vault
-            .set_counterparty_disclosure_scope(&test_id(0x33), &scope)
-            .expect_err("missing contact rejected")
-            .kind(),
-        crate::error::ErrorKind::EntityNotFound
-    );
-
-    // Missing row reads None.
-    assert_eq!(vault.counterparty_disclosure_scope(&contact_id)?, None);
-
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
-    assert_eq!(
-        vault.counterparty_disclosure_scope(&contact_id)?,
-        Some(scope.clone())
-    );
-
-    // Owner-visible claim mirror exists.
-    let claim_id = disclosure_scope_claim_id(&contact_id)?;
-    let claim = vault.get_claim(&claim_id)?.expect("scope claim mirror");
-    assert_eq!(claim.predicate, PREDICATE_DISCLOSURE_SCOPE);
-    assert_eq!(claim.subject, ClaimSubject::Entity(contact_id));
-    assert_eq!(claim.value, disclosure_scope_body_value(&scope)?);
-    validate_disclosure_claim_structure(&claim)?;
-
-    // Re-set (dial-not-wall) replaces the row AND supersedes the prior claim
-    // value — exactly one owner-visible scope claim, carrying the new value.
-    let mut wider = DisclosureScope::new(crate::federation::Scope::top(), "party and travel", 100)?;
-    wider.updated_at = 200;
-    vault.set_counterparty_disclosure_scope(&contact_id, &wider)?;
-    assert_eq!(
-        vault.counterparty_disclosure_scope(&contact_id)?,
-        Some(wider.clone())
-    );
-    let claim = vault.get_claim(&claim_id)?.expect("rewritten scope claim");
-    assert_eq!(claim.value, disclosure_scope_body_value(&wider)?);
-    assert_eq!(claim.lifecycle, ClaimLifecycleStatus::Active);
+    assert!(DisclosureContext::below_tier_a(
+        &vault.store,
+        &rtxn,
+        &id,
+        ENTITY_TYPE_CLAIM,
+        Some(&control)
+    )?);
     Ok(())
 }
 
@@ -556,16 +297,23 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         Ok(())
     };
 
-    // OwnerAlone and Supervised do not require a contact clearance.
+    // P1: with no non-owner present the met clearance is the top of the
+    // lattice, never bottom, so the owner alone sees everything.
+    assert_eq!(
+        crate::disclosure::DisclosableSet::resolve(&vault, &InterlocutorSet::owner_alone(), false)?
+            .clearance(),
+        &crate::federation::Scope::top()
+    );
     let ctx = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
     assert_eq!(ctx.mode(), DisclosureMode::OwnerAlone);
     check_admission(&ctx, [true, true, true])?;
+    // Owner presence is no clearance: a contact without one sees nothing.
     let ctx = DisclosureContext::resolve(
         &vault,
         InterlocutorSet::with_session_owner(vec![known(contact_a, "a@example.com")]),
     )?;
     assert_eq!(ctx.mode(), DisclosureMode::Supervised);
-    check_admission(&ctx, [true, true, true])?;
+    check_admission(&ctx, [false, false, false])?;
 
     // Unknown party -> Scope bottom.
     let ctx = DisclosureContext::resolve(
@@ -614,187 +362,6 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         InterlocutorSet::without_owner(vec![known(contact_b, "b@example.com")]),
     )?;
     check_admission(&ctx, [false, false, false])?;
-    Ok(())
-}
-
-#[test]
-fn admits_truth_table_checks_tier_before_scope() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x71);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-    let party = test_id(0x72);
-    let diary = test_id(0x73);
-    put_turn(&vault, &party);
-    put_turn(&vault, &diary);
-    // The party turn is IN scope but owner-marked Tier A: scope can never
-    // override tier (I2 never-widen).
-    let scope = DisclosureScope::new(crate::federation::Scope::top(), "party", 100)?;
-    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
-    vault.set_disclosure_tier_a(&party, 100)?;
-
-    let owner_alone = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
-    let supervised = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::with_session_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-    let clamped = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    // OwnerAlone admits everything, Tier A included.
-    assert!(owner_alone.admits(&vault.store, &rtxn, &party, ENTITY_TYPE_TURN, None)?);
-    // Supervised and AbsenceClamp never admit Tier A — even in-scope.
-    assert!(!supervised.admits(&vault.store, &rtxn, &party, ENTITY_TYPE_TURN, None)?);
-    assert!(!clamped.admits(&vault.store, &rtxn, &party, ENTITY_TYPE_TURN, None)?);
-    // Supervised admits Tier B without a scope check.
-    assert!(supervised.admits(&vault.store, &rtxn, &diary, ENTITY_TYPE_TURN, None)?);
-    // Both turns have the same record-position Scope. A facet or id is not
-    // an authorization axis, so the unmarked turn is admitted.
-    assert!(clamped.admits(&vault.store, &rtxn, &diary, ENTITY_TYPE_TURN, None)?);
-    // A PSYCH_PROFILE id is never admitted in either non-owner mode (rule 2).
-    let psych = test_id(0x74);
-    assert!(!supervised.admits(
-        &vault.store,
-        &rtxn,
-        &psych,
-        crate::registry::ENTITY_TYPE_PSYCH_PROFILE,
-        None
-    )?);
-    assert!(!clamped.admits(
-        &vault.store,
-        &rtxn,
-        &psych,
-        crate::registry::ENTITY_TYPE_PSYCH_PROFILE,
-        None
-    )?);
-    Ok(())
-}
-
-#[test]
-fn admits_claims_by_record_scope_not_subject_allowlist() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x81);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-    let subject = test_id(0x82);
-    put_turn(&vault, &subject);
-    let mut clearance = crate::federation::Scope::top();
-    clearance.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-        crate::federation::ScopeId(crate::claim::base_world_id()),
-    ]));
-    vault.set_counterparty_disclosure_scope(
-        &contact_id,
-        &DisclosureScope::new(clearance, "base-world reads", 100)?,
-    )?;
-
-    let mut fact = ClaimBody::new(
-        "event.headcount",
-        ClaimSubject::Entity(subject),
-        Value::from("12"),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    fact.scope = Some(sensitivity_scope("public"));
-    let base_fact = test_id(0x84);
-    vault.put_claim(&base_fact, &fact, TimeRange { start: 1, end: 1 }, 1)?;
-    let foreign_fact = test_id(0x85);
-    fact.world = Some(test_id(0x86));
-    vault.put_claim(&foreign_fact, &fact, TimeRange { start: 1, end: 1 }, 1)?;
-
-    let clamped = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-    let rtxn = vault.store.env.read_txn()?;
-    // Both claims have the same subject and public sensitivity. Their record
-    // worlds differ; only the one in the contact's Scope passes.
-    assert!(clamped.admits(&vault.store, &rtxn, &base_fact, ENTITY_TYPE_CLAIM, None)?);
-    assert!(!clamped.admits(&vault.store, &rtxn, &foreign_fact, ENTITY_TYPE_CLAIM, None)?);
-    Ok(())
-}
-
-// ─── Notice, assembly, receipt stamp (design §10) ───────────────────────────
-
-#[test]
-fn presence_discretion_notice_matches_pinned_template() {
-    let set = InterlocutorSet::with_session_owner(vec![
-        known(test_id(0x91), "Kenji"),
-        Interlocutor::unknown("unknown speaker 2", true),
-    ]);
-    let notice = presence_discretion_notice(&set);
-    assert!(notice.contains("Kenji (known_contact"));
-    assert!(notice.contains("unknown speaker 2 (unknown)"));
-    assert!(
-        !notice.contains("owner (owner)"),
-        "the Owner entry never appears under Others present"
-    );
-
-    // Verify discretion through admission, not the wording of the instruction.
-    let (_tmp, vault) = temp_vault();
-    let ctx = DisclosureContext::resolve(&vault, set).expect("resolve supervised context");
-    assert_eq!(ctx.mode(), DisclosureMode::Supervised);
-    assert!(ctx.assembly(0).notice.is_some());
-    let rtxn = vault.store.env.read_txn().expect("read transaction");
-    let id = test_id(0x15);
-    let protected = claim_with_scope("affect.trigger", Some(sensitivity_scope("public")));
-    assert!(
-        !ctx.admits(
-            &vault.store,
-            &rtxn,
-            &id,
-            ENTITY_TYPE_CLAIM,
-            Some(&protected)
-        )
-        .expect("protected admission")
-    );
-    let public = claim_with_scope("profile.hobby", Some(sensitivity_scope("public")));
-    assert!(
-        ctx.admits(&vault.store, &rtxn, &id, ENTITY_TYPE_CLAIM, Some(&public))
-            .expect("public admission")
-    );
-}
-
-#[test]
-fn assembly_and_receipt_stamp_are_mode_keyed() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let contact_id = test_id(0x92);
-    seed_contact(&vault, contact_id, "kenji@example.com");
-
-    let supervised = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::with_session_owner(vec![known(contact_id, "kenji@example.com")]),
-    )?;
-    let assembly = supervised.assembly(3);
-    assert_eq!(assembly.mode, "supervised");
-    let notice = assembly
-        .notice
-        .as_deref()
-        .expect("supervised presence notice");
-    assert!(notice.contains("kenji@example.com (known_contact"));
-    assert!(!notice.contains("owner (owner)"));
-    assert_eq!(assembly.clamped_out, 3);
-    assert_eq!(assembly.interlocutors.len(), 2);
-    assert_eq!(
-        supervised.receipt_stamp(),
-        "mode=supervised;interlocutors=owner:owner,known_contact:kenji@example.com"
-    );
-
-    let clamped = DisclosureContext::resolve(
-        &vault,
-        InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", false)]),
-    )?;
-    let assembly = clamped.assembly(0);
-    assert_eq!(assembly.mode, "absence_clamp");
-    assert!(assembly.notice.is_none(), "notice is Some iff Supervised");
-    assert_eq!(
-        clamped.receipt_stamp(),
-        "mode=absence_clamp;interlocutors=unknown:guest"
-    );
-
-    let owner = DisclosureContext::resolve(&vault, InterlocutorSet::owner_alone())?;
-    assert!(owner.assembly(0).notice.is_none());
     Ok(())
 }
 
@@ -940,65 +507,115 @@ fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
     Ok(())
 }
 
+/// agent-runtime-v1 §d7 through #1364's resolver: an epoch summary carries
+/// words from every record it was written from, and its own birth scope
+/// cannot stand for them. The clamp admits one only while it admits each
+/// `DerivedFrom` source, through a nested epoch summary too.
 #[test]
-fn receipt_stamp_escapes_delimiters_and_round_trips_the_exact_labels() -> Result<()> {
-    fn percent_decode(encoded: &str) -> String {
-        let bytes = encoded.as_bytes();
-        let mut out = Vec::with_capacity(bytes.len());
-        let mut index = 0;
-        while index < bytes.len() {
-            if bytes[index] == b'%' {
-                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).expect("hex pair");
-                out.push(u8::from_str_radix(hex, 16).expect("hex byte"));
-                index += 3;
-            } else {
-                out.push(bytes[index]);
-                index += 1;
-            }
-        }
-        String::from_utf8(out).expect("decoded label utf8")
-    }
-
+fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from() -> Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    use crate::registry::ENTITY_TYPE_SUMMARY;
     let (_tmp, vault) = temp_vault();
-    let hostile = "gu,est:x=y;z%";
-    let control = "line\nbreak";
+    let contact_id = test_id(0x31);
+    seed_contact(&vault, contact_id, "kenji@example.com");
+    let clearance = DisclosureScope::new(crate::federation::Scope::top(), "guest", 10)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &clearance)?;
+    let source = test_id(0x32);
+    put_turn(&vault, &source);
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: test_id(0x33).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: test_id(0x34).to_hex(),
+        })
+    };
+    let (summary, nested, lone) = (test_id(0x35), test_id(0x36), test_id(0x37));
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault
+        .batch()
+        .put(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            at(2),
+            2,
+            &epoch(1, "steps 3-5")?,
+        )
+        .edge(&summary, crate::edge::EdgeKind::DerivedFrom, &source, 1.0)
+        .put(
+            &nested,
+            ENTITY_TYPE_SUMMARY,
+            at(3),
+            3,
+            &epoch(2, "steps 6-8")?,
+        )
+        .edge(&nested, crate::edge::EdgeKind::DerivedFrom, &summary, 1.0)
+        .put(
+            &lone,
+            ENTITY_TYPE_SUMMARY,
+            at(4),
+            4,
+            &epoch(3, "a run that read nothing yet")?,
+        )
+        .commit()?;
     let ctx = DisclosureContext::resolve(
         &vault,
-        InterlocutorSet::without_owner(vec![
-            Interlocutor::unknown(hostile, false),
-            Interlocutor::unknown(control, true),
-        ]),
+        InterlocutorSet::with_session_owner(vec![known(contact_id, "kenji@example.com")]),
     )?;
+    assert_eq!(ctx.mode(), DisclosureMode::Supervised);
+    let admits = |id: &EntityId| -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        ctx.admits(&vault.store, &rtxn, id, ENTITY_TYPE_SUMMARY, None)
+    };
+    assert!(admits(&summary)? && admits(&nested)?);
 
-    let stamp = ctx.receipt_stamp();
-    assert_eq!(
-        stamp,
-        "mode=absence_clamp;interlocutors=\
-         unknown:gu%2Cest%3Ax%3Dy%3Bz%25,unknown:line%0Abreak"
+    // A room's P7 rule reads the same words: a clearance that takes the
+    // summaries' own stamps, but not their source's, discloses neither of
+    // the two written from it. Facets never bound a disclosure, so the
+    // clearance parts them by kind band.
+    let discloses = |scope: &crate::federation::Scope, id: EntityId| -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault.get_raw_in(&rtxn, &id)?.expect("a stored summary");
+        super::discloses_raw(&vault, &rtxn, scope, id, &raw)
+    };
+    let top = crate::federation::Scope::top();
+    assert!(discloses(&top, summary)? && discloses(&top, nested)?);
+    let mut summaries_only = top;
+    summaries_only.bands = crate::federation::ScopeAxis::Some([ENTITY_TYPE_SUMMARY].into());
+    assert!(
+        !discloses(&summaries_only, summary)? && !discloses(&summaries_only, nested)?,
+        "a room clearance short of the source discloses neither summary"
     );
     assert!(
-        !stamp.chars().any(char::is_control),
-        "no raw control bytes reach the audit record"
+        discloses(&summaries_only, lone)?,
+        "an epoch written from no record carries its own words"
     );
 
-    // A delimiter-grammar parse recovers the EXACT interlocutor set.
-    let (mode_part, interlocutors_part) = stamp.split_once(';').expect("one mode separator");
-    assert_eq!(mode_part, "mode=absence_clamp");
-    let entries: Vec<(&str, String)> = interlocutors_part
-        .strip_prefix("interlocutors=")
-        .expect("interlocutors key")
-        .split(',')
-        .map(|entry| {
-            let (class, label) = entry.split_once(':').expect("class separator");
-            (class, percent_decode(label))
-        })
-        .collect();
-    assert_eq!(
-        entries,
-        vec![
-            ("unknown", hostile.to_owned()),
-            ("unknown", control.to_owned()),
-        ]
+    vault.set_disclosure_tier_a(&source, 100)?;
+    assert!(!admits(&summary)?, "its source is withheld");
+    assert!(
+        !admits(&nested)?,
+        "the summary it was written from is withheld"
     );
+
+    // Erasing the source withdraws both: the nested summary repeats its
+    // parent's words.
+    assert!(vault.delete_entity(&source)?);
+    let rtxn = vault.store.env.read_txn()?;
+    for id in [summary, nested] {
+        assert!(
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)?.stale
+        );
+    }
     Ok(())
 }

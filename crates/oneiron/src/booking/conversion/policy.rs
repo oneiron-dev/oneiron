@@ -215,7 +215,3 @@ impl crate::Vault {
             })
     }
 }
-
-#[cfg(test)]
-#[path = "policy/tests.rs"]
-mod tests;

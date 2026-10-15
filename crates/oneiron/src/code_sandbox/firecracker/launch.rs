@@ -180,7 +180,7 @@ fn jailer_command(
     vm: &MicroVmHandle,
     budget: ExecutionBudget,
 ) -> Command {
-    let mut command = Command::new(&config.jailer);
+    let mut command = oneiron_spawn::command(&config.jailer);
     // No environment passthrough, shell, NIC, daemonization, or extra host mounts.
     command
         .env_clear()

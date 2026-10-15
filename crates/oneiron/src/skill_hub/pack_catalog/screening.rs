@@ -140,38 +140,16 @@ impl Vault {
         if source.manifest().kind != PackKind::Connector {
             return Ok(None);
         }
-        let manifest = source.manifest();
-        let mut decoded = vec![
-            ("name", manifest.name.as_str()),
-            ("description", manifest.description.as_str()),
-            ("version", manifest.version.as_str()),
-        ];
-        if let Some(license) = &manifest.license {
-            decoded.push(("license", license));
-        }
-        if let Some(adapter) = &manifest.adapter {
-            match adapter {
-                super::PackAdapter::Builtin(value) | super::PackAdapter::Script(value) => {
-                    decoded.push(("adapter", value));
-                }
-            }
-        }
-        for (field, values) in [
-            ("predicates", &manifest.predicates),
-            ("kinds", &manifest.kinds),
-            ("grants", &manifest.requested_grants),
-            ("wakes", &manifest.wake_subscriptions),
-        ] {
-            decoded.extend(values.iter().map(|value| (field, value.as_str())));
-        }
-        for (field, text) in decoded {
-            if let Some(reason) = decoded_rule(text, &rules) {
-                return Ok(Some(format!("PACK.md {field}: {reason}")));
-            }
-        }
         if let Some(pack) = source.files().iter().find(|file| file.path == "PACK.md") {
             let text =
                 std::str::from_utf8(&pack.content).map_err(|_| invalid("PACK.md is not UTF-8"))?;
+            for (field, decoded) in super::manifest::decoded_frontmatter(text)? {
+                for value in decoded.strings.iter().chain(&decoded.run) {
+                    if let Some(reason) = decoded_rule(value, &rules) {
+                        return Ok(Some(format!("PACK.md {field}: {reason}")));
+                    }
+                }
+            }
             if let Some(reason) = screen_text(text, &rules) {
                 return Ok(Some(format!("PACK.md: {reason}")));
             }

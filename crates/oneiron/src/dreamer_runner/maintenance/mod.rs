@@ -31,7 +31,7 @@ impl DreamerRunnerStore<'_> {
         dedupe: String,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             self.enqueue_kind_in_txn(
                 txn,
                 MAINTENANCE_QUEUE_KIND,
@@ -119,17 +119,20 @@ fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
 
 pub mod digest;
 
+/// The owner proof still holds in this write: it was authenticated by THIS
+/// vault (a proof from another vault never acts here, whatever PERSON ids the
+/// two share), its credential is live, and its actor is a live, active PERSON.
 pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,
-) -> Result<()> {
+) -> Result<crate::EntityId> {
+    let actor = owner.revalidate_in_txn(vault, txn)?;
     let refused = || {
         Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             "maintenance requires a live owner in this vault",
         ))
     };
-    let actor = owner.actor();
     if !matches!(
         crate::vault::live_entity_row_in_txn(&vault.store, txn, &actor)?,
         crate::vault::LiveEntityRow::Live {
@@ -141,5 +144,5 @@ pub(crate) fn validate_owner_in_txn(
     {
         return Err(refused());
     }
-    Ok(())
+    Ok(actor)
 }

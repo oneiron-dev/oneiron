@@ -137,6 +137,9 @@ impl CodeRunBridgeCall {
             _ if self.effect == SelfEffect::WakePolicyWrite => Err(invalid_code_run_replay(
                 "wake policy effect carries another success outcome",
             )),
+            SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
+                invalid_code_run_replay("agent verb result belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(
@@ -194,6 +197,17 @@ impl CodeRunBridgeCall {
                     ..
                 }))
             )
+    }
+
+    /// The bubble position this row emitted at, when it emitted one.
+    pub(crate) fn emitted_speech_order(&self) -> Option<u32> {
+        if !self.emitted_speech() {
+            return None;
+        }
+        match decode_self_dispatch_outcome(&self.outcome) {
+            Ok(SelfDispatchOutcome::Speech(result)) => Some(result.order),
+            _ => None,
+        }
     }
 
     /// The visible TEXT this row spoke, when it emitted an addressed bubble.
@@ -494,6 +508,27 @@ impl CodeRunReplayRecord {
     pub fn generation(&self) -> Result<CodeRunReplayGeneration> {
         CodeRunReplayGeneration::for_record(self)
     }
+
+    /// The rows this run's verb calls listed as served, kept beside each
+    /// answer it recorded (DEC-0005). `None` when an answer was recorded with
+    /// no row set, or does not decode: no caller off this device is released
+    /// such a run's answers.
+    #[must_use]
+    pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
+        let mut rows = Vec::new();
+        let verb_calls = self
+            .bridge_calls
+            .iter()
+            .filter(|call| call.effect == SelfEffect::AgentVerb);
+        for call in verb_calls {
+            if let SelfDispatchOutcome::AgentVerb(answer) =
+                decode_self_dispatch_outcome(&call.outcome).ok()?
+            {
+                rows.extend(answer.rows?);
+            }
+        }
+        Some(rows)
+    }
 }
 
 /// Returns the default ABI/layout checks recorded with v1 replay records.
@@ -596,6 +631,22 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
         self.next.set(index + 1);
         match outcome {
+            // A refused SDK verb reached the guest as a typed refusal it could
+            // handle, so replay hands back that same refusal, not a gate trap.
+            SelfDispatchOutcome::Denied(result)
+                if stored.effect == SelfEffect::AgentVerb
+                    && result.effect == SelfEffect::AgentVerb =>
+            {
+                Ok(SelfDispatchOutcome::Denied(result))
+            }
+            // So did a host door's refusal of a call the run serves itself. A
+            // gate's denial carries the gate's own outcome word and replays as
+            // the trap it was; a door's code is never one.
+            SelfDispatchOutcome::Denied(result)
+                if crate::error::GateDenialOutcome::parse(&result.outcome).is_none() =>
+            {
+                Ok(SelfDispatchOutcome::Denied(result))
+            }
             SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
             SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
             outcome => Ok(outcome),

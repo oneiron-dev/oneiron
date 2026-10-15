@@ -27,7 +27,10 @@ pub(super) fn finalize_batch_indexes(
 pub(super) fn apply_text_index_update(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    (analyzer, analyzed): (
+        &crate::analyzer::MultilingualAnalyzer,
+        Option<&crate::bm25::AnalyzedText>,
+    ),
     id: &EntityId,
     fields: &[(String, String)],
     text_index_trusted: bool,
@@ -42,6 +45,9 @@ pub(super) fn apply_text_index_update(
         crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
         *text_manifest_checked = true;
     }
+    // Text staged for idle publication meets the same ceiling now, at its
+    // write, rather than failing publication later.
+    crate::bm25::check_indexed_text_bytes(fields)?;
     if !crate::vault::entity_revision::defer_index_inputs(
         store,
         wtxn,
@@ -50,7 +56,12 @@ pub(super) fn apply_text_index_update(
         None,
         None,
     )? {
-        crate::bm25::index_text(store, wtxn, analyzer, id, fields)?;
+        // The analysis done before the transaction opened, when it was read
+        // from these very fields; otherwise analyze here as before.
+        match analyzed.filter(|analyzed| analyzed.reads(fields)) {
+            Some(analyzed) => crate::bm25::index_analyzed_text(store, wtxn, id, fields, analyzed)?,
+            None => crate::bm25::index_text(store, wtxn, analyzer, id, fields)?,
+        }
     }
     Ok(())
 }

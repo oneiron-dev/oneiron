@@ -2,6 +2,7 @@ use super::ViewQuery;
 use super::check_api_auth;
 use super::query_params;
 use super::scoped_read_for_legacy_api;
+use crate::auth::Locality;
 use crate::error::ApiError;
 use crate::projection;
 use crate::projection::View;
@@ -101,11 +102,12 @@ use utoipa::ToSchema;
 )]
 pub(crate) async fn get_entity(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
@@ -113,10 +115,10 @@ pub(crate) async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .read(&[oneiron::claim::PointRead::id(id)], None)
-        .inspect_err(|error| tracing::error!(%error,"get entity failed"))
+        .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?
         .single();
     let response = match read
@@ -238,11 +240,12 @@ mod credential_tests {
 )]
 pub(crate) async fn get_edges(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -250,11 +253,11 @@ pub(crate) async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
-            tracing::error!(error = %e, "get edges failed");
+            tracing::error!(kind = ?e.kind(), "get edges failed");
         })
         .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
     let response = match read.value {

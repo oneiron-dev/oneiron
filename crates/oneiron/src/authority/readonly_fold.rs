@@ -47,7 +47,7 @@ pub(crate) struct AuthorityCacheKey {
 /// caller keeps its LMDB snapshot; this handle carries no transaction or
 /// mutable state, and its cheap clone shares the exact decision image.
 #[derive(Clone)]
-pub(super) struct AuthorityView {
+pub(crate) struct AuthorityView {
     fold: Arc<AuthorityFold>,
     generation: u64,
 }
@@ -107,6 +107,50 @@ fn cached_fold(store: &Store, key: AuthorityCacheKey) -> Option<AuthorityView> {
             .filter(|cached| cached.matches(key))
             .map(|cached| cached.view.clone())
     })
+}
+
+/// `build`'s value for `txn`'s authority generation, from `cache` when it
+/// holds that generation. A value is cached only when its generation is the
+/// committed one, so a write that aborts never publishes it, and a
+/// transaction that staged an authority row reads past the cache.
+pub(super) fn per_authority_generation<T>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    cache: &std::sync::Mutex<Option<(u64, Arc<T>)>>,
+    build: impl FnOnce() -> Result<T>,
+) -> Result<Arc<T>> {
+    let generation = authority_cache_generation(store, txn)?;
+    let cached = cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|(cached, _)| *cached == generation)
+            .map(|(_, value)| Arc::clone(value))
+    });
+    if let Some(value) = cached {
+        return Ok(value);
+    }
+    let value = Arc::new(build()?);
+    // A second read txn on this thread fails with MDB_BAD_RSLOT; see
+    // `cache_fold_if_committed`.
+    let committed = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                store
+                    .env
+                    .read_txn()
+                    .ok()
+                    .and_then(|committed| authority_cache_generation(store, &committed).ok())
+            })
+            .join()
+            .ok()
+            .flatten()
+    });
+    if committed == Some(generation)
+        && let Ok(mut cache) = cache.lock()
+    {
+        *cache = Some((generation, Arc::clone(&value)));
+    }
+    Ok(value)
 }
 
 fn cache_fold_if_committed(
@@ -227,7 +271,8 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         posture,
     );
     // The fold's only clock-sensitive transition is stale-roster approval
-    // expiry. Slip TTL is checked by each caller against its own snapshot
+    // expiry, here and in the fold with no vouch that bounds this install's
+    // view. Slip TTL is checked by each caller against its own snapshot
     // clock, not frozen into this authority view.
     let next_deadline_secs = next_stale_roster_deadline(
         &entries,
@@ -235,7 +280,10 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         &first_seen_at_secs,
         now_secs,
         key.policy.stale_roster_window_secs,
-    );
+    )
+    .into_iter()
+    .chain(fold.install.no_vouch_deadline)
+    .min();
     let view = AuthorityView {
         fold: Arc::new(fold),
         generation: key.generation,

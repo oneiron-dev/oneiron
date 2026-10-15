@@ -8,9 +8,13 @@
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
+mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
+mod seeded_upgrade;
 mod self_grant;
+mod session_recall;
+mod session_union_reads;
 mod session_witness;
 mod shared_effects;
 mod support;
@@ -1102,7 +1106,12 @@ fn witness_and_session_witness_run_one_program() {
 
     // The session link.
     assert_eq!(room_vault.get_raw(&turn_id).expect("base get"), None);
-    session.promote_turn(&turn_id).expect("promote the turn");
+    // The vault's owner promotes the speaker's turn (H203: only the owner's
+    // proof promotes); the owner is a row both vaults hold from their open.
+    let proof = crate::test_util::embedded_owner_proof(&room_vault);
+    session
+        .promote_turn_as(&proof, &turn_id)
+        .expect("promote the turn");
     assert_eq!(
         room_vault
             .off_record_promote_receipt(&turn_id)
@@ -1120,20 +1129,10 @@ fn witness_and_session_witness_run_one_program() {
         let rtxn = room_vault.store.env.read_txn().expect("read txn");
         ids.map(|id| rows_naming(&room_vault.store, &rtxn, &id))
     };
+    // ARCH-0052 #d4 (REV-9 item 5): promote replays the AuthoredBy edges
+    // too, so the promoted rows are the base witness's rows exactly.
     for ((id, base), promoted) in ids.iter().zip(&base_rows).zip(&promoted_rows) {
-        let mut unattributed = base.clone();
-        unattributed.edges.retain(|(key, _)| {
-            crate::edge::parse_strict_edge_record_key(key)
-                .expect("edge key")
-                .1
-                != EdgeKind::AuthoredBy
-        });
-        assert_eq!(
-            &unattributed,
-            promoted,
-            "promoted rows naming {}",
-            id.to_hex()
-        );
+        assert_eq!(base, promoted, "promoted rows naming {}", id.to_hex());
     }
     session.close().expect("close session");
 }

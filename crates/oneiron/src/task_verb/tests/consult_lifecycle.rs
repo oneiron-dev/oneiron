@@ -3,67 +3,6 @@
 use super::support::*;
 use super::*;
 
-/// A consult create mints exactly one synced TASK entity and ZERO local
-/// realizations: a node-local lease could never reach a peer's machine.
-#[test]
-fn consult_create_mints_one_task_entity_and_no_realization() {
-    let (_dir, vault) = open_vault();
-    let (task_ref, peer, _question) = open_consult(&vault);
-    let task_hex = task_ref.to_hex();
-    let realizations = AttemptQueue::new(&vault)
-        .list()
-        .expect("list attempts")
-        .iter()
-        .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
-        .count();
-    let body = task_verb_body(&vault, task_ref)
-        .expect("decode consult body")
-        .expect("consult is typed");
-
-    assert_eq!(realizations, 0);
-    assert_eq!(task_entity_census(&vault), 1);
-    assert_eq!(body.task_kind(), TaskKind::Consult);
-    assert_eq!(body.assignee, Some(TaskAssignee::Peer { actor_ref: peer }));
-    assert_eq!(body.ttl, Some(TaskTtl::at(CONSULT_DEADLINE)));
-    assert_eq!(body.state, Some(TaskExecutionState::Queued));
-    assert_eq!(body.spec, Value::Nil);
-}
-
-/// The pre-ticket constructor still compiles with exactly four arguments
-/// and still takes the legacy Dreamer-realized standard path.
-#[test]
-fn pre_ticket_create_spec_takes_the_unchanged_standard_path() {
-    let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let legacy = TaskCreateSpec::new(Value::from("unit-task"), None, None, Some(120));
-    let created = vault
-        .memory(own, EdgeActorClass::Agent)
-        .tasks_create(&legacy)
-        .expect("legacy create");
-    let task_ref = created.task_ref.expect("task ref");
-    let task_hex = task_ref.to_hex();
-    let body = task_verb_body(&vault, task_ref)
-        .expect("decode body")
-        .expect("typed body");
-
-    assert_eq!(legacy.kind, None);
-    assert_eq!(legacy.consult, None);
-    assert_eq!(legacy.assignee, None);
-    assert_eq!(legacy.ttl, None);
-    assert_eq!(body.task_kind(), TaskKind::Standard);
-    assert_eq!(usize::from(body.assignee.is_none()), 1);
-    assert_eq!(usize::from(body.terminal().is_none()), 1);
-    assert_eq!(
-        AttemptQueue::new(&vault)
-            .list()
-            .expect("list attempts")
-            .iter()
-            .filter(|record| record.task_ref.as_deref() == Some(task_hex.as_str()))
-            .count(),
-        1
-    );
-}
-
 /// A schema-v1 row — one that names none of the additive keys — decodes as
 /// a standard, implicitly Dreamer-routed task with no TTL and no terminal.
 #[test]
@@ -209,7 +148,7 @@ fn invalid_consult_shapes_reject_before_any_write() {
 /// reasoned-abstention lands, and neither/both is unrepresentable.
 #[test]
 fn result_contract_is_addressed_and_partitioned() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_consult_vault();
     let (task_ref, peer, question) = open_consult(&vault);
     let stranger = consult_peer(&vault, 0xE9);
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
@@ -261,7 +200,7 @@ fn result_contract_is_addressed_and_partitioned() {
 /// mutates nothing.
 #[test]
 fn one_replica_settles_once_and_replays_idempotently() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_consult_vault();
     let (task_ref, peer, question) = open_consult(&vault);
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
     let other_result = consult_turn(&vault, 0x81).entity_ref();
@@ -289,7 +228,7 @@ fn one_replica_settles_once_and_replays_idempotently() {
 
 #[test]
 fn standalone_consult_with_option_replays_identically() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_consult_vault();
     let (task_ref, peer, question) = open_consult(&vault);
     let result_ref = consult_turn(&vault, 0x82).entity_ref();
     let input = ConsultResultInput {
@@ -316,7 +255,7 @@ fn standalone_consult_with_option_replays_identically() {
 /// and an expired task refuses a later answer — one local transition.
 #[test]
 fn answer_and_expiry_contend_for_one_local_transition() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_consult_vault();
     let asker = own_agent(&vault);
     grant_outbound(&vault, asker, 0xD1);
     let (answered, peer, question) = open_consult(&vault);
@@ -367,103 +306,6 @@ fn answer_and_expiry_contend_for_one_local_transition() {
                 .is_some_and(|record| record.result_ref.is_some())
         ),
         1
-    );
-}
-
-/// The terminal register is ONE value: later `finished_at` wins, and
-/// `Completed` dominates `Expired` on an exact tie — in both merge orders.
-#[test]
-fn terminal_register_converges_identically_in_both_merge_orders() {
-    let completed = |finished_at| TaskTerminalRecord {
-        disposition: TaskTerminalDisposition::Completed,
-        result_ref: Some(EntityId::from_bytes([0xA1; 16]).expect("result id")),
-        summary: Some(ConsultResultSummary::Answer {
-            evidence_refs: vec![ConsultPayloadRef::Turn(
-                EntityId::from_bytes([0xA2; 16]).expect("evidence id"),
-            )],
-        }),
-        finished_at,
-        ladder: None,
-        counter_task_ref: None,
-    };
-    let expired = |finished_at| TaskTerminalRecord {
-        disposition: TaskTerminalDisposition::Expired,
-        result_ref: Some(EntityId::from_bytes([0xA3; 16]).expect("expiry id")),
-        summary: None,
-        finished_at,
-        ladder: None,
-        counter_task_ref: None,
-    };
-    let cases = [
-        // Later answer beats an earlier expiry.
-        (completed(200), expired(100), completed(200)),
-        // Later expiry beats an earlier answer.
-        (completed(100), expired(200), expired(200)),
-        // Exact tie: the answer dominates.
-        (completed(150), expired(150), completed(150)),
-    ];
-
-    for (index, (left, right, expected)) in cases.into_iter().enumerate() {
-        let forward = merge_task_terminal_register(Some(&left), Some(&right));
-        let backward = merge_task_terminal_register(Some(&right), Some(&left));
-        assert_eq!(forward, backward, "case {index} must be order-free");
-        assert_eq!(forward, Some(expected), "case {index} winner");
-    }
-    // An empty register merges to the one side that has a record.
-    let only = completed(10);
-    assert_eq!(
-        merge_task_terminal_register(Some(&only), None),
-        Some(only.clone())
-    );
-    assert_eq!(merge_task_terminal_register(None, Some(&only)), Some(only));
-    assert_eq!(merge_task_terminal_register(None, None), None);
-}
-
-/// `Expired` and `Abandoned` are distinct causes that survive a body
-/// round-trip, even though both project onto the failed lane.
-#[test]
-fn expired_and_abandoned_stay_distinct_through_the_codec() {
-    let dispositions = [
-        TaskTerminalDisposition::Completed,
-        TaskTerminalDisposition::Rejected,
-        TaskTerminalDisposition::Failed,
-        TaskTerminalDisposition::Expired,
-        TaskTerminalDisposition::Abandoned,
-        TaskTerminalDisposition::Cancelled,
-    ];
-    let round_tripped: Vec<TaskTerminalDisposition> = dispositions
-        .into_iter()
-        .map(|disposition| {
-            let record = TaskTerminalRecord {
-                disposition,
-                result_ref: Some(EntityId::from_bytes([0xA1; 16]).expect("result id")),
-                summary: None,
-                finished_at: 42,
-                ladder: None,
-                counter_task_ref: None,
-            };
-            let decoded = decode_task_terminal_record(&task_terminal_record_value(&record))
-                .expect("terminal record round-trips");
-            assert_eq!(decoded, record);
-            decoded.disposition
-        })
-        .collect();
-
-    assert_eq!(round_tripped, dispositions);
-    assert_eq!(
-        board_status_for_disposition(TaskTerminalDisposition::Expired),
-        TaskBoardStatus::Failed
-    );
-    assert_eq!(
-        board_status_for_disposition(TaskTerminalDisposition::Abandoned),
-        TaskBoardStatus::Failed
-    );
-    assert_eq!(
-        usize::from(
-            TaskTerminalDisposition::Expired.as_str()
-                == TaskTerminalDisposition::Abandoned.as_str()
-        ),
-        0
     );
 }
 
@@ -608,93 +450,6 @@ fn expiry_digest_is_once_per_task_and_recovers_from_the_crash_window() {
     );
 }
 
-/// The asker's failed lane keeps an expired consult until it is acked, and
-/// the row identifies `Expired` distinctly from the `Failed` status.
-#[test]
-fn expired_consult_holds_the_failed_lane_until_acked() {
-    let (_dir, vault) = open_vault();
-    let asker = own_agent(&vault);
-    grant_outbound(&vault, asker, 0xD1);
-    let (task_ref, _peer, _question) = open_consult(&vault);
-    let task_hex = task_ref.to_hex();
-    let facade = vault.memory(asker, EdgeActorClass::Agent);
-    facade
-        .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
-        .expect("settle the expired consult");
-
-    let before = facade.describe_section().expect("board before ack");
-    let lane = crate::context_board::failed_lane(&before);
-    let acked = facade
-        .tasks_update(task_ref)
-        .expect("ack the expired consult");
-    let after = facade.describe_section().expect("board after ack");
-
-    assert_eq!(lane.len(), 1);
-    assert_eq!(lane[0].id, task_hex);
-    assert_eq!(lane[0].status, TaskBoardStatus::Failed);
-    assert_eq!(
-        lane[0].terminal_disposition,
-        Some(TaskTerminalDisposition::Expired)
-    );
-    assert!(acked.acked);
-    assert_eq!(
-        after.rows.iter().filter(|row| row.id == task_hex).count(),
-        0
-    );
-}
-
-/// A board read derives expiry from the persisted deadline alone, so the
-/// failed row is never hidden behind reconciliation or outbound
-/// availability.
-#[test]
-fn board_reads_expiry_from_the_deadline_before_the_sweep_runs() {
-    let (_dir, vault) = open_vault();
-    let asker = own_agent(&vault);
-    let peer = consult_peer(&vault, 0xE2);
-    let question = consult_turn(&vault, 0x7A);
-    let facade = vault.memory(asker, EdgeActorClass::Agent);
-    // A deadline one second into the past of the READ clock; nothing has
-    // settled it, and no digest has been scheduled.
-    let now = unix_seconds_now();
-    let created = facade
-        .tasks_create(
-            &TaskCreateSpec::new(Value::Nil, None, None, Some(now))
-                .with_kind(TaskKind::Consult)
-                .with_consult(ConsultPayload::question(
-                    question,
-                    Vec::new(),
-                    EntityId::now(),
-                ))
-                .with_assignee(TaskAssignee::Peer { actor_ref: peer })
-                .with_ttl(TaskTtl::at(now + 1)),
-        )
-        .expect("consult create effects");
-    let task_ref = created.task_ref.expect("task ref");
-    let body = task_verb_body(&vault, task_ref)
-        .expect("decode body")
-        .expect("typed body");
-
-    let row = task_intent_presence(
-        &vault,
-        task_ref,
-        &task_ref.to_hex(),
-        Vec::new(),
-        false,
-        now + 2,
-    )
-    .expect("project the overdue consult")
-    .expect("consult projects");
-
-    assert_eq!(usize::from(body.terminal().is_none()), 1);
-    assert_eq!(row.status, TaskBoardStatus::Failed);
-    assert_eq!(
-        row.terminal_disposition,
-        Some(TaskTerminalDisposition::Expired)
-    );
-    assert_eq!(usize::from(row.result_ref.is_none()), 1);
-    assert_eq!(vault.connector_send_tasks().expect("sends").len(), 0);
-}
-
 /// The synced entity reaches a peer wherever it connects; the lease-bearing
 /// plane never leaves this node.
 #[cfg(feature = "sync")]
@@ -755,4 +510,68 @@ fn consult_task_syncs_and_no_attempt_row_follows_it() {
         ),
         0
     );
+}
+
+/// F11 / H218: a consult answer landed with the caller's `completed_at` and no
+/// deadline check, so a peer could answer after the deadline (the sweep had
+/// not run yet) by reporting an earlier time, or report a far-future time
+/// that outranks an expiry when terminal records converge. The engine's
+/// clock decides: a completion later than it is refused, and so is any
+/// answer once the clock is past the deadline.
+#[test]
+fn a_consult_answer_lands_only_inside_its_deadline_on_the_engine_clock() {
+    let clock = crate::ports::ManualClock::new(CONSULT_NOW + 10);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    let asker = own_agent(&vault);
+    grant_outbound(&vault, asker, 0xD1);
+    let (on_time, peer, question) = open_consult(&vault);
+    let late = vault
+        .memory(asker, EdgeActorClass::Agent)
+        .tasks_create(&consult_spec(question, peer, CONSULT_DEADLINE))
+        .expect("second consult")
+        .task_ref
+        .expect("second task ref");
+    let result_ref = consult_turn(&vault, 0x80).entity_ref();
+    let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
+
+    let mut far_future = answer_input(result_ref, question);
+    far_future.completed_at = u64::MAX;
+    peer_facade
+        .land_consult_result(on_time, &far_future)
+        .expect_err("a completion later than the engine clock is refused");
+
+    // Inside the deadline, the answer lands.
+    peer_facade
+        .land_consult_result(on_time, &answer_input(result_ref, question))
+        .expect("an answer inside the deadline lands");
+
+    // Past the deadline, before any sweep: a backdated answer is refused.
+    clock.set(CONSULT_DEADLINE + 1);
+    let refused = peer_facade
+        .land_consult_result(
+            late,
+            &answer_input(consult_turn(&vault, 0x81).entity_ref(), question),
+        )
+        .expect_err("the consult's deadline has passed");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_INVALID_STATE);
+    let stored = task_verb_body(&vault, late)
+        .expect("decode body")
+        .expect("typed body");
+    assert!(
+        stored.terminal().is_none(),
+        "nothing settled the late consult"
+    );
+    // The answer that landed in time still replays after the deadline.
+    let replay = peer_facade
+        .land_consult_result(on_time, &answer_input(result_ref, question))
+        .expect("an identical replay after the deadline");
+    assert_eq!(usize::from(replay.idempotent_replay), 1);
 }

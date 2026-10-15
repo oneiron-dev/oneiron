@@ -1,6 +1,8 @@
 //! The marker row: its kind, payload, dedupe key, derived id and the
 //! in-transaction doors that commit it.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome, RetryAttempt};
@@ -62,6 +64,29 @@ impl Default for TaggingTraceHistory {
     }
 }
 
+/// What a checked answer does to the vault.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TaggingMode {
+    /// The turn's tags are saved: a vault with a tagger saves its tags
+    /// (ARCH-0036, serving the tagger).
+    #[default]
+    Save,
+    /// The marker settles and nothing else is written: the test switch.
+    Shadow,
+}
+
+/// The longest model label the label table admits, in bytes.
+const MAX_LABEL_BYTES: usize = 64;
+
+/// Whether the label table may map a label to `kind`: only a kind with a
+/// declared identity key can be linked or minted, so a mention of any other
+/// kind (an event, say, which the Dreamer mints) stays a tag by leaving its
+/// label out of the table.
+#[must_use]
+pub fn label_kind_admitted(kind: u8) -> bool {
+    !crate::ingest::identity_fields_for_kind(kind).is_empty()
+}
+
 /// Arms the tagging marker on a vault ([`crate::VaultConfig::tagging`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggingMarkerConfig {
@@ -69,6 +94,12 @@ pub struct TaggingMarkerConfig {
     /// digits of the SHA-256 of its weights. Half of every marker's dedupe
     /// key, so a new checkpoint owes every turn a new pass.
     pub checkpoint: String,
+    /// The served stack the host pins beside the checkpoint, when it pins
+    /// one: the first 16 lowercase hex digits of the SHA-256 of the stack's
+    /// canonical card, which names the trunk and every head. With it the
+    /// stack is the rest of every marker's dedupe key, so a head swap at a
+    /// fixed checkpoint owes every turn a new pass as a trunk swap does.
+    pub stack: Option<String>,
     /// The live window, in the tagger's tokens: how much earlier text of its
     /// conversation a turn is sent with, never a later turn; 0 sends the turn
     /// alone. Set it to the tagger's own K. The engine cannot count the
@@ -79,19 +110,40 @@ pub struct TaggingMarkerConfig {
     pub live_window_tokens: u32,
     /// The traces kept once their markers leave the job ledger.
     pub trace_history: TaggingTraceHistory,
+    /// Save the tags, or settle in shadow.
+    pub mode: TaggingMode,
+    /// The label table: model label to the entity kind a span with that
+    /// label is linked as. It maps name labels only. A label absent here
+    /// stays a tag, and a coreferent span with one takes its antecedent's
+    /// link without a lookup: a pronoun's label (a tagger's reference or
+    /// pronoun mention class) stays out, so a pronoun is never linked by its
+    /// own text. No model's label names sit in engine code; the host
+    /// supplies the table.
+    pub labels: BTreeMap<String, u8>,
 }
 
 impl TaggingMarkerConfig {
     /// A validated marker configuration, with the default live window and
-    /// trace history.
+    /// trace history, saving its tags under an empty label table.
     pub fn new(checkpoint: impl Into<String>) -> Result<Self> {
         let config = Self {
             checkpoint: checkpoint.into(),
+            stack: None,
             live_window_tokens: DEFAULT_LIVE_WINDOW_TOKENS,
             trace_history: TaggingTraceHistory::default(),
+            mode: TaggingMode::Save,
+            labels: BTreeMap::new(),
         };
         config.validate()?;
         Ok(config)
+    }
+
+    /// Pins the served stack; [`Self::validate`] refuses one that is not 16
+    /// lowercase hex digits.
+    #[must_use]
+    pub fn with_stack(mut self, stack: impl Into<String>) -> Self {
+        self.stack = Some(stack.into());
+        self
     }
 
     #[must_use]
@@ -106,13 +158,33 @@ impl TaggingMarkerConfig {
         self
     }
 
-    /// Refuses a checkpoint that is not 16 lowercase hex digits, a live
-    /// window past the runtime's input window, and a trace history past its
-    /// bounds or with no age.
+    #[must_use]
+    pub fn with_mode(mut self, mode: TaggingMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    #[must_use]
+    pub fn with_labels(mut self, labels: BTreeMap<String, u8>) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    /// Refuses a checkpoint or a stack that is not 16 lowercase hex digits,
+    /// a live window past the runtime's input window, a trace history past
+    /// its bounds or with no age, and a label table row that is empty,
+    /// longer than 64 bytes or maps to a kind with no identity key.
     pub fn validate(&self) -> Result<()> {
         let invalid = |reason: &str| Err(Error::InvalidConfig(reason.to_owned()));
         if !is_checkpoint(&self.checkpoint) {
             return invalid("tagging checkpoint must be 16 lowercase hex digits");
+        }
+        if self
+            .stack
+            .as_deref()
+            .is_some_and(|stack| !is_checkpoint(stack))
+        {
+            return invalid("tagging stack must be 16 lowercase hex digits");
         }
         if self.live_window_tokens > MAX_LIVE_WINDOW_TOKENS {
             return invalid("tagging live window must be at most 2048 tokens");
@@ -123,10 +195,20 @@ impl TaggingMarkerConfig {
         if self.trace_history.max_age_secs == 0 {
             return invalid("tagging trace history max age must be greater than zero");
         }
+        for (label, kind) in &self.labels {
+            if label.is_empty() || label.len() > MAX_LABEL_BYTES {
+                return invalid("a tagging label must be 1 to 64 bytes");
+            }
+            if !label_kind_admitted(*kind) {
+                return invalid("a tagging label maps to a kind with no identity key");
+            }
+        }
         Ok(())
     }
 }
 
+/// Whether `value` is 16 lowercase hex digits: the form of a checkpoint and
+/// of a stack identity.
 pub(super) fn is_checkpoint(value: &str) -> bool {
     value.len() == CHECKPOINT_HEX_LEN
         && value
@@ -134,12 +216,15 @@ pub(super) fn is_checkpoint(value: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// What one marker names: a turn owed one pass by one tagger checkpoint.
+/// What one marker names: a turn owed one pass by one tagger checkpoint,
+/// and by the stack pinned beside it, if any.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MarkerPayload {
     pub(super) turn: EntityId,
     pub(super) checkpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) stack: Option<String>,
 }
 
 impl MarkerPayload {
@@ -151,14 +236,25 @@ impl MarkerPayload {
     /// `None` for a payload this build cannot read; its marker is failed, not
     /// retried, because no pass can ever read it.
     pub(super) fn decode(bytes: &[u8]) -> Option<Self> {
-        rmp_serde::from_slice::<Self>(bytes)
-            .ok()
-            .filter(|payload| is_checkpoint(&payload.checkpoint))
+        rmp_serde::from_slice::<Self>(bytes).ok().filter(|payload| {
+            is_checkpoint(&payload.checkpoint) && payload.stack.as_deref().is_none_or(is_checkpoint)
+        })
+    }
+
+    /// Whether the marker is owed to the tagger `config` arms: its
+    /// checkpoint and its pinned stack.
+    pub(super) fn owed_to(&self, config: &TaggingMarkerConfig) -> bool {
+        self.checkpoint == config.checkpoint && self.stack == config.stack
     }
 }
 
-pub(super) fn dedupe_key(turn: &EntityId, checkpoint: &str) -> String {
-    format!("{}@{checkpoint}", turn.to_hex())
+/// A marker's dedupe key: the turn, then the tagger it is owed to, its
+/// checkpoint and the stack pinned beside it.
+pub(super) fn dedupe_key(turn: &EntityId, config: &TaggingMarkerConfig) -> String {
+    match &config.stack {
+        None => format!("{}@{}", turn.to_hex(), config.checkpoint),
+        Some(stack) => format!("{}@{}+{stack}", turn.to_hex(), config.checkpoint),
+    }
 }
 
 /// The marker id is the owner-retained prefix, the low seven bytes of the
@@ -212,18 +308,18 @@ fn free_id(
     Err(Error::IndexOverflow("tagging marker generations"))
 }
 
-/// Commits a marker for `turn` under `checkpoint` in the caller's write
-/// transaction, stamped at `recorded_at`. A live marker for the same pair
-/// absorbs the call.
+/// Commits a marker for `turn`, owed to the tagger `config` arms, in the
+/// caller's write transaction, stamped at `recorded_at`. A live marker with
+/// the same key absorbs the call.
 pub(super) fn enqueue_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     turn: EntityId,
-    checkpoint: &str,
+    config: &TaggingMarkerConfig,
     recorded_at: u64,
 ) -> Result<EnqueueOutcome> {
     let queue = AttemptQueue::from_store(&vault.store);
-    let key = dedupe_key(&turn, checkpoint);
+    let key = dedupe_key(&turn, config);
     // A live marker absorbs the call before any id is drawn for it.
     if let Some(live) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
         return Ok(EnqueueOutcome::Existing(live));
@@ -244,7 +340,7 @@ pub(super) fn enqueue_marker_in_txn(
             MARKER_ID_DOMAIN,
             &[
                 turn.as_bytes(),
-                checkpoint.as_bytes(),
+                config.checkpoint.as_bytes(),
                 &sequence.to_be_bytes(),
             ],
             recorded_at,
@@ -253,7 +349,8 @@ pub(super) fn enqueue_marker_in_txn(
     })?;
     let payload = MarkerPayload {
         turn,
-        checkpoint: checkpoint.to_owned(),
+        checkpoint: config.checkpoint.clone(),
+        stack: config.stack.clone(),
     };
     queue.enqueue_with_id_in_txn(
         wtxn,
@@ -320,22 +417,20 @@ pub(crate) fn mark_turn_in_txn(
     // door: the marker writes only the job tables, and the turn's own write
     // keeps its clock policy whether the vault is armed or not.
     let recorded_at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
-    enqueue_marker_in_txn(vault, wtxn, turn, &tagging.checkpoint, recorded_at).map(|_| ())
+    enqueue_marker_in_txn(vault, wtxn, turn, tagging, recorded_at).map(|_| ())
 }
 
-/// The type of an entity whose document text a turn's tag pass reads, on an
-/// armed vault: a MESSAGE or a TURN. `None` for any other entity, and on a
-/// vault with no tagger, so a document write there compares no text.
-/// Entity documents exist only on a sync build.
+/// The type of an entity whose document text a turn's tag pass, vector or
+/// sieve read reads: a MESSAGE or a TURN. `None` for any other entity. The
+/// sieve reads on every vault, so a TURN's or MESSAGE's document write
+/// compares its text whatever models are configured. Entity documents exist
+/// only on a sync build.
 #[cfg(feature = "sync")]
 pub(crate) fn text_entity_type_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<u8>> {
-    if vault.config.tagging.is_none() {
-        return Ok(None);
-    }
     Ok(
         match crate::vault::live_entity_row_in_txn(&vault.store, txn, entity)? {
             crate::vault::LiveEntityRow::Live { entity_type, .. }

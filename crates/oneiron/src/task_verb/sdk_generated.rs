@@ -139,6 +139,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "rooms.speak",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
+            (
+                "search",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
+            ),
+            (
+                "put_claim",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemoryClaimInput>(),
+            ),
+            (
+                "supersede_claim",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySupersedeInput>(
+                ),
+            ),
+            (
+                "put_edge",
+                crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -220,6 +237,90 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["task_ref"]
+        }
+        "witness" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "claim_upsert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "key_value_get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "key_value_put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "key_value_delete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "key_value_search" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "key_value_namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "can" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "peek" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "tasks.ask" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -367,6 +468,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: RecallRequest = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
             crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+            crate::memory::caps::check_as_of(input.as_of)?;
+            crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
         "export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
@@ -581,14 +684,9 @@ pub fn recall(
 ) -> MemoryResult<crate::memory::MemoryPack> {
     crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
-    memory.recall(
-        &input.query,
-        input.effort.unwrap_or(crate::memory::Effort::Medium),
-        &input.scope.unwrap_or_default(),
-        input.limit.unwrap_or(10),
-        input.format.as_deref(),
-        None,
-    )
+    crate::memory::caps::check_as_of(input.as_of)?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)
 }
 pub fn export(
     memory: &Memory<'_>,

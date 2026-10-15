@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/companion.rs` | src | s | 2 const | — | The retired companion-register identity, reserved in the type registry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | s | 30 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | s | 35 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | s | 1 enum · 1 crate-vis | ArtifactError | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -46,12 +46,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 22 mod · 2 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 1 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
-| `src/memory/error.rs` | src | m | 4 struct · 6 fn · 1 type · 9 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/error.rs` | src | m | 4 struct · 6 fn · 1 type · 11 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
 | `src/registry/families.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | TypeByteFamily, TypeByteFamilyEntry | Byte-space v3.1 family allocation, independent of kind behavior |
-| `src/registry/families/tests.rs` | test | s | — | — | — |
 | `src/registry/mod.rs` | src | s | 11 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `src/registry/namespaces.rs` | src | s | 2 struct · 1 enum · 1 fn · 2 const | IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration | Presentation-id namespaces for entity kinds and vaults |
 | `src/registry/registry_table.rs` | src | m | 1 struct · 6 fn · 1 const | EntityTypeRegistryEntry | Registry rows: the `ENTITY_TYPE_REGISTRY` table and its lookups |
@@ -59,12 +58,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/registry/validation.rs` | src | s | 3 fn | — | Static validation of entity type bytes, including public-write gates |
 | `src/registry/zones.rs` | src | s | 2 enum · 1 fn · 9 const | EntityClassification, TypeByteZone | Type-byte zones: classification, zone map, and the `zone_of` table |
 | `src/retrieval_quality.rs` | src | s | 3 struct · 3 enum · 4 fn · 4 const | ConfidenceAdjustment, PprCacheOutcome, RetrievalDegradation, RetrievalDiagnostics, RetrievalQuality, RetrievalQualityReport | Shared retrieval execution quality, independent of result counts and ranking |
-| `src/retrieval_quality/tests.rs` | test | m | — | — | — |
 | `src/retrieval_telemetry.rs` | src | s | 2 struct · 2 enum · 6 fn | RetrievalBlendSignal, RetrievalBlendWeights, RetrievalScoreComponent, RetrievalSignal | The retrieval signal and blend-weight vocabulary: what retrieval's fusion scores with, what the retrieval… |
 | `src/secret_custody.rs` | src | s | 2 enum · 4 fn | CustodyClass, CustodyTier | ARCH-0069 S1 custody classes and tiers |
 | `src/secret_lease.rs` | src | s | 1 enum · 2 fn | SecretLeaseStatus | Secret lease status |
 | `src/serialize.rs` | src | s | 1 mod | — | Serde adapters shared by the engine crates' serialized envelopes |
 | `src/serialize/entity_ref.rs` | src | s | 6 fn · 2 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
-| `src/temporal.rs` | src | m | 1 struct · 3 enum · 5 fn | TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TimeRange | `TimeRange`, temporal expressions/parsing, granularity |
+| `src/temporal.rs` | src | L | 6 struct · 6 enum · 8 fn · 1 const | OpenPhrase, QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalPhraseSpan +4 | `TimeRange`, temporal expressions/parsing, granularity |
 | `src/write_envelope.rs` | src | s | 1 struct · 5 fn | WriteActor | The write actor every write path stamps |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-contracts` made `pub` so `oneiron` can reach them across the crate split |

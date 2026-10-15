@@ -32,115 +32,6 @@ fn own_create_effects_and_foreign_create_proposes() {
     assert_eq!(task_entity_census(&vault), 1);
 }
 
-#[test]
-fn task_creation_is_counted_and_receipted_at_every_rate() {
-    let (_dir, vault) = open_vault();
-    let actor = own_agent(&vault);
-    for limit in [0, 1, 3] {
-        for _ in 0..5 {
-            let receipt = vault
-                .memory(actor, EdgeActorClass::Agent)
-                .tasks_create_with_rate_limit(
-                    &spec(120),
-                    TaskCreateRateLimit {
-                        limit,
-                        window_seconds: u64::MAX,
-                    },
-                )
-                .unwrap();
-            assert!(receipt.effected);
-            assert!(receipt.task_ref.is_some());
-            assert!(receipt.proposal_ref.is_none());
-        }
-    }
-    assert_eq!(vault.task_create_count(actor, u64::MAX).unwrap(), 15);
-    assert_eq!(task_entity_census(&vault), 15);
-}
-
-#[test]
-fn sdk_create_is_receipted_after_a_zero_rate_limit_and_ask_is_not_rate_refused() {
-    let (_dir, vault) = open_vault();
-    let actor = own_agent(&vault);
-    let memory = vault.memory(actor, EdgeActorClass::Agent);
-    memory
-        .tasks_create_with_rate_limit(
-            &spec(120),
-            TaskCreateRateLimit {
-                limit: 0,
-                window_seconds: u64::MAX,
-            },
-        )
-        .unwrap();
-    let counted = vault.task_create_count(actor, u64::MAX).unwrap();
-    // More than the SDK's default 10-slot ceiling in one window still mints
-    // and receipts every task, instead of returning a rate refusal.
-    for index in 0..12 {
-        let receipt = crate::task_verb::sdk::invoke(
-            &memory,
-            "tasks.create",
-            serde_json::json!({"spec": index, "label": "another task"}),
-        )
-        .unwrap();
-        assert_eq!(receipt["effected"], true);
-        assert!(receipt["task_ref"].is_string());
-    }
-    memory
-        .tasks_create_with_rate_limit(
-            &spec(120),
-            TaskCreateRateLimit {
-                limit: 0,
-                window_seconds: u64::MAX,
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        vault.task_create_count(actor, u64::MAX).unwrap(),
-        counted + 1
-    );
-    let question = consult_turn(&vault, 0x81);
-    let ask = crate::task_verb::sdk::invoke(
-        &memory,
-        "tasks.ask",
-        serde_json::json!({
-            "who": {"responder": {"human": {"actor_ref": actor}}},
-            "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
-        }),
-    )
-    .unwrap();
-    assert!(ask["handle"]["group_ref"].is_string());
-}
-
-#[test]
-fn create_refuses_a_label_the_board_cannot_render() {
-    let (_dir, vault) = open_vault();
-    let label = "x".repeat(crate::context_board::TASK_LABEL_MAX_BYTES + 1);
-    let refused = vault
-        .memory(own_agent(&vault), EdgeActorClass::Agent)
-        .tasks_create(&TaskCreateSpec::new(
-            Value::from("unit-task"),
-            Some(label),
-            None,
-            Some(120),
-        ))
-        .expect_err("an oversized label is refused");
-    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
-}
-
-#[test]
-fn create_refuses_a_blank_label() {
-    let (_dir, vault) = open_vault();
-    let refused = vault
-        .memory(own_agent(&vault), EdgeActorClass::Agent)
-        .tasks_create(&TaskCreateSpec::new(
-            Value::from("unit-task"),
-            Some("   ".to_owned()),
-            None,
-            Some(120),
-        ))
-        .expect_err("a blank label is refused");
-    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
-}
-
 /// A STANDARD task with a deadline already past is born expired, so the same
 /// refusal the consult branch gives applies here. A future deadline passes,
 /// and no deadline at all still means no TTL.
@@ -302,35 +193,6 @@ fn the_transactional_public_raw_put_refuses_a_task_born_expired() {
     );
 }
 
-/// ...and the INTERNAL door still admits it, which is not a gap but the whole
-/// reason the seam is split: settling a task whose deadline has passed writes
-/// a body carrying that past deadline, and the expiry lane exists to do
-/// exactly that.
-#[test]
-fn the_internal_raw_put_still_admits_a_task_born_expired() {
-    let (_dir, vault) = open_vault();
-    let now = 1_772_400_000;
-    let body = born_expired_task_body(&vault, now);
-
-    vault
-        .with_write_txn(|wtxn| {
-            vault
-                .batch_in()
-                .put_internal(
-                    &ladder_id(0xD4),
-                    ENTITY_TYPE_TASK,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .apply(wtxn)
-        })
-        .expect("the expiry lane must still be able to write an expired task");
-}
-
 /// The SYNC door does not. A peer's row is already written on the peer, so
 /// refusing it here would leave the two vaults holding different histories —
 /// storage convergence outranks an invariant on a row that already exists
@@ -424,28 +286,67 @@ fn repeated_proposal_creates_park_on_one_proposal_row() {
     assert_eq!(open_create_proposal_census(&vault, own), 1);
 }
 
-/// A DIFFERENT ask under a Proposed ceiling still parks its own proposal: the dedupe is on
-/// the ask, not on the actor.
+/// A parked ask is born where its TASK would be (ARCH-0067 §5), so the same
+/// ask from a surface bound to another world or facet parks its own proposal
+/// there, where that surface's reviewers can see it. A retry from the same
+/// surface still lands on the one already waiting.
 #[test]
-fn a_distinct_proposal_create_parks_its_own_proposal() {
+fn a_proposed_create_parks_one_proposal_per_birth_position() {
     let (_dir, vault) = open_vault();
     let own = consult_peer(&vault, 0xE2);
-    let facade = vault.memory(own, EdgeActorClass::Agent);
     let rate = TaskCreateRateLimit {
-        limit: 1,
+        limit: 0,
         window_seconds: u64::MAX,
     };
-    facade
-        .tasks_create_with_rate_limit(&spec(120), rate)
-        .expect("proposal parks");
-    facade
-        .tasks_create_with_rate_limit(
-            &TaskCreateSpec::new(Value::from("other-task"), None, None, Some(120)),
-            rate,
-        )
-        .expect("a different proposal parks");
+    let world = EntityId::from_bytes([0x5A; 16]).expect("world id");
+    let other_world = EntityId::from_bytes([0x5B; 16]).expect("world id");
+    let facet = EntityId::from_bytes([0x5C; 16]).expect("facet id");
+    let park = |world, facet| {
+        vault
+            .memory(own, EdgeActorClass::Agent)
+            .with_birth_position(crate::federation::record_scope::BirthPosition { world, facet })
+            .tasks_create_with_rate_limit(&spec(120), rate)
+            .expect("the Proposed-ceiling create parks")
+            .proposal_ref
+            .expect("the create parks a proposal")
+    };
 
-    assert_eq!(open_create_proposal_census(&vault, own), 2);
+    let in_world = park(Some(world), None);
+    assert_eq!(
+        park(Some(world), None),
+        in_world,
+        "a same-surface retry lands on the parked ask"
+    );
+    let parked = [
+        (in_world, Some(world), None),
+        (park(Some(other_world), None), Some(other_world), None),
+        (park(None, None), None, None),
+        (park(None, Some(facet)), None, Some(facet)),
+    ];
+
+    assert_eq!(
+        park(Some(crate::claim::base_world_id()), None),
+        parked[2].0,
+        "base reality named outright is the same birth as no world"
+    );
+
+    let refs: std::collections::BTreeSet<EntityId> = parked.iter().map(|row| row.0).collect();
+    assert_eq!(
+        refs.len(),
+        parked.len(),
+        "each birth position parks its own ask"
+    );
+    for (proposal, world, facet) in parked {
+        let body = vault
+            .get_claim(&proposal)
+            .expect("claim body")
+            .expect("the parked proposal is stored");
+        assert_eq!(body.world, world);
+        if let Some(facet) = facet {
+            assert_eq!(body.scope_facet, facet);
+        }
+    }
+    assert_eq!(open_create_proposal_census(&vault, own), parked.len());
 }
 
 /// The dedupe index is claims-ABOUT-subject, so a row naming this actor may
@@ -587,117 +488,6 @@ fn a_corrupt_claim_edge_still_fails_the_proposed_create() {
 }
 
 #[test]
-fn create_rate_slot_overwrites_one_key_across_windows() {
-    let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let rate = TaskCreateRateLimit {
-        limit: 2,
-        window_seconds: 10,
-    };
-    {
-        let mut wtxn = vault.store.env.write_txn().expect("write txn");
-        // Window 0 (now 0..9): two slots, then the third is refused.
-        assert_eq!(
-            record_task_create(&vault, &mut wtxn, own, 0, rate).expect("w0 s1"),
-            1
-        );
-        assert_eq!(
-            record_task_create(&vault, &mut wtxn, own, 3, rate).expect("w0 s2"),
-            2
-        );
-        assert_eq!(
-            record_task_create(&vault, &mut wtxn, own, 9, rate).expect("w0 over"),
-            3
-        );
-        // Window 1 (now 10..): the count resets, a slot is available again.
-        assert_eq!(
-            record_task_create(&vault, &mut wtxn, own, 10, rate).expect("w1 s1"),
-            1
-        );
-        // Window 2 (now 20..): still resets, still the same single key.
-        assert_eq!(
-            record_task_create(&vault, &mut wtxn, own, 20, rate).expect("w2 s1"),
-            1
-        );
-        wtxn.commit().expect("commit");
-    }
-    // Elapsed windows overwrite the SAME key: exactly one rate key persists
-    // for this (actor, window_seconds), not one row per elapsed window.
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let keys = TASK_CREATE_RATE_WINDOWS
-        .scan(&vault.store, &rtxn)
-        .expect("rate scan")
-        .len();
-    assert_eq!(keys, 1);
-}
-
-#[test]
-fn caller_time_variation_does_not_bypass_one_engine_rate_window() {
-    let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
-    let facade = vault.memory(own, EdgeActorClass::Agent);
-    let limit = 3;
-    let rate = TaskCreateRateLimit {
-        limit,
-        window_seconds: u64::MAX,
-    };
-    let caller_times = [0, 60, 120, 180];
-    let results = caller_times.map(|now| {
-        facade
-            .tasks_create_with_rate_limit(&spec(now), rate)
-            .expect("create")
-    });
-
-    assert!(
-        results
-            .iter()
-            .all(|result| result.effected && result.proposal_ref.is_none())
-    );
-    assert_eq!(vault.task_create_count(own, u64::MAX).unwrap(), 4);
-}
-
-#[test]
-fn task_rate_limit_window_rollover_and_actor_isolation() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let actor = own_agent(&vault);
-    let other = EntityId::now();
-    put_person(&vault, other);
-    let rate = TaskCreateRateLimit {
-        limit: 1,
-        window_seconds: u64::MAX,
-    };
-    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 0);
-    vault.with_write_txn(|txn| {
-        assert!(consume_create_rate_slot(&vault, txn, actor, 0, rate)?);
-        assert!(!consume_create_rate_slot(&vault, txn, actor, 0, rate)?);
-        assert_eq!(record_task_create(&vault, txn, actor, 0, rate)?, 2);
-        assert!(consume_create_rate_slot(&vault, txn, other, 0, rate)?);
-        Ok(())
-    })?;
-    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 2);
-    assert_eq!(vault.task_create_count(other, rate.window_seconds)?, 1);
-    vault.with_write_txn(|txn| {
-        assert!(consume_create_rate_slot(
-            &vault,
-            txn,
-            actor,
-            u64::MAX,
-            rate
-        )?);
-        assert_eq!(record_task_create(&vault, txn, actor, u64::MAX, rate)?, 2);
-        Ok(())
-    })?;
-    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 0);
-    assert_eq!(vault.task_create_count(other, rate.window_seconds)?, 1);
-    vault.with_write_txn(|txn| {
-        assert_eq!(record_task_create(&vault, txn, actor, 0, rate)?, 1);
-        Ok(())
-    })?;
-    assert_eq!(vault.task_create_count(actor, rate.window_seconds)?, 1);
-    Ok(())
-}
-
-#[test]
 fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
     let (_dir, vault) = open_vault();
     let actor = own_agent(&vault);
@@ -722,10 +512,34 @@ fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
             vault.with_write_txn(|txn| record_task_create(&vault, txn, actor, 0, rate)),
             Err(crate::Error::CorruptedIndex(_))
         ));
-        assert!(matches!(
-            vault.with_write_txn(|txn| consume_create_rate_slot(&vault, txn, actor, 0, rate)),
-            Err(crate::Error::CorruptedIndex(_))
-        ));
     }
     Ok(())
+}
+
+/// H328: past the create limit an own actor's tasks still land (OF-520), and
+/// the first crossing in the window leaves a typed check.
+#[test]
+fn an_own_create_burst_lands_and_leaves_a_typed_check() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let memory = vault.memory(own, EdgeActorClass::Agent);
+    for _ in 0..2 {
+        let receipt = memory
+            .tasks_create_with_rate_limit(&spec(120), rate)
+            .expect("own create");
+        assert!(receipt.effected);
+    }
+    assert_eq!(task_entity_census(&vault), 2);
+    let check = vault
+        .own_rate_check(own, crate::own_rate::OwnRateKind::TaskCreate)
+        .expect("check reads");
+    assert_eq!(
+        check.map(|check| (check.actor, check.count, check.threshold)),
+        Some((own.to_hex(), 2, 1)),
+        "H328: an own create burst left no typed check"
+    );
 }

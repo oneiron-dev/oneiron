@@ -38,7 +38,7 @@ impl BuildCache<'_> {
             return Ok(leg(cached, class, true));
         }
         {
-            let mut txn = self.vault.store.env.write_txn().map_err(Error::from)?;
+            let mut txn = self.vault.store.env.write_txn()?;
             if RUNNING_RESERVATION.contains(&self.vault.store, &txn, key.as_bytes())? {
                 return Err(BuildCacheError::ActionInFlight {
                     action_key: key.to_hex(),

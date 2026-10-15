@@ -4,7 +4,7 @@
 //! trusted local network should place it behind a TLS-terminating reverse proxy.
 
 use std::io::{self, Write};
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,14 +15,15 @@ use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-use crate::auth::revoke_token_jti;
-use crate::build_app;
+use crate::auth::{CoreScope, revoke_token_jti};
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenRevokeArgs,
-    VaultArgs,
+    AgentTier, ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenAgentArgs, TokenBootstrapArgs,
+    TokenPairArgs, TokenReadArgs, TokenRevokeArgs, VaultArgs,
 };
-use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
-use crate::managed::{self, ServeListener};
+#[cfg(test)]
+use crate::config::ServeConfig;
+use crate::config::{ServeArgs, SyncServerConfig, resolve_serve_config};
+use crate::managed;
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
@@ -31,10 +32,15 @@ use crate::skills_pack::{self, OutputMode};
 /// serves — no endpoint, no authority model, and no response interpretation is
 /// added here.
 mod api;
+mod credential_file;
 mod host_init;
 pub use self::host_init::host_init;
+mod host_re_root;
+pub use self::host_re_root::host_re_root;
 
 pub use self::api::api;
+mod mcp_bridge;
+pub use self::mcp_bridge::mcp;
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 /// Below this the auth secret is weak MAC key material; warn, do not refuse.
@@ -62,12 +68,24 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     serve_with_config(config).await
 }
 
+mod history_import;
 mod init;
 pub use init::init;
 mod reembed;
 pub use reembed::reembed;
+mod serve;
+use self::serve::serve_with_config;
+mod dreamer;
+pub use self::dreamer::dreamer_grant;
+mod embedder_serve;
+pub use self::embedder_serve::embedder_serve;
+mod maintain;
+pub use maintain::maintain;
 mod owner;
-pub use owner::{backup, doctor, export, import, restore, runs, secret_scan};
+pub use owner::{
+    backup, doctor, export, import, recover_clock, recover_window, restore, runs, secret_scan,
+    secrets, whoami,
+};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 
@@ -158,6 +176,7 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             holder_ref: Some(owner.to_hex()),
             actor_class: Some("human".into()),
             org_ref: None,
+            write_facet: None,
         },
     )?;
     Ok(oneiron::authority::format_pairing_link(
@@ -165,6 +184,336 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
         &link.code,
         &owner.to_hex(),
     ))
+}
+
+/// What `token read` and `token agent` print: the credential in the SDK's
+/// one-string form and in the CLI's slip-plus-seed form, and the slip id
+/// `token revoke` takes.
+#[derive(serde::Serialize)]
+struct PairedCredential {
+    principal_ref: String,
+    actor_class: String,
+    expires_at: u64,
+    slip_id: String,
+    credential: String,
+    token: String,
+    binding_key: String,
+}
+
+/// A read-only credential for a local agent, minted on the stopped vault.
+///
+/// The same host-rooted doors as `token bootstrap` and `/v1/core/pairing/redeem`:
+/// the host issues a one-use link for an existing principal carrying only
+/// `core:read`, and this process redeems it at once with a fresh connection
+/// key. The slip is logged like every paired slip and revoked by its id.
+pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !args.serve.managed_by_hypnos,
+        "managed vaults pair through their supervisor; local minting is self-host only"
+    );
+    anyhow::ensure!(
+        args.serve.auth_secret.is_none(),
+        "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
+    );
+    let config = resolve_serve_config(&args.serve)?;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let principal_ref = args.principal_ref.unwrap_or_else(|| owner.to_hex());
+    // Pairing names an existing actor whose kind can act as the class asked
+    // for; it never manufactures one. Checked before the vault is rooted.
+    let (principal, _) =
+        oneiron::memory::parse_actor_key(&vault, &format!("{}:{principal_ref}", args.actor_class))
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{principal_ref} cannot hold a {} credential: {}",
+                    args.actor_class,
+                    error.message
+                )
+            })?;
+    let principal = principal.to_hex();
+    vault.ensure_host_root_slip(&issuer)?;
+    let credential = mint_paired_credential(
+        &vault,
+        &issuer,
+        &principal,
+        &args.actor_class,
+        [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
+        args.lifetime_secs,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&credential)?);
+    Ok(())
+}
+
+/// A credential for one named agent, minted on the stopped vault.
+///
+/// The agent acts as a PERSON principal derived from its name (so a second
+/// mint for one name is the same agent with a new slip), of class `agent`,
+/// never the owner. Its tier is ARCH-0028's registration-time tier (see
+/// `agent_tier_authority`), and the latest mint holds: it revokes the
+/// agent's earlier slips and sets its ceiling. The slip comes through the
+/// host-rooted pairing doors `token read` uses and carries only its tier's
+/// verbs: scoped, paired and bound to a fresh connection key, never
+/// owner-grade. `token revoke` takes its slip id.
+pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !args.serve.managed_by_hypnos,
+        "managed vaults pair through their supervisor; local minting is self-host only"
+    );
+    anyhow::ensure!(
+        args.serve.auth_secret.is_none(),
+        "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
+    );
+    anyhow::ensure!(
+        !args.name.is_empty()
+            && args.name.len() <= 64
+            && args
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')),
+        "an agent name is 1 to 64 letters, digits, `-`, `_` or `.`"
+    );
+    anyhow::ensure!(args.lifetime_secs > 0, "--lifetime-secs must be at least 1");
+    // The file exists before the slip does, so a path that cannot be written
+    // fails here rather than after a slip nobody holds is logged.
+    let mut out = match &args.out {
+        Some(path) => Some((path, credential_file::create(path)?)),
+        None => None,
+    };
+    let minted = mint_agent_credential(&args, |credential| match out.as_mut() {
+        Some((path, file)) => file
+            .write_all(format!("{}\n", credential.credential).as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| anyhow::anyhow!("write {}: {error}", path.display())),
+        None => {
+            let printed = serde_json::to_string_pretty(credential)?;
+            writeln!(io::stdout().lock(), "{printed}")
+                .map_err(|error| anyhow::anyhow!("print the credential: {error}"))
+        }
+    });
+    match (minted, out) {
+        (Ok(minted), Some((path, _))) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "principal_ref": minted.credential.principal_ref,
+                    "actor_class": minted.credential.actor_class,
+                    "ceiling": minted.ceiling.as_str(),
+                    "expires_at": minted.credential.expires_at,
+                    "slip_id": minted.credential.slip_id,
+                    "credential_file": path,
+                    "revoked_slip_ids": minted.replaced,
+                }))?
+            );
+            Ok(())
+        }
+        // stdout already holds the credential, as one JSON document.
+        (Ok(minted), None) => {
+            if !minted.replaced.is_empty() {
+                eprintln!(
+                    "revoked {}'s earlier slips: {}",
+                    args.name,
+                    minted.replaced.join(", ")
+                );
+            }
+            Ok(())
+        }
+        (Err(error), out) => {
+            if let Some((path, _)) = out {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(error)
+        }
+    }
+}
+
+/// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
+/// agent's ceiling. Propose-only writes with `core:propose`, which only doors
+/// that hold a write for review honour: `/v1/core/propose`, and the MCP verbs
+/// whose write lands at the agent's `proposed` ceiling (`AgentVerb::proposes`).
+/// `core:write`, which every unbound write door and every MCP write that takes
+/// effect at once requires, is full-access's alone. Nothing else —
+/// `core:auth`, an organization power, a companion scope — is ever an agent's.
+fn agent_tier_authority(
+    tier: AgentTier,
+) -> (
+    std::collections::BTreeSet<String>,
+    oneiron::agent_def::AgentCeiling,
+) {
+    use oneiron::agent_def::AgentCeiling;
+    let (verbs, ceiling): (&[CoreScope], _) = match tier {
+        AgentTier::ReadOnly => (&[CoreScope::Read], AgentCeiling::Proposed),
+        AgentTier::ProposeOnly => (
+            &[CoreScope::Read, CoreScope::Propose],
+            AgentCeiling::Proposed,
+        ),
+        AgentTier::FullAccess => (
+            &[CoreScope::Read, CoreScope::Propose, CoreScope::Write],
+            AgentCeiling::Auto,
+        ),
+    };
+    (
+        verbs.iter().map(|verb| verb.as_str().to_owned()).collect(),
+        ceiling,
+    )
+}
+
+/// `token agent`'s vault half: principal, slip and grant, on the stopped vault.
+/// `deliver` hands the credential to the owner between the slip and the grant.
+fn mint_agent_credential(
+    args: &TokenAgentArgs,
+    deliver: impl FnOnce(&PairedCredential) -> anyhow::Result<()>,
+) -> anyhow::Result<MintedAgent> {
+    let config = resolve_serve_config(&args.serve)?;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).map_err(
+        |error| match error {
+            oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
+                "vault {} is open in a running `oneiron serve`; stop it, mint, and start it again",
+                config.vault_path.display()
+            ),
+            error => anyhow::anyhow!("open vault {}: {error}", config.vault_path.display()),
+        },
+    )?;
+    let owner = crate::owner::local_owner(&vault)?;
+    let principal = vault
+        .ensure_agent_principal(&args.name)
+        .map_err(|error| anyhow::anyhow!("agent {}: {}", args.name, error.message))?;
+    let principal = principal.to_hex();
+    // The same store-truth class check `token read` makes, before rooting.
+    oneiron::memory::parse_actor_key(&vault, &format!("agent:{principal}")).map_err(|error| {
+        anyhow::anyhow!(
+            "agent {} cannot hold a credential: {}",
+            args.name,
+            error.message
+        )
+    })?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let (verbs, ceiling) = agent_tier_authority(args.tier);
+    // The slip, its delivery, the revocation of the agent's earlier slips,
+    // then the grant: the latest mint is the agent's one credential, so no
+    // earlier slip keeps a verb this tier lacks. A mint that fails anywhere
+    // leaves the standing ceiling as it was, and one that fails after the
+    // slip takes the new slip back, so a failure leaves the agent with less,
+    // never more.
+    let credential = mint_paired_credential(
+        &vault,
+        &issuer,
+        &principal,
+        "agent",
+        verbs,
+        args.lifetime_secs,
+    )?;
+    let slip_id = oneiron::authority::CapabilitySlip::from_token(&credential.token)?
+        .claims
+        .slip_id;
+    let granted = deliver(&credential)
+        .and_then(|()| {
+            vault
+                .revoke_held_capability_slips(&issuer, &principal, slip_id)
+                .map_err(anyhow::Error::from)
+        })
+        .and_then(|replaced| {
+            vault
+                .grant_agent_principal(&owner, &principal, ceiling)
+                .map_err(anyhow::Error::from)?;
+            Ok(replaced)
+        });
+    match granted {
+        Ok(replaced) => Ok(MintedAgent {
+            credential,
+            ceiling,
+            replaced: replaced.iter().map(|id| hex(id)).collect(),
+        }),
+        Err(error) => {
+            vault
+                .revoke_capability_slip_once(&issuer, slip_id)
+                .map_err(|revoke| {
+                    anyhow::anyhow!(
+                        "agent {}: {error}; then revoking its new slip {}: {revoke}",
+                        args.name,
+                        credential.slip_id
+                    )
+                })?;
+            Err(error)
+        }
+    }
+}
+
+/// What one `token agent` mint produced: the credential, the ceiling it set,
+/// and the ids of the agent's earlier slips it revoked.
+struct MintedAgent {
+    credential: PairedCredential,
+    ceiling: oneiron::agent_def::AgentCeiling,
+    replaced: Vec<String>,
+}
+
+/// Issues a one-use link for an existing `principal` carrying `verbs`, and
+/// redeems it at once with a fresh connection key: the host-rooted pairing
+/// doors `/v1/core/pairing/redeem` uses, on the stopped vault. The slip is
+/// logged like every paired slip and revoked by its id.
+fn mint_paired_credential(
+    vault: &oneiron::Vault,
+    issuer: &oneiron::authority::HostSlipIssuer,
+    principal: &str,
+    actor_class: &str,
+    verbs: std::collections::BTreeSet<String>,
+    lifetime_secs: u64,
+) -> anyhow::Result<PairedCredential> {
+    use ed25519_dalek::{Signer, SigningKey};
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
+    let link = vault.issue_pairing_link_for_principal(
+        issuer,
+        scope,
+        lifetime_secs,
+        oneiron::authority::PairingPrincipal {
+            holder_ref: Some(principal.to_owned()),
+            actor_class: Some(actor_class.to_owned()),
+            org_ref: None,
+            write_facet: None,
+        },
+    )?;
+    let key = SigningKey::generate(&mut rand_core::OsRng);
+    let binding_key = key.verifying_key().to_bytes();
+    let transcript =
+        oneiron::authority::pairing_binding_transcript(&link.code, &binding_key, principal)?;
+    let slip = vault.redeem_pairing_link(
+        issuer,
+        &link.code,
+        principal,
+        binding_key,
+        &key.sign(&transcript).to_bytes(),
+    )?;
+    let token = slip.to_token()?;
+    let seed = hex(key.as_bytes());
+    let credential = format!(
+        "v2.cred.{}.{seed}",
+        token.strip_prefix("v2.slip.").unwrap_or(&token)
+    );
+    Ok(PairedCredential {
+        principal_ref: principal.to_owned(),
+        actor_class: actor_class.to_owned(),
+        expires_at: slip.claims.expires_at,
+        slip_id: hex(&slip.claims.slip_id),
+        credential,
+        token,
+        binding_key: seed,
+    })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Creates a pairing link on the running server and prints it.
@@ -184,13 +533,19 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         holder_ref: Some(args.principal_ref.clone()),
         actor_class: args.actor_class,
         org_ref: None,
+        write_facet: None,
     };
     let body = serde_json::to_vec(&json!({
         "scope": scope,
         "lifetime_secs": args.lifetime_secs,
         "principal": principal,
     }))?;
-    let (origin, link) = api::create_pairing_link(&args.url, &token, &binding, body)?;
+    let credential = api::CurlCredential {
+        secret: Some(&token),
+        binding: Some(&binding),
+        env: &[args.token_env.clone(), args.binding_key_env.clone()],
+    };
+    let (origin, link) = api::create_pairing_link(&args.url, credential, body)?;
     println!(
         "{}",
         oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)
@@ -412,121 +767,6 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
     }
 }
 
-async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
-    use oneiron_vault_contract::host::{Host, HostLimits};
-
-    tracing::info!(
-        vault_path = %config.vault_path.display(),
-        dimensions = config.dimensions,
-        "starting oneiron sync server"
-    );
-
-    let dicts = resolve_dict_search_paths(&config.dict_search_paths);
-    if let Some(warning) = dicts.warning {
-        tracing::warn!(dict_paths = ?dicts.paths, "{warning}");
-    } else {
-        tracing::info!(dict_paths = ?dicts.paths, "using CJK dictionary search paths");
-    }
-
-    let mut vault_config = config.vault_config();
-    vault_config.dict_search_paths = dicts.paths;
-    let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
-        .map_err(reembed::with_model_change_remedy)?;
-
-    let server_config = config.sync_server_config();
-    match server_config.auth_secret.as_deref() {
-        None if !server_config.allow_unauthenticated => {
-            tracing::warn!(
-                "server started with no auth_secret and allow_unauthenticated=false; refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
-            );
-            if should_warn_public_bind_without_auth(
-                server_config.auth_secret.as_deref(),
-                server_config.allow_unauthenticated,
-                &config.host,
-            ) {
-                tracing::warn!(
-                    host = %config.host,
-                    "server listener is network-exposed while refusing unauthenticated requests"
-                );
-            }
-        }
-        // A nudge, not a wall: short dev secrets keep working.
-        Some(secret) => {
-            if let Some(warning) = weak_auth_secret_warning(secret) {
-                tracing::warn!("{warning}");
-            }
-        }
-        None => {}
-    }
-    let cors_layer = build_cors_layer(&server_config)?;
-
-    // Built before the listener binds: a reachable endpoint that serves the
-    // wrong embedding space must stop serve rather than fill a vault from two
-    // spaces. The local provider downloads nothing here — that is the worker's.
-    //
-    // On a blocking thread because the endpoint probe is a blocking HTTP call,
-    // which must not run on a runtime worker.
-    let embedder_config = config.embedder.clone();
-    let embedder =
-        tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
-            .await
-            .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
-    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
-
-    // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
-    // boot must not silently discard previously relayed updates/tombstones.
-    let sync_server = Arc::new(
-        SyncServer::new(Arc::new(vault), server_config)
-            .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
-            .with_embedder(embedder)
-            .with_tagger(tagger)
-            .with_owner_host(owner_host),
-    );
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    tracing::info!(%addr, "listening");
-
-    // Same bind, named through the listener enum managed mode also uses.
-    // `Tcp` is the only variant this path can produce, so unmanaged serve
-    // still binds host:port and nothing else.
-    let listener = ServeListener::Tcp(addr).bind().await?;
-    let managed::BoundServeListener::Tcp(listener) = listener else {
-        anyhow::bail!("unmanaged serve requires a TCP listener");
-    };
-    let mut host = oneiron_vault_contract::host_adapters::InProcessHost::new(
-        listener.into_std()?,
-        HostLimits::unbounded(),
-        || Ok(()),
-        || Ok(()),
-    );
-    let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
-    let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-    let mut workers = sync_server.spawn_slot_workers();
-    workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
-    let app = build_app(sync_server).layer(cors_layer);
-    host.ready()?;
-    let result = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await;
-    host.on_stop()?;
-    lifecycle_handle.abort();
-    let _ = lifecycle_handle.await;
-    if let Some(handle) = linear_handle {
-        handle.abort();
-        let _ = handle.await;
-    }
-    for handle in workers {
-        handle.abort();
-        let _ = handle.await;
-    }
-    result?;
-
-    Ok(())
-}
-
 pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let client_id = parse_client_id_hex(&args.client)?;
     let config = resolve_serve_config(&args.serve)?;
@@ -539,8 +779,16 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
-        .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
+    let vault =
+        oneiron::Vault::open_owned(&config.vault_path, vault_config).map_err(|e| match e {
+            // The running server owns the vault and its leases: revoke there.
+            oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
+                "vault {} is open in a running server; revoke the lease through it with POST \
+             /api/lease/revoke, or stop the server and run revoke again",
+                config.vault_path.display()
+            ),
+            e => anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()),
+        })?;
     let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
 
@@ -592,8 +840,9 @@ fn print_doctor_report(vault: &oneiron::Vault) -> anyhow::Result<()> {
 }
 
 fn init_tracing(log_level: &str) {
+    use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    let _ = crate::logging::subscriber(filter, io::stdout).try_init();
 }
 
 pub fn resolve_dict_search_paths(configured_paths: &[PathBuf]) -> DictSearchResolution {
@@ -710,5 +959,7 @@ fn parse_allowed_origins(origins: &[String]) -> anyhow::Result<Vec<HeaderValue>>
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, unix))]
+mod unauthenticated_bind_tests;
 #[cfg(all(test, unix))]
 mod writer_lease_tests;

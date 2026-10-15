@@ -7,7 +7,7 @@ use crate::batch::LONG_INTERVAL_THRESHOLD_SECS;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fusion;
-use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, Store};
+use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, Store, StoreRead};
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::claim_status_gate_allows;
@@ -58,6 +58,9 @@ pub(super) struct RetrievalBlendConfig<'a> {
 pub(super) struct RetrievalChannelIndexes {
     pub(super) vector: Option<usize>,
     pub(super) text: Option<usize>,
+    /// Scored as a full fusion-length list of hits and non-hits, not over
+    /// its hits alone (see [`fusion::retrieval_candidates_from_ranked_lists`]).
+    pub(super) phonetic: Option<usize>,
 }
 
 pub(super) struct BlendedRetrievalScores {
@@ -94,7 +97,7 @@ pub(super) fn retrieval_blend_weights_for_scoring(
 pub(super) fn blended_retrieval_scores(
     ranked_lists: &[Vec<ScoredEntity>],
     channel_indexes: RetrievalChannelIndexes,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     claim_gate: &mut ClaimStatusGateCache,
@@ -102,7 +105,10 @@ pub(super) fn blended_retrieval_scores(
     access_now_secs: u64,
     weights: RetrievalBlendWeights,
 ) -> Result<BlendedRetrievalScores> {
-    let mut inputs = fusion::retrieval_candidates_from_ranked_lists(ranked_lists);
+    let mut inputs = fusion::retrieval_candidates_from_ranked_lists(
+        ranked_lists,
+        channel_indexes.phonetic.as_slice(),
+    );
     let cosine_ghosts = if config.gravity {
         cosine_ghost_set(ranked_lists, channel_indexes.vector, channel_indexes.text)
     } else {
@@ -212,7 +218,7 @@ pub(super) fn blended_retrieval_scores(
 /// scored) — keep the neutral `1.0`.
 fn populate_access_factors(
     inputs: &mut [fusion::RetrievalBlendInput],
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     claim_gate: &mut ClaimStatusGateCache,
@@ -282,7 +288,7 @@ pub(super) fn cosine_ghost_set(
 pub(super) fn boost_contiguity(
     scores: &mut [ScoredEntity],
     temporal_config: Option<&TemporalSearchConfig>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<()> {

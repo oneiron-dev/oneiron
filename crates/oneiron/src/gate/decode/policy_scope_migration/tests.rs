@@ -34,6 +34,9 @@ fn manifest(version: &str, grants: Vec<Value>) -> Vec<u8> {
             *value = version.into();
         }
     }
+    // The fixture's grant table is exactly `grants`; the shipped Dreamer row
+    // is current-schema and would not be a legacy row.
+    entries.retain(|(key, _)| key.as_str() != Some(POLICY_SCOPED_GRANTS_KEY));
     entries.push((POLICY_SCOPED_GRANTS_KEY.into(), Value::Array(grants)));
     encode(&Value::Map(entries))
 }

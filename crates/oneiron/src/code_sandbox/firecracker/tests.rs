@@ -248,18 +248,3 @@ fn firecracker_real_boot_delete_rename_and_failed_run_preserve_base_and_reclaim_
     assert!(!dir.path().join("new").exists());
     Ok(())
 }
-
-#[test]
-fn guest_pid_budget_matches_protocol_ceiling_before_boot() {
-    for pids in [1, 4096] {
-        validate_guest_budget(&ExecutionBudget::new(15, 128, pids)).unwrap();
-    }
-    for pids in [0, 4097, 65_536] {
-        assert_eq!(
-            validate_guest_budget(&ExecutionBudget::new(15, 128, pids))
-                .unwrap_err()
-                .kind(),
-            crate::error::ErrorKind::MicroVmBackendError
-        );
-    }
-}

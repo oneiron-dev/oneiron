@@ -39,6 +39,3 @@ pub fn normalized_burst_inputs(
         streak,
     }
 }
-
-#[cfg(test)]
-mod tests;

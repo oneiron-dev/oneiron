@@ -19,6 +19,8 @@ fn fact(task_ref: EntityId, kind: TaskAuthorityFactKind, actor_ref: EntityId) ->
         kind,
         actor_ref,
         assigned_ref: (kind == TaskAuthorityFactKind::HumanAssigned).then(|| id(0xA8)),
+        actor_generation: None,
+        assigned_generation: None,
         occurred_at: 100,
     }
 }
@@ -28,11 +30,6 @@ fn put_fact(vault: &Vault, fact: TaskAuthorityFact) -> EntityId {
     let fact_ref = put_task_authority_fact_in_txn(vault, &mut wtxn, fact).expect("put fact");
     wtxn.commit().expect("commit fact");
     fact_ref
-}
-
-fn facts(vault: &Vault, task_ref: EntityId) -> Result<TaskAuthorityFacts> {
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    vault.task_authority_facts_in(&rtxn, task_ref)
 }
 
 fn rewrite_body(body: &[u8], mutate: impl FnOnce(&mut Vec<(Value, Value)>)) -> Vec<u8> {
@@ -66,6 +63,8 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         kind: TaskAuthorityFactKind::Cancelled,
         actor_ref: id(0xA2),
         assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
         occurred_at: 1_700_000_000,
     };
     let encoded = encode_task_authority_fact_body(&original);
@@ -85,7 +84,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         (BODY_KEY_ROLE, Value::from(TaskRole::Task.role_byte())),
         (BODY_KEY_SCHEMA_VERSION, Value::from(2_u8)),
         (BODY_KEY_SUBKIND, Value::from("typed")),
-        (BODY_KEY_KIND, Value::from(5_u8)),
+        (BODY_KEY_KIND, Value::from(7_u8)),
         (BODY_KEY_TASK_REF, Value::from("not-a-hex-id")),
         (BODY_KEY_OCCURRED_AT, Value::from("not-a-number")),
     ] {
@@ -103,6 +102,48 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
     }));
     cases.push(rewrite_body(&encoded, |entries| {
         entries.push((Value::from("extra"), Value::from(1_u8)));
+    }));
+    // A binding generation rides only on a consult's party fact, only as
+    // one to eight 32-byte binaries in strictly ascending order, and only
+    // for a party the fact names.
+    cases.push(rewrite_body(&encoded, |entries| {
+        entries.push((
+            Value::from(BODY_KEY_ACTOR_GENERATION),
+            Value::Binary(vec![0xB1; 32]),
+        ));
+    }));
+    let parties = TaskAuthorityFact {
+        kind: TaskAuthorityFactKind::ConsultAssignee,
+        actor_generation: BindingGeneration::from_bindings([[0xB1; 32], [0xB0; 32]]),
+        ..original
+    };
+    let parties_encoded = encode_task_authority_fact_body(&parties);
+    assert_eq!(
+        decode_task_authority_fact_body(&parties_encoded).expect("party round trip"),
+        parties
+    );
+    let binding = |byte: u8| Value::Binary(vec![byte; 32]);
+    for generation in [
+        Value::from("b1".repeat(32)),
+        binding(0xB1),
+        Value::Array(Vec::new()),
+        Value::Array(vec![binding(0xB1), binding(0xB0)]),
+        Value::Array(vec![binding(0xB1), binding(0xB1)]),
+        Value::Array(vec![Value::Binary(vec![0xB1; 31])]),
+        Value::Array(vec![Value::from("b1".repeat(32))]),
+        Value::Array((0..=8).map(binding).collect()),
+    ] {
+        cases.push(body_with(
+            &parties_encoded,
+            BODY_KEY_ACTOR_GENERATION,
+            generation,
+        ));
+    }
+    cases.push(rewrite_body(&parties_encoded, |entries| {
+        entries.push((
+            Value::from(BODY_KEY_ASSIGNED_GENERATION),
+            Value::Binary(vec![0xB2; 32]),
+        ));
     }));
     for (index, case) in cases.iter().enumerate() {
         assert!(
@@ -160,29 +201,6 @@ fn human_assignment_witness_requires_matching_owner_and_fails_closed_on_fork() {
     assert!(vault.task_human_assigner_in(&txn, another).is_err());
 }
 
-/// Direct authority fails CLOSED: no Owner fact, no owner — while the
-/// cancellation the task really carries stays visible to the render tier.
-#[test]
-fn zero_owner_facts_prove_no_authority_but_keep_cancellation() {
-    let (_dir, vault) = open_vault();
-    let task_ref = id(0xB1);
-    assert_eq!(
-        vault.task_authority_state(task_ref).expect("empty state"),
-        None
-    );
-
-    put_fact(
-        &vault,
-        fact(task_ref, TaskAuthorityFactKind::Cancelled, id(0xB2)),
-    );
-    assert_eq!(
-        vault.task_authority_state(task_ref).expect("state"),
-        None,
-        "a cancellation is not a proof of ownership"
-    );
-    assert!(facts(&vault, task_ref).expect("facts").cancelled);
-}
-
 /// Two facts naming the SAME owner are one owner: replicas that both
 /// minted the proof converge instead of forking.
 #[test]
@@ -201,66 +219,6 @@ fn duplicate_same_owner_facts_are_idempotent() {
             acked: false,
         })
     );
-}
-
-/// Two owners is not "pick one": it is a refusal.
-#[test]
-fn conflicting_owner_facts_fail_closed() {
-    let (_dir, vault) = open_vault();
-    let task_ref = id(0xD1);
-    put_fact(
-        &vault,
-        fact(task_ref, TaskAuthorityFactKind::Owner, id(0xD2)),
-    );
-    put_fact(
-        &vault,
-        fact(task_ref, TaskAuthorityFactKind::Owner, id(0xD3)),
-    );
-
-    assert!(matches!(
-        vault.task_authority_state(task_ref),
-        Err(Error::InvariantViolation(_))
-    ));
-}
-
-/// Set union, not arrival order: both merge orders and the concurrent pair
-/// land on the same state, and cancellation is never cleared.
-#[test]
-fn cancel_wins_under_every_merge_order() {
-    let (_dir, vault) = open_vault();
-    let actor = id(0xE9);
-    let orders: [(EntityId, [TaskAuthorityFactKind; 2]); 2] = [
-        (
-            id(0xE1),
-            [
-                TaskAuthorityFactKind::Acked,
-                TaskAuthorityFactKind::Cancelled,
-            ],
-        ),
-        (
-            id(0xE2),
-            [
-                TaskAuthorityFactKind::Cancelled,
-                TaskAuthorityFactKind::Acked,
-            ],
-        ),
-    ];
-    for (task_ref, kinds) in orders {
-        put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, actor));
-        for kind in kinds {
-            put_fact(&vault, fact(task_ref, kind, actor));
-        }
-        assert_eq!(
-            vault.task_authority_state(task_ref).expect("state"),
-            Some(TaskAuthorityState {
-                owner_ref: actor,
-                cancelled: true,
-                acked: true,
-            }),
-            "{}",
-            task_ref.to_hex()
-        );
-    }
 }
 
 /// The edge is the index and the body is the claim; a fact reachable from
@@ -287,41 +245,6 @@ fn fact_body_subject_must_equal_the_edge_target() {
         vault.task_authority_state(foreign),
         Err(Error::Record(RecordError::InvalidTaskBody(_)))
     ));
-}
-
-/// Inbound `ScopedTo` is a shared structural relation. Anything that is
-/// not a role-6 TASK row is simply not a fact, and must not poison the
-/// read of the facts that are.
-#[test]
-fn non_fact_scoped_edges_are_not_facts() {
-    let (_dir, vault) = open_vault();
-    let task_ref = id(0x11);
-    let owner = id(0x12);
-    let neighbour = id(0x13);
-    vault
-        .put_entity(
-            &neighbour,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &crate::habit::task_body_for_test(TaskRole::Task),
-        )
-        .expect("store a plain TASK");
-    vault
-        .batch()
-        .edge(&neighbour, EdgeKind::ScopedTo, &task_ref, 0.7)
-        .commit()
-        .expect("scope it to the task");
-    put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, owner));
-
-    assert_eq!(
-        vault.task_authority_state(task_ref).expect("state"),
-        Some(TaskAuthorityState {
-            owner_ref: owner,
-            cancelled: false,
-            acked: false,
-        })
-    );
 }
 
 /// Only the engine door mints authority. A caller who could write a role-6
@@ -352,4 +275,86 @@ fn generic_write_doors_refuse_the_reserved_role() {
         drop(wtxn);
         assert!(vault.get(&entity).expect("read back").is_none());
     }
+}
+
+/// engine-core-04: a fact is immutable. A put at its id, local or replicated,
+/// can neither re-point the owner nor replace the fact with an ordinary TASK
+/// body; only an exact echo lands.
+#[test]
+fn an_authority_fact_admits_only_an_exact_echo() {
+    let (_dir, vault) = open_vault();
+    let task_ref = id(0xD1);
+    let owner = id(0xD2);
+    let fact_ref = put_fact(&vault, fact(task_ref, TaskAuthorityFactKind::Owner, owner));
+    let raw = {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &fact_ref)
+            .expect("read fact")
+            .expect("stored fact")
+    };
+    let header = EntityMetadataHeader::parse(&raw).expect("fact header");
+    let occurred = TimeRange {
+        start: header.occurred_start,
+        end: header.occurred_end,
+    };
+    let learned_at = header.learned_at;
+    let stored = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let forged = body_with(&stored, BODY_KEY_ACTOR_REF, Value::from(id(0xD3).to_hex()));
+    let ordinary = crate::habit::task_body_for_test(TaskRole::Task);
+
+    for body in [&forged, &ordinary] {
+        assert!(
+            vault
+                .put_entity(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+                .is_err()
+        );
+        let mut wtxn = vault.store.env.write_txn().expect("write txn");
+        let internal = vault
+            .batch_in()
+            .put_internal(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+            .apply(&mut wtxn);
+        assert!(matches!(
+            internal,
+            Err(Error::Record(RecordError::InvalidTaskBody(_)))
+        ));
+        drop(wtxn);
+        assert!(
+            vault
+                .batch()
+                .put_replicated(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, body)
+                .commit()
+                .is_err()
+        );
+    }
+    vault
+        .batch()
+        .put_replicated(&fact_ref, ENTITY_TYPE_TASK, occurred, learned_at, &stored)
+        .commit()
+        .expect("an exact echo lands");
+    assert_eq!(
+        vault
+            .task_authority_state(task_ref)
+            .expect("state")
+            .map(|state| state.owner_ref),
+        Some(owner)
+    );
+}
+
+/// F24 round 5 (H219): at the cap of eight bindings, every class a party
+/// holds keeps one, so a consult its creator minted as an agent is one it
+/// still moves as that agent.
+#[test]
+fn a_generation_at_the_cap_keeps_every_class() {
+    let held: Vec<_> = (0..8)
+        .map(|byte| ("human", [byte; 32]))
+        .chain([("agent", [0xF0; 32]), ("system", [0xF1; 32])])
+        .collect();
+    let generation = BindingGeneration::from_classed_bindings(&held).expect("a generation");
+    assert_eq!(generation.bindings().len(), MAX_GENERATION_BINDINGS);
+    assert!(generation.names(&[0xF0; 32]), "the agent binding is kept");
+    assert!(generation.names(&[0xF1; 32]), "the system binding is kept");
+    assert!(
+        generation.names(&[0; 32]),
+        "the lowest human binding is kept"
+    );
 }

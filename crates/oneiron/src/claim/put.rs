@@ -158,6 +158,8 @@ impl Vault {
         )
     }
 
+    /// `landing` runs first in the write transaction; its refusal writes
+    /// nothing. (An off-record stretch on record checks its saver there.)
     pub(crate) fn put_claim_candidate_without_lexical_query_reconcile(
         &self,
         id: &EntityId,
@@ -165,6 +167,7 @@ impl Vault {
         envelope: &WriteEnvelope,
         occurred: TimeRange,
         learned_at: u64,
+        landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         // Same family rule the public batch doors carry, on the door the
         // code-run traps reach. This helper skips the lexical-query
@@ -175,6 +178,7 @@ impl Vault {
         // covered by the one check because both arrive through this door.
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
+        landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
         apply_ops_with_gate_mode(
@@ -199,6 +203,8 @@ impl Vault {
         Ok(())
     }
 
+    /// `landing` runs first in the write transaction; its refusal writes
+    /// nothing, not even a gate receipt.
     #[expect(
         clippy::too_many_arguments,
         reason = "code-run write trap commits both typed gate checks and transition atomically"
@@ -213,12 +219,14 @@ impl Vault {
         claim_gate_body: &ClaimBody,
         edge_gate_id: EntityId,
         edge_gate_body: &ClaimBody,
+        landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
         let mut wtxn = self.store.env.write_txn()?;
+        landing(&wtxn)?;
         self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
         // The write-verb guard runs BEFORE the gate checks, because those
         // deliberately COMMIT their decision receipts on rejection. A stale
@@ -325,6 +333,8 @@ impl Vault {
         Ok(())
     }
 
+    /// `landing` runs first in the write transaction; its refusal writes
+    /// nothing, not even a gate receipt.
     #[expect(
         clippy::too_many_arguments,
         reason = "code-run edge trap carries gate material plus edge tuple"
@@ -338,8 +348,10 @@ impl Vault {
         envelope: &WriteEnvelope,
         gate_id: EntityId,
         gate_body: &ClaimBody,
+        landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        landing(&wtxn)?;
         self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         // The edge verb's gate body is host-typed synthetic effect material

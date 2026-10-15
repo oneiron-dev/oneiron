@@ -209,20 +209,25 @@ impl Store {
     }
 
     pub(crate) fn record_retrieval_run(&self, record: &RetrievalRunRecord) -> Result<()> {
-        self.record_retrieval_run_with_visibility(record, true)
+        self.record_retrieval_run_admitted(record, true, &|_| Ok(()))
     }
 
     pub(crate) fn record_context_pack_provisional_retrieval_run(
         &self,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
-        self.record_retrieval_run_with_visibility(record, false)
+        self.record_retrieval_run_admitted(record, false, &|_| Ok(()))
     }
 
-    fn record_retrieval_run_with_visibility(
+    /// Records `record`, published or provisional, with `admit` run first in
+    /// the write's own transaction. A refusal there writes nothing and leaves
+    /// the write fuse alone: the caller's authority lapsed, the store did not
+    /// fail.
+    pub(crate) fn record_retrieval_run_admitted(
         &self,
         record: &RetrievalRunRecord,
         published: bool,
+        admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         if !self.retrieval_telemetry_writes_enabled() {
             return Err(Error::InvariantViolation(
@@ -246,24 +251,28 @@ impl Store {
             ));
         }
 
-        let result = (|| {
-            let mut wtxn = self.env.write_txn()?;
-            if published {
-                super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
+        // Joins the vault's group commit; a failure here drops only this row.
+        let mut refused = false;
+        let result = self.write_in_group(|wtxn| {
+            if let Err(refusal) = admit(wtxn) {
+                refused = true;
+                return Err(refusal);
             }
-            stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
+            if published {
+                super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
+            }
+            stage_retrieval_run_with_visibility(self, wtxn, record, published)?;
             if published {
                 super::retention::put_retrieval_age(
                     self,
-                    &mut wtxn,
+                    wtxn,
                     record.run_id,
                     self.clock.now_recorded_at(),
                 )?;
             }
-            wtxn.commit()?;
             Ok(())
-        })();
-        if result.is_err() {
+        });
+        if result.is_err() && !refused {
             self.retrieval_writes_disabled
                 .store(true, std::sync::atomic::Ordering::Release);
         }
@@ -277,10 +286,7 @@ impl Store {
             ));
         }
 
-        let mut wtxn = self.env.write_txn()?;
-        stage_retrieval_run_delete(self, &mut wtxn, run_id)?;
-        wtxn.commit()?;
-        Ok(())
+        self.write_in_group(|wtxn| stage_retrieval_run_delete(self, wtxn, run_id))
     }
 
     /// Publishes the caller's scope count and surfaced ids atomically.
@@ -290,28 +296,39 @@ impl Store {
         &self,
         finalize: RetrievalRunFinalize<'_>,
     ) -> Result<()> {
+        self.finalize_context_pack_retrieval_run_admitted(finalize, &|_| Ok(()))
+    }
+
+    /// [`Self::finalize_context_pack_retrieval_run`] with `admit` run first
+    /// in the write's own transaction; a refusal there publishes nothing.
+    pub(crate) fn finalize_context_pack_retrieval_run_admitted(
+        &self,
+        finalize: RetrievalRunFinalize<'_>,
+        admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
                 "context-pack retrieval telemetry skipped inside active write transaction",
             ));
         }
 
-        let mut wtxn = self.env.write_txn()?;
-        let run_id = finalize.run_id;
-        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &wtxn, &run_id)? {
-            super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
-        }
-        stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
-        if RETRIEVAL_RUN.contains(self, &wtxn, &run_id)? {
-            super::retention::put_retrieval_age(
-                self,
-                &mut wtxn,
-                run_id,
-                self.clock.now_recorded_at(),
-            )?;
-        }
-        wtxn.commit()?;
-        Ok(())
+        self.write_in_group(|wtxn| {
+            admit(wtxn)?;
+            let run_id = finalize.run_id;
+            if RETRIEVAL_RUN_PROVISIONAL.contains(self, wtxn, &run_id)? {
+                super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
+            }
+            stage_context_pack_retrieval_run_finalize(self, wtxn, finalize)?;
+            if RETRIEVAL_RUN.contains(self, wtxn, &run_id)? {
+                super::retention::put_retrieval_age(
+                    self,
+                    wtxn,
+                    run_id,
+                    self.clock.now_recorded_at(),
+                )?;
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
@@ -481,7 +498,7 @@ fn read_retrieval_runs_in_txn(
 /// into `target`'s `vault_meta` (ONE-1728 K11).
 ///
 /// The base path is byte-identical because it IS this body: `Store`'s
-/// `record_retrieval_run_with_visibility` opens the txn and calls here. A
+/// `record_retrieval_run_admitted` opens the txn and calls here. A
 /// session target passes its `SessionStoreView`, so an OffRecord run's row
 /// stages into the overlay keyspace and evaporates at close — the base
 /// telemetry ledger gains nothing (ARCH-0052 §7 / K10).
@@ -543,7 +560,6 @@ fn stage_context_pack_retrieval_run_finalize(
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
-        pack_output,
         pack_config,
     } = finalize;
     let Some(mut record) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)? else {
@@ -585,7 +601,6 @@ fn stage_context_pack_retrieval_run_finalize(
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     record.empty_reason = empty_reason;
-    record.pack_output = pack_output;
     if let Some(pack_config) = pack_config
         && let Some(inputs) = record.replay_inputs.as_mut()
     {
@@ -606,15 +621,6 @@ fn stage_context_pack_retrieval_run_finalize(
 #[cfg(test)]
 pub(in crate::store) fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
     RETRIEVAL_RUN.key_bytes(&run_id)
-}
-
-/// Test-only, see [`retrieval_run_key`].
-#[cfg(test)]
-pub(in crate::store) fn retrieval_trace_fork_key(
-    fork_hash: &RetrievalTraceForkHash,
-    run_id: RetrievalRunId,
-) -> Vec<u8> {
-    RETRIEVAL_TRACE_FORK_INDEX.key_bytes(&(*fork_hash, run_id))
 }
 
 fn is_unknown_retrieval_trace_fork_hash(fork_hash: &RetrievalTraceForkHash) -> bool {

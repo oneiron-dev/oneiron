@@ -161,9 +161,19 @@ pub(crate) fn dispatch(
     verb: &str,
     body: Value,
 ) -> Result<Json<Value>, ApiError> {
+    // The surface reads its records raw, under no credential key, so a
+    // credential narrowed to some records is refused on reads as `require`
+    // refuses it on writes: its records cannot bound what comes back.
+    auth.require_unrestricted_record_scope()?;
     auth.require(scope)?;
     let actor = surface_actor(auth)?;
-    let facade = server.vault.memory(actor, oneiron::EdgeActorClass::Human);
+    let facade = super::credential_memory(
+        &server.vault,
+        Some(auth),
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .at(auth.locality());
     let reply = invoke_campaign_surface(
         &facade,
         SurfaceCall {
@@ -231,7 +241,7 @@ pub(crate) fn surface_error(error: oneiron::MemoryError) -> ApiError {
             error.suggestions,
         ),
         oneiron::MEMORY_CODE_INTERNAL => {
-            tracing::error!(error = %error.message, "campaign surface failed");
+            tracing::error!(code = %error.code, "campaign surface failed");
             ApiError::internal_server_error("campaign surface failed")
         }
         _ => ApiError::new(

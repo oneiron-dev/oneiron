@@ -111,7 +111,7 @@ impl ControlKeys {
         expires_at: Option<u64>,
     ) -> Result<KeyRecord, KeyError> {
         let row = self.row(plaintext, scopes, now, expires_at)?;
-        self.vault.try_with_write_txn(|txn| {
+        self.vault.try_with_write_txn_grouped(|txn| {
             let key = format!("{PREFIX}{}", row.digest);
             if self.vault.sync_state_get_in_write_txn(txn, &key)?.is_some() {
                 return Err(KeyError::Duplicate);
@@ -132,7 +132,7 @@ impl ControlKeys {
     ) -> Result<KeyRecord, KeyError> {
         let started = Instant::now();
         let key = format!("{PREFIX}{}", self.digest(plaintext));
-        let result = self.vault.try_with_write_txn(|txn| {
+        let result = self.vault.try_with_write_txn_grouped(|txn| {
             let bytes = self
                 .vault
                 .sync_state_get_in_write_txn(txn, &key)?
@@ -159,7 +159,7 @@ impl ControlKeys {
     /// original live; a successful replacement revokes it in the same commit.
     pub fn rotate(&self, old: &[u8], new: &[u8], now: u64) -> Result<KeyRecord, KeyError> {
         let old_key = format!("{PREFIX}{}", self.digest(old));
-        self.vault.try_with_write_txn(|txn| {
+        self.vault.try_with_write_txn_grouped(|txn| {
             let bytes = self
                 .vault
                 .sync_state_get_in_write_txn(txn, &old_key)?
@@ -188,7 +188,7 @@ impl ControlKeys {
     }
     pub fn revoke(&self, plaintext: &[u8]) -> Result<(), KeyError> {
         let key = format!("{PREFIX}{}", self.digest(plaintext));
-        self.vault.try_with_write_txn(|txn| {
+        self.vault.try_with_write_txn_grouped(|txn| {
             let bytes = self
                 .vault
                 .sync_state_get_in_write_txn(txn, &key)?

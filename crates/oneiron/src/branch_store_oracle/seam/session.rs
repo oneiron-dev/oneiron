@@ -47,6 +47,9 @@ pub(in crate::branch_store_oracle) struct SessionVault<'vault> {
     /// `bind_actor` BEFORE taking their census, putting the actor in the
     /// baseline instead of making it look like session residue.
     pub(super) actor: Option<EntityId>,
+    /// The vault owner's proof the flip and promote take, made with the
+    /// actor so that a census taken after `bind_actor` gains no row of it.
+    pub(super) owner: Option<crate::consent::AuthenticatedOwner>,
 }
 
 /// One (key, value) row as the model oracle sees it.
@@ -57,18 +60,16 @@ const WITNESS_OCCURRED_AT: u64 = 1;
 
 /// Placeholder TYPED refusals for every contract that pins a typed
 /// error / fail-closed behavior (ONE-1726 budget+lease, ONE-1727
-/// kill-switch+single-shot, ONE-1728 taint, ONE-1729 policy, ONE-1732
-/// ABI gate). The arming ticket maps each variant onto the real error
-/// type; VARIANT-LEVEL DISCRIMINATION must survive the mapping — these
-/// tests assert exact variants, never bare `is_err()`.
+/// kill-switch+single-shot, ONE-1729 policy). The arming ticket maps each
+/// variant onto the real error type; VARIANT-LEVEL DISCRIMINATION must
+/// survive the mapping — these tests assert exact variants, never bare
+/// `is_err()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SeamError {
     /// ONE-1727: `off_record_enabled = false` — enter fails closed.
     KillSwitchDisabled,
     /// ONE-1727: re-entering a session ref that is still live.
     SessionRefLive,
-    /// ONE-1728: base batch preflight taint-guard rejection.
-    TaintedBaseWrite,
     /// ONE-1729: guest-supplied turn_ref policy rejection.
     GuestTurnRef,
     /// ONE-1729: durable-memory-write verb policy rejection.
@@ -81,8 +82,6 @@ pub(crate) enum SeamError {
     OverlayFull,
     /// ONE-1726: generation-stamped lease refused after close.
     LeaseClosed,
-    /// ONE-1732: the STORAGE_ABI gate fails closed.
-    AbiFailClosed,
 }
 
 pub(crate) type SeamResult<T> = std::result::Result<T, SeamError>;
@@ -103,6 +102,7 @@ impl<'vault> SessionVault<'vault> {
                 session,
                 vault,
                 actor: None,
+                owner: None,
             })
             .map_err(map_session_error)
     }
@@ -125,6 +125,7 @@ impl<'vault> SessionVault<'vault> {
                 session,
                 vault,
                 actor: None,
+                owner: None,
             })
             .map_err(map_session_error)
     }
@@ -172,7 +173,16 @@ impl<'vault> SessionVault<'vault> {
             b"branch-store oracle witness actor",
         )?;
         self.actor = Some(actor);
+        self.owner = Some(crate::test_util::embedded_owner_proof(self.vault));
         Ok(actor)
+    }
+
+    /// The vault owner's proof the flip and promote take (H203: alone or in
+    /// a room, only the owner's): the one `bind_actor` made, else a new one.
+    pub(in crate::branch_store_oracle) fn owner_proof(&self) -> crate::consent::AuthenticatedOwner {
+        self.owner
+            .clone()
+            .unwrap_or_else(|| crate::test_util::embedded_owner_proof(self.vault))
     }
 
     /// ONE-1727: witness one turn (+ PartOf MESSAGE, DerivedFrom SUMMARY)
@@ -421,7 +431,7 @@ impl<'vault> SessionVault<'vault> {
 
     /// ONE-1727: mode flip (OffRecord <-> OnRecord).
     pub(crate) fn flip_on_record(&self) -> Result<()> {
-        self.session.flip_on_record()
+        self.session.flip_on_record_as(&self.owner_proof())
     }
 
     /// ONE-1726 test seam: drain leases and drop the overlay. ONE-1727
@@ -491,7 +501,7 @@ impl<'vault> SessionVault<'vault> {
     /// closure (from the TYPED journal) and the temp->canonical short-id
     /// mapping.
     pub(crate) fn promote_turn(&self, turn: &EntityId) -> Result<PromoteOutcome> {
-        self.session.promote_turn(turn)
+        self.session.promote_turn_as(&self.owner_proof(), turn)
     }
 
     /// ONE-1730 ARMED: the fresh conversation shell wrapping a witnessed

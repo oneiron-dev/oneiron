@@ -20,6 +20,9 @@ use super::super::types::{
 pub struct ContextPackBuilder<'a> {
     pub(super) pipeline: PipelineBuilder<'a>,
     pub(super) vault: &'a Vault,
+    /// The content this pack retrieves, hydrates and walks: the vault's own,
+    /// or a room's overlay ∪ base ([`Self::reading`]).
+    pub(super) read: crate::store::StoreRead<'a>,
     pub(super) hydrate: bool,
     pub(super) read_mode: crate::vault::ReadMode,
     pub(super) criticality: Option<bool>,
@@ -50,6 +53,9 @@ pub struct ContextPackBuilder<'a> {
     pub(super) psych_profile_key: Option<PsychProfileKey>,
     pub(super) l2_summary_subjects: Vec<EntityId>,
     pub(super) l2_summary_reader: Option<&'a crate::claim::ScopedRead<'a>>,
+    /// Whether the pack is for a caller off this device; see
+    /// [`Self::caller_off_device`]. Its edge walk admits no device-local row.
+    pub(super) off_device: bool,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -96,6 +102,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
+            read: vault.store.read(),
             vault,
             hydrate: true,
             read_mode: crate::vault::ReadMode::Indexed,
@@ -122,6 +129,7 @@ impl<'a> ContextPackBuilder<'a> {
             psych_profile_key: None,
             l2_summary_subjects: Vec::new(),
             l2_summary_reader: None,
+            off_device: false,
         }
     }
 
@@ -142,6 +150,16 @@ impl<'a> ContextPackBuilder<'a> {
     ) -> Self {
         self.pipeline = self.pipeline.in_session(session);
         self.session = Some(session);
+        self
+    }
+
+    /// Reads this pack's content through `read`: a room's view, so its
+    /// retrieval, hydration, edges and references see the room's overlay ∪
+    /// base (ARCH-0052 §2). The read target must be the same vault's;
+    /// telemetry routing stays with [`Self::in_session`].
+    pub(crate) fn reading(mut self, read: crate::store::StoreRead<'a>) -> Self {
+        self.pipeline = self.pipeline.reading(read);
+        self.read = read;
         self
     }
 
@@ -188,7 +206,7 @@ impl<'a> ContextPackBuilder<'a> {
     /// it before assembly, not only filter the rendered response afterwards.
     pub fn l2_summary_reader(mut self, reader: &'a crate::claim::ScopedRead<'a>) -> Self {
         self.l2_summary_reader = Some(reader);
-        self
+        self.caller_off_device(reader.off_device())
     }
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
@@ -328,6 +346,23 @@ impl<'a> ContextPackBuilder<'a> {
     /// freeze the timestamp.
     pub fn with_temporal_now(mut self, now: u64) -> Self {
         self.pipeline = self.pipeline.with_temporal_now(now);
+        self
+    }
+
+    /// Builds the pack's memory results alone. Skill and agent discovery
+    /// runs a full retrieval each; a caller that reads only `results`, never
+    /// `capabilities`, skips that work. Such a pack is empty when it holds no
+    /// memory: its `empty` marker and the run's empty reason say so, where a
+    /// skill or agent hit the caller never shows used to hide it.
+    pub(crate) fn memory_results_only(mut self) -> Self {
+        self.pipeline = self.pipeline.memory_lane_only();
+        self
+    }
+
+    /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
+    /// [`PipelineBuilder::fold_messages_into_turns`].
+    pub(crate) fn fold_messages_into_turns(mut self, fold: crate::pipeline::TurnFold) -> Self {
+        self.pipeline = self.pipeline.fold_messages_into_turns(fold);
         self
     }
 

@@ -53,7 +53,7 @@ pub(crate) fn settle_ask_if_due(vault: &Vault, id: EntityId) -> Result<()> {
         return Ok(());
     }
     drop(txn);
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         settle_in(vault, txn, id, vault.store.clock.now_recorded_at()).map(|_| ())
     })
 }
@@ -322,6 +322,43 @@ pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -
     Ok(false)
 }
 
+/// Where an ask group stands for the cut [`settle_in`] makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AskStanding {
+    /// A settlement already closes the ask, whatever it would read now.
+    pub(crate) settled: bool,
+    /// [`is_stale`] holds it: it settles as stale, with no decision.
+    pub(crate) stale: bool,
+}
+
+/// How the ask group `id` stands, read through the readers [`settle_in`]
+/// calls before it cuts, without cutting; `None` when `id` names no ask
+/// group. A pure read, for a caller holding no write transaction.
+pub(crate) fn ask_standing_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<AskStanding>> {
+    let Some(group) = ask_record::read_group(vault, txn, id)? else {
+        return Ok(None);
+    };
+    Ok(Some(AskStanding {
+        settled: read_result(vault, txn, id)?.is_some(),
+        stale: is_stale(vault, txn, &group)?,
+    }))
+}
+
+/// The settlement that closes the ask group `id`, read as [`settle_in`]
+/// reads it before it cuts: [`settle_in`] returns it and cuts no other.
+/// `None` while no receipt is held for `id`, whether or not its group is.
+pub(crate) fn ask_settlement_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<TaskAskResult>> {
+    read_result(vault, txn, id)
+}
+
 fn reduce(
     spec: &TaskAskSpec,
     who: &BTreeSet<EntityId>,
@@ -425,8 +462,20 @@ fn reduce(
                 && decision_seats.contains(&entry.person_ref)
         })
         .collect();
+    // A collection completes on the words that count. Replies that lack a
+    // required source stay as evidence but never complete it on their own.
+    let counted: BTreeSet<_> = evidence
+        .iter()
+        .filter(|entry| entry.reason == TaskAskEvidenceReason::Counted)
+        .map(|entry| entry.person_ref)
+        .collect();
     let decision = match &spec.decide {
-        None => TaskAskDecision::Collected,
+        None if need.intersection(&counted).count() >= usize::from(spec.need.count)
+            && required.is_subset(&counted) =>
+        {
+            TaskAskDecision::Collected
+        }
+        None => TaskAskDecision::Unknown,
         Some(TaskAskDecide::First) => words.first().map_or(TaskAskDecision::Unknown, |entry| {
             if entry.word.confirmation.as_ref().is_some_and(|response| {
                 response.decision == super::TaskAskConfirmationDecision::Reject

@@ -11,7 +11,8 @@ use crate::attempt_queue::{
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::context_board::{
-    TaskBoardStatus, TasksSection, ack_task_in_txn, cancel_task_in_txn, expand_task, task_is_acked,
+    TaskBoardStatus, TasksSectionRows, ack_task_in_txn, cancel_task_in_txn, expand_task,
+    task_is_acked,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -20,7 +21,10 @@ use crate::gate::{
     GateProvenanceHandles, PolicyApprovalCeiling, check_external_effect_policy,
     resolve_policy_manifest,
 };
-use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, facade_provenance,
+    verify_actor_binding,
+};
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
 
@@ -33,7 +37,8 @@ use super::consts::{
 use super::consult_result::CancelTargetState;
 use super::presence_scan::{
     cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
-    superseded_attempt_ids, task_presence, task_presence_for_id, terminal_attempt_status,
+    superseded_attempt_ids, task_owned_by, task_owned_in, task_presence_at,
+    task_presence_for_dismissal, task_presence_for_id, terminal_attempt_status,
 };
 use super::rate_limit::{task_create_owner_in, task_verb_contract};
 use super::route_receipts::{
@@ -54,28 +59,29 @@ impl Memory<'_> {
     /// A named task's card is read direct by id: a row outside the collapsed
     /// board prefix is hidden, never gone, so the card never inherits the
     /// section's scan cap.
+    ///
+    /// A handle bound to a read credential describes only the TASKs that
+    /// credential reads: a task it does not read has no card, as an absent
+    /// one has none.
     pub fn describe(&self, task_ref: Option<EntityId>) -> MemoryResult<TaskDescription> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(task_ref) = task_ref else {
-            let snapshot = task_presence(self.vault())?;
-            for failure in &snapshot.read_failures {
-                tracing::warn!(
-                    task_ref = %failure.task_ref.to_hex(),
-                    stage = ?failure.stage,
-                    kind = ?failure.kind,
-                    "task presence skipped unreadable row"
-                );
-            }
-            return Ok(TaskDescription::Section(TasksSection::render_bounded(
-                &snapshot.intents,
-                &snapshot.bare_jobs,
-                snapshot.source_exhausted,
-            )));
+            let rows = self.credential_rows(self.section_rows()?)?;
+            return Ok(TaskDescription::Section(rows.render()));
         };
+        // The credential is judged before the card is read, so a task it
+        // does not read names no failure of its own, and again after, so a
+        // card read past a revocation is never served.
+        if self.credential_withholds(task_ref)? {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
+        if self.credential_withholds(task_ref)? {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
         // An acked failure has left the TASKS surface (the renderer drops it);
         // the typed read verbs must agree, so it has no card by id either.
         if intent.is_acked_failure() {
@@ -86,11 +92,77 @@ impl Memory<'_> {
         })
     }
 
+    /// The rows `describe` renders its TASKS section from, before the render
+    /// cap and before any reader's cut: the actor's whole board, even on a
+    /// handle bound to a read credential. A host whose reader is narrower
+    /// than this facade's actor keeps the rows that reader may see and
+    /// renders only those ([`TasksSectionRows::render`]), so it can count
+    /// what it withheld. An acknowledged failure, which the section never
+    /// renders, is not among them.
+    pub fn describe_rows(&self) -> MemoryResult<TasksSectionRows> {
+        let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        self.section_rows()
+    }
+
+    fn section_rows(&self) -> MemoryResult<TasksSectionRows> {
+        let snapshot = task_presence_at(self.vault(), self.locality())?;
+        for failure in &snapshot.read_failures {
+            tracing::warn!(
+                task_ref = %failure.task_ref.to_hex(),
+                stage = ?failure.stage,
+                kind = ?failure.kind,
+                "task presence skipped unreadable row"
+            );
+        }
+        let mut intents = snapshot.intents;
+        intents.retain(|intent| !intent.is_acked_failure());
+        Ok(TasksSectionRows {
+            intents,
+            bare_jobs: snapshot.bare_jobs,
+            source_exhausted: snapshot.source_exhausted,
+        })
+    }
+
+    /// Whether this handle's read credential withholds `task_ref`. An unbound
+    /// handle withholds nothing.
+    fn credential_withholds(&self, task_ref: EntityId) -> MemoryResult<bool> {
+        Ok(self
+            .credential_readable_ids(&[task_ref])?
+            .is_some_and(|readable| readable.is_empty()))
+    }
+
+    /// `rows` cut to what a handle bound to a read credential reads: each
+    /// TASK by the credential's point read. A bare job is an attempt, not an
+    /// entity, so no entity read proves it, and the cut drops it. An unbound
+    /// handle keeps them all.
+    fn credential_rows(&self, mut rows: TasksSectionRows) -> MemoryResult<TasksSectionRows> {
+        let ids: Vec<EntityId> = rows
+            .intents
+            .iter()
+            .filter_map(|intent| EntityId::from_hex(&intent.id).ok())
+            .collect();
+        if let Some(readable) = self.credential_readable_ids(&ids)? {
+            rows.intents.retain(|intent| {
+                EntityId::from_hex(&intent.id).is_ok_and(|id| readable.contains(&id))
+            });
+            rows.bare_jobs.clear();
+        }
+        Ok(rows)
+    }
+
     /// Updates one TASK. Today the update is the free render-tier
     /// acknowledgement bit of a failed task.
+    ///
+    /// Only the task's owner dismisses its failure: the bit takes the row off
+    /// every board, so another actor's dismissal is a typed refusal. A task
+    /// this handle's credential does not read is absent, as in `describe`.
     pub fn tasks_update(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksUpdate));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        if self.credential_withholds(task_ref)? {
+            return Err(MemoryError::from(Error::EntityNotFound));
+        }
         // The acknowledgement applies only to a currently-FAILED task: failed
         // rows stay surfaced until acknowledged (08b §3). Acknowledging a
         // queued/running task would pre-set the bit so the later failure is
@@ -99,9 +171,14 @@ impl Memory<'_> {
         //
         // Direct by id, like a `describe` card: a failed row past the board
         // scan prefix must stay acknowledgeable.
-        let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
+        let Some(intent) = task_presence_for_dismissal(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
+        match task_owned_by(self.vault(), self.actor(), task_ref)? {
+            Some(true) => {}
+            Some(false) => return Err(not_the_task_owner()),
+            None => return Err(MemoryError::from(Error::EntityNotFound)),
+        }
         if intent.status != TaskBoardStatus::Failed {
             return Ok(TaskUpdateReceipt {
                 task_ref,
@@ -113,6 +190,14 @@ impl Memory<'_> {
         // actor's write transaction like every other engine-authored fact.
         let now = self.vault().store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|wtxn| {
+            // Ownership is re-read in the transaction that commits the
+            // dismissal, so a TASK rewritten since the check above is judged
+            // as it stands now.
+            match task_owned_in(self.vault(), &*wtxn, self.actor(), task_ref)? {
+                Some(true) => {}
+                Some(false) => return Err(not_the_task_owner()),
+                None => return Err(MemoryError::from(Error::EntityNotFound)),
+            }
             ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
                 .map_err(MemoryError::from)
         })?;
@@ -597,18 +682,29 @@ impl Memory<'_> {
         provenance: Value,
     ) -> MemoryResult<(EntityId, Option<String>)> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
-        let candidate = ClaimCandidate::new(
+        let mut candidate = ClaimCandidate::new(
             predicate.to_owned(),
             ClaimSubject::Entity(subject),
             value,
             1.0,
         );
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(self.actor(), self.actor_class()),
-            ClaimSource::ToolOutput,
-            WriteProvenance::new(provenance)?,
-            ClaimApprovalStatus::Proposed,
-        );
+        // A parked proposal is born where its writer's TASK would be.
+        let position = self.birth_position();
+        if let Some(world) = position.claim_world() {
+            candidate = candidate.with_world(world);
+        }
+        if let Some(facet) = position.facet {
+            candidate = candidate.with_scope_stamps(facet, crate::claim::default_project_id());
+        }
+        let envelope = match self.host_envelope(ClaimApprovalStatus::Proposed)? {
+            Some(envelope) => envelope,
+            None => WriteEnvelope::new(
+                WriteActor::new(self.actor(), self.actor_class()),
+                ClaimSource::ToolOutput,
+                WriteProvenance::new(provenance)?,
+                ClaimApprovalStatus::Proposed,
+            ),
+        };
         let occurred = TimeRange {
             start: now,
             end: now,
@@ -641,4 +737,12 @@ impl Memory<'_> {
             .map(|record| format!("gate:{}", record.decision_id.to_hex()));
         Ok((proposal_ref, gate_decision_ref))
     }
+}
+
+fn not_the_task_owner() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "only the task's owner dismisses its failure".to_owned(),
+        &["A failed task stays on the board until the actor that owns it dismisses it."],
+    )
 }

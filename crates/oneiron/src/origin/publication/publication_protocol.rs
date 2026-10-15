@@ -1,9 +1,13 @@
 //! Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement projection.
 
+use std::ops::ControlFlow;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
+use crate::git_wire::{
+    GitOid, GitRefName, GitWire, GitWireRepo, lock_repository, try_lock_repository,
+};
 
 use super::publication_codec::{
     KEEP_OWNER, PUBLICATIONS, keep_owner_key, origin_keep_ref_name, origin_publication_id,
@@ -51,7 +55,7 @@ impl Vault {
         }
         let repo_id = self.origin_repo_id_for(repo)?;
         let key = keep_owner_key(&repo_id, oid, kind, owner_key);
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             KEEP_OWNER.put(&self.store, wtxn, &key, &learned_at.to_le_bytes())?;
             Ok(())
         })?;
@@ -79,7 +83,7 @@ impl Vault {
         let _guard = lock_repository(repo.common_dir())?;
         let repo_id = self.origin_repo_id_for(repo)?;
         let key = keep_owner_key(&repo_id, oid, kind, owner_key);
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             KEEP_OWNER.delete(&self.store, wtxn, &key)?;
             Ok(())
         })?;
@@ -168,8 +172,10 @@ impl Vault {
         let _guard = lock_repository(repo.common_dir())?;
         self.reconcile_receive_pack_operations(repo.repo_root())?;
         let mut items = Vec::new();
-        for record in self.origin_publication_rows(Some(repo_id))? {
-            let publication_id = record.publication_id;
+        for publication_id in self.origin_publication_ids(Some(repo_id))? {
+            let Some(record) = self.origin_publication(publication_id)? else {
+                continue;
+            };
             let disposition = if record.status == OriginPublicationStatus::Prepared {
                 self.advance_prepared_origin_publication(git, repo, record, learned_at)?
                     .disposition
@@ -199,17 +205,19 @@ impl Vault {
 
     /// Lists durable publication ids for read-only diagnostics, in every status.
     ///
-    /// `None` includes every repository. The scan refuses after
-    /// [`ORIGIN_PUBLICATION_MAX_ROWS`](crate::origin::publication::ORIGIN_PUBLICATION_MAX_ROWS) rows rather than returning a partial list.
+    /// `None` includes every repository. The list is whole: the scan never
+    /// refuses for its length, and past its threshold row it raises an
+    /// [`OriginScanCheck`](crate::origin::scan_check::OriginScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.
     pub fn origin_publication_ids(&self, repo_id: Option<EntityId>) -> Result<Vec<EntityId>> {
-        Ok(self
-            .origin_publication_rows(repo_id)?
-            .into_iter()
-            .map(|record| record.publication_id)
-            .collect())
+        let mut ids = Vec::new();
+        self.visit_origin_publication_rows(repo_id, |record| {
+            ids.push(record.publication_id);
+            ControlFlow::Continue(())
+        })?;
+        Ok(ids)
     }
 
     /// THE advertisement projection, and the only one.
@@ -228,6 +236,36 @@ impl Vault {
     ) -> Result<Vec<(GitRefName, GitOid)>> {
         self.validate_origin_repo(repo_id, repo)?;
         let _guard = lock_repository(repo.common_dir())?;
+        self.project_published_origin_refs(git, repo_id, repo)
+    }
+
+    /// [`Vault::published_origin_refs`] for a reader that may not wait on the
+    /// repository coordinator: it projects under the coordinator when it finds
+    /// it free, and without it while a writer holds it.
+    ///
+    /// Without the coordinator the projection can only hide more, never show
+    /// more. `Published` is terminal, a row's `Published` mark and its visible
+    /// slot land in one transaction, and the live ref only disproves a row. So
+    /// a projection overlapping a landing may hide that landing's ref until it
+    /// is finalized, and can never advertise a ref/OID pair no publication
+    /// claims.
+    pub(crate) fn published_origin_refs_without_waiting(
+        &self,
+        git: &GitWire<'_>,
+        repo_id: EntityId,
+        repo: &GitWireRepo,
+    ) -> Result<Vec<(GitRefName, GitOid)>> {
+        self.validate_origin_repo(repo_id, repo)?;
+        let _free = try_lock_repository(repo.common_dir())?;
+        self.project_published_origin_refs(git, repo_id, repo)
+    }
+
+    fn project_published_origin_refs(
+        &self,
+        git: &GitWire<'_>,
+        repo_id: EntityId,
+        repo: &GitWireRepo,
+    ) -> Result<Vec<(GitRefName, GitOid)>> {
         let mut advertised = Vec::new();
         for publication_id in self.origin_visible_ref_rows(&repo_id)? {
             let Some(record) = self.origin_publication(publication_id)? else {
@@ -251,12 +289,13 @@ impl Vault {
 
     /// How many publications for one repository are still `Prepared`.
     pub fn prepared_origin_publication_count(&self, repo_id: EntityId) -> Result<u64> {
-        let prepared = self
-            .origin_publication_rows(Some(repo_id))?
-            .into_iter()
-            .filter(|record| record.status == OriginPublicationStatus::Prepared)
-            .count();
-        u64::try_from(prepared)
-            .map_err(|_| Error::ArithmeticOverflow("prepared origin publication count"))
+        let mut prepared = 0_u64;
+        self.visit_origin_publication_rows(Some(repo_id), |record| {
+            if record.status == OriginPublicationStatus::Prepared {
+                prepared = prepared.saturating_add(1);
+            }
+            ControlFlow::Continue(())
+        })?;
+        Ok(prepared)
     }
 }

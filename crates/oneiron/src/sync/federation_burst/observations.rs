@@ -85,5 +85,5 @@ pub(super) fn record_outcome(
     structural_failure: bool,
 ) -> Result<()> {
     peer.revalidate(vault)?;
-    vault.with_write_txn(|txn| outcome_in_txn(vault, txn, peer, structural_failure))
+    vault.with_write_txn_grouped(|txn| outcome_in_txn(vault, txn, peer, structural_failure))
 }

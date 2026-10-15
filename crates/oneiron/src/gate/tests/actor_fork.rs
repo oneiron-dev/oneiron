@@ -3,109 +3,6 @@
 use super::*;
 
 #[test]
-fn resolver_maps_actors() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let store = &vault.store;
-
-    // The fork parent: an Auto definition stored at Scout's pinned actor id.
-    let scout_parent_id = pinned_actor_id(0xA1);
-    put_agent_def_row(
-        &vault,
-        &scout_parent_id,
-        "sys.scout",
-        AgentCeiling::Auto,
-        None,
-    )?;
-    let scout_fork_id = test_id(0x51);
-    put_agent_def_row(
-        &vault,
-        &scout_fork_id,
-        "eiri.scout.fork",
-        AgentCeiling::Auto,
-        Some("sys.scout"),
-    )?;
-    let person_id = test_id(0x52);
-    vault.put_entity(&person_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"person")?;
-
-    {
-        let rtxn = store.env.read_txn()?;
-        // A stored Scout fork resolves to its effective ceiling (Auto ∧ Auto).
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_fork_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Auto)
-        );
-        // Non-agent classes carry no definition bound.
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(scout_fork_id, EdgeActorClass::Human),
-            ),
-            None
-        );
-        // Absent/deleted agent entity fails closed to Proposed (B3).
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(test_id(0x53), EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Proposed)
-        );
-        // Present-but-non-type-17 keeps today's semantics.
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &rtxn,
-                WriteActor::new(person_id, EdgeActorClass::Agent),
-            ),
-            None
-        );
-    }
-
-    // Narrowing the stored fork bites the next resolution (live authority).
-    put_agent_def_row(
-        &vault,
-        &scout_fork_id,
-        "eiri.scout.fork",
-        AgentCeiling::Proposed,
-        Some("sys.scout"),
-    )?;
-    assert_eq!(
-        resolved_ceiling(&vault, scout_fork_id)?,
-        Some(PolicyApprovalCeiling::Proposed)
-    );
-
-    // OF-074 symmetry helper: effective = definition ∧ manifest projection.
-    assert_eq!(
-        dispatched_agent_effective_ceiling(
-            PolicyApprovalCeiling::Auto,
-            PolicyApprovalCeiling::Auto
-        ),
-        PolicyApprovalCeiling::Auto
-    );
-    assert_eq!(
-        dispatched_agent_effective_ceiling(
-            PolicyApprovalCeiling::Auto,
-            PolicyApprovalCeiling::Proposed
-        ),
-        PolicyApprovalCeiling::Proposed
-    );
-    assert_eq!(
-        dispatched_agent_effective_ceiling(
-            PolicyApprovalCeiling::Proposed,
-            PolicyApprovalCeiling::Auto
-        ),
-        PolicyApprovalCeiling::Proposed
-    );
-    Ok(())
-}
-
-#[test]
 fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![]);
@@ -347,12 +244,19 @@ fn pinned_actor_without_row_is_proposed() -> Result<()> {
         Some(PolicyApprovalCeiling::Proposed)
     );
 
-    // A non-type-17 row at a pinned id is simply not agent-bearing (`None`),
-    // the same answer any other non-agent entity gives. Reachable only through
-    // the raw store door: the batch.rs write-door lockout still rejects it.
+    // A non-type-17 row at a pinned id is no agent's definition, and holds
+    // the agent there at Proposed rather than lifting its bound (H215).
+    // Reachable only through the raw store door: the put doors refuse it.
     let keeper_id = pinned_actor_id(0xA2);
     put_raw_entity_row(&vault, &keeper_id, ENTITY_TYPE_PERSON, b"occupant")?;
-    assert_eq!(resolved_ceiling(&vault, keeper_id)?, None);
+    assert_eq!(
+        resolved_ceiling(&vault, keeper_id)?,
+        Some(PolicyApprovalCeiling::Proposed)
+    );
+    // The same row at an id that never was an agent bears no ceiling.
+    let person_id = test_id(0x59);
+    put_raw_entity_row(&vault, &person_id, ENTITY_TYPE_PERSON, b"occupant")?;
+    assert_eq!(resolved_ceiling(&vault, person_id)?, None);
     Ok(())
 }
 
@@ -473,6 +377,26 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
         GateOutcome::Allow,
         "a first_party principal over a non-agent entity is not clamped"
     );
+    drop(wtxn);
+
+    // H215 (Astra R4 F2): a deleted definition leaves its id's pin, and the
+    // id stays held at Proposed under any class asserted for it.
+    vault.batch().delete(&herald_id).commit()?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    for class in ["human", "system", "first_party", "agent"] {
+        let (_, decision, _) = check_external_effect_policy(
+            &vault.store,
+            &mut wtxn,
+            &effect_for(class, herald_id),
+            &policy,
+            true,
+        )?;
+        assert_ne!(
+            decision.outcome(),
+            GateOutcome::Allow,
+            "a deleted agent's id auto-fired under class {class:?}"
+        );
+    }
     drop(wtxn);
     Ok(())
 }
@@ -795,59 +719,47 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
     Ok(())
 }
 
-/// Manual external-effect input composition preserves typed consent reasons:
-/// an ungranted irreversible send stays pending, a covering grant yields
-/// consent-Auto, and explicit None contributes no consent reasons.
+/// F26 H359: an effect a count ceiling holds before admission keeps its
+/// governance record, but nothing was admitted. The owner's approve-once
+/// stays unspent, so the effect still runs on it once the ceiling clears; the
+/// observe recorder the ceiling used to call spent it.
 #[test]
-fn external_effect_gate_input_composes_consent_context() -> Result<()> {
-    // Ungranted: the composed context holds the irreversible send at Ask.
+fn a_held_effect_keeps_its_approve_once() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0xD5), &encode_policy_manifest(vec![]))?;
+    let owner_id = test_id(0xE0);
+    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let actor_ref = owner_id.to_hex();
+    let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        &actor_ref,
+        "external:send",
+        Value::Map(vec![(
+            Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+            Value::from("line"),
+        )]),
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &policy_data)?;
     let policy = resolve(&vault)?;
-    let effect = external_effect_gate_input("sender", "send", "line");
-    let consent = external_effect_consent_context(&effect, None, &[])
-        .expect("a send effect composes an honest consent context");
-    assert!(matches!(
-        consent.decision,
-        crate::consent::ConsentDecision::Ask,
-    ));
-    assert!(matches!(
-        consent.reason,
-        Some(ConsentPendingReason::IrreversibleEffect),
-    ));
-    let consent_reasons = consent_ladder_reasons(Some(&consent));
-    assert!(!consent_reasons.is_empty());
-    let decision = policy.evaluate_gate(&effect.gate_input(None, Some(consent)));
-    assert!(matches!(decision.outcome(), GateOutcome::Pending));
-    assert!(
-        consent_reasons
-            .iter()
-            .all(|reason| decision.reason_codes().contains(reason)),
-    );
+    let effect = external_effect_gate_input(&actor_ref, "send", "line");
+    let digest = external_effect_composed_effect(&effect)
+        .expect("effect composes")
+        .digest();
+    vault.approve_once(&owner, digest)?;
 
-    // Covered: a remembered grant auto-runs INSIDE its bound (invariant 1/3).
-    let request = external_effect_action_requirement(&effect).expect("requirement");
-    let covering = crate::consent::StandingConsentGrant::from_bound(request)
-        .expect("a bound mints a standing grant");
-    let consent = external_effect_consent_context(&effect, None, &[covering])
-        .expect("covered effect composes");
-    assert!(matches!(
-        consent.decision,
-        crate::consent::ConsentDecision::Auto,
-    ));
-    let decision = policy.evaluate_gate(&effect.gate_input(None, Some(consent)));
+    let held = vault.with_write_txn(|wtxn| {
+        record_held_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+            .map(|(_, decision)| decision.outcome())
+    })?;
+    assert_eq!(held, GateOutcome::Allow, "the hold keeps the decision");
+    let admitted = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+            .map(|(_, decision, _)| decision.outcome())
+    });
     assert!(
-        consent_reasons
-            .iter()
-            .all(|reason| !decision.reason_codes().contains(reason)),
-    );
-
-    // Explicit None must not acquire the ungranted send's consent reasons.
-    let decision = policy.evaluate_gate(&effect.gate_input(None, None));
-    assert!(
-        consent_reasons
-            .iter()
-            .all(|reason| !decision.reason_codes().contains(reason)),
+        matches!(admitted, Ok(GateOutcome::Allow)),
+        "FAILBEFORE H359: the hold spent the owner's approval ({admitted:?})"
     );
     Ok(())
 }

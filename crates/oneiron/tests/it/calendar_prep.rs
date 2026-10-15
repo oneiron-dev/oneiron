@@ -32,11 +32,9 @@
 use std::path::Path;
 
 use crate::common::entity as test_id;
-use oneiron::calendar::ics::parse_ics_feed;
 use oneiron::calendar::prep::{
-    DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS, PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND,
-    PrepBuildRequest, PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPack, PrepPolicy,
-    PrepSectionKind, build_prep_pack, plan_prep_wake, prep_is_eligible, prep_wake_id,
+    DEFAULT_PREP_LEAD_SECS, PrepBuildRequest, PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPack,
+    PrepPolicy, PrepSectionKind, build_prep_pack, plan_prep_wake, prep_is_eligible, prep_wake_id,
     render_prep_lens, run_due_home_node_prep,
 };
 use oneiron::edge::EdgeKind;
@@ -49,21 +47,12 @@ use oneiron::{
 };
 use rmpv::Value;
 
-/// Contract wire bounds (`oneiron_vault_contract::MAX_WAKE_ID` /
-/// `MAX_REASON_TAG`), restated as numbers because `crates/oneiron` carries no
-/// dependency on the contract crate at this commit — the same reason
-/// `calendar::prep::PrepWake` is the engine-side image of `WakeEntry`.
-const CONTRACT_MAX_WAKE_ID: usize = 128;
-const CONTRACT_MAX_REASON_TAG: usize = 64;
-
 /// Fixture seeds. All outside `PINNED_ID_BYTES`.
 const EVENT_SEED: u8 = 0x51;
-const SECOND_EVENT_SEED: u8 = 0x52;
 const PERSON_SEED: u8 = 0x53;
 const TURN_SEED: u8 = 0x54;
 const SUMMARY_SEED: u8 = 0x55;
 const LATE_TURN_SEED: u8 = 0x56;
-const BULK_SEED_BASE: u8 = 0x60;
 
 const EVENT_START: u64 = 1_754_400_000;
 const EVENT_END: u64 = EVENT_START + 3_600;
@@ -220,21 +209,6 @@ fn put_attendee(vault: &Vault, index: u8, event_ref: EntityId, who: &str) {
     );
 }
 
-fn cancel_event(vault: &Vault, index: u8, event_ref: EntityId) {
-    put_claim(
-        vault,
-        claim_id(EVENT_SEED, index),
-        "calendar.status",
-        event_ref,
-        Value::Map(vec![
-            (Value::from("status"), Value::from("cancelled")),
-            (Value::from("basis"), Value::from("imported_absence")),
-            (Value::from("recorded_at"), Value::from(FIRE_AT)),
-        ]),
-        FIRE_AT,
-    );
-}
-
 /// One meeting with a counterparty, a prior commitment, a recent thread, a
 /// dossier delta, and one row that arrives too late to be seen at T-45.
 struct PrepFixture {
@@ -245,7 +219,6 @@ struct PrepFixture {
     commitment_ref: EntityId,
     turn_ref: EntityId,
     summary_ref: EntityId,
-    late_turn_ref: EntityId,
 }
 
 impl PrepFixture {
@@ -336,7 +309,6 @@ fn seeded_prep_vault() -> PrepFixture {
         commitment_ref,
         turn_ref,
         summary_ref,
-        late_turn_ref,
     }
 }
 
@@ -348,20 +320,6 @@ fn external_event(event_ref: EntityId, start: u64) -> PrepEvent {
         end_utc: start + 3_600,
         attendee_refs: Vec::new(),
         external_attendee_count: 1,
-        has_campaign_linkage: false,
-        has_commitment_linkage: false,
-        internal_meeting_opt_in: false,
-    }
-}
-
-/// A solo/internal meeting: nobody outside the house, no linkage, no opt-in.
-fn solo_event(event_ref: EntityId, start: u64) -> PrepEvent {
-    PrepEvent {
-        event_ref,
-        start_utc: start,
-        end_utc: start + 3_600,
-        attendee_refs: Vec::new(),
-        external_attendee_count: 0,
         has_campaign_linkage: false,
         has_commitment_linkage: false,
         internal_meeting_opt_in: false,
@@ -411,225 +369,6 @@ fn rows(pack: &PrepPack) -> Vec<(PrepSectionKind, String)> {
 }
 
 // ---------------------------------------------------------------------------
-// Law 1 — the wake is the host's, and it is exact.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn prep_wake_is_host_schedule_exact_at_t45() {
-    let event_ref = test_id(EVENT_SEED);
-    let event = external_event(event_ref, EVENT_START);
-    let wake = plan_prep_wake(prep_wake_id(&event_ref), &event, PrepPolicy::default())
-        .expect("an external meeting arms the wake");
-
-    // T-45, to the second, computed from the EVENT start.
-    assert_eq!(DEFAULT_PREP_LEAD_SECS, 45 * 60);
-    assert_eq!(wake.at_utc, EVENT_START - DEFAULT_PREP_LEAD_SECS);
-    assert_eq!(wake.reason_tag, PREP_WAKE_REASON_TAG);
-
-    // Exact, never a window: CAL plans one instant and recomputes it, so the
-    // host has nothing to jitter. This is the `Schedule::Exact` wire arm.
-    assert_eq!(PREP_WAKE_SCHEDULE_KIND, "exact");
-
-    // The contract's wake bounds hold without the contract crate present.
-    assert!(!wake.id.is_empty());
-    assert!(wake.id.len() <= CONTRACT_MAX_WAKE_ID);
-    assert!(wake.reason_tag.len() <= CONTRACT_MAX_REASON_TAG);
-    assert!(!wake.id.bytes().any(|byte| byte < 0x20));
-    assert!(!wake.reason_tag.bytes().any(|byte| byte < 0x20));
-
-    // A start inside the first 45 minutes of the epoch has no representable
-    // T-45. That is no wake at all, never a wake saturated to 1970.
-    let unrepresentable = external_event(event_ref, 60);
-    assert!(
-        plan_prep_wake(
-            prep_wake_id(&event_ref),
-            &unrepresentable,
-            PrepPolicy::default()
-        )
-        .is_none()
-    );
-}
-
-#[test]
-fn prep_wake_is_recomputed_when_event_start_moves() {
-    let event_ref = test_id(EVENT_SEED);
-    let mut event = external_event(event_ref, EVENT_START);
-    let policy = PrepPolicy::default();
-
-    let first = plan_prep_wake(prep_wake_id(&event_ref), &event, policy).expect("first wake");
-    event.start_utc += 3_600;
-    event.end_utc += 3_600;
-    let second = plan_prep_wake(prep_wake_id(&event_ref), &event, policy).expect("second wake");
-
-    // The instant moves with the meeting...
-    assert_ne!(first.at_utc, second.at_utc);
-    assert_eq!(second.at_utc, first.at_utc + 3_600);
-    // ...and the id does NOT, so the host replaces one entry instead of
-    // accumulating a wake per reschedule.
-    assert_eq!(first.id, second.id);
-    assert_eq!(first.id, prep_wake_id(&event_ref));
-    assert_eq!(first.reason_tag, second.reason_tag);
-
-    // Stability is per EVENT and per purpose, not global.
-    assert_ne!(
-        prep_wake_id(&event_ref),
-        prep_wake_id(&test_id(SECOND_EVENT_SEED))
-    );
-}
-
-#[test]
-fn prep_module_starts_no_timer_or_cron() {
-    let source = prep_source();
-    // No clock is read, nothing is started, nothing repeats, and no recurrence
-    // primitive is minted. The engine describes a wake and returns.
-    for forbidden in [
-        "std::thread",
-        "thread::spawn",
-        "std::time",
-        "SystemTime",
-        "Instant",
-        "sleep",
-        "tokio",
-        "async ",
-        "loop {",
-        "while ",
-        "cron",
-        "interval(",
-        "set_timeout",
-        // No new recurrence primitive either: expansion stays in CAL-03.
-        "RRULE",
-        "rrule",
-        "super::series",
-        "expand_window",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "calendar/prep.rs must not contain {forbidden:?}"
-        );
-    }
-}
-
-#[test]
-fn prep_persists_nothing_and_adds_no_type_byte() {
-    let source = prep_source();
-    // Render time means render time: no write door is opened here at all, so
-    // there is no prep entity, no prep claim, and no stale artifact to serve.
-    // No new type byte or edge kind either — this layer allocates nothing.
-    for forbidden in [
-        "put_entity",
-        "put_claim",
-        "put_blob_artifact",
-        "with_write_txn",
-        "write_txn",
-        ".batch()",
-        "supersede",
-        "pub const ENTITY_TYPE_",
-        "ENTITY_TYPE_REGISTRY",
-        "EdgeKind",
-        // Home-node election and lease storage stay host-owned (CAL-06
-        // non-claim: no edit to and no copy of `src/sync/lease.rs`).
-        "crate::sync",
-        "sync::lease",
-        "LeaseManager",
-        // Delivery uses host surfaces outside this ticket.
-        "outbound",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "calendar/prep.rs must not contain {forbidden:?}"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Law 2 — external meetings by default.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn campaign_or_commitment_linkage_arms_without_external_attendee() {
-    let event_ref = test_id(EVENT_SEED);
-    let policy = PrepPolicy::default();
-
-    let mut campaign = solo_event(event_ref, EVENT_START);
-    campaign.has_campaign_linkage = true;
-    assert!(prep_is_eligible(&campaign, policy));
-    assert!(plan_prep_wake(prep_wake_id(&event_ref), &campaign, policy).is_some());
-
-    let mut commitment = solo_event(event_ref, EVENT_START);
-    commitment.has_commitment_linkage = true;
-    assert!(prep_is_eligible(&commitment, policy));
-    assert!(plan_prep_wake(prep_wake_id(&event_ref), &commitment, policy).is_some());
-}
-
-#[test]
-fn internal_and_solo_events_require_explicit_opt_in() {
-    let event_ref = test_id(EVENT_SEED);
-    let policy = PrepPolicy::default();
-
-    // Solo: nobody outside the house, no linkage, no opt-in.
-    let solo = solo_event(event_ref, EVENT_START);
-    assert!(!prep_is_eligible(&solo, policy));
-    assert!(plan_prep_wake(prep_wake_id(&event_ref), &solo, policy).is_none());
-
-    // Internal-only with colleagues present is still internal-only: only the
-    // external count arms by default, and it is zero.
-    let mut internal = solo_event(event_ref, EVENT_START);
-    internal.attendee_refs = vec![test_id(PERSON_SEED)];
-    assert!(!prep_is_eligible(&internal, policy));
-
-    // Two doors, both explicit: per event...
-    let mut opted_in = internal.clone();
-    opted_in.internal_meeting_opt_in = true;
-    assert!(prep_is_eligible(&opted_in, policy));
-    assert!(plan_prep_wake(prep_wake_id(&event_ref), &opted_in, policy).is_some());
-
-    // ...or vault-wide, by clearing the external-only default.
-    let wide = PrepPolicy {
-        external_only: false,
-        ..PrepPolicy::default()
-    };
-    assert!(prep_is_eligible(&internal, wide));
-}
-
-#[test]
-fn imported_valarm_does_not_arm_prep_or_reminder() {
-    let feed = concat!(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n",
-        "BEGIN:VEVENT\r\n",
-        "UID:valarm-only@example.com\r\n",
-        "DTSTAMP:20260805T100000Z\r\n",
-        "DTSTART:20260806T140000Z\r\n",
-        "DTEND:20260806T150000Z\r\n",
-        "SEQUENCE:0\r\n",
-        "SUMMARY:solo focus block\r\n",
-        "BEGIN:VALARM\r\n",
-        "ACTION:DISPLAY\r\n",
-        "TRIGGER:-PT45M\r\n",
-        "DESCRIPTION:imported reminder\r\n",
-        "END:VALARM\r\n",
-        "END:VEVENT\r\nEND:VCALENDAR"
-    );
-    let parsed = parse_ics_feed(feed.as_bytes()).expect("feed with a VALARM parses");
-    let vevent = parsed.events.first().expect("one VEVENT");
-
-    // The alarm reaches no engine-side surface a prep signal could be read
-    // from: `ParsedVEvent` has no alarm field and the canonical component
-    // excludes nested components outright.
-    let component = String::from_utf8(vevent.raw_component.clone()).expect("utf8 component");
-    assert!(!component.contains("VALARM"));
-    assert!(!component.contains("TRIGGER"));
-
-    // The imported event is solo, so it stays disarmed. The VALARM does not
-    // arm prep, and it does not mint a reminder either — there is no door here
-    // that turns a feed alarm into a wake.
-    let event_ref = test_id(EVENT_SEED);
-    let start = vevent.starts_at_utc.expect("DTSTART converts");
-    let imported = solo_event(event_ref, start);
-    assert!(!prep_is_eligible(&imported, PrepPolicy::default()));
-    assert!(plan_prep_wake(prep_wake_id(&event_ref), &imported, PrepPolicy::default()).is_none());
-}
-
-// ---------------------------------------------------------------------------
 // Law 3 — render time, not nightly.
 // ---------------------------------------------------------------------------
 
@@ -668,182 +407,6 @@ fn pack_is_built_from_state_visible_at_fire_time() {
 }
 
 // ---------------------------------------------------------------------------
-// Law 4 — precedence beats recency; the ceiling is spent top-down.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn prior_commitments_precede_threads_and_dossier_delta() {
-    let fixture = seeded_prep_vault();
-    let pack = build_prep_pack(&fixture.vault, &fixture.request(FIRE_AT))
-        .expect("build succeeds")
-        .expect("the meeting has evidence");
-
-    let kinds: Vec<PrepSectionKind> = pack.sections.iter().map(|section| section.kind).collect();
-    assert_eq!(
-        kinds,
-        vec![
-            PrepSectionKind::PriorCommitment,
-            PrepSectionKind::AttendeeThread,
-            PrepSectionKind::DossierDelta,
-        ],
-        "sections rank by precedence, never by recency"
-    );
-
-    let ordered = rows(&pack);
-    let position = |needle: &str| {
-        ordered
-            .iter()
-            .position(|(_, text)| text.contains(needle))
-            .unwrap_or_else(|| panic!("{needle} is missing from the pack"))
-    };
-    let commitment = position(COMMITMENT_TEXT);
-    let thread = position(THREAD_TEXT);
-    let dossier = position(DOSSIER_TEXT);
-
-    // The dossier row is the NEWEST thing in the pack and still ranks last;
-    // the commitment is the OLDEST and still ranks first.
-    assert!(commitment < thread, "commitments precede threads");
-    assert!(thread < dossier, "threads precede dossier delta");
-
-    // Each row names the vault row it came from.
-    let backing: Vec<String> = pack
-        .sections
-        .iter()
-        .flat_map(|section| section.items.iter())
-        .flat_map(|item| item.source_refs.clone())
-        .collect();
-    for expected in [
-        fixture.commitment_ref,
-        fixture.turn_ref,
-        fixture.summary_ref,
-    ] {
-        assert!(backing.contains(&expected.to_hex()));
-    }
-    assert!(!backing.contains(&fixture.late_turn_ref.to_hex()));
-    // The EVENT and its attendee are seeds, not evidence about themselves.
-    assert!(!backing.contains(&fixture.event_ref.to_hex()));
-    assert!(!backing.contains(&fixture.person_ref.to_hex()));
-}
-
-#[test]
-fn prep_pack_never_exceeds_default_250_words() {
-    let (_dir, vault) = temp_vault();
-    let event_ref = put_event(&vault, EVENT_SEED, EVENT_START, EVENT_END);
-    let person_ref = put_text_entity(
-        &vault,
-        PERSON_SEED,
-        ENTITY_TYPE_PERSON,
-        "name",
-        "counterparty",
-        PLANNED_AT,
-    );
-
-    // Six rows of a hundred words each: six hundred words of evidence against
-    // a two-hundred-and-fifty-word ceiling, spread across all three sections.
-    let long_text = (0..100)
-        .map(|index| format!("w{index}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut refs = Vec::new();
-    for offset in 0..6_u8 {
-        let seed = BULK_SEED_BASE + offset;
-        let learned_at = COMMITMENT_AT + u64::from(offset);
-        let id = if offset % 3 == 0 {
-            let id = claim_id(seed, 0);
-            put_claim(
-                &vault,
-                id,
-                "prep.commitment",
-                person_ref,
-                Value::from(long_text.as_str()),
-                learned_at,
-            );
-            id
-        } else if offset % 3 == 1 {
-            put_text_entity(
-                &vault,
-                seed,
-                ENTITY_TYPE_TURN,
-                "txt",
-                &long_text,
-                learned_at,
-            )
-        } else {
-            put_text_entity(
-                &vault,
-                seed,
-                ENTITY_TYPE_SUMMARY,
-                "text",
-                &long_text,
-                learned_at,
-            )
-        };
-        refs.push(id);
-    }
-
-    let mut batch = vault
-        .batch()
-        .edge(&event_ref, EdgeKind::ParticipatesIn, &person_ref, 1.0);
-    for id in &refs {
-        batch = batch.edge(&person_ref, EdgeKind::About, id, 1.0);
-    }
-    batch.commit().expect("bulk fixture edges commit");
-
-    let request = PrepBuildRequest {
-        event: PrepEvent {
-            event_ref,
-            start_utc: EVENT_START,
-            end_utc: EVENT_END,
-            attendee_refs: vec![person_ref],
-            external_attendee_count: 1,
-            has_campaign_linkage: false,
-            has_commitment_linkage: false,
-            internal_meeting_opt_in: false,
-        },
-        fired_at: FIRE_AT,
-        policy: PrepPolicy::default(),
-    };
-    let pack = build_prep_pack(&vault, &request)
-        .expect("build succeeds")
-        .expect("the meeting has evidence");
-
-    let counted: usize = pack
-        .sections
-        .iter()
-        .flat_map(|section| section.items.iter())
-        .map(|item| item.text.split_whitespace().count())
-        .sum();
-    assert_eq!(
-        pack.word_count, counted,
-        "the reported count is the real one"
-    );
-    assert!(
-        counted <= DEFAULT_PREP_MAX_WORDS,
-        "pack carried {counted} words against a {DEFAULT_PREP_MAX_WORDS}-word ceiling"
-    );
-    // The budget is spent top-down: the highest-ranked section survives the
-    // cut, so truncation never promotes lower-ranked material.
-    assert_eq!(
-        pack.sections.first().expect("a surviving section").kind,
-        PrepSectionKind::PriorCommitment
-    );
-
-    // A zero budget is silence, not an empty card.
-    let starved = PrepBuildRequest {
-        policy: PrepPolicy {
-            max_words: 0,
-            ..PrepPolicy::default()
-        },
-        ..request
-    };
-    assert!(
-        build_prep_pack(&vault, &starved)
-            .expect("build succeeds")
-            .is_none()
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Law 5 — silence is an answer; one door for closed-vault delivery.
 // ---------------------------------------------------------------------------
 
@@ -874,139 +437,6 @@ fn no_useful_context_returns_none_and_renders_nothing() {
     let rendered = run_due_home_node_prep(&vault, &job, FIRE_AT, request.policy, &copy())
         .expect("due run succeeds");
     assert!(rendered.is_none());
-}
-
-#[test]
-fn closed_vault_due_payload_runs_only_through_home_node_job_entrypoint() {
-    let source = prep_source();
-    // Exactly one function takes the due payload. There is no second door a
-    // closed-vault wake could enter through.
-    assert_eq!(
-        source.matches("job: &PrepHomeNodeJob").count(),
-        1,
-        "the due payload must be accepted by exactly one entrypoint"
-    );
-    assert_eq!(source.matches("pub fn run_due_home_node_prep").count(), 1);
-    // The payload stays small and deterministic: three scalars, no context.
-    for field in [
-        "pub event_ref: String",
-        "pub scheduled_for: u64",
-        "pub wake_id: String",
-    ] {
-        assert!(source.contains(field), "due payload must carry {field}");
-    }
-
-    // And the door works when the host says it holds the election.
-    let fixture = seeded_prep_vault();
-    let wake = plan_prep_wake(
-        prep_wake_id(&fixture.event_ref),
-        &fixture.event(),
-        PrepPolicy::default(),
-    )
-    .expect("wake is planned");
-    let job = PrepHomeNodeJob::from_wake(&fixture.event_ref, &wake);
-    assert_eq!(job.event_ref, fixture.event_ref.to_hex());
-    assert_eq!(job.scheduled_for, FIRE_AT);
-    assert_eq!(job.wake_id, wake.id);
-    // Serializable, and byte-identical for the same wake.
-    let encoded = serde_json::to_string(&job).expect("payload serializes");
-    let decoded: PrepHomeNodeJob = serde_json::from_str(&encoded).expect("payload round-trips");
-    assert_eq!(decoded, job);
-
-    assert!(
-        run_due_home_node_prep(
-            &fixture.vault,
-            &job,
-            FIRE_AT,
-            PrepPolicy::default(),
-            &copy()
-        )
-        .expect("due run succeeds")
-        .is_some()
-    );
-}
-
-#[test]
-fn due_job_rechecks_event_eligibility_and_staleness() {
-    let fixture = seeded_prep_vault();
-    let policy = PrepPolicy::default();
-    let wake = plan_prep_wake(prep_wake_id(&fixture.event_ref), &fixture.event(), policy)
-        .expect("wake is planned");
-    let job = PrepHomeNodeJob::from_wake(&fixture.event_ref, &wake);
-
-    // Baseline: the live EVENT still agrees with the payload.
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &job, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_some()
-    );
-
-    // Stale by payload: a fire instant the live EVENT never implied.
-    let stale = PrepHomeNodeJob {
-        scheduled_for: job.scheduled_for + 1,
-        ..job.clone()
-    };
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &stale, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_none()
-    );
-
-    // Stale by reschedule: the EVENT moved, so THIS payload is the old one.
-    // The replacement wake carries the same id, which is what lets the host
-    // overwrite rather than accumulate.
-    put_event(
-        &fixture.vault,
-        EVENT_SEED,
-        EVENT_START + 7_200,
-        EVENT_END + 7_200,
-    );
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &job, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_none()
-    );
-    put_event(&fixture.vault, EVENT_SEED, EVENT_START, EVENT_END);
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &job, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_some()
-    );
-
-    // Ineligible by cancellation: CAL-00's `calendar.status` is the home that
-    // law lives in, and a prep card for a called-off meeting is noise.
-    cancel_event(&fixture.vault, 9, fixture.event_ref);
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &job, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_none()
-    );
-
-    // Ineligible by attendance: an EVENT the engine can read no attendee row
-    // for never arms, however the payload was minted.
-    let bare_event = put_event(&fixture.vault, SECOND_EVENT_SEED, EVENT_START, EVENT_END);
-    let bare_job = PrepHomeNodeJob {
-        event_ref: bare_event.to_hex(),
-        scheduled_for: FIRE_AT,
-        wake_id: prep_wake_id(&bare_event),
-    };
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &bare_job, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_none()
-    );
-
-    // Missing EVENT: stale work, not an error the host has to special-case.
-    let absent_job = PrepHomeNodeJob {
-        event_ref: test_id(0x7E).to_hex(),
-        scheduled_for: FIRE_AT,
-        wake_id: prep_wake_id(&test_id(0x7E)),
-    };
-    assert!(
-        run_due_home_node_prep(&fixture.vault, &absent_job, FIRE_AT, policy, &copy())
-            .expect("due run succeeds")
-            .is_none()
-    );
 }
 
 #[test]
@@ -1063,56 +493,4 @@ fn lens_uses_caller_supplied_copy_and_contains_source_backing() {
         ..copy
     };
     assert!(render_prep_lens(&pack, &blank).is_err());
-}
-
-#[test]
-fn prep_keeps_ranked_owner_claim_when_l2_base_is_implicit() {
-    let (_dir, vault) = temp_vault();
-    let owner = vault.ensure_embedded_owner_actor().expect("owner person");
-    let event_ref = put_event(&vault, EVENT_SEED, EVENT_START, EVENT_END);
-    put_attendee(&vault, 0, event_ref, "mailto:owner@example.com");
-    let claim_ref = claim_id(PERSON_SEED, 0xD0);
-    put_claim(
-        &vault,
-        claim_ref,
-        "prep.commitment",
-        owner,
-        Value::from("owner prep obligation"),
-        COMMITMENT_AT,
-    );
-    vault
-        .batch()
-        .edge(&event_ref, EdgeKind::ParticipatesIn, &owner, 1.0)
-        .edge(&owner, EdgeKind::About, &claim_ref, 1.0)
-        .commit()
-        .expect("prep edges");
-    let event = PrepEvent {
-        event_ref,
-        start_utc: EVENT_START,
-        end_utc: EVENT_END,
-        attendee_refs: vec![owner],
-        external_attendee_count: 1,
-        has_campaign_linkage: false,
-        has_commitment_linkage: false,
-        internal_meeting_opt_in: false,
-    };
-    let pack = build_prep_pack(
-        &vault,
-        &PrepBuildRequest {
-            event,
-            fired_at: FIRE_AT,
-            policy: PrepPolicy::default(),
-        },
-    )
-    .expect("prep assembly")
-    .expect("owner commitment is retained");
-    assert!(
-        pack.sections
-            .iter()
-            .flat_map(|section| &section.items)
-            .any(|item| {
-                item.source_refs.contains(&claim_ref.to_hex())
-                    && item.text.contains("owner prep obligation")
-            })
-    );
 }

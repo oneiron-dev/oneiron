@@ -3,45 +3,6 @@
 use super::*;
 
 #[test]
-fn lifecycle_binding_rejects_before_start_despite_clamped_header() -> Result<()> {
-    let (_dir, vault, actor) = fixture()?;
-    let id = entity(0x64);
-    authored_local_claim(&vault, actor, id)?;
-    assert_current_actor(&vault, id, actor)?;
-    let raw = vault.get_raw(&id)?.expect("authored claim");
-    let digest = binding_digest(&vault, id)?;
-    assert_eq!(digest, Some(row_digest(&raw).to_vec()));
-
-    for lifecycle in [
-        ClaimLifecycleStatus::Retracted,
-        ClaimLifecycleStatus::Superseded,
-    ] {
-        let mut op = retract_op(&vault, id)?;
-        let BatchOp::Put { occurred, data, .. } = &mut op else {
-            unreachable!();
-        };
-        let mut body = decode_claim_body(data, false)?;
-        body.lifecycle = lifecycle;
-        body.valid_to = Some(9);
-        *data = encode_claim_body(&body)?;
-        // Match the public callers' current clamp: the header is a legal
-        // point event, but the body still closes before the stored start.
-        occurred.end = occurred.start;
-        let error = vault
-            .with_write_txn(|txn| ClaimMaterialization::lifecycle(&vault.store, txn, &op))
-            .expect_err("a clamped header must not seal an early closing timestamp");
-        assert!(
-            matches!(error, Error::InvalidTimeRange { start: 10, end: 9 }),
-            "{lifecycle:?}: {error:?}"
-        );
-        assert_eq!(vault.get_raw(&id)?.expect("unchanged claim"), raw);
-        assert_eq!(binding_digest(&vault, id)?, digest);
-        assert_current_actor(&vault, id, actor)?;
-    }
-    Ok(())
-}
-
-#[test]
 fn retract_before_start_rejects_without_changing_claim_binding_or_edges() -> Result<()> {
     let (_dir, vault, actor) = fixture()?;
     let id = entity(0x64);

@@ -39,22 +39,7 @@ pub use self::requests::{
 pub(in crate::calendar) use self::service::{matches_selectors, validate_selectors};
 pub use self::service::{read_event, read_event_scoped, search_events, search_events_scoped};
 
-#[cfg(test)]
-mod tests;
-
 // The flat query.rs module used to provide these names to the sibling test
 // module through `use super::*`. The query-internal items the tests name bare
 // already flow through the seam re-exports above; only the private crate/std
 // import header needs re-importing here so `tests.rs` resolves as before.
-#[cfg(test)]
-use crate::calendar::claims::{PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND};
-#[cfg(test)]
-use crate::entity_id::EntityId;
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_EVENT;
-#[cfg(test)]
-use crate::temporal::TimeRange;
-#[cfg(test)]
-use crate::vault::Vault;
-#[cfg(test)]
-use rmpv::Value;

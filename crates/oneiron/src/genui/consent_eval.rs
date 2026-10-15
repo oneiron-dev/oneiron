@@ -5,14 +5,10 @@ use super::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 use crate::booking::DisclosureRung;
 use crate::consent::AuthenticatedOwner;
 use crate::error::GateError;
-use crate::lens::{
-    ButtonControl, LensAtom, LensAtomId, LensNode, LensText, MetaLineAtom, SelfUiAction,
-    SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
-};
+use crate::lens::LensText;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
@@ -154,14 +150,21 @@ impl ConsentActorIdentity {
 
     /// A store-authenticated owner handle and an account/device actor are both
     /// necessary. A voice claim cannot borrow a handle from another channel.
-    #[must_use]
+    /// The handle is revalidated on `vault`: it decides an act, so a proof
+    /// another vault authenticated, or a revoked one, names no principal here.
+    ///
+    /// # Errors
+    /// The proof does not revalidate on `vault`, or a storage error.
     pub fn authenticates_owner(
         &self,
+        vault: &crate::Vault,
         principal_ref: &str,
         authenticated_owner: &AuthenticatedOwner,
-    ) -> bool {
-        authenticated_owner.principal_ref() == principal_ref
-            && self.authenticates_principal(principal_ref)
+    ) -> Result<bool> {
+        Ok(
+            authenticated_owner.revalidate_principal_ref(vault)? == principal_ref
+                && self.authenticates_principal(principal_ref),
+        )
     }
 }
 
@@ -317,57 +320,6 @@ pub fn calendar_grant_mint_intent(
     })
 }
 
-pub(super) fn append_care_register_actions(
-    elements: &mut serde_json::Map<String, Value>,
-    root_children: &mut Vec<String>,
-    actions: &[Of336ActionDescriptor],
-) {
-    for action in actions {
-        let id = action.action_id.clone();
-        root_children.push(id.clone());
-        elements.insert(
-            id,
-            json!({
-                "type": "button",
-                "props": {
-                    "label": action.label,
-                    "action": {
-                        "kind": "agentCallback",
-                        "name": action.action_id,
-                        "typedAction": action.action
-                    }
-                },
-                "children": [],
-                "fallbackText": action.label
-            }),
-        );
-    }
-}
-
-pub(super) fn action_button_node(action: Of336ActionDescriptor) -> Result<LensNode> {
-    Ok(LensNode::new(
-        atom_id(format!("action-{}", action.action_id))?,
-        LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-            id: control_id(&action.action_id)?,
-            label: lens_text(action.label)?,
-            action: SelfUiAction {
-                command: action_id(action_command(&action.action))?,
-                args: vec![SelfUiValue::Text(lens_text(action.action_id)?)],
-            },
-        })),
-    ))
-}
-
-fn action_command(action: &ConsentActionKind) -> &'static str {
-    match action {
-        ConsentActionKind::Approve => "consent_approve",
-        ConsentActionKind::Decline => "consent_decline",
-        ConsentActionKind::Escalate(_) => "consent_grant_mint",
-        ConsentActionKind::BundleApprove(_) => "bundle_grant_mint",
-        ConsentActionKind::ProjectMint => "project_mint_intent",
-    }
-}
-
 pub(super) fn consent_evaluation(
     component_kind: Of336ComponentKind,
     component_id: &str,
@@ -391,13 +343,14 @@ pub(super) fn consent_evaluation(
 }
 
 pub(super) fn ensure_authenticated_actor(
+    vault: &crate::Vault,
     principal_ref: &str,
     request: &ConsentActionRequest,
     authenticated_owner: &AuthenticatedOwner,
 ) -> Result<()> {
     if request
         .actor
-        .authenticates_owner(principal_ref, authenticated_owner)
+        .authenticates_owner(vault, principal_ref, authenticated_owner)?
     {
         return Ok(());
     }
@@ -539,23 +492,4 @@ pub(super) fn non_empty(context: &str, value: String) -> Result<String> {
 
 pub(super) fn lens_text(value: impl Into<String>) -> Result<LensText> {
     LensText::new(value)
-}
-
-pub(super) fn atom_id(value: impl Into<String>) -> Result<LensAtomId> {
-    LensAtomId::new(value)
-}
-
-fn control_id(value: &str) -> Result<SelfUiControlId> {
-    SelfUiControlId::new(value)
-}
-
-fn action_id(value: &str) -> Result<SelfUiActionId> {
-    SelfUiActionId::new(value)
-}
-
-pub(super) fn meta_line(label: &str, value: &str) -> Result<MetaLineAtom> {
-    Ok(MetaLineAtom {
-        label: lens_text(label)?,
-        value: lens_text(value)?,
-    })
 }

@@ -61,6 +61,9 @@ impl PipelineBuilder<'_> {
                 world_authority: inputs.world_authority,
             },
         );
+        // Keyed before every fold: a telemetry reader holds every input but
+        // the query, so an unkeyed digest would confirm a guessed query.
+        let fork_hash = self.vault.retrieval_trace_key().seal(fork_hash);
         let fork_hash = if let Some(identity) = inputs.community_trace_identity {
             use sha2::{Digest, Sha256};
             let mut hash = Sha256::new();
@@ -125,6 +128,8 @@ impl PipelineBuilder<'_> {
                 inputs.blend_access_factors,
                 inputs.trace_candidate_limit,
             ),
+            fusion_list_length: u32::try_from(crate::fusion::FUSION_LIST_LENGTH)
+                .unwrap_or(u32::MAX),
         }
     }
 }

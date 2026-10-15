@@ -5,6 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
+use super::on_record::Landing;
 use super::session::OffRecordSession;
 use super::types::ExecutorUtterance;
 use crate::error::OffRecordError;
@@ -174,24 +175,40 @@ impl OffRecordSession<'_> {
             }],
             occurred_at,
         };
-        let result = match host_turn_ref {
-            Some(turn_ref) => {
-                memory.witness_into_session_with_host_turn(self, &turn, None, turn_ref)
-            }
-            None => memory.witness_into_session(self, &turn, None),
+        // The run's own checks, first in each transaction the witness opens
+        // (its container probes and the one that lands the turn): its
+        // participant is still in the room, and the route it bound at run
+        // entry still stands. Their refusal travels back as the typed error
+        // it was.
+        let refused = std::cell::Cell::new(None);
+        let admit = |txn: &heed::RoTxn<'_>| {
+            self.participant_in_txn(txn)
+                .and_then(|()| route.revalidate())
+                .map_err(|error| {
+                    let shown = crate::memory::MemoryError::new(
+                        crate::memory::MEMORY_CODE_INVALID_STATE,
+                        error.to_string(),
+                        &["Bind a new run to the room."],
+                    );
+                    refused.set(Some(error));
+                    shown
+                })
         };
-        result
+        memory
+            .witness_into_session_for_run(self, &turn, None, host_turn_ref, admit)
             // The door reports a code+message `MemoryError`. A CEILING refusal
             // is a policy verdict the caller must be able to route on, so it
             // travels back out as the typed gate denial it was (ONE-1686) —
             // flattening it into an invariant violation would turn "the owner's
             // policy refused this bubble" into "the engine is broken". Every
-            // other refusal this entry OWNS is raised typed above, and the turn
-            // is built here from executor-controlled parts, so anything else
-            // the door rejects does mean an executor-side invariant broke.
+            // other refusal this entry OWNS is raised typed, above or in
+            // `admit`, and the turn is built here from executor-controlled
+            // parts, so anything else the door rejects does mean an
+            // executor-side invariant broke.
             .map_err(|error| {
-                error
-                    .gate_denial_error()
+                refused
+                    .take()
+                    .or_else(|| error.gate_denial_error())
                     .unwrap_or(Error::InvariantViolation(
                         "executor witness door rejected the session turn",
                     ))
@@ -219,10 +236,17 @@ impl OffRecordSession<'_> {
     /// `Base` route — the sole evidence the room went on record. An `Overlay`
     /// route means the caller reached a durable write while off record, which
     /// the effect policy is supposed to have refused first.
-    fn base_write_vault(&self, route: &SessionWriteRoute) -> Result<&Vault> {
+    ///
+    /// The write runs the returned landing first in its own transaction:
+    /// `route` must still stand there, and a stretch on record takes writes only
+    /// while the saver `route` lands under holds.
+    fn base_write_vault<'r>(
+        &self,
+        route: &'r SessionWriteRoute,
+    ) -> Result<(&Vault, Landing<'r, '_, '_>)> {
         route.revalidate()?;
         match route.target() {
-            RouteTarget::Base => Ok(self.vault),
+            RouteTarget::Base => Ok((self.vault, self.landing(route)?)),
             RouteTarget::Overlay | RouteTarget::Discard => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.session_ref.clone(),
@@ -232,6 +256,8 @@ impl OffRecordSession<'_> {
     }
 
     /// Write-path gate check for a session-bound code run's durable write.
+    /// The gate's decision is a write too, so it lands only as the write
+    /// would.
     pub(crate) fn executor_check_write_gate(
         &self,
         route: &SessionWriteRoute,
@@ -240,13 +266,14 @@ impl OffRecordSession<'_> {
         envelope: &crate::WriteEnvelope,
         can_resolve_pending_consent: bool,
     ) -> Result<()> {
-        let vault = self.base_write_vault(route)?;
+        let (vault, landing) = self.base_write_vault(route)?;
         crate::code_run::check_write_gate_against_vault(
             vault,
             id,
             body,
             envelope,
             can_resolve_pending_consent,
+            |txn| landing.in_txn(txn),
         )
     }
 
@@ -260,12 +287,13 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let vault = self.base_write_vault(route)?;
+        let (vault, landing) = self.base_write_vault(route)?;
         let predicate = candidate.predicate().to_owned();
         vault
             .batch()
             .claim_candidate(id, candidate, envelope, occurred, learned_at)
             .commit_with_target_guard(|txn| {
+                landing.in_txn(txn)?;
                 vault.validate_code_run_claim_target_in_txn(txn, id, Some(&predicate))
             })
     }
@@ -280,10 +308,15 @@ impl OffRecordSession<'_> {
         occurred: crate::TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.base_write_vault(route)?
-            .put_claim_candidate_without_lexical_query_reconcile(
-                id, candidate, envelope, occurred, learned_at,
-            )
+        let (vault, landing) = self.base_write_vault(route)?;
+        vault.put_claim_candidate_without_lexical_query_reconcile(
+            id,
+            candidate,
+            envelope,
+            occurred,
+            learned_at,
+            |txn| landing.in_txn(txn),
+        )
     }
 
     /// `self.memory.supersede_claim` on a session-bound run. ONE-1936's
@@ -305,17 +338,18 @@ impl OffRecordSession<'_> {
         edge_gate_id: EntityId,
         edge_gate_body: &crate::ClaimBody,
     ) -> Result<()> {
-        self.base_write_vault(route)?
-            .supersede_claim_for_code_run_trap(
-                new_id,
-                old_id,
-                now,
-                envelope,
-                claim_gate_id,
-                claim_gate_body,
-                edge_gate_id,
-                edge_gate_body,
-            )
+        let (vault, landing) = self.base_write_vault(route)?;
+        vault.supersede_claim_for_code_run_trap(
+            new_id,
+            old_id,
+            now,
+            envelope,
+            claim_gate_id,
+            claim_gate_body,
+            edge_gate_id,
+            edge_gate_body,
+            |txn| landing.in_txn(txn),
+        )
     }
 
     /// `self.memory.put_edge` on a session-bound run.
@@ -334,7 +368,16 @@ impl OffRecordSession<'_> {
         gate_id: EntityId,
         gate_body: &crate::ClaimBody,
     ) -> Result<()> {
-        self.base_write_vault(route)?
-            .put_edge_for_code_run_trap(src, kind, tgt, weight, envelope, gate_id, gate_body)
+        let (vault, landing) = self.base_write_vault(route)?;
+        vault.put_edge_for_code_run_trap(
+            src,
+            kind,
+            tgt,
+            weight,
+            envelope,
+            gate_id,
+            gate_body,
+            |txn| landing.in_txn(txn),
+        )
     }
 }

@@ -52,11 +52,7 @@ impl BatchBuilder<'_> {
         }
         let vault = self.vault;
         #[cfg(feature = "sync")]
-        let mut ops = std::mem::take(&mut self.ops);
-        #[cfg(not(feature = "sync"))]
-        let ops = std::mem::take(&mut self.ops);
-        #[cfg(feature = "sync")]
-        admit_federated_puts(vault, wtxn, &mut ops, &self.federated_puts)?;
+        admit_federated_puts(vault, wtxn, &mut self.ops, &self.federated_puts)?;
         // A batch inside an actor-bound transaction cannot silently choose the
         // trusted/raw apply path. The in-flight writer is transaction-local,
         // never a process-global flag or a reusable preflight token.
@@ -70,7 +66,7 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
-        let text_index_trusted = if contains_text_op(&ops) {
+        let text_index_trusted = if contains_text_op(&self.ops) {
             vault.ensure_text_index_trusted()?;
             true
         } else {
@@ -79,12 +75,16 @@ impl BatchBuilder<'_> {
                 .load(std::sync::atomic::Ordering::Acquire)
         };
         let pending_vad_ids = if super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn) {
-            super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &ops)?
+            super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &self.ops)?
         } else {
             Vec::new()
         };
-        let changes_claims = super::vad_postcommit::ops_change_proactivity(&ops);
+        let changes_claims = super::vad_postcommit::ops_change_proactivity(&self.ops);
+        let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
         let gate_mode = gate_mode.with_birth_mask(self.birth_mask);
+        // Taken only now: until here a refusal leaves a promotion replay's
+        // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
+        let ops = std::mem::take(&mut self.ops);
         if let Some(actor) = actor {
             apply_actor_ops(
                 vault,
@@ -113,6 +113,7 @@ impl BatchBuilder<'_> {
         if changes_claims {
             super::vad_postcommit::queue_proactivity_change(vault, wtxn);
         }
+        super::vad_postcommit::queue_task_updates(vault, wtxn, tasks);
         Ok(())
     }
 }

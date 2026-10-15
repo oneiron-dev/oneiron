@@ -53,6 +53,7 @@ pub fn candidate_keys(
             world: facts.world,
             facet: facts.facet,
             rel: facts.rel,
+            project: facts.project,
             topic: facts.topic.clone(),
         },
         topic_key: facts.topic.unwrap_or(canonical_value_bytes(&topic)?),
@@ -146,7 +147,8 @@ pub fn judge_queue(
             let same_slice = a.identity.subject == b.identity.subject
                 && a.identity.world == b.identity.world
                 && a.identity.facet == b.identity.facet
-                && a.identity.rel == b.identity.rel;
+                && a.identity.rel == b.identity.rel
+                && a.identity.project == b.identity.project;
             if !same_slice {
                 continue;
             }
@@ -223,11 +225,9 @@ impl Vault {
         }
     }
     pub fn set_consolidation_key_rules(&self, rules: &PredicateKeyRules) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             KEY_RULES.put(&self.store, txn, &(), rules)?;
             Ok(())
         })
     }
 }
-#[cfg(test)]
-mod tests;

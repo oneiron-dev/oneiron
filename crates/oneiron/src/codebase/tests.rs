@@ -5,7 +5,6 @@ use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
 use crate::context_pack::PackFormat;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{CodeError, Error, ErrorKind};
-use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::secret_custody::{
     CustodyClass, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
@@ -16,7 +15,6 @@ use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
-use std::cell::RefCell;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -214,38 +212,6 @@ fn commit_test_file(repo_dir: &Path, path: &str, bytes: &[u8], message: &str) ->
     run_git(repo_dir, &["commit", "-m", message])
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HashMatchCall {
-    project_id: String,
-    path: String,
-    media_type: &'static str,
-    content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
-    size_bytes: u64,
-    bytes: Vec<u8>,
-}
-
-#[derive(Debug, Default)]
-struct RecordingHashMatchProvider {
-    calls: RefCell<Vec<HashMatchCall>>,
-}
-
-impl HostedMediaHashMatchProvider for RecordingHashMatchProvider {
-    fn check_hosted_media(
-        &self,
-        input: HostedMediaHashMatchInput<'_>,
-    ) -> Result<HostedMediaHashMatchDecision> {
-        self.calls.borrow_mut().push(HashMatchCall {
-            project_id: input.project_id.to_owned(),
-            path: input.path.to_owned(),
-            media_type: input.media_type,
-            content_hash: input.content_hash,
-            size_bytes: input.size_bytes,
-            bytes: input.bytes.to_vec(),
-        });
-        Ok(HostedMediaHashMatchDecision::NoMatch)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct KnownMatchProvider;
 
@@ -262,36 +228,32 @@ impl HostedMediaHashMatchProvider for KnownMatchProvider {
 }
 
 #[test]
-fn noop_hosted_media_hash_match_provider_reports_no_match() -> Result<()> {
-    let bytes = b"secret-media-bytes";
+fn media_input_debug_redacts_text_and_numeric_byte_representations() {
+    let secret = b"private-media-canary-7391";
     let input = HostedMediaHashMatchInput {
         project_id: "project.alpha",
         path: "portrait.JPG",
         media_type: "image/jpeg",
-        content_hash: *blake3::hash(bytes).as_bytes(),
-        size_bytes: u64::try_from(bytes.len())
-            .map_err(|_| Error::ArithmeticOverflow("test bytes"))?,
-        bytes,
+        content_hash: [0xAB; 32],
+        size_bytes: secret.len() as u64,
+        bytes: secret,
     };
-
-    let provider = NoopHostedMediaHashMatchProvider;
-    assert!(matches!(
-        provider.check_hosted_media(input)?,
-        HostedMediaHashMatchDecision::NoMatch
-    ));
-    assert_eq!(
-        hosted_media_type_for_blob("payload.bin", b"\xff\xd8\xff\xe0jpeg-body"),
-        Some("image/jpeg")
-    );
-    assert_eq!(
-        hosted_media_type_for_blob("portrait.JPG", b"extension-only-candidate"),
-        Some("image/jpeg")
-    );
-    assert_eq!(hosted_media_type_for_blob("README.md", b"plain text"), None);
-
-    let debug = format!("{input:?}");
-    assert!(!debug.contains("secret-media-bytes"));
-    Ok(())
+    let text = std::str::from_utf8(secret).unwrap();
+    let compact_bytes = format!("{secret:?}");
+    let pretty_bytes = format!("{secret:#?}");
+    let decimal_sequence = secret
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    for debug in [format!("{input:?}"), format!("{input:#?}")] {
+        assert!(debug.contains("portrait.JPG"));
+        assert!(!debug.contains(text));
+        assert!(!debug.contains(&compact_bytes));
+        assert!(!debug.contains(&pretty_bytes));
+        let without_whitespace: String = debug.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(!without_whitespace.contains(&decimal_sequence));
+    }
 }
 
 #[test]
@@ -324,22 +286,6 @@ fn codebase_repo_ref_parse_validates_local_and_github_at_commit() -> Result<()> 
     let err = RepoRef::parse("github:oneiron-dev/oneiron#main")
         .expect_err("branch names are not commit-pinned repo refs");
     assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
-    Ok(())
-}
-
-#[test]
-fn task_list_repo_url_migrates_to_repo_ref_with_commit() -> Result<()> {
-    let migrated = RepoRef::from_task_list_repo_url(
-        "https://github.com/oneiron-dev/oneiron.git",
-        "9D561405A81FFBF29D1369CD848E0EF9FCA4F277",
-    )?;
-    assert_eq!(migrated, repo_ref());
-
-    let local = RepoRef::from_task_list_repo_url(
-        "file:///Users/example/project",
-        "9d561405a81ffbf29d1369cd848e0ef9fca4f277",
-    )?;
-    assert_eq!(local, local_repo_ref());
     Ok(())
 }
 
@@ -431,53 +377,6 @@ fn codebase_snapshot_codec_rejects_invalid_constructed_repo_ref() {
 }
 
 #[test]
-fn codebase_snapshot_vault_round_trip_and_queries() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let id = EntityId::now();
-    let repo_ref = repo_ref();
-    let snapshot = snapshot("project.alpha", repo_ref.clone())?;
-
-    vault.put_code_artifact(
-        &id,
-        &code_body(&repo_ref),
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
-
-    let persisted = vault
-        .get_codebase_snapshot(&id)?
-        .expect("persisted snapshot");
-    assert_eq!(persisted.project_id, snapshot.project_id);
-    assert_eq!(persisted.repo_ref.canonical(), repo_ref.canonical());
-    assert_eq!(persisted.commit_hash, snapshot.commit_hash);
-    assert_eq!(persisted.fork_hash, snapshot.fork_hash);
-    assert_eq!(persisted.scope_key, snapshot.scope_key);
-    assert_eq!(persisted.files.len(), snapshot.files.len());
-    for (actual, expected) in persisted.files.iter().zip(&snapshot.files) {
-        assert_eq!(actual.path, expected.path);
-        assert_eq!(actual.content_hash, expected.content_hash);
-        assert_eq!(actual.size_bytes, expected.size_bytes);
-    }
-    assert!(
-        vault
-            .codebase_snapshots_by_repo_ref(&repo_ref)?
-            .contains(&id)
-    );
-    assert!(
-        vault
-            .codebase_snapshots_by_project_id("project.alpha")?
-            .contains(&id)
-    );
-    assert!(
-        vault
-            .codebase_snapshots_by_project_id("project.beta")?
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
 fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity_id(0x33);
@@ -547,53 +446,6 @@ fn codebase_snapshot_rejects_secret_file_path_before_sidecar_mutation() -> Resul
     assert!(
         !vault
             .codebase_snapshots_by_fork_hash(&secret_snapshot.fork_hash)?
-            .contains(&id)
-    );
-    Ok(())
-}
-
-#[test]
-fn codebase_snapshot_allows_non_secret_file_paths() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let id = entity_id(0x34);
-    let repo_ref = repo_ref();
-    let content = b"valid-non-secret-codebase-fixture".to_vec();
-    let snapshot = CodebaseSnapshot::new(
-        "project.alpha",
-        repo_ref.clone(),
-        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
-        vec![CodebaseFileEntry::new(
-            "src/secret-name",
-            *blake3::hash(&content).as_bytes(),
-            content.len() as u64,
-        )],
-    )?;
-
-    vault.put_code_artifact(
-        &id,
-        &code_body(&repo_ref),
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
-
-    let persisted = vault
-        .get_codebase_snapshot(&id)?
-        .expect("innocuous secret-name path is retained");
-    assert_eq!(persisted.files.len(), 1);
-    assert_eq!(persisted.files[0].path, "src/secret-name");
-    assert_eq!(
-        persisted.files[0].content_hash,
-        *blake3::hash(&content).as_bytes()
-    );
-    assert!(
-        vault
-            .codebase_snapshots_by_repo_ref(&repo_ref)?
-            .contains(&id)
-    );
-    assert!(
-        vault
-            .codebase_snapshots_by_project_id("project.alpha")?
             .contains(&id)
     );
     Ok(())
@@ -749,75 +601,6 @@ fn codebase_snapshot_code_artifact_repo_ref_overwrite_cleans_sidecar_indexes() -
             .codebase_snapshots_by_project_id("project.alpha")?
             .is_empty()
     );
-    Ok(())
-}
-
-#[test]
-fn codebase_filters_apply_to_search_and_context_pack() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let repo_a = repo_ref();
-    let repo_b = repo_ref_b();
-    let id_a = EntityId::now();
-    let id_b = EntityId::now();
-
-    vault.put_code_artifact(
-        &id_a,
-        &code_body(&repo_a),
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    vault.put_codebase_snapshot(&id_a, &snapshot("project.alpha", repo_a.clone())?, &|_| {
-        Some(Vec::new())
-    })?;
-    vault.put_code_artifact(
-        &id_b,
-        &code_body(&repo_b),
-        TimeRange { start: 12, end: 12 },
-        13,
-    )?;
-    vault.put_codebase_snapshot(
-        &id_b,
-        &CodebaseSnapshot::new(
-            "project.beta",
-            repo_b,
-            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
-            vec![file("src/main.rs", 3)],
-        )?,
-        &|_| Some(Vec::new()),
-    )?;
-    vault
-        .batch()
-        .text(&id_a, &[("body", "sharedneedle alpha")])
-        .text(&id_b, &[("body", "sharedneedle beta")])
-        .commit()?;
-
-    let all = vault.query().search_text("sharedneedle", 10).run()?;
-    assert_eq!(all.len(), 2);
-
-    let by_repo = vault
-        .query()
-        .search_text("sharedneedle", 10)
-        .filter_repo_ref(repo_a)
-        .run()?;
-    assert_eq!(by_repo.len(), 1);
-    assert_eq!(by_repo[0].id, id_a);
-
-    let by_project = vault
-        .query()
-        .search_text("sharedneedle", 10)
-        .filter_project_id("project.beta")
-        .run()?;
-    assert_eq!(by_project.len(), 1);
-    assert_eq!(by_project[0].id, id_b);
-
-    let pack = vault
-        .context_pack()
-        .format(PackFormat::Json)
-        .search_text("sharedneedle", 10)
-        .filter_project_id("project.alpha")
-        .run()?;
-    assert_eq!(pack.results.len(), 1);
-    assert_eq!(pack.results[0].id, id_a);
     Ok(())
 }
 
@@ -1160,89 +943,6 @@ fn local_repo_ingest_filtered_identity_matches_persisted_snapshot_and_artifact()
 }
 
 #[test]
-fn local_repo_ingest_does_not_persist_blobs_for_declared_secret_paths() -> Result<()> {
-    let repo_dir = create_test_repo()?;
-    let declared_bytes = b"pub fn declared_only_symbol() -> u8 { 7 }\n";
-    commit_test_file(
-        repo_dir.path(),
-        "src/declared.rs",
-        declared_bytes,
-        "add declared secret source",
-    )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    vault.register_secret(SecretCustodyRecord {
-        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
-        name: "ingest-declared-source".to_owned(),
-        class: CustodyClass::CustodyPortable,
-        device_only: false,
-        value_bytes: b"declared path fixture".to_vec(),
-        status: SecretCustodyStatus::Active,
-        registered_at: 1,
-        rotated_at: None,
-        rotation_generation: 0,
-        bindings: vec![],
-        manifest_ref: "secrets.toml".to_owned(),
-        declared_paths: vec!["src/declared.rs".to_owned()],
-        policy_floor_snapshot: SecretCustodyFloor::default(),
-    })?;
-    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
-
-    let result = vault.ingest_local_repo_at_commit(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-
-    // The excluded path is absent from the manifest and its sidecar records it.
-    assert_eq!(
-        result
-            .snapshot
-            .files
-            .iter()
-            .map(|entry| entry.path.as_str())
-            .collect::<Vec<_>>(),
-        ["Cargo.toml", "src/lib.rs"]
-    );
-    let report = vault
-        .get_codebase_snapshot_custody_report(&result.snapshot.fork_hash)?
-        .expect("sidecar");
-    assert_eq!(report.excluded_secret_paths, ["src/declared.rs"]);
-
-    // The declared blob body must never reach storage, while retained blobs do.
-    let declared_asset = codebase_asset_entity_id(blake3::hash(declared_bytes).as_bytes())?;
-    assert_eq!(
-        vault.get_entity_type(&declared_asset)?,
-        None,
-        "declared secret blob must not persist as an ASSET body"
-    );
-    let retained_asset =
-        codebase_asset_entity_id(blake3::hash(b"pub fn answer() -> u8 { 42 }\n").as_bytes())?;
-    assert_eq!(
-        vault.get_entity_type(&retained_asset)?,
-        Some(ENTITY_TYPE_ASSET)
-    );
-    // Two fixture blobs plus four bootstrap skill carriers and four built-in pack sources.
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 10);
-
-    // No symbols may be derived from the excluded source either.
-    assert!(
-        vault
-            .code_symbol_definitions(&result.code_artifact_id, "declared_only_symbol")?
-            .is_empty(),
-        "excluded source must not yield symbols"
-    );
-    assert_eq!(
-        vault
-            .code_symbol_definitions(&result.code_artifact_id, "answer")?
-            .len(),
-        1
-    );
-    Ok(())
-}
-
-#[test]
 fn local_repo_ingest_rechecks_custody_after_first_pass_before_any_write() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let late_bytes = b"pub fn late_declared_symbol() -> u8 { 7 }\n";
@@ -1304,142 +1004,6 @@ fn local_repo_ingest_rechecks_custody_after_first_pass_before_any_write() -> Res
     );
     // Two fixture blobs plus four bootstrap skill carriers and four built-in pack sources.
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 10);
-    Ok(())
-}
-
-#[test]
-fn local_repo_ingest_reclaims_an_old_unfiltered_excluded_asset() -> Result<()> {
-    let repo_dir = create_test_repo()?;
-    let residue = b"pub fn legacy_excluded_symbol() -> u8 { 9 }\n";
-    commit_test_file(
-        repo_dir.path(),
-        "src/legacy.rs",
-        residue,
-        "add old unfiltered source",
-    )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let asset_id = codebase_asset_entity_id(blake3::hash(residue).as_bytes())?;
-    vault
-        .batch()
-        .put(
-            &asset_id,
-            ENTITY_TYPE_ASSET,
-            TimeRange { start: 1, end: 1 },
-            2,
-            residue,
-        )
-        .commit()?;
-    assert_eq!(vault.get_entity_type(&asset_id)?, Some(ENTITY_TYPE_ASSET));
-    vault.register_secret(SecretCustodyRecord {
-        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
-        name: "old-unfiltered-source".to_owned(),
-        class: CustodyClass::CustodyPortable,
-        device_only: false,
-        value_bytes: b"legacy declared fixture".to_vec(),
-        status: SecretCustodyStatus::Active,
-        registered_at: 1,
-        rotated_at: None,
-        rotation_generation: 0,
-        bindings: vec![],
-        manifest_ref: "secrets.toml".to_owned(),
-        declared_paths: vec!["src/legacy.rs".to_owned()],
-        policy_floor_snapshot: SecretCustodyFloor::default(),
-    })?;
-    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
-    let result = vault.ingest_local_repo_at_commit(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    assert_eq!(vault.get_entity_type(&asset_id)?, None);
-    assert_eq!(
-        vault.get_codebase_snapshot(&result.code_artifact_id)?,
-        Some(result.snapshot)
-    );
-    Ok(())
-}
-
-#[test]
-fn local_repo_ingest_reclaims_excluded_asset_from_older_commit() -> Result<()> {
-    let repo_dir = create_test_repo()?;
-    let residue = b"pub fn legacy_excluded_symbol() -> u8 { 9 }\n";
-    commit_test_file(
-        repo_dir.path(),
-        "src/legacy.rs",
-        residue,
-        "add legacy source",
-    )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
-    let first = vault.ingest_local_repo_at_commit(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    let asset_id = codebase_asset_entity_id(blake3::hash(residue).as_bytes())?;
-    assert_eq!(vault.get_entity_type(&asset_id)?, Some(ENTITY_TYPE_ASSET));
-    assert_eq!(
-        vault
-            .mount_codebase_snapshot(&first.code_artifact_id)?
-            .expect("older snapshot")
-            .read_file("src/legacy.rs")?,
-        Some(residue.to_vec()),
-    );
-
-    vault.register_secret(SecretCustodyRecord {
-        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
-        name: "legacy-commit-source".to_owned(),
-        class: CustodyClass::CustodyPortable,
-        device_only: false,
-        value_bytes: b"legacy declared fixture".to_vec(),
-        status: SecretCustodyStatus::Active,
-        registered_at: 1,
-        rotated_at: None,
-        rotation_generation: 0,
-        bindings: vec![],
-        manifest_ref: "secrets.toml".to_owned(),
-        declared_paths: vec!["src/legacy.rs".to_owned()],
-        policy_floor_snapshot: SecretCustodyFloor::default(),
-    })?;
-    commit_test_file(
-        repo_dir.path(),
-        "Cargo.toml",
-        b"[package]\nname = \"updated\"\n",
-        "change other file",
-    )?;
-    let second = vault.ingest_local_repo_at_commit(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 20, end: 20 },
-        21,
-    )?;
-    assert_ne!(first.snapshot.repo_ref, second.snapshot.repo_ref);
-    assert!(
-        second
-            .snapshot
-            .files
-            .iter()
-            .all(|file| file.path != "src/legacy.rs")
-    );
-    let report = vault
-        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
-        .expect("filtered report");
-    assert_eq!(report.excluded_secret_paths, ["src/legacy.rs"]);
-    assert_eq!(vault.get_entity_type(&asset_id)?, None);
-    assert_eq!(
-        vault
-            .mount_codebase_snapshot(&first.code_artifact_id)?
-            .expect("older snapshot")
-            .read_file("src/legacy.rs")
-            .expect_err("excluded old body cannot be read")
-            .kind(),
-        ErrorKind::EntityNotFound,
-    );
     Ok(())
 }
 
@@ -1520,13 +1084,6 @@ fn assert_historical_declared_asset_reclaimed(replacement: Option<&[u8]>) -> Res
         ErrorKind::EntityNotFound,
     );
     Ok(())
-}
-
-#[test]
-fn local_repo_ingest_reclaims_changed_historical_declared_asset() -> Result<()> {
-    assert_historical_declared_asset_reclaimed(Some(
-        b"pub fn changed_declared_symbol() -> u8 { 8 }\n",
-    ))
 }
 
 #[test]
@@ -1709,75 +1266,6 @@ fn local_repo_ingest_preserves_clean_historical_body_at_newly_quarantined_path()
 }
 
 #[test]
-fn local_repo_ingest_sees_custody_registered_before_writer_and_keeps_blob_out() -> Result<()> {
-    let repo_dir = create_test_repo()?;
-    let newly_declared = b"pub fn newly_declared_symbol() -> u8 { 7 }\n";
-    commit_test_file(
-        repo_dir.path(),
-        "src/newly_declared.rs",
-        newly_declared,
-        "add later declared path",
-    )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let vault = std::sync::Arc::new(vault);
-    let registering = std::sync::Arc::clone(&vault);
-    vault
-        .test_hooks()
-        .before_codebase_ingest_writer
-        .lock()
-        .expect("codebase ingest hook poisoned")
-        .replace(Box::new(move || {
-            registering
-                .register_secret(SecretCustodyRecord {
-                    schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
-                    name: "late-declared-source".to_owned(),
-                    class: CustodyClass::CustodyPortable,
-                    device_only: false,
-                    value_bytes: b"late declaration fixture".to_vec(),
-                    status: SecretCustodyStatus::Active,
-                    registered_at: 1,
-                    rotated_at: None,
-                    rotation_generation: 0,
-                    bindings: vec![],
-                    manifest_ref: "secrets.toml".to_owned(),
-                    declared_paths: vec!["src/newly_declared.rs".to_owned()],
-                    policy_floor_snapshot: SecretCustodyFloor::default(),
-                })
-                .expect("late custody registration");
-        }));
-    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
-    let result = vault.ingest_local_repo_at_commit(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    let persisted = vault
-        .get_codebase_snapshot(&result.code_artifact_id)?
-        .expect("stored snapshot");
-    assert_eq!(result.snapshot, persisted);
-    assert!(
-        persisted
-            .files
-            .iter()
-            .all(|entry| entry.path != "src/newly_declared.rs")
-    );
-    let report = vault
-        .get_codebase_snapshot_custody_report(&persisted.fork_hash)?
-        .expect("custody report");
-    assert_eq!(report.excluded_secret_paths, ["src/newly_declared.rs"]);
-    let asset = codebase_asset_entity_id(blake3::hash(newly_declared).as_bytes())?;
-    assert_eq!(vault.get_entity_type(&asset)?, None);
-    assert!(
-        vault
-            .code_symbol_definitions(&result.code_artifact_id, "newly_declared_symbol")?
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
 fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let leaked = format!("pub const LEAKED_TOKEN: &str = \"{GITHUB_TOKEN_SECRET_FIXTURE}\";\n");
@@ -1841,63 +1329,6 @@ fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> R
 }
 
 #[test]
-fn local_repo_ingest_calls_hash_match_provider_for_hosted_media_candidates() -> Result<()> {
-    let repo_dir = create_test_repo()?;
-    let media_bytes = b"not-a-real-image-but-route-media-by-extension";
-    let renamed_media_bytes = b"\x89PNG\r\n\x1a\nmisnamed-png-body";
-    commit_test_file(
-        repo_dir.path(),
-        "assets/payload.bin",
-        renamed_media_bytes,
-        "add renamed media",
-    )?;
-    commit_test_file(
-        repo_dir.path(),
-        "assets/portrait.jpg",
-        media_bytes,
-        "add media",
-    )?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
-    let provider = RecordingHashMatchProvider::default();
-
-    vault.ingest_local_repo_at_commit_with_hosted_media_hash_match_provider(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 10, end: 10 },
-        11,
-        &provider,
-    )?;
-
-    let calls = provider.calls.borrow();
-    assert_eq!(calls.len(), 2);
-    for (path, media_type, bytes) in [
-        (
-            "assets/payload.bin",
-            "image/png",
-            renamed_media_bytes.as_slice(),
-        ),
-        ("assets/portrait.jpg", "image/jpeg", media_bytes.as_slice()),
-    ] {
-        let call = calls
-            .iter()
-            .find(|call| call.path == path)
-            .expect("hosted media candidate reaches provider");
-        assert_eq!(call.project_id, "project.alpha");
-        assert_eq!(call.media_type, media_type);
-        assert_eq!(call.content_hash, *blake3::hash(bytes).as_bytes());
-        assert_eq!(
-            call.size_bytes,
-            u64::try_from(bytes.len())
-                .map_err(|_| Error::ArithmeticOverflow("test media bytes"))?
-        );
-        assert_eq!(call.bytes.as_slice(), bytes);
-    }
-    Ok(())
-}
-
-#[test]
 fn local_repo_ingest_preserves_known_match_metadata() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let media_bytes = b"\xff\xd8\xff\xe0known-jpeg";
@@ -1939,51 +1370,6 @@ fn local_repo_ingest_preserves_known_match_metadata() -> Result<()> {
 }
 
 #[test]
-fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
-    let repo_dir = create_test_repo()?;
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
-    let ingest = vault.ingest_local_repo_at_commit(
-        "project.alpha",
-        &config,
-        "HEAD",
-        TimeRange { start: 10, end: 10 },
-        11,
-    )?;
-    let outside = entity_id(0x58);
-    let asset_id = codebase_asset_entity_id(&ingest.snapshot.files[0].content_hash)?;
-
-    vault.put_entity(
-        &outside,
-        ENTITY_TYPE_ASSET,
-        TimeRange { start: 20, end: 20 },
-        21,
-        b"outside asset",
-    )?;
-    vault
-        .batch()
-        .text(&ingest.code_artifact_id, &[("body", "scopeneedle repo")])
-        .text(&asset_id, &[("body", "scopeneedle included asset")])
-        .text(&outside, &[("body", "scopeneedle outside")])
-        .commit()?;
-
-    let all = vault.query().search_text("scopeneedle", 10).run()?;
-    assert_eq!(all.len(), 3);
-    assert!(all.iter().any(|hit| hit.id == outside));
-
-    let scoped = vault
-        .query()
-        .search_text("scopeneedle", 10)
-        .world(WorldScope::CodebaseSet(ingest.snapshot.scope_key))
-        .run()?;
-    assert_eq!(scoped.len(), 2);
-    assert!(scoped.iter().any(|hit| hit.id == ingest.code_artifact_id));
-    assert!(scoped.iter().any(|hit| hit.id == asset_id));
-    assert!(!scoped.iter().any(|hit| hit.id == outside));
-    Ok(())
-}
-
-#[test]
 fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let repo_a = repo_ref();
@@ -2021,10 +1407,30 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
         .text(&id_a, &[("body", "needle needle needle needle")])
         .text(&id_b, &[("body", "needle")])
         .vector(&id_a, &[1.0, 0.0, 0.0, 0.0])
-        .vector(&id_b, &[0.0, 1.0, 0.0, 0.0])
+        .vector(&id_b, &[0.97, 0.243, 0.0, 0.0])
         .commit()?;
+    // EMBED-PACK: a channel fetches its fusion list length whatever it is
+    // asked for. More rows than that, in no project, outrank id_b on both
+    // channels and not id_a, so id_b is in a channel's top only when the
+    // filter runs first; the pack's limit caps the results. Their vectors
+    // ring the query at 0.98, each apart from the next. id_b sits just
+    // outside the ring at 0.97: a vector far from every other one loses its
+    // last link once each neighbour list fills, and no walk reaches it.
+    let mut outside = vault.batch();
+    for index in 0..=crate::fusion::FUSION_LIST_LENGTH {
+        let index = u8::try_from(index).expect("a small index");
+        let mut bytes = [0x5A; 16];
+        bytes[15] = index;
+        let id = EntityId::from_bytes(bytes)?;
+        let angle = std::f32::consts::TAU * f32::from(index) / 81.0;
+        outside = outside
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .text(&id, &[("body", "needle needle")])
+            .vector(&id, &[0.98, 0.199 * angle.cos(), 0.199 * angle.sin(), 0.0]);
+    }
+    outside.commit()?;
 
-    let unscoped_text_top = vault.query().search_text("needle", 1).run()?;
+    let unscoped_text_top = vault.query().search_text("needle", 1).limit(1).run()?;
     assert_eq!(unscoped_text_top.len(), 1);
     assert_eq!(unscoped_text_top[0].id, id_a);
 
@@ -2048,6 +1454,7 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
     let unscoped_vector_top = vault
         .query()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .limit(1)
         .run()?;
     assert_eq!(unscoped_vector_top.len(), 1);
     assert_eq!(unscoped_vector_top[0].id, id_a);

@@ -48,6 +48,9 @@ pub struct ConsentRegistryRow {
     pub created_at: u64,
     /// The one-tap revoke command the host interprets.
     pub revoke_action: ConsentRevokeAction,
+    /// Where a scoped catastrophe bypass grant applies; `None` for an
+    /// ordinary standing grant.
+    pub bypass: Option<super::bypass::BypassExtent>,
 }
 
 /// The one-tap revoke command carried by every registry row.
@@ -89,6 +92,7 @@ impl ConsentRegistryRow {
                 grant_ref: grant_ref.clone(),
             },
             grant_ref,
+            bypass: row.bypass,
         }
     }
 }

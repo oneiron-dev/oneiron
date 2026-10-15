@@ -177,12 +177,73 @@ impl Vault {
     pub fn members(&self, conversation: EntityId) -> Result<Vec<EntityId>> {
         self.membership_at(conversation, u64::MAX)
     }
+    /// [`Self::members`] in the caller's snapshot.
+    pub(crate) fn members_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        body::body_in(self, txn, conversation)?;
+        Ok(
+            members_at_rows(&rows_in(&self.store, txn, conversation)?, u64::MAX)
+                .into_iter()
+                .collect(),
+        )
+    }
+    /// Everyone `conversation`'s ledger has ever joined, in the caller's
+    /// snapshot, whether or not they have left since.
+    pub(crate) fn ever_members_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+    ) -> Result<BTreeSet<EntityId>> {
+        body::body_in(self, txn, conversation)?;
+        Ok(rows_in(&self.store, txn, conversation)?
+            .into_iter()
+            .filter(|row| row.action == MembershipAction::Join)
+            .map(|row| row.person)
+            .collect())
+    }
+    /// Where in `conversation`'s ledger the join that opened `person`'s
+    /// current membership sits, in the caller's snapshot; `None` when they
+    /// are not a member. Leaving and joining again opens a new membership,
+    /// so the answer moves.
+    pub(crate) fn current_join_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+    ) -> Result<Option<u64>> {
+        body::body_in(self, txn, conversation)?;
+        let mut current = None;
+        for (index, row) in (0_u64..).zip(rows_in(&self.store, txn, conversation)?) {
+            if row.person != person {
+                continue;
+            }
+            match row.action {
+                MembershipAction::Join => current = Some(index),
+                MembershipAction::Leave => current = None,
+                MembershipAction::History => {}
+            }
+        }
+        Ok(current)
+    }
     pub fn windows(
         &self,
         conversation: EntityId,
         person: EntityId,
     ) -> Result<Vec<MembershipWindow>> {
         windows_rows(&self.membership_ledger(conversation)?, person)
+    }
+    /// [`Self::windows`] in the caller's snapshot.
+    pub(crate) fn windows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+    ) -> Result<Vec<MembershipWindow>> {
+        body::body_in(self, txn, conversation)?;
+        windows_rows(&rows_in(&self.store, txn, conversation)?, person)
     }
     pub fn join_member(
         &self,
@@ -251,7 +312,7 @@ impl Vault {
         history: Option<HistoryChoice>,
         from: Option<u64>,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             authorize(self, txn, actor)?;
             require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
             let mut body = body::body_in(self, txn, conversation)?;

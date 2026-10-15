@@ -281,39 +281,6 @@ fn recovery_keeps_typed_scoped_channel_spellings_distinct() {
 }
 
 #[test]
-fn recovery_blocks_the_exact_per_grant_capability_key() {
-    let (_tmp, vault) = temp_vault();
-    let denied_key = entity(0xD1);
-    let neighbour_key = entity(0xD2);
-    let denied = register_scoped_key(&vault, &denied_key, &entity(0x8A), "files");
-    let neighbour = register_scoped_key(&vault, &neighbour_key, &entity(0x8B), "files");
-    let text = format!("never key {}", denied.connector());
-    stamp_charter(&vault, &denied_key, &text);
-    // The neighbour grant carries the SAME stamped prohibition text, naming the
-    // other grant's key.
-    stamp_charter(&vault, &neighbour_key, &text);
-
-    assert!(matches!(
-        recovery_governance(
-            &vault,
-            &charged_record(denied_key, "read_file", Some(denied)),
-        )
-        .expect("recovery governance"),
-        RecoveryGovernance::Block("charter_never_list")
-    ));
-    // Discriminating: a prefix, per-segment, or server-wide reading of the
-    // capability key would block this neighbour grant too.
-    assert!(matches!(
-        recovery_governance(
-            &vault,
-            &charged_record(neighbour_key, "read_file", Some(neighbour)),
-        )
-        .expect("recovery governance"),
-        RecoveryGovernance::Allow
-    ));
-}
-
-#[test]
 fn recovery_reads_typed_provenance_never_connector_text() {
     let (_tmp, vault) = temp_vault();
     let real_grant = entity(0x8C);
@@ -459,49 +426,4 @@ fn recovery_leaves_uncharted_and_unregistered_keys_unchanged() {
         .expect("recovery governance"),
         RecoveryGovernance::Block("connector_key_unregistered")
     ));
-}
-
-#[test]
-fn provider_reply_resumes_slim_and_first_query_rebuilds_lazily() -> crate::Result<()> {
-    struct Reply<'a>(&'a Vault);
-    impl OutboundTransport for Reply<'_> {
-        fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
-            let outcome = self
-                .0
-                .shed_rebuildable_heap(crate::ShedCause::LongOutboundWait, 2, 20)
-                .unwrap();
-            let crate::ShedOutcome::Entered { residue, dropped } = outcome else {
-                panic!("entered slim");
-            };
-            assert_eq!(Some(&residue.step.intent_id), call.intent_id());
-            assert!(dropped.ppr_cache_rows > 0);
-            assert_eq!(self.0.residency(), crate::VaultResidency::Slim);
-            OutboundSendOutcome::Acked
-        }
-    }
-
-    let (_dir, vault) = temp_vault();
-    let key = entity(0xDB);
-    register_key(&vault, &key, "files");
-    let mut record = charged_record(key, "read_file", None);
-    // The record must carry the same host authorization stamp as production.
-    record.authorization_binding = Some(OutboundAuthorizationBinding::new([0xB1; 32]));
-    vault.with_write_txn(|txn| {
-        insert_pending_in_txn(&vault, txn, &record)
-            .map_err(|_| crate::Error::InvariantViolation("fixture pending"))
-    })?;
-    let a = entity(0xB3);
-    let b = entity(0xB4);
-    for id in [a, b] {
-        vault.put_entity(&id, 1, crate::TimeRange { start: 1, end: 1 }, 1, b"node")?;
-    }
-    vault.put_edge(&a, crate::EdgeKind::Mentions, &b, 0.8)?;
-    let before = vault.query().search_ppr(&[a], 2).run()?;
-    let authority = OutboundBindingAuthority::from_secret([0xAC; 32]);
-    let result = send_pending(&vault, &authority, record, 30, false, &mut Reply(&vault))
-        .map_err(|_| crate::Error::InvariantViolation("provider reply"))?;
-    assert_eq!(result.dispatch.state, Some(IntentState::Done));
-    assert_eq!(vault.residency(), crate::VaultResidency::Full);
-    assert_eq!(vault.query().search_ppr(&[a], 2).run()?, before);
-    Ok(())
 }

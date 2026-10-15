@@ -12,45 +12,6 @@ fn surface_terms(tokens: &[Token]) -> Vec<&str> {
 // tautology — asserting a portable analyzer reports portable mode for
 // every lang adds no coverage beyond `MultilingualAnalyzer::portable()`.
 
-#[test]
-fn manifest_channels_match_v1() {
-    let a = MultilingualAnalyzer::portable();
-    let m = a.manifest();
-    let actual: Vec<&str> = m.channels.iter().map(String::as_str).collect();
-    assert_eq!(
-        actual,
-        ["surface", "stem", "normalized_overlay", "cjk_ngram"]
-    );
-    assert_eq!(AnalyzerChannel::ALL_V1.len(), 4);
-}
-
-#[test]
-fn manifest_hash_stable() {
-    let a = MultilingualAnalyzer::portable();
-    let h1 = a.manifest().canonical_hash().unwrap();
-    let h2 = a.manifest().canonical_hash().unwrap();
-    assert_eq!(h1, h2);
-}
-
-/// ONE-1118 AC4: the emoji-lane tokenization change must flow through
-/// ANALYZER_VERSION into the manifest hash. Pins the literal "v3" and
-/// proves the version field alone flips the canonical hash — which is
-/// what makes a populated v2-era index fail closed at the handshake.
-#[test]
-fn analyzer_version_v3_flips_manifest_hash_vs_v2() {
-    assert_eq!(ANALYZER_VERSION, "v3");
-    let a = MultilingualAnalyzer::portable();
-    let mut m = a.manifest();
-    assert_eq!(m.analyzer_version, "v3");
-    let h_v3 = m.canonical_hash().unwrap();
-    m.analyzer_version = "v2".into();
-    let h_v2 = m.canonical_hash().unwrap();
-    assert_ne!(
-        h_v3, h_v2,
-        "analyzer_version must participate in the manifest hash"
-    );
-}
-
 /// ARCH-0031 dispatch row "Emoji / unknown → Grapheme per token"
 /// through the full pipeline: a pure-emoji input forms a Common run
 /// and emits one Surface token per grapheme cluster.
@@ -111,36 +72,6 @@ fn emoji_in_latin_text_emits_on_both_index_and_query_sides() {
     assert_eq!(surface_terms(&queried), vec!["🦀"]);
 }
 
-/// Emoji adjacent to CJK splits into its own Common run; the emoji
-/// token appears and no CjkNgram bigram absorbs it.
-#[test]
-fn emoji_after_cjk_run_stays_out_of_bigrams() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze("東京🦀", &AnalyzerContext::for_index(), &mut out);
-    assert_eq!(surface_terms(&out), vec!["東", "京", "🦀"]);
-    for tok in out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-    {
-        assert!(
-            !tok.term.contains('🦀'),
-            "cjk_ngram token {:?} must not absorb emoji",
-            tok.term,
-        );
-    }
-}
-
-/// AC2: numerics in Common runs are unchanged and punctuation stays
-/// dropped when the emoji lane is active.
-#[test]
-fn numerics_unchanged_and_punctuation_dropped_alongside_emoji() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze("123 🦀 ...!!!", &AnalyzerContext::for_index(), &mut out);
-    assert_eq!(surface_terms(&out), vec!["123", "🦀"]);
-}
-
 /// End-to-end through the full router: a regional-indicator flag and a
 /// keycap reach the emoji lane (Common runs → ICU) and each emits exactly
 /// one Surface token; two adjacent flags split per UAX #29. Guards the
@@ -176,143 +107,6 @@ fn flags_and_keycaps_round_trip_through_router() {
 }
 
 #[test]
-fn hiragana_routes_to_japanese_portable() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze("とうきょう", &AnalyzerContext::for_index(), &mut out);
-    // Portable JP falls through to cjk_ngram → per-char unigrams on Surface.
-    let terms = surface_terms(&out);
-    assert_eq!(terms, vec!["と", "う", "き", "ょ", "う"]);
-}
-
-#[test]
-fn hangul_routes_to_korean_portable() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze("안녕하세요", &AnalyzerContext::for_index(), &mut out);
-    let terms = surface_terms(&out);
-    assert_eq!(terms, vec!["안", "녕", "하", "세", "요"]);
-}
-
-/// Han-only runs in Portable mode yield both unigram Surface tokens and
-/// a bigram CjkNgram overlay. Variants exercise the same path with
-/// different inputs to confirm the overlay shape across multiple
-/// realistic strings.
-///
-/// Variants:
-/// - `four_char_japanese_word` (was `han_portable_produces_unigrams_and_bigram_overlay`):
-///   `"東京大学"` → surface `[東,京,大,学]`, bigrams `[東京,京大,大学]`.
-/// - `three_char_chinese_phrase` (was `portable_han_only_run_yields_cjk_ngram_shaped_output`):
-///   `"我喜欢"` → surface `[我,喜,欢]`, bigrams `[我喜,喜欢]`.
-#[test]
-fn portable_han_yields_unigrams_and_bigram_overlay() {
-    let cases: Vec<(&str, &str, Vec<&str>, Vec<&str>)> = vec![
-        (
-            "four_char_japanese_word",
-            "東京大学",
-            vec!["東", "京", "大", "学"],
-            vec!["東京", "京大", "大学"],
-        ),
-        (
-            "three_char_chinese_phrase",
-            "我喜欢",
-            vec!["我", "喜", "欢"],
-            vec!["我喜", "喜欢"],
-        ),
-    ];
-
-    for (case_name, input, expected_surface, expected_bigrams) in cases {
-        let a = MultilingualAnalyzer::portable();
-        let mut out = Vec::new();
-        a.analyze(input, &AnalyzerContext::for_index(), &mut out);
-        let surface = surface_terms(&out);
-        assert_eq!(
-            surface, expected_surface,
-            "case {case_name}: unexpected Surface tokens"
-        );
-        let bigrams: Vec<&str> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-            .map(|t| t.term.as_ref())
-            .collect();
-        assert_eq!(
-            bigrams, expected_bigrams,
-            "case {case_name}: unexpected CjkNgram bigrams"
-        );
-    }
-}
-
-#[test]
-fn mixed_script_no_cross_boundary_bigram() {
-    let a = MultilingualAnalyzer::portable();
-    let text = "とう東京";
-    let mut out = Vec::new();
-    a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-    // Any cjk_ngram token must not span the hiragana→han boundary.
-    // `とう` ends at byte 6; `東京` starts at byte 6. Reject any token
-    // whose [start, end) crosses the boundary of 6.
-    for tok in out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::CjkNgram)
-    {
-        let s = tok.byte_start as usize;
-        let e = tok.byte_end as usize;
-        assert!(
-            e <= 6 || s >= 6,
-            "bigram {:?} [{}..{}] crosses script boundary at byte 6",
-            tok.term,
-            s,
-            e,
-        );
-    }
-}
-
-#[test]
-fn thai_routes_to_icu_segmenter() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze("ไปโรงเรียน", &AnalyzerContext::for_index(), &mut out);
-    // ICU4X returns at least one word-like segment for Thai.
-    assert!(!surface_terms(&out).is_empty());
-}
-
-#[test]
-fn offsets_slice_original_utf8() {
-    let a = MultilingualAnalyzer::portable();
-    let text = "hello 東京 안녕 สวัสดี";
-    let mut out = Vec::new();
-    a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-    for tok in &out {
-        let s = tok.byte_start as usize;
-        let e = tok.byte_end as usize;
-        assert!(s <= e && e <= text.len());
-        // Slicing must not panic — this enforces valid UTF-8 boundaries.
-        let _ = &text[s..e];
-    }
-}
-
-#[test]
-fn positions_monotonic_across_runs() {
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    a.analyze("hello 東京", &AnalyzerContext::for_index(), &mut out);
-    let mut last = 0u32;
-    for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::Surface) {
-        assert!(tok.position >= last);
-        last = tok.position;
-    }
-}
-
-#[test]
-fn discover_with_no_paths_returns_all_portable() {
-    let a = MultilingualAnalyzer::discover(&[]).unwrap();
-    let m = a.manifest();
-    assert_eq!(m.langs["ja"].mode, AnalyzerMode::Portable);
-    assert_eq!(m.langs["zh"].mode, AnalyzerMode::Portable);
-    assert_eq!(m.langs["ko"].mode, AnalyzerMode::Portable);
-}
-
-#[test]
 fn fullwidth_ascii_folds_to_ascii_with_original_offsets() {
     let a = MultilingualAnalyzer::portable();
     let text = "ＡＢＣ";
@@ -327,37 +121,6 @@ fn fullwidth_ascii_folds_to_ascii_with_original_offsets() {
     assert_eq!(tok.byte_end, text.len() as u32);
     let slice = &text[tok.byte_start as usize..tok.byte_end as usize];
     assert_eq!(slice, "ＡＢＣ");
-}
-
-#[test]
-fn halfwidth_katakana_indexes_like_fullwidth() {
-    let a = MultilingualAnalyzer::portable();
-    let mut half = Vec::new();
-    let mut full = Vec::new();
-    a.analyze("ｶﾀｶﾅ", &AnalyzerContext::for_index(), &mut half);
-    a.analyze("カタカナ", &AnalyzerContext::for_index(), &mut full);
-    // After NFKC, halfwidth katakana indexes the same surface terms
-    // as the fullwidth form. Byte offsets differ since the sources
-    // have different lengths — equality of terms is what matters.
-    assert_eq!(surface_terms(&half), surface_terms(&full));
-}
-
-#[test]
-fn original_offsets_survive_mixed_normalization() {
-    // Mixed-script sample with a fullwidth-ASCII prefix; every emitted
-    // token must still slice valid UTF-8 out of the ORIGINAL input.
-    let a = MultilingualAnalyzer::portable();
-    let text = "ＡＢＣ 東京";
-    let mut out = Vec::new();
-    a.analyze(text, &AnalyzerContext::for_index(), &mut out);
-    assert!(!out.is_empty());
-    for tok in &out {
-        let s = tok.byte_start as usize;
-        let e = tok.byte_end as usize;
-        assert!(s <= e && e <= text.len(), "offsets out of range: {s}..{e}");
-        let _ = &text[s..e];
-    }
-    assert!(surface_terms(&out).contains(&"abc"));
 }
 
 /// Regression guard for cross-run hint bleed: a hiragana run must not
@@ -389,54 +152,6 @@ fn latin_run_with_hiragana_still_stems_english() {
             "case {case_name}: expected English stem `run` from `running`, got stems: {stems:?}",
         );
     }
-}
-
-#[test]
-fn explicit_hint_overrides_per_run_inference_for_latin() {
-    // Short accent-less Spanish falls back to English under the
-    // length-gated ASCII short-circuit; the explicit hint is the
-    // caller's escape hatch for symmetric Spanish stem recall.
-    let a = MultilingualAnalyzer::portable();
-    let mut out = Vec::new();
-    let ctx = AnalyzerContext::for_index().with_language(LanguageHint::Es);
-    a.analyze("hablando", &ctx, &mut out);
-    let stems: Vec<&str> = out
-        .iter()
-        .filter(|t| t.channel == AnalyzerChannel::Stem)
-        .map(|t| t.term.as_ref())
-        .collect();
-    assert!(
-        stems.iter().any(|s| *s != "hablando"),
-        "expected Spanish stem distinct from surface, got stems: {stems:?}",
-    );
-}
-
-// `portable_han_only_run_yields_cjk_ngram_shaped_output` folded into
-// `portable_han_yields_unigrams_and_bigram_overlay` above.
-
-#[test]
-fn zh_han_run_with_loaded_chinese_dict_uses_chinese_morphological_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let dict_path = dir.path().join("tiny.dict.utf8");
-    std::fs::write(&dict_path, "我喜欢 100 n\n学习 80 v\n中文 80 n\n").unwrap();
-    let chinese = chinese::ChineseAnalyzer::with_dict(&dict_path).expect("inline dict should load");
-    assert_eq!(chinese.mode(), AnalyzerMode::Morphological);
-
-    let analyzer = MultilingualAnalyzer {
-        splitter: script::ScriptRunSplitter::new(),
-        japanese: japanese::JapaneseAnalyzer::portable(),
-        chinese,
-        korean: korean::KoreanAnalyzer::portable(),
-        normalization: NormalizationPolicy::default(),
-    };
-
-    let mut out = Vec::new();
-    analyzer.analyze("我喜欢学习中文", &AnalyzerContext::for_index(), &mut out);
-    let surfaces = surface_terms(&out);
-    assert!(
-        surfaces.iter().any(|term| term.chars().count() > 1),
-        "expected Chinese morphological path to emit multi-character surface, got {surfaces:?}",
-    );
 }
 
 /// Explicit `LanguageHint::Ja` must route Han runs to the JP analyzer

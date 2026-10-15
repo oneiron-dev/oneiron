@@ -4,7 +4,10 @@ use crate::EntityId;
 use crate::access_grant::AccessContext;
 use crate::claim::{ClaimBody, decode_claim_body};
 use crate::error::Result;
+use crate::federation::Scope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
+use crate::store::Store;
+use std::cell::RefCell;
 
 fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     let Some(scope) = scope else { return false };
@@ -23,10 +26,28 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     private.unwrap_or(false)
 }
 
-impl ScopedRead<'_> {
-    /// Persist grant time before the read snapshot, never inside it.
+/// The relationship a claim is scoped to and whether it is private, as
+/// relationship reads see them.
+pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
+    (body.rel, private_scope(body.scope.as_ref()))
+}
+
+/// The relationship authority the row checks of one read share in its one
+/// snapshot: loaded at the first row that needs it, then reused, so a batch
+/// read resolves the reader's grants and memberships once, not per row.
+#[derive(Default)]
+pub(super) struct HeldAuthority<'v>(RefCell<Option<AccessContext<'v>>>);
+
+impl<'v> ScopedRead<'v> {
+    /// Persist grant time before the read snapshot, never inside it. Inside
+    /// a room turn, or with peer reads, each peer's access grants are judged
+    /// at that time too, and the snapshot may hold a member who joined after
+    /// the key was built.
     pub(crate) fn persist_grant_clock(&self) -> Result<()> {
-        if self.actor_key.enforce_access_grants {
+        if self.actor_key.enforce_access_grants
+            || self.actor_key.room_turn.is_some()
+            || !self.peer_reads.is_empty()
+        {
             self.vault.store.authorization_now()?;
         }
         Ok(())
@@ -37,21 +58,36 @@ impl ScopedRead<'_> {
         Ok(self.vault.store.env.read_txn()?)
     }
 
+    /// Whether this read's relationship gate binds in `txn`. A narrower
+    /// credential of the owner's is exempt only while its holder still exists
+    /// and is the vault's owner in this snapshot (Astra #1413-003, Sol
+    /// R5-007).
+    pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        if !self.actor_key.enforce_access_grants {
+            return Ok(false);
+        }
+        let Some(owner) = self.actor_key.owner_exemption else {
+            return Ok(true);
+        };
+        crate::memory::owner_exemption_holds_in_txn(self.vault, txn, owner)
+            .map(|owner| !owner)
+            .map_err(|refusal| {
+                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
+                    Box::new(refusal),
+                ))
+            })
+    }
+
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         body: &ClaimBody,
     ) -> Result<bool> {
-        if !self.actor_key.enforce_access_grants {
+        if !self.relationship_gated_in(txn)? {
             return Ok(true);
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows_at_snapshot(
-            ENTITY_TYPE_CLAIM,
-            body.rel,
-            private_scope(body.scope.as_ref()),
-            &body.record_scope("read"),
-        ))
+        Ok(RelationshipRead::claim(body).allowed_by(&context))
     }
 
     pub(super) fn relationship_raw_allowed_in(
@@ -59,88 +95,181 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
-        if !self.actor_key.enforce_access_grants {
+        if !self.relationship_gated_in(txn)? {
             return Ok(true);
         }
-        let header = crate::batch::EntityMetadataHeader::parse(raw).ok_or(
-            crate::error::Error::CorruptedIndex("relationship record header"),
+        let read = relationship_read_keyed(
+            &self.vault.store,
+            txn,
+            id,
+            raw,
+            self.actor_key.unscoped_rows_open,
         )?;
-        let kind = header.entity_type;
-        let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-        if kind == ENTITY_TYPE_CLAIM {
-            if bytes.is_empty() {
-                return Ok(false);
-            }
-            return self.relationship_claim_allowed_in(txn, &decode_claim_body(bytes, true)?);
+        if let RelationshipRead::Decided(allowed) = read {
+            return Ok(allowed);
         }
-        if !matches!(kind, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY) {
-            return Ok(true);
-        }
-        // Memory data scopes are typed fields, never inferred from content or names.
-        let mut cursor = std::io::Cursor::new(bytes);
-        let Ok(body) = rmpv::decode::read_value(&mut cursor) else {
-            return Ok(false);
+        let mut held = authority.0.borrow_mut();
+        let context = match held.take() {
+            Some(context) => context,
+            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
         };
-        if cursor.position() != bytes.len() as u64 {
-            return Ok(false);
-        }
-        let Some(fields) = body.as_map() else {
-            return Ok(false);
-        };
-        // Witness MESSAGE scope fields live in the authenticated envelope's
-        // metadata. Legacy top-level fields remain readable, but declaring the
-        // same axis in both locations is ambiguous and fails closed below.
-        let mut metadata = None;
-        if kind == ENTITY_TYPE_MESSAGE {
-            for (key, value) in fields {
-                if key.as_str() == Some("metadata") {
-                    if metadata.is_some() {
-                        return Ok(false);
-                    }
-                    metadata = Some(value);
-                }
-            }
-        }
-        let metadata_fields = match metadata {
-            None | Some(rmpv::Value::Nil) => &[][..],
-            Some(rmpv::Value::Map(fields)) => fields.as_slice(),
-            Some(_) => return Ok(false),
-        };
-        let mut space = None;
-        let mut seen_rel = false;
-        let mut seen_scope = false;
-        let mut private = false;
-        for (key, value) in fields.iter().chain(metadata_fields) {
-            if key.as_str() == Some("rel") {
-                if seen_rel {
-                    return Ok(false);
-                }
-                seen_rel = true;
-                space = match value {
-                    rmpv::Value::Binary(bytes) => bytes
-                        .as_slice()
-                        .try_into()
-                        .ok()
-                        .and_then(|b| EntityId::from_bytes(b).ok()),
-                    rmpv::Value::String(s) => s.as_str().and_then(|s| EntityId::from_hex(s).ok()),
-                    _ => None,
-                };
-            }
-            if key.as_str() == Some("scope") {
-                if seen_scope {
-                    return Ok(false);
-                }
-                seen_scope = true;
-                private |= private_scope(Some(value));
-            }
-        }
-        let Some(record) =
-            crate::federation::record_scope::scope_for_blob(&self.vault.store, txn, *id, raw)?
-        else {
-            return Ok(false);
-        };
-        let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows_at_snapshot(kind, space, private, &record))
+        let allowed = read.allowed_by(&context);
+        *held = Some(context);
+        Ok(allowed)
     }
+}
+
+/// What a relationship read decides one stored row on, before it knows who
+/// reads it.
+pub(crate) enum RelationshipRead {
+    /// The row decides alone: a kind relationship reads do not gate
+    /// (`true`), or one whose scope fields or record position do not resolve
+    /// (`false`).
+    Decided(bool),
+    /// The reader's memberships and grants decide, from the row's kind, the
+    /// relationship it is scoped to, whether it is private, and its record
+    /// position.
+    Gated {
+        kind: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: Scope,
+    },
+}
+
+impl RelationshipRead {
+    fn claim(body: &ClaimBody) -> Self {
+        let (space, private) = claim_access_axes(body);
+        Self::Gated {
+            kind: ENTITY_TYPE_CLAIM,
+            space,
+            private,
+            record: body.record_scope("read"),
+        }
+    }
+
+    /// Whether the principal `context` was loaded for may read the row.
+    pub(crate) fn allowed_by(&self, context: &AccessContext<'_>) -> bool {
+        match self {
+            Self::Decided(allowed) => *allowed,
+            Self::Gated {
+                kind,
+                space,
+                private,
+                record,
+            } => context.allows_at_snapshot(*kind, *space, *private, record),
+        }
+    }
+}
+
+/// What a relationship read decides the stored row `raw` of `id` on: a
+/// CLAIM's scope from its body, a MESSAGE's or SUMMARY's from its typed
+/// `rel` and `scope` fields and its record position.
+pub(crate) fn relationship_read(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<RelationshipRead> {
+    relationship_read_keyed(store, txn, id, raw, false)
+}
+
+/// [`relationship_read`] for a key that may open unscoped rows: with
+/// `unscoped_rows_open` (a vault-internal reader,
+/// `require_relationship_grants`), a MESSAGE or SUMMARY that names neither a
+/// relationship nor a private scope is the vault's own and decides readable.
+fn relationship_read_keyed(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    unscoped_rows_open: bool,
+) -> Result<RelationshipRead> {
+    let header = crate::batch::EntityMetadataHeader::parse(raw).ok_or(
+        crate::error::Error::CorruptedIndex("relationship record header"),
+    )?;
+    let kind = header.entity_type;
+    let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    if kind == ENTITY_TYPE_CLAIM {
+        if bytes.is_empty() {
+            return Ok(RelationshipRead::Decided(false));
+        }
+        return Ok(RelationshipRead::claim(&decode_claim_body(bytes, true)?));
+    }
+    if !matches!(kind, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY) {
+        return Ok(RelationshipRead::Decided(true));
+    }
+    // Memory data scopes are typed fields, never inferred from content or names.
+    let mut cursor = std::io::Cursor::new(bytes);
+    let Ok(body) = rmpv::decode::read_value(&mut cursor) else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    if cursor.position() != bytes.len() as u64 {
+        return Ok(RelationshipRead::Decided(false));
+    }
+    let Some(fields) = body.as_map() else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    // Witness MESSAGE scope fields live in the authenticated envelope's
+    // metadata. Legacy top-level fields remain readable, but declaring the
+    // same axis in both locations is ambiguous and fails closed below.
+    let mut metadata = None;
+    if kind == ENTITY_TYPE_MESSAGE {
+        for (key, value) in fields {
+            if key.as_str() == Some("metadata") {
+                if metadata.is_some() {
+                    return Ok(RelationshipRead::Decided(false));
+                }
+                metadata = Some(value);
+            }
+        }
+    }
+    let metadata_fields = match metadata {
+        None | Some(rmpv::Value::Nil) => &[][..],
+        Some(rmpv::Value::Map(fields)) => fields.as_slice(),
+        Some(_) => return Ok(RelationshipRead::Decided(false)),
+    };
+    let mut space = None;
+    let mut seen_rel = false;
+    let mut seen_scope = false;
+    let mut private = false;
+    for (key, value) in fields.iter().chain(metadata_fields) {
+        if key.as_str() == Some("rel") {
+            if seen_rel {
+                return Ok(RelationshipRead::Decided(false));
+            }
+            seen_rel = true;
+            space = match value {
+                rmpv::Value::Binary(bytes) => bytes
+                    .as_slice()
+                    .try_into()
+                    .ok()
+                    .and_then(|b| EntityId::from_bytes(b).ok()),
+                rmpv::Value::String(s) => s.as_str().and_then(|s| EntityId::from_hex(s).ok()),
+                _ => None,
+            };
+        }
+        if key.as_str() == Some("scope") {
+            if seen_scope {
+                return Ok(RelationshipRead::Decided(false));
+            }
+            seen_scope = true;
+            private |= private_scope(Some(value));
+        }
+    }
+    if unscoped_rows_open && !seen_rel && !private {
+        return Ok(RelationshipRead::Decided(true));
+    }
+    let Some(record) = crate::federation::record_scope::scope_for_blob(store, txn, *id, raw)?
+    else {
+        return Ok(RelationshipRead::Decided(false));
+    };
+    Ok(RelationshipRead::Gated {
+        kind,
+        space,
+        private,
+        record,
+    })
 }

@@ -87,6 +87,17 @@ fn recipient_binding(
     }
     Ok(Some((digest, cap)))
 }
+/// Whether `recipient` of `document` holds a capability no one revoked. One
+/// that holds none reads no PDF and signs nothing, whatever its ceremony.
+pub(crate) fn recipient_capability_unrevoked_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    recipient: &str,
+) -> Result<bool> {
+    Ok(recipient_binding(vault, txn, document, recipient)?
+        .is_some_and(|(_, cap)| cap.revoked_at.is_none()))
+}
 pub(super) fn require_recipient_capabilities(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -115,7 +126,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         document: EntityId,
     ) -> Result<Vec<(String, EsignCapability)>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let state = state_in(self, txn, document)?;
             if state.status != DocumentStatus::Draft {
@@ -162,7 +173,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         token: &EsignCapability,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let mut row = binding(self, txn, token)?;
             row.revoked_at = Some(self.now_recorded_at());

@@ -1,0 +1,504 @@
+# Run the server, with or without models
+
+`oneiron serve` needs no model. Capture, search, reopen, export and backup all
+work on a fresh vault with nothing configured. Models attach afterwards as
+config, in a `[models]` section of the same `oneiron.toml`. One edit swaps
+the model behind any seat, and no model or vendor is named in code.
+
+## 1. No model
+
+```bash
+export ONEIRON_AUTH_SECRET="$(openssl rand -hex 32)"   # host root; the Dreamer needs it later
+oneiron init ~/oneiron/vault --config ~/.config/oneiron/oneiron.toml --embedder none
+oneiron serve --config ~/.config/oneiron/oneiron.toml
+```
+
+`GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
+Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
+
+## 2. Point a seat at a model
+
+Each provider is one entry of data. Pick any of the three levels below. HIGH
+and MID are shorthands that expand to the DETAILED form, and a role written
+out in DETAILED replaces what a shorthand gave it.
+
+```toml
+# HIGH: one model for every seat (chat and agents, checks, the Dreamer).
+[models]
+default = "cpa:olety7/gpt-6.1-sol"     # "<provider>:<the provider's own model id>"
+prompt = "Answer briefly."             # optional; or prompt_file = "rung.md"
+
+[models.providers.cpa]
+kind = "openai-compat"
+base_url = "http://127.0.0.1:8317"     # with or without a trailing /v1
+key_env = "CPA_API_KEY"                 # the variable's NAME; never the key itself
+```
+
+```toml
+# MID: a local stack and a cloud, local first. `local` also fills local_reasoner.
+[models]
+local = "exl3:qwen3.8-27b"
+cloud = "router:anthropic/claude-sonnet-4.5"
+prefer_local = true                     # false puts the cloud rung first
+
+[models.providers.exl3]                 # any local OpenAI-compatible server: exllamav3, llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8080"
+response_format = "none"                # JSON calls go out without a schema, as the EXL3 recipe below runs
+
+[models.providers.router]               # OpenRouter, or any OpenAI-compatible endpoint
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api"
+key_env = "OPENROUTER_API_KEY"
+```
+
+```toml
+# DETAILED: one role's ladder, rung by rung. A rung that fails hands the call
+# to the next; each rung may carry its own prompt.
+[models.roles.dreamer_current]
+rungs = [
+  { model = "exl3:qwen3.8-27b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "llama:qwen3.8-27b-q4" },   # the fallback recipe, below
+  { model = "claude:claude-sonnet-4-5" },
+]
+
+[models.providers.llama]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
+
+[models.providers.claude]               # any Anthropic-compatible /v1/messages server
+kind = "anthropic-compat"
+base_url = "https://api.anthropic.com"
+key_env = "ANTHROPIC_API_KEY"
+```
+
+The local Dreamer model the examples name is the measured recipe for the
+Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
+tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+its provider sets `response_format = "none"`, so a JSON call goes out with
+no `response_format`. The fallback is llama.cpp `llama-server` on
+`Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
+(`--spec-type draft-simple --spec-draft-n-max 8`). The Dreamer's extraction
+call sends no schema on any provider: a grammar built from one can strip the
+claim fields, so the engine checks the answer against the extraction
+contract itself, and an answer that breaks it is refused. Other JSON calls,
+such as the conflict verdict, send their schema unless the provider sets
+`response_format = "none"`; the engine checks the answer against it either
+way. A ladder sends a schema in `response_format` only when every rung declares
+`json_response`. A rung without it, such as the Anthropic-compatible one in
+the DETAILED example, makes the engine put the schema in a system message on
+every rung instead, so keep a schema-constrained llama.cpp fallback in a
+ladder of OpenAI-compatible rungs. Typed decisions stay on `vllm-sr/d3-flash`.
+
+Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
+saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
+`dreamer_target`, `extraction_encoder` (a tagger, `kind = "oneironer"`), and the
+rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
+`provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
+
+Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
+`local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
+(non-credential only), `timeout_secs` (120), `context_tokens` (128000),
+`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
+`json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`;
+a `local-openai-compat` provider declares `streaming`, `json_response` and
+`reasoning` unless the list is written out),
+`locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
+`http://` is accepted only for this machine, or for a `local-openai-compat`
+server on the private network.
+
+A `key_secret` names a vault secret instead of a variable: the key stays in
+the vault's custody (T0), and only the credential broker sends it. The broker is
+a separate process that runs as its own OS user, adds the key to one request,
+sends it once over verified TLS (no redirect, no retry, no proxy) and strips the
+key from the reply. Each call reads the key at the custody door, so register the
+secret with a binding for the effector `broker:model` at T0 (doored). Run
+the broker with `oneiron-broker serve --socket <path> --client-uid <the
+server's uid>` (add `--extra-roots <pem>` for a private CA), and name it:
+
+```toml
+[models.broker]
+socket = "/run/oneiron-broker/broker.sock"   # absolute; its directory is the fence
+uid = 991                                    # the broker's user, never the server's
+
+[models.providers.paid]
+kind = "openai-compat"
+base_url = "https://api.example.com"         # https only
+key_secret = "provider-key"
+```
+
+Where no separate user exists, as on macOS, leave out `socket` and `uid`: the
+server then starts the broker as its own child, under its own user, at the first
+`key_secret` call. The child makes itself non-dumpable (`PT_DENY_ATTACH` on
+macOS), so another process of that user cannot read or trace its memory. It
+binds no socket file: it takes calls only over a socket pair the server made when
+it started it, so it serves that server alone. Its calls' receipts say
+`same_user`, and the provider's entry in the model status carries
+`"unproven": true`, the badge: another process of that user can still stop the
+child, reach the server's own descriptors, or open the child's memory in the
+moment it starts, before it closes itself. A separate user stays the first
+choice. The child is the `oneiron-broker` beside the server's binary, or:
+
+```toml
+[models.broker]
+program = "/opt/oneiron/bin/oneiron-broker"   # absolute
+extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
+```
+
+A declared run's paid keys must sit at T0, so its teacher calls go out this way.
+A `key_secret` provider answers whole replies only for now: a streamed call to it
+is refused before it starts.
+
+The broker holds `<socket>.lock` while it serves, so a second broker on the same
+path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
+the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
+for the user that runs it, and `newuidmap`. A Linux host that is meant to prove the
+broker runs it; there, a missing prerequisite fails the run instead of skipping it.
+The full gate (`SCOPE_FULL=true scripts/ci/run_scoped.sh test`) runs it after the
+workspace tests, so the host that runs the full gate needs the range and
+`newuidmap`.
+
+`max_output_tokens` is a ceiling on every call to that provider: it is sent
+when a call names no limit, and a larger limit is cut down to it. An
+OpenAI-compatible endpoint reads it from `max_tokens` unless
+`output_limit_field = "max_completion_tokens"` says otherwise (some hosted
+reasoning models accept only that one). An Anthropic-compatible call always
+carries `max_tokens`, 4096 when nothing else names it.
+
+A reply may name its model differently from the request (a proxy that strips a
+login prefix, say). The answer is kept, and the receipt records both names under
+`usage.raw_provider` (`requested_model`, `reported_model`, `rung`,
+`failed_rungs`). `rung` is the answering rung's place in the role's ladder as
+configured, counted from 0, the same numbering `GET /v1/ai/status` lists;
+`failed_rungs` counts the rungs that were tried and failed before it.
+
+## 3. Let the Dreamer work
+
+The Dreamer consolidates witnessed turns into claims in the background. It
+starts when all of these hold, and `GET /v1/ai/status` names the one that is
+missing:
+
+| Needs | Reason when missing |
+|---|---|
+| a rung on `dreamer_current` | `no_model_configured` |
+| `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
+| `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
+| vault defaults that route each Dreamer role's purpose to where that role's model is served (extraction and narrative under `extraction`, the conflict verdict under `consolidation`): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| with a model manifest, its extraction teacher served by `[models]` at the vault's route | `extraction_model_not_served` |
+| with a model manifest, its `generative_reasoner` (the conflict verdict) and `dreamer_current` (narrative) models served by `[models]` at the vault's route | `role_model_not_served` |
+| the Dreamer's three policy rows (a fresh vault ships them) | `needs_owner_grant` |
+
+Each pass calls three roles, each on its own model and run: extraction as
+`extraction_teacher`, the conflict verdict as `generative_reasoner`, and
+declared summaries as `dreamer_current`. A vault's model manifest pins each;
+without one, a role uses its own `[models.roles.*]` seat when it has one,
+else the Dreamer's (`default = "provider:model"` fills all three with one
+model). Each role's calls go out as the run `dreamer-pass/<role>`, so the
+run receipts (`oneiron::run_receipt` at info) name the role that made them.
+
+Every call of the three roles names its reasoning level; none leaves the
+level to the server, which a local thinking model reads as its highest. With
+no level configured it is `medium` with a 4,096-token thinking budget. A
+level the vault authors for a call's purpose (its seat policy or description
+policy: extraction and narrative under `extraction`, the verdict under
+`consolidation`) replaces that default, and the budget with it. A local
+(`own_server`) OpenAI-compatible server is sent the level as
+`reasoning_effort` and in `chat_template_kwargs`, and the budget as
+`reasoning_budget_tokens` (llama.cpp reads all three per request; an
+exllamav3 server that renders `chat_template_kwargs` gets the level, not the
+budget). A hosted provider gets `reasoning_effort` alone. A model whose
+provider does not declare `reasoning`, or a ladder with a rung that does not,
+takes no reasoning controls, so its calls are pinned to `none`; declare
+`reasoning` on a hosted provider whose model accepts `reasoning_effort`.
+
+The extraction input lists the people, organisations and places the turns
+name that the vault already holds, each with its newest claims, so a model
+can name the claim a later turn corrects. A correction the Dreamer stages (a
+new value for a claim it already holds) takes its grant in the same pass when
+the vault's policy allows it: the replacement lands Auto, the prior closes
+with a `Supersedes` edge, and an open `core.conflict.open` that named the
+prior closes with a `core.conflict.resolved` claim. One the policy protects (a class a
+manifest rule declares critical, or attributed truth such as a user-stated
+claim) stays Proposed and is listed in the owner's run review (`GET
+/v1/owner/runs`, `oneiron runs pending`). The seeded manifest declares
+`health.`, `safety.`, `legal.` and `boundary.` critical, and `decision.settled`
+exactly; a predicate no rule names defaults critical for legibility only and
+does not hold a correction. A vault whose policy manifest is still the
+untouched seeded one takes a newer build's seeded manifest when it opens, and
+what waited on the old policy is re-gated, never applied; a manifest the owner
+wrote is never touched.
+
+```bash
+# once, with the server stopped; ONEIRON_AUTH_SECRET set as for serve
+oneiron dreamer grant --config ~/.config/oneiron/oneiron.toml --extraction-route own_server
+```
+
+The Dreamer is warm by default (ARCH-0026): a fresh vault's seeded policy
+already carries three rows, each keyed to the vault's own Dreamer: a read-only
+grant over the vault, an Auto ceiling, and the permit its generated claims
+need. No other system actor and no other generated writer gains anything. A
+vault created before these rows shipped has none, and the same command adds
+them to its live policy; on a vault that has them it changes nothing. The
+owner may narrow or remove the rows like any policy row. Extraction leaves the
+device only on both opt-ins (the `extraction_egress` key and the routed
+defaults), and then only to the model each pass extracts with: the Dreamer's
+seat, or the extraction teacher the vault's model manifest pins. Boot reads the
+routing and never writes it, so a later tightening by the owner is never
+undone by a restart.
+
+A sitting ends, and its turns dream, on `POST /v1/ai/session {"event":"end"}`,
+after `models.dreamer.idle_floor_secs` (1200) without activity, or after
+`session_ceiling_secs` (43200). Apps send `{"event":"open"}` and
+`{"event":"activity"}`; chat turns send them for you. Per-pass spend is
+`models.dreamer.pass_budget_units` (400000), metered through the usual budget
+guard. If the server is killed mid-pass, the next start requeues the
+interrupted attempt and runs it once more; durable steps that already have a
+response are not paid for again. A pass that ran out of budget is parked on a
+budget trap instead, and a restart leaves it parked: only the trap's resume
+signal lets it spend again. `SIGTERM` or Ctrl-C stops cleanly: a pass in
+flight reaches its attempt boundary first.
+
+## 4. Chat
+
+`POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
+optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
+`done`, then `saved` with the message receipt. The same deltas reach every
+owner socket on `/ws` as transient presence. Only the final message is written
+to the vault, once. The credential needs read and write scope, and must be
+able to read the answering agent's definition. It is checked for the whole
+turn: once it is revoked or expires, the body sends one
+`{"type":"error","code":"credential_revoked"}` line and ends, the model call
+stops, and the message is cancelled rather than saved as an answer. The seeded
+default agent answers; an owner-grade credential may name another with
+`agent_ref`, which must be live, approved and enabled. A turn still running
+at shutdown gets a grace to finish, then its message is cancelled, not left
+open. A turn spends from `models.chat.turn_budget_units`: the tokens the
+reply reports, or the turn's reservation (one call's 8000 units, or the whole
+budget if smaller) when it reports none, plus one reservation for each rung
+that failed before it. A turn that ends without a reply spends its
+reservation.
+
+Chat turns and workflow steps are calls of the `generative_reasoner` role. If
+the vault has a model manifest, its binding for that role at the vault's
+current route (the pin, narrowed by any resident route) picks the model, and
+the server must serve exactly that model there: one of your `[models]` models
+with the same engine id and locality. A route the server cannot serve is
+refused with `503 model_route_not_served` before anything is sent. Without a
+manifest the `[models]` ladder is the role's binding.
+
+## 5. Saved workflows
+
+A dispatched saved workflow runs its steps on the `generative_reasoner` seat
+with no further call. Each step's system message is the agent definition's
+`instructions`; each step sees its briefing and the earlier steps' outputs.
+Memory and chat sections a definition selects are not yet rendered into the
+step's prompt. A failed step goes to the engine's failure ladder. A model
+call the provider answered with a retryable error is tried again after
+`models.workflows.retry_backoff_secs` (30) times the tries so far, up to five
+tries. Any other failure, or a fifth retryable one, ends the step for a
+person to look at, and its workflow stops. Spend per step:
+`models.workflows.step_budget_units` (64000, at least one call's 8000-unit
+reservation), one budget for all of a step's tries: an answered try spends
+the tokens it reports, or its reservation when it reports none, plus one
+reservation for each rung that failed before it; each failed try is
+charged its reservation, every budget policy row the step matches (its
+agent's cap, its purpose's) counts those charges too, and a try the
+remainder cannot admit ends the step. `models.workflows.enabled = false` turns the pump
+off.
+
+## 6. Code mode (MCP `execute_code`)
+
+`execute_code` runs a task as generated JavaScript: each step's program comes
+from the `generative_reasoner` seat and runs in the checked-in QuickJS
+component, calling the vault through `self.memory.<verb>` under the
+connector's own grants. It is listed on `tools/list` only when the seat has a
+rung and a prompt package for the executor is named:
+
+```toml
+[models.code_mode]
+prompt_package = "prompts"   # holds blocks/engine-executor-wire.md; relative to this file
+budget_units = 10000000      # optional; process-lifetime meter for its model calls
+max_runs = 4                 # optional; runs at once, each its own thread
+max_runs_per_credential = 2  # optional; runs at once under one credential
+```
+
+A run holds its place until its worker ends, whether or not its caller is
+still waiting, and past either bound a new run is refused with
+`code_run_saturated`. A compaction pass can outlive the call that started it,
+so passes have their own `max_runs` places; past them a pass is refused and
+the run keeps its raw window.
+
+Each step's call is admitted like a chat turn, against the vault's model
+manifest and route, and spends from `budget_units`: the tokens the reply
+reports, or one call's 8000-unit reservation when it reports none, plus one
+reservation for each rung that failed before it. A call that failed spends one
+reservation for each provider call it made: every rung of the seat, or the one
+model the vault's manifest pins. A run's clock and config are saved when it
+starts, so a run resumed after a restart keeps its clock and refuses another
+task. A vault with a model
+manifest needs a seat judge this server does not bind yet, so its runs are
+refused with `code_run_binding_failed`.
+
+A long run compacts its own window (agent-runtime-v1 §d7). Once a step's
+request comes within a margin of the window (the tokens the run adds while
+one summary is written, measured as it runs; never more than half the
+window), the steps behind the newest `hot_steps` are summarized in the
+background while the run keeps working. The summary
+replaces them only after the engine's six checks: the reply stopped
+naturally, it is the requested JSON, it is smaller than the steps and above
+a floor, it keeps every failed step's first line word for word, it does not
+loop, and it covers exactly the requested steps. The next request holds one
+`<compacted epoch="n" steps="a-b">` frame with the summary and a
+`sandbox.fs.read_file` handle to each original output. A failed check is
+retried, naming the check, up to `tries` times; after that the run keeps its
+raw window. A run that reaches its window with no accepted summary stops
+with `"status": "window_full"` and a typed reason, and the next call goes on.
+Erasing a record the run was served withdraws the summary's words; the
+steps stay covered by their handles.
+
+```toml
+[models.code_mode.compaction]   # optional; on by default when code mode is served
+enabled = true
+role = "checker"        # default: checker when its rungs take a whole window, else generative_reasoner
+window_tokens = 96000   # default: the smallest context the code-mode seat's rungs leave for input
+hot_steps = 2           # newest steps that never compact
+tries = 3
+```
+
+The summary prompt is `blocks/engine-executor-compaction.md` in the same
+prompt package as the wire prompt. Its user message is one JSON object
+(`from`, `through`, `max_summary_tokens`, `pins`, `retry`, `steps`) and the
+reply is `{"from", "through", "summary"}`; the test package's block,
+`crates/oneiron/tests/fixtures/prompts/blocks/engine-executor-compaction.md`,
+is a working example. Passes are metered on `budget_units`. Without the
+block, a seat for the role, or `[models]`, compaction is off and never calls
+a model; `GET /api/health` says `"compaction": "off"` with the reason
+(`no_model_configured`, `no_compaction_prompt`, `no_compaction_seat`,
+`compaction_seat_too_small` when the role's smallest rung leaves less input
+room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` result carries the run's
+`compaction` object: `used_tokens`, `compact_at`, `window_tokens`,
+`in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
+`turn_scoped` with the failed `check`, or `sticky` with `why`).
+
+### Type check (shadow mode)
+
+Each generated program can be type-checked before it runs, against the same
+declarations the executor prompt teaches (`allowJs` + `checkJs`, strict,
+ES2022, no DOM or Node globals). It is off by default:
+
+```toml
+[models.code_mode.check]
+mode = "shadow"              # "off" (default) or "shadow"; "enforce" is reserved and refused
+backend = "tsc-rs"           # "tsc-rs" in process (default) or "microsoft"
+microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
+```
+
+Shadow mode blocks nothing and changes no program's result. Once a step's own
+state is saved, the check's report is appended to the run's replay record as
+`executor/repl/<step>.code-check.json`: backend and pin, latency, the first 32
+diagnostics in program coordinates (`diagnostics_omitted` counts the rest), or
+a failure code. Each check also logs one `oneiron::code_check` line with the
+step's outcome (`completed`, `waiting`, `continued` or `failed`) and the
+running counts. A step that fails keeps no report, and neither does a run in an
+off-record session, whose overlay is quota-bounded; their checks are only in
+the log.
+
+`tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
+startup (a few seconds) and run in a fresh instance per check, two at a time.
+`microsoft` runs Microsoft's native `tsc` (`@typescript/typescript-<platform>`,
+version `7.1.0-dev.20261010.1` only) as a process per check, in its own
+process group and temporary directory but with this host's file system. Since
+resolving a module would read or probe the path it names, it leaves unchecked
+(`code_check_unsupported`) any program that could name one: one containing
+`import`, `export`, `require`, `reference`, `module` or a `\u` escape, in any
+case.
+With `tsc-rs` selected, a set `microsoft_tsc` is the fallback for any check
+tsc-rs cannot finish, a busy one included. A step's report names the checker
+whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
+server logs why. The checker binary is trusted configuration, like any path
+in this file; the programs it checks are not.
+
+## 7. Raw calls
+
+With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
+configured model by its engine id (`<provider>/<model>@<revision>`, shown in
+`GET /v1/ai/status`), or a seat by its seat id. Their process-lifetime meter is
+`models.raw_budget_units`.
+
+## 8. The reranker
+
+Recall at `high`, `xhigh` and `max` reranks its top 30 or 50 candidates on
+the `reranker` role (ARCH-0004 #rerank: a cross-encoder refines the fused set
+and never replaces the blend). Route the role in `[models]` like any other,
+on an OpenAI-compatible provider whose server answers `POST /v1/rerank`
+(`{model, query, documents}` in, `{results: [{index, relevance_score}],
+usage: {total_tokens}}` out):
+
+```toml
+[models.providers.rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
+
+[models.roles.reranker]
+model = "rerank:<the model your server loaded>"
+
+[models.recall]
+rerank_budget_units = 32000   # each recall's own line; the default
+```
+
+Each paid recall runs on a line of its own under the vault's budget policy,
+as a chat turn does. Before a call leaves it is priced on its words, a unit
+per byte of each document plus the query once per document, and 16 more
+per document for the marks a cross-encoder puts around each pair. A line
+that cannot cover that refuses the call unsent with `BUDGET_SPENT`. The
+default line covers 50 documents of 500 ASCII characters beside a query of
+about 120; longer documents, text outside ASCII (several bytes a
+character), or a model whose template wraps each pair in a longer prompt
+need a larger `rerank_budget_units`. Each rung of the `reranker` route the
+call reaches is admitted on its own permit, reserving that price (at least
+one call's 8000 units, or the whole line if smaller), sent through the run's
+gate and settled: the tokens the reranker reports, or the reservation when
+it reports none. A rung that failed after it went out pays its reservation,
+and a fallback rung goes out only while the line still covers the price.
+The `Admitted`, `Dispatched` and `Settled` rows go to the server's run
+receipts. If the vault has a model manifest, its binding for the `reranker`
+role picks the model, as for chat.
+
+The recall scores exactly the block it would rerank: the candidates the
+reader may read, with each one's text as the reader's own read serves it.
+A row with no revision that holds its words (a message whose words live in
+its document: a streamed message, the server's own chat replies among them,
+or an edited one; or a turn whose messages show none) is found but not
+reranked yet: it follows the reranked rows in its first-stage order. Each
+text is judged by the write door as it would leave, a turn's messages
+joined as the reranker would read them, and one the door refuses is sent
+empty. So is a row a device-only world keeps, at the revision scored: a
+`[models]` reranker is reached over HTTP, never on the device. A row sent
+empty scores last. A block with no text to send makes no call and says
+`skipped` with `no_candidates`. Each rung, a fallback's too, goes out only
+while that device-only verdict, run again, keeps none of the rows it sends
+with words. Once it keeps one (its world was flagged while a rung was out),
+nothing more is sent, and the recall ranks by fusion and says `skipped` with
+`device_only` to a caller on this device; a caller off it reads
+`no_candidates`, as it reads no hint of a device-local row. The pack repeats
+the name the endpoint says
+answered as `served_model` only when it is at most 200 printable characters.
+The model runs outside every vault transaction, and the scores apply only to
+that same block. A block that changed while it was scored (the vault was
+written to) is scored once more; if it changes again the recall is refused
+with `INVALID_STATE` (409) and nothing stale is used. The pack's
+`retrieval_meta.rerank` says what happened: `{"status": "applied", "model",
+"served_model", "candidates", "calls"}` or `{"status": "skipped", "reason":
+"no_reranker" | "no_candidates" | "deadline" | "device_only"}`.
+
+Without a `reranker` route, `high` and above run their graph expansion
+unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
+for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
+`budget_spent`), and a reranker that refuses, fails or answers out of shape
+with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
+rungs cannot serve (a key variable unset, or a `key_secret` provider: the
+broker sends chat calls only for now) refuses the same way. The request
+never names the model, the endpoint or the lease; the server holds them, for
+MCP, HTTP and WebSocket recall alike.

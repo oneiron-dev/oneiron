@@ -80,5 +80,5 @@ pub fn set_serving_model(vault: &Vault, model: &ModelId) -> Result<()> {
         v: ROW_VERSION,
         model_version: model_version_token(model),
     });
-    vault.with_write_txn(|wtxn| SERVING_MODEL.put(&vault.store, wtxn, &(), &row))
+    vault.with_write_txn_grouped(|wtxn| SERVING_MODEL.put(&vault.store, wtxn, &(), &row))
 }

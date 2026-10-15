@@ -38,6 +38,19 @@ pub(crate) struct ResolvedRetrievalFilter {
     pub(crate) min_confidence: f32,
     pub(crate) min_salience: f32,
     pub(crate) deny_all: bool,
+    /// The verified credential a scoped read retrieves under, if any. A TASK
+    /// the pipeline denies outside its worlds or facets adds to no
+    /// suppression count (ARCH-0067 §5, DEC-0005).
+    pub(crate) credential: Option<crate::federation::Scope>,
+}
+
+impl ResolvedRetrievalFilter {
+    /// This filter as `actor` retrieves under it, carrying its credential.
+    #[must_use]
+    pub(crate) fn under_credential_of(mut self, actor: &ScopedReadActorKey) -> Self {
+        self.credential = actor.authority_scope().cloned();
+        self
+    }
 }
 
 impl PolicyManifestResolution {
@@ -118,28 +131,11 @@ impl RetrievalPolicyFloor {
             {
                 continue;
             }
-            let Some(mut row) = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)
-            else {
+            let Some(row) = Self::from_grant(grant) else {
                 // Invalid or empty alternatives authorize nothing, not a veto
                 // of another independently valid complete grant.
                 continue;
             };
-            let authority = &grant.authority_scope;
-            match &authority.bands {
-                crate::federation::ScopeAxis::All => {}
-                crate::federation::ScopeAxis::Some(kinds) if !kinds.is_empty() => {
-                    row.allowed_entity_types = Some(match row.allowed_entity_types {
-                        Some(existing) => existing.intersection(kinds).copied().collect(),
-                        None => kinds.clone(),
-                    });
-                }
-                _ => continue,
-            }
-            let max = match authority.sensitivity {
-                crate::federation::SensitivityCeiling::Bottom => continue,
-                crate::federation::SensitivityCeiling::AtMost(max) => max as u8,
-            };
-            row.max_sensitivity_band = row.max_sensitivity_band.min(max);
             floor = Some(match floor {
                 None => row,
                 Some(existing) => existing.union_envelope(row),
@@ -150,6 +146,42 @@ impl RetrievalPolicyFloor {
         } else {
             None
         }
+    }
+
+    /// Whether a read under this floor could admit any row: it is not
+    /// deny-all and leaves some entity type. A floor met from types that
+    /// share none (a credential's bands and its grant's) admits no row
+    /// though its flag stays clear.
+    pub(crate) fn reads_some_row(&self) -> bool {
+        !self.deny_all
+            && self
+                .allowed_entity_types
+                .as_ref()
+                .is_none_or(|types| !types.is_empty())
+    }
+
+    /// One complete read grant's floor: its retrieval selectors met with its
+    /// canonical Scope's bands and sensitivity. `None` when an invalid or
+    /// empty selector, or a band or sensitivity at bottom, leaves it no row.
+    fn from_grant(grant: &PolicyScopedGrant) -> Option<Self> {
+        let mut row = Self::from_scope(grant.scope.as_ref()).filter(|row| !row.deny_all)?;
+        let authority = &grant.authority_scope;
+        match &authority.bands {
+            crate::federation::ScopeAxis::All => {}
+            crate::federation::ScopeAxis::Some(kinds) if !kinds.is_empty() => {
+                row.allowed_entity_types = Some(match row.allowed_entity_types {
+                    Some(existing) => existing.intersection(kinds).copied().collect(),
+                    None => kinds.clone(),
+                });
+            }
+            _ => return None,
+        }
+        let max = match authority.sensitivity {
+            crate::federation::SensitivityCeiling::Bottom => return None,
+            crate::federation::SensitivityCeiling::AtMost(max) => max as u8,
+        };
+        row.max_sensitivity_band = row.max_sensitivity_band.min(max);
+        Some(row)
     }
 
     fn from_authority_scope(scope: &crate::federation::Scope) -> Self {
@@ -331,6 +363,22 @@ fn parse_minimum(value: &Value) -> Option<f32> {
     })
 }
 
+/// Whether `grant`, read as retrieval reads it under a credential whose
+/// canonical Scope is `credential` (`None` for a key that holds none), leaves
+/// a row of some entity type: its selectors, its bands and the credential's
+/// share one. A grant reads a world only then (Sol R7-004, R11-001).
+pub(crate) fn scoped_read_grant_reads_some_type(
+    grant: &PolicyScopedGrant,
+    credential: Option<&crate::federation::Scope>,
+) -> bool {
+    RetrievalPolicyFloor::from_grant(grant).is_some_and(|row| match credential {
+        Some(scope) => row
+            .intersect(&RetrievalPolicyFloor::from_authority_scope(scope))
+            .reads_some_row(),
+        None => row.reads_some_row(),
+    })
+}
+
 /// Resolve once at the authority boundary. An absent request copies the floor
 /// exactly. Invalid numbers return no resolved filter, even for a deny floor.
 pub(crate) fn narrow_retrieval_filter(
@@ -359,6 +407,7 @@ pub(crate) fn narrow_retrieval_filter(
         min_confidence: narrowed.min_confidence,
         min_salience: narrowed.min_salience,
         deny_all: narrowed.deny_all,
+        credential: None,
     })
 }
 

@@ -110,6 +110,22 @@ pub(super) const CONSULT_NOW: u64 = 1_772_400_000;
 
 pub(super) const CONSULT_DEADLINE: u64 = CONSULT_NOW + 60;
 
+/// A vault whose engine clock sits inside the consult window
+/// (`CONSULT_NOW` .. `CONSULT_DEADLINE`), so an answer timed at
+/// `CONSULT_NOW + 10` lands before the deadline on the engine's clock.
+pub(in crate::task_verb) fn open_consult_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: crate::test_util::pinned_store_clock(CONSULT_NOW + 30),
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    (dir, vault)
+}
+
 pub(in crate::task_verb) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
     let turn_ref = EntityId::from_bytes([seed; 16]).expect("turn id");
     let mut body = Vec::new();
@@ -861,30 +877,6 @@ pub(super) fn route_spec(assignee: Option<TaskAssignee>) -> TaskCreateSpec {
     match assignee {
         Some(assignee) => base.with_assignee(assignee),
         None => base,
-    }
-}
-
-/// A synthetic type-index id. Big-endian bytes order numerically exactly
-/// as `EntityId`'s byte order does, so index order IS type-index order.
-pub(super) fn synthetic_task_id(index: u128) -> EntityId {
-    EntityId::from_bytes(index.to_be_bytes()).expect("synthetic id from 16 bytes")
-}
-
-pub(super) fn synthetic_index(id: &EntityId) -> u128 {
-    u128::from_be_bytes(*id.as_bytes())
-}
-
-/// A pager over `1..=rows` that answers the exclusive `after` cursor the
-/// way `Vault::entities_by_type_page` does, without holding the rows.
-pub(super) fn synthetic_pager(
-    rows: u128,
-    fetched: &mut usize,
-) -> impl FnMut(Option<&EntityId>, usize) -> Result<Vec<EntityId>> + '_ {
-    move |after, limit| {
-        let start = after.map_or(1, |id| synthetic_index(id) + 1);
-        let page: Vec<EntityId> = (start..=rows).take(limit).map(synthetic_task_id).collect();
-        *fetched += page.len();
-        Ok(page)
     }
 }
 

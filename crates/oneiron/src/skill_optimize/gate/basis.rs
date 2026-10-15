@@ -533,7 +533,7 @@ pub fn set_skill_edit_cycle_cap(vault: &Vault, cap: u32) -> Result<()> {
             "skill edit cycle cap must be > 0: a zero cap disables the loop by accident",
         ));
     }
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         SKILL_EDIT_CYCLE_CAP.put(&vault.store, wtxn, &(), &cap.to_be_bytes())?;
         Ok(())
     })

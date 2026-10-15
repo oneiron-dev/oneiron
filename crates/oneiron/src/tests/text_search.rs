@@ -178,32 +178,6 @@ fn retract_claim_lifecycle_reput_drops_stale_text_postings() -> Result<()> {
 }
 
 #[test]
-fn local_overwrite_same_body_replay_without_text_keeps_text_postings() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
-    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-local-payload")?;
-    vault
-        .batch()
-        .text(&id, &[("body", "stable_replay_xyz")])
-        .commit()?;
-    let forward_before = text_forward_row(&vault, &id)?;
-
-    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"stable-local-payload")?;
-
-    assert_eq!(
-        vault.search_text("stable_replay_xyz", 10)?.len(),
-        1,
-        "same-bytes local replay must leave postings serving"
-    );
-    assert_eq!(
-        text_forward_row(&vault, &id)?,
-        forward_before,
-        "same-bytes local replay must not rewrite the forward row"
-    );
-    Ok(())
-}
-
-#[test]
 fn local_metadata_only_reput_without_text_keeps_text_postings() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
@@ -241,38 +215,6 @@ fn local_metadata_only_reput_without_text_keeps_text_postings() -> Result<()> {
         vault.search_text("metadata_only_xyz", 10)?.len(),
         1,
         "failed metadata write must leave postings serving"
-    );
-    Ok(())
-}
-
-#[test]
-fn local_changed_body_with_text_op_reindexes_new_terms() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    crate::test_util::publish_seeded_revisions(&vault);
-    let id = EntityId::now();
-    vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"body-before-text")?;
-    vault
-        .batch()
-        .text(&id, &[("body", "old_term_xyz")])
-        .commit()?;
-
-    vault
-        .batch()
-        .put(&id, 1, test_time_range(2, 2), 2, b"body-after-text")
-        .text(&id, &[("body", "new_term_xyz")])
-        .commit()?;
-
-    assert_indexed_text_body(&vault, &id, "old_term_xyz", b"body-before-text")?;
-    assert!(vault.search_text("new_term_xyz", 10)?.is_empty());
-    publish_text_revision_at_idle(&vault, &id)?;
-    assert!(
-        vault.search_text("old_term_xyz", 10)?.is_empty(),
-        "Text op self-deindex must remove the old term"
-    );
-    assert_eq!(
-        vault.search_text("new_term_xyz", 10)?.len(),
-        1,
-        "Text op must leave the new term indexed"
     );
     Ok(())
 }

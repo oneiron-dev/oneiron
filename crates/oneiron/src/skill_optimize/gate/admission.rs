@@ -53,7 +53,7 @@ pub fn admit_optimized_skill_revision(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    let refused = vault.with_write_txn(|wtxn| {
+    let refused = vault.with_write_txn_grouped(|wtxn| {
         vault.admit_optimized_skill_in_txn(wtxn, proposal, occurred, learned_at)
     })?;
     match refused {
@@ -136,11 +136,11 @@ fn resolve_skill_edit_tradeoff_with_cycle(
             "tradeoff decision requires a bounded evidence reference",
         ));
     }
-    vault.with_write_txn(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
+    vault.with_write_txn_grouped(|txn| {
+        let actor = owner.revalidate_in_txn(vault, txn)?;
         let decision = TradeoffResolution {
             pending: pending_id,
-            owner: owner.actor(),
+            owner: actor,
             authentication: format!("{:?}", owner.decision_id()),
             evidence: evidence.to_owned(),
             rung: TradeoffRung::Person,

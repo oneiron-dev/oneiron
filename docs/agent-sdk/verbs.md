@@ -13,6 +13,7 @@ both bindings and their export-census tests in one reviewed change.
 - `witness`
 - `claim_upsert`
 - `recall`
+- `export`
 - `receipts`
 - `key_value_get`
 - `key_value_put`
@@ -27,5 +28,9 @@ both bindings and their export-census tests in one reviewed change.
 - `tasks.outcomes`
 - `rooms.list`
 - `rooms.messages`
+- `rooms.render`
+- `rooms.find`
+- `rooms.get`
+- `rooms.trunk`
 - `rooms.claim`
 - `rooms.speak`

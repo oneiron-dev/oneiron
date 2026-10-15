@@ -1,34 +1,156 @@
-//! Stateless ROOM projection and ordinary world-scope intersection.
+//! Stateless ROOM projection and the one roster-to-Scope function.
 
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
+use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
 use crate::{EntityId, Result};
+use std::collections::BTreeSet;
 
-/// Host-resolved presence; authority comes from the normal turn resolver.
-#[derive(Debug, Clone)]
+#[cfg(test)]
+mod tests;
+
+/// One roster entry. The engine builds every entry from the Conversation's
+/// `memberIds` and each member's own grants; no request supplies one.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomPresence {
     pub actor: EntityId,
-    /// Class authenticated by the host; validated against the actor entity on each read.
+    /// The bound caller's class. Other members carry none, so a peer read
+    /// matches only class-agnostic grants.
     pub actor_class: Option<crate::EdgeActorClass>,
     pub label: String,
     pub present: bool,
+    /// The worlds this member reads by default (ARCH-0022).
     pub active_worlds: WorldAuthoritySet,
+    /// The member's contact clearance (ILDF2). `None` for the vault owner
+    /// and the vault's own agents, which add no clearance term; bottom for a
+    /// member with no contact or an unknown, revoked or undecodable one.
+    pub clearance: Option<Scope>,
 }
 
-/// This is the SAME authority-set type `PipelineBuilder::active_worlds` takes.
-/// A room intersects already narrowed per-turn sets; joining can never widen.
-pub fn room_scope(roster: &[RoomPresence]) -> Result<WorldAuthoritySet> {
-    let mut present = roster.iter().filter(|member| member.present);
-    let Some(first) = present.next() else {
-        return Ok(WorldAuthoritySet::default());
-    };
-    let mut base = first.active_worlds.include_base();
-    let mut worlds = first.active_worlds.worlds().clone();
-    for member in present {
-        base &= member.active_worlds.include_base();
-        worlds.retain(|id| member.active_worlds.worlds().contains(id));
+/// One party to the roster-to-Scope meet: a room member, or a resolved
+/// interlocutor, whose only term is its clearance (`Option<Scope>`).
+pub trait RosterParty {
+    /// Whether the party is in the meet.
+    fn present(&self) -> bool;
+    /// The worlds the party reads by default, if it brings a world term.
+    fn worlds(&self) -> Option<&WorldAuthoritySet>;
+    /// The party's clearance term; `None` adds none.
+    fn clearance(&self) -> Option<&Scope>;
+}
+
+impl RosterParty for RoomPresence {
+    fn present(&self) -> bool {
+        self.present
     }
-    WorldAuthoritySet::new(base, worlds)
+    fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        Some(&self.active_worlds)
+    }
+    fn clearance(&self) -> Option<&Scope> {
+        self.clearance.as_ref()
+    }
+}
+
+impl RosterParty for WorldAuthoritySet {
+    fn present(&self) -> bool {
+        true
+    }
+    fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        Some(self)
+    }
+    fn clearance(&self) -> Option<&Scope> {
+        None
+    }
+}
+
+impl RosterParty for Option<Scope> {
+    fn present(&self) -> bool {
+        true
+    }
+    fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        None
+    }
+    fn clearance(&self) -> Option<&Scope> {
+        self.as_ref()
+    }
+}
+
+/// ARCH-0067 §8 and ILDF2 R17: the only function from a roster to a Scope,
+/// also exported as `disclosure::disclosable_set`. It meets the present
+/// parties' world sets into the room's world ceiling, then meets in every
+/// present party's clearance. The owner and the vault's own agents add no
+/// clearance term, so with no other party present the clearance half is the
+/// top (P1). A record is disclosed under the result iff it is positively
+/// public or sits under it (P7). No party present gives bottom, and a party
+/// who joins can only narrow the result.
+pub fn room_scope<P: RosterParty>(roster: &[P]) -> Result<Scope> {
+    let worlds = room_worlds(roster)?;
+    Ok(match room_clearance(roster) {
+        Some(clearance) => worlds.meet(&clearance),
+        None => worlds,
+    })
+}
+
+/// The clearance half of [`room_scope`]: the meet of the present parties'
+/// clearances, `None` while no present party brings one.
+pub(crate) fn room_clearance<P: RosterParty>(roster: &[P]) -> Option<Scope> {
+    roster
+        .iter()
+        .filter(|party| party.present())
+        .filter_map(RosterParty::clearance)
+        .fold(None, |met, term| {
+            crate::claim::meet_clearance(met.as_ref(), Some(term))
+        })
+}
+
+/// The world ceiling of [`room_scope`]: the meet of the present parties'
+/// world sets, every other axis open. Every row a room reads lies in it,
+/// public or not; a clearance narrows only what may be disclosed.
+pub(crate) fn room_worlds<P: RosterParty>(roster: &[P]) -> Result<Scope> {
+    let mut present = roster.iter().filter(|party| party.present()).peekable();
+    if present.peek().is_none() {
+        return Ok(Scope::default());
+    }
+    let mut sets = present.filter_map(|party| party.worlds());
+    let Some(first) = sets.next() else {
+        return Ok(Scope::top());
+    };
+    let mut base = first.include_base();
+    let mut worlds = first.worlds().clone();
+    for set in sets {
+        base &= set.include_base();
+        worlds.retain(|id| set.worlds().contains(id));
+    }
+    // Keep the world-set bound at this door too.
+    let meet = WorldAuthoritySet::new(base, worlds)?;
+    // Base has its own boolean. A world id equal to the reserved base id
+    // cannot stand in for it.
+    let mut ids: BTreeSet<_> = meet
+        .worlds()
+        .iter()
+        .filter(|id| **id != crate::claim::base_world_id())
+        .map(|id| ScopeId(*id))
+        .collect();
+    if meet.include_base() {
+        ids.insert(ScopeId(crate::claim::base_world_id()));
+    }
+    let mut scope = Scope::top();
+    scope.worlds = ids.into_iter().collect();
+    Ok(scope)
+}
+
+/// The world axis of a room Scope as a retrieval world set, or `None` when
+/// the axis is open.
+pub(crate) fn scope_worlds(scope: &Scope) -> Result<Option<WorldAuthoritySet>> {
+    let base = ScopeId(crate::claim::base_world_id());
+    match &scope.worlds {
+        ScopeAxis::All => Ok(None),
+        ScopeAxis::Bottom => WorldAuthoritySet::new(false, []).map(Some),
+        ScopeAxis::Some(ids) => WorldAuthoritySet::new(
+            ids.contains(&base),
+            ids.iter().filter(|id| **id != base).map(|id| id.0),
+        )
+        .map(Some),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -63,7 +185,7 @@ impl RoomPosture {
 pub struct RoomSection {
     pub room: EntityId,
     pub roster: Vec<RoomPresence>,
-    pub scope: WorldAuthoritySet,
+    pub scope: Scope,
     pub posture: RoomPosture,
     pub claims: Vec<crate::memory::ClaimView>,
     /// The caller's read of the room's rules. Rules the caller could read but
@@ -84,15 +206,20 @@ impl RoomSection {
                 one_line_token(&member.label)
             )
         }));
+        let base = ScopeId(crate::claim::base_world_id());
         rows.push(format!(
             "scope: base={} worlds={}",
-            self.scope.include_base(),
-            self.scope
-                .worlds()
-                .iter()
-                .map(EntityId::to_hex)
-                .collect::<Vec<_>>()
-                .join(",")
+            self.scope.worlds.contains(&base),
+            match &self.scope.worlds {
+                ScopeAxis::All => "all".to_owned(),
+                ScopeAxis::Bottom => String::new(),
+                ScopeAxis::Some(ids) => ids
+                    .iter()
+                    .filter(|id| **id != base)
+                    .map(|id| id.0.to_hex())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            }
         ));
         let mode = match self.posture.mode {
             RoomMode::Chime => "chime",

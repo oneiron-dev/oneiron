@@ -119,6 +119,7 @@ mod channel_identity_receipts;
 mod commitment_due;
 mod diagnostics;
 mod gate_decision;
+mod group_commit;
 mod handle;
 mod key_encoding;
 mod local_queue_budget;
@@ -147,6 +148,8 @@ pub use channel_identity_receipts::*;
 pub(crate) use commitment_due::*;
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
+pub use group_commit::GroupCommitStats;
+pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
 pub(crate) use key_encoding::*;
 pub use open_gates::*;
@@ -154,6 +157,13 @@ pub(crate) use outbound_send_receipt::*;
 pub(in crate::store) use pending_embedding::*;
 pub use pending_gate_consent::*;
 pub use retrieval_telemetry::*;
+#[cfg(all(unix, test))]
+pub(crate) use root_directory::arm_after_root_entry_removed;
+#[cfg(unix)]
+pub use root_directory::{
+    SharedPath, refuse_shared_path, refuse_shared_vault_root, remove_held_directory, shared_path,
+    shared_vault_root,
+};
 pub use short_id_alias::*;
 use structural_kind_registry::*;
 #[cfg(test)]

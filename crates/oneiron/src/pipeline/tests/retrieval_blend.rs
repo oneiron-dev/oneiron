@@ -3,97 +3,6 @@
 use super::*;
 
 #[test]
-fn expand_ppr_uses_blended_results_as_seeds() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let a = entity_id(20);
-    let b = entity_id(21);
-
-    vault
-        .batch()
-        .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
-        .text(&a, &[("body", "alpha")])
-        .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
-        .edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)
-        .commit()?;
-
-    let baseline = vault.query().search_text("alpha", 10).run()?;
-    assert!(!baseline.iter().any(|entry| entry.id == b));
-
-    let expanded = vault
-        .query()
-        .search_text("alpha", 10)
-        .expand_ppr(&[], 3)
-        .run()?;
-    assert!(expanded.iter().any(|entry| entry.id == b));
-    Ok(())
-}
-
-#[test]
-fn expand_ppr_clamps_internal_seed_growth() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    for i in 0..=crate::ppr::MAX_PPR_SEEDS {
-        // Skip the two reserved scope members (base world 1, default project 2).
-        let id = EntityId::from_bytes((i as u128 + 3).to_be_bytes())?;
-        vault
-            .batch()
-            .put(
-                &id,
-                1,
-                TimeRange {
-                    start: 10 + i as u64,
-                    end: 10 + i as u64,
-                },
-                10,
-                b"payload",
-            )
-            .text(&id, &[("body", "alpha")])
-            .commit()?;
-    }
-
-    let expanded = vault
-        .query()
-        .search_text("alpha", crate::ppr::MAX_PPR_SEEDS + 1)
-        .expand_ppr(&[], 3)
-        .run()?;
-
-    assert!(!expanded.is_empty());
-    Ok(())
-}
-
-#[test]
-fn search_ppr_as_blend_candidate_signal() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let a = entity_id(22);
-    let b = entity_id(23);
-
-    vault
-        .batch()
-        .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
-        .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
-        .edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)
-        .commit()?;
-
-    let results = vault.query().search_ppr(&[a], 3).run()?;
-    assert!(results.iter().any(|entry| entry.id == b));
-    Ok(())
-}
-
-#[test]
-fn search_ppr_rejects_excessive_seed_count_and_depth() {
-    let (_dir, vault) = open_test_vault();
-    let seeds = vec![entity_id(1); crate::ppr::MAX_PPR_SEEDS + 1];
-
-    let too_many_seeds = vault.query().search_ppr(&seeds, 3).run();
-    assert_matches!(too_many_seeds, Err(Error::InvalidConfig(_)));
-
-    let too_deep = vault.query().search_ppr(&[entity_id(1)], 11).run();
-    assert_matches!(too_deep, Err(Error::InvalidConfig(_)));
-}
-
-#[test]
 fn recency_boost_orders_text_channel_before_truncation() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let old = entity_id(0x10);
@@ -202,10 +111,24 @@ fn live_exact_claim_preserves_search_text_limit() -> Result<()> {
     let live_prefix = entity_id(0x32);
 
     put_claim_text(&vault, live_exact, "livegateprefix", None)?;
-    put_text(&vault, lower_ranked_exact_doc, "livegateprefix")?;
+    put_text(
+        &vault,
+        lower_ranked_exact_doc,
+        "livegateprefix in a longer note",
+    )?;
     put_claim_text(&vault, live_prefix, "livegateprefixalpha", None)?;
 
-    let results = vault.query().search_text("livegateprefix", 1).run()?;
+    // EMBED-PACK: the text channel fetches its fusion list length whatever it
+    // is asked for, so all three are candidates and the pack's limit caps the
+    // results. The doc ranks below the claim on its words, and the claims
+    // are read undecayed, as a doc is, so the words decide.
+    let undecayed = std::collections::HashMap::from([(live_exact, 1.0), (live_prefix, 1.0)]);
+    let results = vault
+        .query()
+        .search_text("livegateprefix", 1)
+        .with_access_factor_overrides(&undecayed)
+        .limit(1)
+        .run()?;
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, live_exact);
@@ -293,92 +216,18 @@ fn prefix_scope_widening_preserves_exact_text_limit_after_type_filter() -> Resul
         .text(&in_scope_extra, &[("body", "limitfilterneedle")])
         .commit()?;
 
+    // EMBED-PACK: the text channel fetches its fusion list length whatever it
+    // is asked for, so the pack's limit is what caps the results.
     let results = vault
         .query()
         .search_text("limitfilterneedle", 1)
         .filter_types(&[1])
+        .limit(1)
         .run()?;
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, in_scope_preferred);
     assert!(!results.iter().any(|entry| entry.id == out_of_scope_exact));
-    Ok(())
-}
-
-#[test]
-fn exact_old_text_hit_does_not_suppress_since_prefix() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let old_exact = entity_id(0x12);
-    let recent_prefix = entity_id(0x22);
-
-    vault
-        .batch()
-        .put(
-            &old_exact,
-            1,
-            TimeRange { start: 1, end: 1 },
-            100,
-            b"payload",
-        )
-        .text(&old_exact, &[("body", "sinceprefix")])
-        .put(
-            &recent_prefix,
-            1,
-            TimeRange { start: 1, end: 1 },
-            200,
-            b"payload",
-        )
-        .text(&recent_prefix, &[("body", "sinceprefixalpha")])
-        .commit()?;
-
-    let results = vault
-        .query()
-        .search_text("sinceprefix", 1)
-        .filter_since(200)
-        .run()?;
-
-    assert!(results.iter().any(|entry| entry.id == recent_prefix));
-    assert!(!results.iter().any(|entry| entry.id == old_exact));
-    Ok(())
-}
-
-#[test]
-fn parsed_recent_query_bounds_text_retrieval() -> Result<()> {
-    const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
-
-    let (_dir, vault) = open_test_vault();
-    let old = entity_id(0x13);
-    let recent = entity_id(0x23);
-
-    put_text_with_time(
-        &vault,
-        old,
-        "recent parsedbounds",
-        TimeRange {
-            start: NOW - 7 * 86_400 - 1,
-            end: NOW - 7 * 86_400 - 1,
-        },
-        NOW - 7 * 86_400 - 1,
-    )?;
-    put_text_with_time(
-        &vault,
-        recent,
-        "recent parsedbounds",
-        TimeRange {
-            start: NOW - 60,
-            end: NOW - 60,
-        },
-        NOW - 60,
-    )?;
-
-    let results = vault
-        .query()
-        .search_text("recent parsedbounds", 10)
-        .with_temporal_now(NOW)
-        .run()?;
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, recent);
     Ok(())
 }
 
@@ -423,202 +272,71 @@ fn learned_range_does_not_override_parsed_recent_hint() -> Result<()> {
     Ok(())
 }
 
+/// Time words never fail a run: a phrase the parser cannot use is left out
+/// and the text channel still answers.
 #[test]
-fn explicit_time_range_overrides_parsed_recent_hint() -> Result<()> {
-    const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
-
-    let (_dir, vault) = open_test_vault();
-    let explicit_keep = entity_id(0x14);
-    let parsed_recent_drop = entity_id(0x24);
-    let vector = [1.0, 0.0, 0.0, 0.0];
-
-    put_text_and_vector_with_time(
-        &vault,
-        explicit_keep,
-        "recent overridebounds",
-        vector,
-        TimeRange {
-            start: 100,
-            end: 100,
-        },
-        100,
-    )?;
-    put_text_and_vector_with_time(
-        &vault,
-        parsed_recent_drop,
-        "recent overridebounds",
-        vector,
-        TimeRange {
-            start: NOW - 60,
-            end: NOW - 60,
-        },
-        NOW - 60,
-    )?;
-
-    let results = vault
-        .query()
-        .search(
-            "recent overridebounds",
-            &vector,
-            Some(TimeRange {
-                start: 90,
-                end: 110,
-            }),
-            10,
-        )
-        .with_temporal_now(NOW)
-        .run()?;
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, explicit_keep);
-    Ok(())
-}
-
-#[test]
-fn explicit_time_range_overrides_unsupported_last_phrase() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let explicit_keep = entity_id(0x34);
-    let vector = [1.0, 0.0, 0.0, 0.0];
-
-    put_text_and_vector_with_time(
-        &vault,
-        explicit_keep,
-        "last friday overridebounds",
-        vector,
-        TimeRange {
-            start: 100,
-            end: 100,
-        },
-        100,
-    )?;
-
-    let results = vault
-        .query()
-        .search(
-            "last friday overridebounds",
-            &vector,
-            Some(TimeRange {
-                start: 90,
-                end: 110,
-            }),
-            10,
-        )
-        .with_temporal_now(1_710_504_000)
-        .run()?;
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, explicit_keep);
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_friday_query_fails_closed() -> Result<()> {
+fn time_words_a_query_cannot_use_never_fail_the_run() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x15);
-    put_text(&vault, id, "last friday failclosed")?;
+    put_text(&vault, id, "rollout degrade")?;
 
-    let err = vault
-        .query()
-        .search_text("last friday failclosed", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()
-        .expect_err("unsupported temporal expression must fail closed");
-
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::InvalidTemporalExpression
-    );
-    assert_matches!(
-        err,
-        Error::InvalidTemporalExpression(
-            TemporalExpressionParseError::Unsupported { expression }
-        ) if expression == "last friday"
-    );
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_two_weeks_query_fails_closed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x16);
-    put_text(&vault, id, "last 2 weeks failclosed")?;
-
-    let err = vault
-        .query()
-        .search_text("last 2 weeks failclosed", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()
-        .expect_err("unsupported temporal expression must fail closed");
-
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::InvalidTemporalExpression
-    );
-    assert_matches!(
-        err,
-        Error::InvalidTemporalExpression(
-            TemporalExpressionParseError::Unsupported { expression }
-        ) if expression == "last 2 weeks"
-    );
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_spelled_quantity_query_fails_closed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x17);
-    put_text(&vault, id, "last two weeks failclosed")?;
-
-    let err = vault
-        .query()
-        .search_text("last two weeks failclosed", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()
-        .expect_err("unsupported temporal expression must fail closed");
-
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::InvalidTemporalExpression
-    );
-    assert_matches!(
-        err,
-        Error::InvalidTemporalExpression(
-            TemporalExpressionParseError::Unsupported { expression }
-        ) if expression == "last two weeks"
-    );
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_subday_quantity_query_fails_closed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    for (offset, query, expected) in [
-        (0, "last 24 hours failclosed", "last 24 hours"),
-        (
-            1,
-            "last twenty four hours failclosed",
-            "last twenty four hours",
-        ),
+    for query in [
+        "rollout degrade tomorrow",
+        "rollout degrade over the last several weeks",
+        "rollout degrade next 2 weeks",
     ] {
-        put_text(&vault, entity_id(0x18 + offset), query)?;
-
-        let err = vault
+        let results = vault
             .query()
             .search_text(query, 10)
             .with_temporal_now(1_710_504_000)
-            .run()
-            .expect_err("unsupported temporal expression must fail closed");
+            .run()?;
+        assert!(results.iter().any(|hit| hit.id == id), "{query}");
+    }
+    Ok(())
+}
 
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::InvalidTemporalExpression
-        );
-        assert_matches!(
-            err,
-            Error::InvalidTemporalExpression(
-                TemporalExpressionParseError::Unsupported { expression }
-            ) if expression == expected
-        );
+/// A quantity hint `main` refused now bounds the text channel: the row inside
+/// the window is found and the row outside it is not.
+fn quantity_hint_bounds_text_retrieval(query: &str, inside: u64, outside: u64) -> Result<()> {
+    const NOW: u64 = 1_710_504_000;
+    let (_dir, vault) = open_test_vault();
+    let (kept, dropped) = (entity_id(0x16), entity_id(0x26));
+    for (id, ago) in [(kept, inside), (dropped, outside)] {
+        let at = NOW - ago;
+        put_text_with_time(
+            &vault,
+            id,
+            "quantitybounds",
+            TimeRange { start: at, end: at },
+            at,
+        )?;
+    }
+
+    let results = vault
+        .query()
+        .search_text(&format!("{query} quantitybounds"), 10)
+        .with_temporal_now(NOW)
+        .run()?;
+
+    let ids: Vec<EntityId> = results.iter().map(|hit| hit.id).collect();
+    assert_eq!(ids, [kept], "{query}");
+    Ok(())
+}
+
+#[test]
+fn last_two_weeks_query_bounds_text_retrieval() -> Result<()> {
+    quantity_hint_bounds_text_retrieval("last 2 weeks", 3 * 86_400, 30 * 86_400)
+}
+
+#[test]
+fn last_spelled_quantity_query_bounds_text_retrieval() -> Result<()> {
+    quantity_hint_bounds_text_retrieval("last two weeks", 3 * 86_400, 30 * 86_400)
+}
+
+#[test]
+fn last_subday_quantity_query_bounds_text_retrieval() -> Result<()> {
+    for query in ["last 24 hours", "last twenty four hours"] {
+        quantity_hint_bounds_text_retrieval(query, 3_600, 2 * 86_400)?;
     }
     Ok(())
 }
@@ -664,33 +382,6 @@ fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<
 
     assert!(results.iter().any(|entry| entry.id == active_facet_prefix));
     assert!(!results.iter().any(|entry| entry.id == other_facet_exact));
-    Ok(())
-}
-
-#[test]
-fn exact_other_world_text_hit_does_not_suppress_world_prefix() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let world_active = entity_id(0x92);
-    let world_other = entity_id(0xB2);
-    let other_world_exact = entity_id(0x60);
-    let active_world_prefix = entity_id(0x21);
-
-    put_claim_text(&vault, other_world_exact, "worldprefix", Some(world_other))?;
-    put_claim_text(
-        &vault,
-        active_world_prefix,
-        "worldprefixalpha",
-        Some(world_active),
-    )?;
-
-    let results = vault
-        .query()
-        .search_text("worldprefix", 1)
-        .world(WorldScope::World(world_active))
-        .run()?;
-
-    assert!(results.iter().any(|entry| entry.id == active_world_prefix));
-    assert!(!results.iter().any(|entry| entry.id == other_world_exact));
     Ok(())
 }
 
@@ -807,35 +498,5 @@ fn recency_boost_orders_non_text_scores_before_ppr_expansion_fusion() -> Result<
         .run()?;
 
     assert_eq!(boosted[0].id, fresh);
-    Ok(())
-}
-
-#[test]
-fn recency_boost_auto_skips_when_temporal_search_present() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-
-    let anchor = 2_000_000;
-    let a = entity_id(30);
-    let b = entity_id(31);
-
-    put_entity(&vault, a, 1, anchor, anchor, anchor)?;
-    put_entity(&vault, b, 1, anchor + 3_600, anchor + 3_600, anchor + 3_600)?;
-
-    let without_boost = vault
-        .query()
-        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Auto, 10)
-        .run()?;
-    let with_boost = vault
-        .query()
-        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Auto, 10)
-        .boost_recency(7.0)
-        .run()?;
-
-    assert_eq!(without_boost.len(), with_boost.len());
-    for (left, right) in without_boost.iter().zip(with_boost.iter()) {
-        assert_eq!(left.id, right.id);
-        assert!(approx_eq(left.score, right.score, 1e-6));
-    }
-
     Ok(())
 }

@@ -1,9 +1,23 @@
 mod cold_attach;
+mod device;
 mod eligibility;
 mod locality;
+mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
-pub(crate) use eligibility::{embeddable_payload, indexed_payload};
+pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
+pub(crate) use device::{
+    clear_all_embedding_devices_in_txn, copy_embedding_device_in_txn,
+    record_embedding_device_in_txn,
+};
+pub(crate) use eligibility::{
+    embeddable_payload, embeddable_payload_in_txn, indexed_payload, joined_turn_text,
+    turn_text_in_txn,
+};
 pub(crate) use locality::clear_embedding_locality_in_txn;
+pub(crate) use turn::{
+    erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
+    mark_turn_in_txn,
+};
 
 #[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
@@ -48,13 +62,16 @@ pub enum EmbedderLocality {
 /// Content supplied to an embedder and its egress predicate.
 ///
 /// Match the variant before decoding: CLAIM carries its canonical record,
-/// while an epoch SUMMARY carries only its already-decoded prose.
+/// while an epoch SUMMARY and a TURN carry only their already-read text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingEmbeddingPayload {
     /// Canonical MessagePack CLAIM body bytes, without the entity header.
     ClaimBody(Vec<u8>),
     /// UTF-8 prose from a validated epoch-summary body, without framing keys.
     SummaryText(String),
+    /// A TURN's text: its visible MESSAGE children's text in message order,
+    /// one per line (ARCH-0004: the turn is the embedding unit).
+    TurnText(String),
 }
 
 /// One pending entity supplied to a host-injected embedder.
@@ -75,6 +92,39 @@ pub trait Embedder: Send + Sync {
     fn dimensions(&self) -> usize;
     fn locality(&self) -> EmbedderLocality;
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
+    /// The device and runtime that compute what [`Self::embed`] returns,
+    /// stored beside each vector it fills. Unknown unless overridden.
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::unknown()
+    }
+    /// [`Self::embed`], each vector with the device and runtime that computed
+    /// it. An embedder whose answers name their own (an endpoint that says)
+    /// overrides this; any other marks each with [`Self::provenance`].
+    fn embed_marked(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        let provenance = self.provenance();
+        Ok(self
+            .embed(inputs)?
+            .into_iter()
+            .map(|vector| (vector, provenance.clone()))
+            .collect())
+    }
+
+    /// [`Self::embed_marked`] for an embedder off this device: `release`
+    /// judges the rows of each request it sends right before that request
+    /// leaves, and a refusal sends nothing and fails the embed. One that
+    /// sends a single request needs no more than this default.
+    fn embed_released(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[EntityId]) -> Result<()>,
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
+        release(&rows)?;
+        self.embed_marked(inputs)
+    }
 }
 
 /// Tri-state PII egress verdict for one pending entity (ONE-EMBED E6).
@@ -101,6 +151,9 @@ pub trait EgressPredicate: Send + Sync {
     /// Called under a held write transaction: host trait impls invoked
     /// under a held txn/lock must be non-blocking cached lookups; hosts run
     /// arbitrary inference in the async phases the engine exposes for it.
+    /// That transaction may be one group commit shared with other writes:
+    /// `decide` must not call into the vault or wait on anything a vault
+    /// caller can hold while it writes, or the vault's writer deadlocks.
     fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision;
 }
 
@@ -152,7 +205,9 @@ pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
 /// bytes and therefore still one space — it is not an attempt at prose.
 pub fn payload_text(payload: &PendingEmbeddingPayload) -> Result<Cow<'_, str>> {
     match payload {
-        PendingEmbeddingPayload::SummaryText(text) => Ok(Cow::Borrowed(text)),
+        PendingEmbeddingPayload::SummaryText(text) | PendingEmbeddingPayload::TurnText(text) => {
+            Ok(Cow::Borrowed(text))
+        }
         PendingEmbeddingPayload::ClaimBody(bytes) => Ok(Cow::Owned(claim_text(
             &crate::claim::decode_claim_body(bytes, true)?,
         ))),
@@ -234,6 +289,7 @@ struct LeaseBatch {
     stale_jobs: usize,
     egress_denied: usize,
     egress_no_verdict: usize,
+    device_local: usize,
 }
 
 /// Summary from one reconciler pass.
@@ -250,6 +306,9 @@ pub struct PendingEmbeddingReconcileReport {
     pub egress_denied: usize,
     pub egress_no_verdict: usize,
     pub remote_failed_fallback_local: usize,
+    /// Rows a device-local world keeps (DEC-0005): embedded on device, or
+    /// left pending unsent while no embedder on this device takes them.
+    pub device_local: usize,
 }
 
 /// Per-vault pending-embedding reconciler.
@@ -335,6 +394,7 @@ impl PendingEmbeddingReconciler {
             stale_jobs: batch.stale_jobs,
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
+            device_local: batch.device_local,
             ..PendingEmbeddingReconcileReport::default()
         };
         if batch.work.is_empty() {
@@ -358,7 +418,7 @@ impl PendingEmbeddingReconciler {
             ))?;
             let inputs: Vec<PendingEmbeddingInput> =
                 remote_work.iter().map(|work| work.input.clone()).collect();
-            match rung.embedder.embed(&inputs) {
+            match self.embed_on(rung.embedder.as_ref(), &inputs) {
                 Ok(vectors) => {
                     if vectors.len() != remote_work.len() {
                         return Err(Error::InvariantViolation(
@@ -375,7 +435,7 @@ impl PendingEmbeddingReconciler {
                     )?;
                 }
                 Err(e) => {
-                    tracing::warn!(?e, "remote embed failed; falling back to local");
+                    tracing::warn!(kind = ?e.kind(), "remote embed failed; falling back to local");
                     report.remote_failed_fallback_local += remote_work.len();
                     self.embed_and_fill_local(&remote_work, &mut report)?;
                 }
@@ -389,7 +449,7 @@ impl PendingEmbeddingReconciler {
             // stay silent, exactly as EMB-1 always propagated them.
             if report.routed_remote > 0 || report.remote_failed_fallback_local > 0 {
                 tracing::warn!(
-                    ?error,
+                    kind = ?error.kind(),
                     routed_remote = report.routed_remote,
                     remote_failed_fallback_local = report.remote_failed_fallback_local,
                     embedded = report.embedded,
@@ -414,7 +474,7 @@ impl PendingEmbeddingReconciler {
         }
         let inputs: Vec<PendingEmbeddingInput> =
             work.iter().map(|item| item.input.clone()).collect();
-        let vectors = self.embedder.embed(&inputs)?;
+        let vectors = self.embed_on(self.embedder.as_ref(), &inputs)?;
         if vectors.len() != work.len() {
             return Err(Error::InvariantViolation(
                 "embedder returned mismatched vector count",
@@ -424,15 +484,42 @@ impl PendingEmbeddingReconciler {
         self.fill_batch(work, &vectors, self.embedder.locality(), report)
     }
 
+    /// `embedder`'s vectors for `inputs`, each marked with the device and
+    /// runtime that computed it. One off this device sends each request only
+    /// once the vault releases its rows: none of them is one a device-local
+    /// world keeps (DEC-0005), whatever the host's egress list says. A
+    /// refusal fails the embed and sends nothing.
+    fn embed_on(
+        &self,
+        embedder: &dyn Embedder,
+        inputs: &[PendingEmbeddingInput],
+    ) -> Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        if embedder.locality() == EmbedderLocality::OnDevice {
+            return embedder.embed_marked(inputs);
+        }
+        embedder.embed_released(inputs, &|rows| {
+            if self.vault.rows_may_leave_device(rows)? {
+                Ok(())
+            } else {
+                Err(Error::UpstreamToolFailure {
+                    tool: "embedder-remote",
+                    code: "device_local_row".to_owned(),
+                })
+            }
+        })
+    }
+
+    /// Fills each leased row with its vector, marked with the device and
+    /// runtime that computed that vector.
     fn fill_batch(
         &self,
         work: &[LeasedPendingEmbedding],
-        vectors: &[Vec<f32>],
+        vectors: &[(Vec<f32>, EmbeddingProvenance)],
         locality: EmbedderLocality,
         report: &mut PendingEmbeddingReconcileReport,
     ) -> Result<()> {
-        for (item, vector) in work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(item, vector, locality)? {
+        for (item, (vector, provenance)) in work.iter().zip(vectors.iter()) {
+            if self.complete_leased_work(item, vector, locality, provenance)? {
                 report.filled += 1;
             } else {
                 report.stale_fills += 1;
@@ -478,7 +565,18 @@ impl PendingEmbeddingReconciler {
             return Ok(batch);
         }
 
-        self.vault.with_write_txn(|wtxn| {
+        // A device-local world's rows never go to a model off this device
+        // (DEC-0005), whatever the host's egress list says: they take the
+        // embedder on this device, or stay pending, unleased and unsent, while
+        // the primary is off it too. Read in the writer, so every flag
+        // committed before this pass is one it reads; the release reads again.
+        let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
+        self.vault.with_write_txn_grouped(|wtxn| {
+            let flagged = crate::settings::device_local_worlds_at(
+                &self.vault,
+                wtxn,
+                crate::claim::CallerLocality::OffDevice,
+            )?;
             for job in jobs {
                 if crate::vault::entity_revision::entity_has_pending_revision(
                     &self.vault.store,
@@ -514,8 +612,25 @@ impl PendingEmbeddingReconciler {
                     continue;
                 }
 
+                let device_local = crate::settings::device_only_withholds(
+                    &self.vault.store,
+                    wtxn,
+                    &flagged,
+                    &job.entity_id,
+                )
+                .or_else(|error| match error {
+                    Error::CorruptedIndex(_) => Ok(true),
+                    error => Err(error),
+                })?;
+                if device_local {
+                    batch.device_local += 1;
+                    if !primary_on_device {
+                        continue;
+                    }
+                }
                 let (route, lease_duration_ms) = match &self.remote_rung {
                     None => (EmbedRoute::Local, self.lease_duration_ms),
+                    Some(_) if device_local => (EmbedRoute::Local, self.lease_duration_ms),
                     Some(rung) => match rung.predicate.decide(&input) {
                         EgressDecision::Allow => (EmbedRoute::Remote, rung.lease_duration_ms),
                         EgressDecision::Deny => {
@@ -552,9 +667,10 @@ impl PendingEmbeddingReconciler {
         work: &LeasedPendingEmbedding,
         vector: &[f32],
         locality: EmbedderLocality,
+        provenance: &EmbeddingProvenance,
     ) -> Result<bool> {
         let mut filled_current = false;
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             let current_before = self
                 .vault
                 .store
@@ -568,6 +684,7 @@ impl PendingEmbeddingReconciler {
                     id: work.input.entity_id,
                     vector: vector.to_vec(),
                     pending_embedding_token: Some(work.input.pending_embedding_token.clone()),
+                    provenance: Some(provenance.clone()),
                 }],
                 self.vault
                     .text_index_trusted
@@ -626,11 +743,16 @@ impl PendingEmbeddingReconciler {
 /// not a production filter — a filter here would silently absorb a routing bug
 /// instead of surfacing it. The base-only `PendingEmbeddingReconciler` needs no
 /// equivalent: it reads base rows session content never enters.
+///
+/// `admit` runs first in the write's own transaction: a retrieval in a room
+/// on record lands its jobs, as every other landing does, only while its
+/// route stands and its saver holds. A refusal there enqueues nothing.
 #[cfg(feature = "sync")]
 pub(crate) fn enqueue_pending_embedding_jobs(
     vault: &crate::Vault,
     ids: &[EntityId],
     priority: u8,
+    admit: &dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
@@ -644,7 +766,8 @@ pub(crate) fn enqueue_pending_embedding_jobs(
         "K6: a live-overlay id reached the embed job queue; session content \
          embeds inline and must never enqueue a background job"
     );
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
+        admit(wtxn)?;
         for id in ids {
             if vault
                 .store
@@ -661,7 +784,7 @@ pub(crate) fn enqueue_pending_embedding_jobs(
 #[cfg(feature = "sync")]
 fn pending_input_in_txn(
     vault: &crate::Vault,
-    wtxn: &heed::RwTxn<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<PendingEmbeddingInput>> {
     let Some(token) = vault.store.pending_embedding_token_in_txn(wtxn, id)? else {
@@ -670,6 +793,27 @@ fn pending_input_in_txn(
     let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
+    // A stale record's words are withdrawn; whatever marked it, it is
+    // retired, never sent out.
+    if crate::ports::stale_in_txn(&vault.store, wtxn, id)? {
+        return Ok(None);
+    }
+    // A TURN embeds its messages' text, read now, and the lease commits to
+    // exactly that text: marking it again here makes a fill current only for
+    // the words it embedded, even when a door that moved them marked nothing.
+    if raw.entity_type == crate::registry::ENTITY_TYPE_TURN {
+        let Some(text) = turn_text_in_txn(vault, wtxn, id)? else {
+            return Ok(None);
+        };
+        let token = vault
+            .store
+            .mark_pending_embedding(wtxn, id, text.as_bytes())?;
+        return Ok(Some(PendingEmbeddingInput {
+            entity_id: *id,
+            payload: PendingEmbeddingPayload::TurnText(text),
+            pending_embedding_token: token,
+        }));
+    }
 
     // RT-05 (ONE-1687): the epoch-summary keyframe is embeddable alongside
     // CLAIM, and what the embedder (and egress gate) receives is its TEXT: the
@@ -704,7 +848,7 @@ fn retire_excluded_marker_in_txn(
     let Some(record) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(());
     };
-    if embeddable_payload(record.entity_type, &record.body).is_none() {
+    if embeddable_payload_in_txn(vault, wtxn, id, record.entity_type, &record.body)?.is_none() {
         vault.store.clear_pending_embedding(wtxn, id)?;
     }
     Ok(())
@@ -768,9 +912,3 @@ fn unix_millis_now() -> u64 {
 
 #[cfg(all(test, feature = "sync"))]
 mod tests;
-
-// Base-mode law: the projection is featureless code, so its coverage runs in
-// the featureless build too. `tests.rs` is sync-gated because every row in it
-// drives the reconciler.
-#[cfg(test)]
-mod payload_text_tests;

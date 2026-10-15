@@ -253,7 +253,7 @@ fn write_actor_subject_anchor(
 
     // `actor.*` is a RESERVED namespace, so this rides the crate-internal
     // engine door; `Vault::put_claim` refuses it by design.
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         validate_writer_in_txn(vault, wtxn, writer)?;
         vault.verify_owner_write_actor_in_txn(wtxn, &writer)?;
         validate_anchor_entities_in_txn(vault, wtxn, actor_ref, subject_ref)?;
@@ -362,7 +362,7 @@ pub fn set_person_substrate(
 
     // Exactly `person.substrate` is engine-owned; other `person.*` facts
     // retain their ordinary doors. Authority and replacement share this txn.
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         validate_writer_in_txn(vault, wtxn, writer)?;
         vault.verify_owner_write_actor_in_txn(wtxn, &writer)?;
         validation::require_person_in_txn(&vault.store, wtxn, &person_ref)?;

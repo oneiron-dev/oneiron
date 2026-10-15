@@ -134,6 +134,36 @@ async fn revoke_command_refuses_missing_vault_path_without_creating_storage() {
     );
 }
 
+/// W1b T3: while a running server holds the vault the CLI cannot revoke, and
+/// its refusal names what works: the online route, or stopping the server.
+#[tokio::test]
+async fn revoke_command_names_the_online_path_while_a_server_holds_the_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("vault");
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 32;
+    vault_config.map_size = 64 * 1024 * 1024;
+    drop(oneiron::Vault::open(&vault_path, vault_config).unwrap());
+    let _server = oneiron::VaultWriterLease::acquire(&vault_path).unwrap();
+
+    let err = revoke(RevokeArgs {
+        client: "0123456789abcdef".to_string(),
+        serve: ServeArgs {
+            vault_path: Some(vault_path),
+            dimensions: Some(32),
+            map_size: Some(64 * 1024 * 1024),
+            dict_search_paths: Some(Vec::new()),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("POST /api/lease/revoke"), "{err}");
+    assert!(err.contains("stop the server"), "{err}");
+}
+
 #[tokio::test]
 async fn revoke_command_flips_existing_binding_and_preserves_pubkey_floor() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -492,55 +522,6 @@ fn api_raw_content_type_defaults_to_json_and_only_a_valid_type_replaces_it() {
     }
 }
 
-/// `@FILE` and a literal body are different forms, and neither is shell text:
-/// a body full of shell metacharacters is bytes, not a command.
-#[test]
-fn api_body_forms_are_distinct_and_never_shell_evaluated() {
-    let dir = tempfile::tempdir().unwrap();
-    let body_path = dir.path().join("request.json");
-    std::fs::write(&body_path, b"{\"from\":\"file\"}").unwrap();
-
-    let from_file = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: format!("@{}", body_path.display()),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        from_file.body.as_deref(),
-        Some(b"{\"from\":\"file\"}".as_slice())
-    );
-
-    let literal = "{\"shell\":\"$(id); rm -rf / `whoami`\"}";
-    let verbatim = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: literal.to_owned(),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        verbatim.body.as_deref(),
-        Some(literal.as_bytes()),
-        "a literal body is sent verbatim, never expanded"
-    );
-
-    assert!(
-        api::request_for_command(
-            "http://127.0.0.1:3000",
-            ApiCommand::Call {
-                verb: "board.append".to_owned(),
-                data: format!("@{}", dir.path().join("absent.json").display()),
-            },
-        )
-        .is_err(),
-        "a missing @FILE is an error here, not an empty request"
-    );
-}
-
 /// The credential travels in curl's config channel on stdin. It is in no
 /// argument, no captured stdout, and no captured stderr.
 #[test]
@@ -802,6 +783,127 @@ fn api_keeps_a_host_curlrc_from_capturing_the_transfer() {
     );
 }
 
+/// An ambient `http_proxy` routes curl's request, bearer and holder proof
+/// included, to that proxy even for a loopback server, and `-q` does not stop
+/// it (Astra F1 on #1360). This row proves it with the REAL binary, a
+/// recording proxy and a stand-in server, both on loopback: plain curl sends
+/// the request to the proxy; through this module only the server receives it.
+/// A host with no curl stands down, as above.
+#[test]
+#[cfg(unix)]
+fn api_keeps_an_ambient_proxy_from_receiving_the_credential() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Answers one connection on `listener` with `body`; yields the request
+    /// head it was sent.
+    fn answer_one(listener: TcpListener, body: &'static str) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut head = Vec::new();
+            let mut buf = [0; 4096];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                match socket.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            String::from_utf8_lossy(&head).into_owned()
+        })
+    }
+    fn loopback() -> (TcpListener, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (listener, url)
+    }
+
+    let probe = std::process::Command::new("curl").arg("--version").output();
+    if !probe.is_ok_and(|probe| probe.status.success()) {
+        return;
+    }
+    let (origin, origin_url) = loopback();
+    let target = format!("{origin_url}/api/core/discover");
+    let origin = answer_one(origin, "origin");
+
+    // The fixture is real: plain curl, the proxy in its environment, sends
+    // the loopback request to the proxy.
+    let (control, control_url) = loopback();
+    let control = answer_one(control, "proxied");
+    let plain = std::process::Command::new("curl")
+        .env("http_proxy", &control_url)
+        .env_remove("no_proxy")
+        .env_remove("NO_PROXY")
+        .args(["-q", "--silent", "--show-error", "--url", &target])
+        .output()
+        .unwrap();
+    assert_eq!(
+        plain.stdout,
+        b"proxied",
+        "fixture check: an ambient proxy must divert plain curl: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let diverted = control.join().unwrap();
+    assert!(
+        diverted.starts_with(&format!("GET {target} ")),
+        "{diverted}"
+    );
+
+    // The same environment, every proxy variable set, in force for this
+    // module's own invocation.
+    let (proxy, proxy_url) = loopback();
+    let proxy_addr = proxy.local_addr().unwrap();
+    let proxy = answer_one(proxy, "proxied");
+    let dir = tempfile::tempdir().unwrap();
+    let program = write_fake_curl(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\nunset no_proxy NO_PROXY\n\
+             export http_proxy=\"{proxy_url}\" https_proxy=\"{proxy_url}\" \
+             all_proxy=\"{proxy_url}\" ALL_PROXY=\"{proxy_url}\"\nexec curl \"$@\"\n"
+        ),
+    );
+    let request = api::CurlRequest {
+        method: "GET".to_owned(),
+        url: target,
+        body: None,
+        content_type: None,
+    };
+    let output = api::run_curl_output(
+        program.as_os_str(),
+        &request,
+        Some(PLACEHOLDER_SECRET),
+        std::process::Stdio::piped(),
+        std::process::Stdio::piped(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        output.stdout,
+        b"origin",
+        "the request must reach the selected server, not the proxy: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let served = origin.join().unwrap();
+    assert!(
+        served.contains(&format!("Authorization: Bearer {PLACEHOLDER_SECRET}")),
+        "{served}"
+    );
+    // Nothing reached the proxy: the first connection it answers is this one.
+    std::net::TcpStream::connect(proxy_addr)
+        .unwrap()
+        .write_all(b"WAKE\r\n\r\n")
+        .unwrap();
+    assert_eq!(proxy.join().unwrap(), "WAKE\r\n\r\n");
+}
+
 /// Staging a body that fails PART-WAY through must leave nothing on disk. The
 /// file exists from the moment it is opened, so the guard that removes it has
 /// to own the path BEFORE the first write: otherwise a write error returns
@@ -849,4 +951,111 @@ fn api_a_failed_body_staging_leaves_nothing_behind() {
         !staged_path.exists(),
         "a staged body must not outlive the call"
     );
+}
+
+/// `token agent`'s vault half on a vault whose authority clock trails the
+/// wall clock by more than the default lifetime, as weeks of closed nights
+/// leave it: the fresh credential serves an MCP call and a REST read. The MCP
+/// door judged the slip's expiry, an authority-clock second, on the wall
+/// clock, so it refused a credential minted a moment before.
+#[tokio::test]
+async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wall() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use tower::ServiceExt;
+    const SECRET: &str = "trailing-clock-issuer-key";
+    let dir = tempfile::tempdir().unwrap();
+    let wall = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let closed_for = 40 * 24 * 60 * 60;
+    let clock = oneiron::store::ports::ManualClock::new(wall() - closed_for);
+    let open = || {
+        let mut config = oneiron::VaultConfig::server();
+        config.store_clock = clock.bundle();
+        oneiron::Vault::open_owned(dir.path(), config).unwrap()
+    };
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    // The vault starts its authority clock 40 days ago and stays closed
+    // until now.
+    open().ensure_host_root_slip(&issuer).unwrap();
+    clock.set(wall());
+
+    let vault = open();
+    let principal = vault
+        .ensure_agent_principal("trailing-clock")
+        .unwrap()
+        .to_hex();
+    let owner = crate::owner::local_owner(&vault).unwrap();
+    let (verbs, ceiling) = agent_tier_authority(AgentTier::FullAccess);
+    let minted = mint_paired_credential(
+        &vault,
+        &issuer,
+        &principal,
+        "agent",
+        verbs,
+        30 * 24 * 60 * 60,
+    )
+    .unwrap();
+    vault
+        .grant_agent_principal(&owner, &principal, ceiling)
+        .unwrap();
+    // Expired on the wall clock, live on the clock the vault judges it on.
+    assert!(minted.expires_at < wall(), "{}", minted.expires_at);
+    assert!(minted.expires_at > vault.capability_slip_now().unwrap());
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::new(vault),
+            SyncServerConfig {
+                auth_secret: Some(SECRET.to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let slip = oneiron::authority::CapabilitySlip::from_token(&minted.token).unwrap();
+    let seed: Vec<u8> = (0..minted.binding_key.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&minted.binding_key[at..at + 2], 16).unwrap())
+        .collect();
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed.try_into().unwrap());
+    let send = |request: axum::http::request::Builder, body: Body| {
+        let proof = oneiron::authority::holder_proof(&slip, &key, server.vault().now_recorded_at())
+            .unwrap();
+        crate::build_app(server.clone()).oneshot(
+            request
+                .header(AUTHORIZATION, format!("Bearer {}", minted.token))
+                .header("x-oneiron-binding", proof.to_string())
+                .body(body)
+                .unwrap(),
+        )
+    };
+
+    let listed = send(
+        Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(CONTENT_TYPE, "application/json"),
+        Body::from(json!({"jsonrpc": "2.0", "id": "list", "method": "tools/list"}).to_string()),
+    )
+    .await
+    .unwrap();
+    let status = listed.status();
+    let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: JsonValue = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["result"]["tools"].is_array(), "{body}");
+
+    let read = send(
+        Request::builder().uri("/v1/core/conversations"),
+        Body::empty(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
 }

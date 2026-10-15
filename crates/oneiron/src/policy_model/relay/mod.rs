@@ -49,8 +49,9 @@ mod trust;
 use super::planes;
 
 pub use self::outcome::{
-    DualPlanePass, InMemoryVaultSideVerdicts, RelayBoundaryDegrade, RelayBoundaryPass,
-    RelayClassifiedPass, RelayResolution, RelaySafeguardTier, VaultSideVerdictSource,
+    DualPlanePass, HostedPassEvidence, InMemoryVaultSideVerdicts, RelayBoundaryDegrade,
+    RelayBoundaryPass, RelayClassifiedPass, RelayResolution, RelaySafeguardTier,
+    VaultSideVerdictSource,
 };
 pub use self::registry::EdgeServiceRegistry;
 pub use self::trust::{
@@ -65,7 +66,3 @@ pub use self::trust::{
 pub(super) use self::boundary::RelayReceipt;
 #[cfg(test)]
 pub(super) use self::outcome::RelayReceiptRow;
-#[cfg(test)]
-pub(super) use self::registry::HOSTED_LEGAL_JURISDICTION_MAX_LEN;
-#[cfg(test)]
-pub(super) use self::trust::HostedDomain;

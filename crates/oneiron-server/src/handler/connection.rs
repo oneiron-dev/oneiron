@@ -51,11 +51,15 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
+    crate::auth::Locality(locality): crate::auth::Locality,
+    machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
+    // The binding door proved the machine with the upgrade's own slip proof.
+    let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
@@ -70,7 +74,9 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti)))
+        .on_upgrade(move |socket| {
+            handle_connection(socket, server, conn_id, session_jti, locality, machine)
+        }))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -117,6 +123,8 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
+    locality: oneiron::claim::CallerLocality,
+    machine: oneiron::authority::PeerMachine,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -168,8 +176,12 @@ async fn handle_connection(
                 return;
             }
         }
-        Err(e) => {
-            tracing::error!(conn_id, error = %e, "failed to export root snapshot");
+        Err(_) => {
+            tracing::error!(
+                conn_id,
+                reason = "root_snapshot_export_failed",
+                "failed to export root snapshot"
+            );
             return;
         }
     }
@@ -184,7 +196,13 @@ async fn handle_connection(
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = ConnState::new(protocol_version);
+    let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
+    conn_state.locality = locality;
+    tracing::debug!(
+        conn_id,
+        machine = ?conn_state.peer_machine(server.vault()),
+        "socket machine"
+    );
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),
@@ -250,7 +268,8 @@ async fn handle_connection(
                 match broadcast_result {
                     Ok(Some(data)) => {
                         if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
-                            let Some(frame) = app_connection.receive_broadcast(&data) else {
+                            let Some(frame) = app_connection.release(conn_state.locality, &data)
+                            else {
                                 continue;
                             };
                             let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
@@ -342,6 +361,7 @@ async fn handle_connection(
                         let subscribed_window = if data.first() == Some(&protocol::TAG_WINDOW_SYNC)
                         {
                             window_broadcast_allowed(protocol_version, &conn_state, &data)
+                                && !window_update_withheld(&server, &data)
                         } else {
                             should_forward_broadcast(protocol_version, &data)
                         };
@@ -376,6 +396,16 @@ async fn handle_connection(
                     break;
                 };
                 let mut data = data;
+                // A queued app body is judged again at its last door before
+                // the send, by the rows it carries (DEC-0005).
+                if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
+                    #[cfg(test)]
+                    crate::livequery::release_hook::run(&server);
+                    let Some(frame) = app_connection.release(conn_state.locality, &data) else {
+                        continue;
+                    };
+                    data = frame;
+                }
                 let app_frame = matches!(
                     data.first().copied(),
                     Some(
@@ -427,6 +457,14 @@ async fn handle_connection(
                         _ => break,
                     }
                 }
+                if window_update_withheld(&server, &data)
+                    || oneiron::sync::documents::document_frame_withheld(server.vault(), &data)
+                    || (data.first() == Some(&oneiron::sync::transport::TAG_LFS_CHUNK_SYNC)
+                        && super::lfs_chunks::chunk_reply_withheld(&server, &mut conn_state))
+                {
+                    transport.app_jti = None;
+                    continue;
+                }
                 let sent = transport.send_binary(data).await;
                 transport.app_jti = None;
                 if !sent {
@@ -452,8 +490,8 @@ async fn handle_connection(
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
-            Err(e) => {
-                tracing::warn!(conn_id, error = %e, "WebSocket error");
+            Err(_) => {
+                tracing::warn!(conn_id, reason = "websocket_read_failed", "WebSocket error");
                 break;
             }
         };
@@ -551,16 +589,24 @@ async fn handle_connection(
                             tracing::warn!(conn_id, size, max, "frame too large — closing");
                             break;
                         }
-                        ProtocolError::LoroImport(msg) => {
-                            tracing::warn!(conn_id, error = %msg, "loro import error — closing");
+                        ProtocolError::LoroImport(_) => {
+                            tracing::warn!(
+                                conn_id,
+                                reason = "loro_import_failed",
+                                "loro import error — closing"
+                            );
                             break;
                         }
-                        ProtocolError::Persistence(msg) => {
+                        ProtocolError::Persistence(_) => {
                             // Fail-closed: the server could not durably
                             // persist sync state — do not keep relaying on a
                             // connection whose updates would vanish on
                             // restart.
-                            tracing::error!(conn_id, error = %msg, "sync persistence failure — closing");
+                            tracing::error!(
+                                conn_id,
+                                reason = "sync_persistence_failed",
+                                "sync persistence failure — closing"
+                            );
                             break;
                         }
                     }
@@ -634,6 +680,22 @@ fn window_broadcast_allowed(
         }
         _ => false,
     }
+}
+
+/// Whether `frame` is a window UPDATE this server now withholds as
+/// device-only. Read at the socket, since the flag may turn after the frame
+/// was queued for this connection.
+fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
+    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
+        return false;
+    }
+    frame
+        .get(1..)
+        .and_then(|payload| protocol::decode_window_sync(payload).ok())
+        .is_some_and(|(key, sub_tag, update)| {
+            sub_tag == protocol::window_sub_tags::UPDATE
+                && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
+        })
 }
 
 pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {

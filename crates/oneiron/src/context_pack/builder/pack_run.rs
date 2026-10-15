@@ -15,7 +15,7 @@ use super::super::empty_pack::{
     context_pack_empty_reason, projected_context_pack_empty_reason, refresh_projected_empty_context,
 };
 use super::super::telemetry::{
-    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry, raw_pack_output,
+    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
 use super::super::types::{ContextPack, PackStats};
 
@@ -28,6 +28,9 @@ pub struct SerializedContextPack {
 #[derive(Clone, Copy)]
 pub(in crate::context_pack) struct HydrateOptions<'a> {
     pub(in crate::context_pack) read_mode: crate::vault::ReadMode,
+    /// A reranker scored this row's words at `read_mode`'s pin, so its fields
+    /// come from that pinned row and not a live NOTE projection.
+    pub(in crate::context_pack) words_pinned: bool,
     pub(in crate::context_pack) policy: &'a crate::gate::PolicyManifestResolution,
     pub(in crate::context_pack) criticality: Option<bool>,
     pub(in crate::context_pack) hydrate_fields: bool,
@@ -97,13 +100,15 @@ impl ContextPackTelemetry<'_> {
 
 pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) vector_completed: bool,
+    pub(in crate::context_pack) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
+    pub(in crate::context_pack) cited_messages:
+        std::collections::HashMap<crate::EntityId, Vec<crate::EntityId>>,
     pub(in crate::context_pack) pack: ContextPack,
     pub(in crate::context_pack) telemetry_run_id: Option<RetrievalRunId>,
     pub(in crate::context_pack) telemetry: ContextPackTelemetry<'a>,
     /// Original pipeline scope count, retained by ordinary finalization.
     pub(in crate::context_pack) total_in_scope: usize,
     pub(in crate::context_pack) clamped_out: u64,
-    pub(in crate::context_pack) capture_replay: bool,
     pub(in crate::context_pack) replay_config: Option<serde_json::Value>,
 }
 
@@ -113,7 +118,6 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) telemetry: ContextPackTelemetry<'a>,
     pub(super) total_in_scope: usize,
     pub(super) clamped_out: u64,
-    pub(super) capture_replay: bool,
     pub(super) replay_config: Option<serde_json::Value>,
 }
 
@@ -148,22 +152,6 @@ impl UnfinalizedContextPack<'_> {
         // carry a room's registration failure, and the base arm's posture is
         // best-effort `Ok`. The `Err` arm is therefore unreachable here, and
         // flattening it cannot hide a room's failure.
-        let pack_output = match self
-            .capture_replay
-            .then(|| raw_pack_output(&pack))
-            .transpose()
-        {
-            Ok(output) => output,
-            Err(error) => {
-                discard_failed_context_pack_telemetry(self.telemetry, self.telemetry_run_id.take());
-                tracing::warn!(?error, "context-pack replay telemetry encode failed");
-                return RetrievalWithTelemetry {
-                    retrieval_quality: pack.retrieval_quality.clone(),
-                    value: pack,
-                    run_id: None,
-                };
-            }
-        };
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
             value["projection"] = super::replay::projection_config(config);
@@ -182,7 +170,6 @@ impl UnfinalizedContextPack<'_> {
                 pre_projection_had_results,
                 &surfaced_result_ids,
             ),
-            pack_output,
             replay_config,
         )
         .ok()
@@ -224,17 +211,6 @@ impl UnfinalizedContextPack<'_> {
             .map(|entity| *entity.id.as_bytes())
             .collect();
         let telemetry_run_id = self.telemetry_run_id.take();
-        let pack_output = match self
-            .capture_replay
-            .then(|| raw_pack_output(&self.value))
-            .transpose()
-        {
-            Ok(output) => output,
-            Err(error) => {
-                discard_failed_context_pack_telemetry(self.telemetry, telemetry_run_id);
-                return Err(error);
-            }
-        };
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
             value["terminal_kind"] = "structured".into();
@@ -247,7 +223,6 @@ impl UnfinalizedContextPack<'_> {
                 claims_suppressed: self.value.stats.claims_suppressed,
                 surfaced_result_ids: &surfaced_result_ids,
                 empty_reason: context_pack_empty_reason(&self.value, &surfaced_result_ids),
-                pack_output,
                 pack_config: replay_config,
             })
         {

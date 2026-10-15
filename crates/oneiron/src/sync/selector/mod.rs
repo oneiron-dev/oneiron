@@ -10,11 +10,13 @@ pub(crate) use admission::admit_federated_entity_blob;
 mod authorize;
 mod codec;
 mod document_admission;
+mod epoch_egress;
 pub(in crate::sync) use document_admission::{
     admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
 };
 #[cfg(feature = "sync")]
 mod edge;
+mod held_retire;
 mod note_admission;
 mod scope;
 pub(crate) use note_admission::admit_note_in_txn;
@@ -28,15 +30,22 @@ use super::loro_support;
 
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
-pub(in crate::sync) use self::admission::revalidate_admitted_federated_claims;
+pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
 pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
+pub(in crate::sync) use self::admission::{
+    admit_peer_window_update, revalidate_admitted_facet_stamps,
+    revalidate_admitted_federated_claims, staged_births,
+};
 pub use self::authorize::authorize_sync_selector;
+pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, guest_share_envelope,
     guest_share_envelope_body,
 };
+pub(crate) use self::edge::ReleasedStamps;
+pub(crate) use self::held_retire::retire_held_facet_stamps;
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};

@@ -1,3 +1,4 @@
+mod dispatch;
 mod guard;
 mod ladders;
 mod ledger;
@@ -8,6 +9,9 @@ mod types;
 
 mod settlement;
 
+pub use self::dispatch::{
+    DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
+};
 pub use self::guard::BudgetGuard;
 pub use self::policy::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 pub use self::templates::{
@@ -35,8 +39,6 @@ mod tests;
 // bare, plus the module's own llm/crate import header. After the directory
 // split the seam re-imports both so `tests.rs` resolves exactly as it did
 // before.
-#[cfg(test)]
-use self::ladders::*;
 #[cfg(test)]
 use super::{LlmRequest, LlmUsage, ModelLocality};
 #[cfg(test)]

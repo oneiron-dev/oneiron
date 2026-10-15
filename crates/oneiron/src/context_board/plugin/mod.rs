@@ -73,7 +73,7 @@ mod tests;
 #[cfg(test)]
 use self::validate::*;
 #[cfg(test)]
-use super::frame::{BoardFrameError, BudgetPolicyRef, SectionPolicy, ShedRank};
+use super::frame::BudgetPolicyRef;
 #[cfg(test)]
 use crate::claim::ClaimApprovalStatus;
 #[cfg(test)]

@@ -27,5 +27,13 @@ pub(super) fn validate_open_config(config: &VaultConfig) -> Result<()> {
     if let Some(tagging) = &config.tagging {
         tagging.validate()?;
     }
+    config.vector_evidence.validate()?;
+    let call_mode_ms = u64::try_from(config.call_mode_deadline.as_millis()).unwrap_or(u64::MAX);
+    if crate::memory::caps::check_deadline_ms(Some(call_mode_ms)).is_err() {
+        return Err(Error::InvalidConfig(format!(
+            "call_mode_deadline must be between 1 and {} ms",
+            crate::memory::caps::MAX_RECALL_DEADLINE_MS
+        )));
+    }
     Ok(())
 }

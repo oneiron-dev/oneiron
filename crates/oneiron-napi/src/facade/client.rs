@@ -81,6 +81,7 @@ impl NativeClient {
     /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`.
     #[napi(factory)]
     pub fn open(path: Option<String>, dimensions: Option<f64>) -> napi::Result<Self> {
+        crate::facade::before_vault_open();
         let options = oneiron_remote::OpenOptions {
             dimensions: dimensions
                 .map(dimensions_to_engine)
@@ -113,6 +114,13 @@ impl NativeClient {
     #[napi]
     pub fn as_actor(&self, actor_key: String) -> napi::Result<Self> {
         let inner = self.inner.as_actor(&actor_key).map_err(facade_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
+    #[napi]
+    pub fn in_room_turn(&self, room_ref: String) -> napi::Result<Self> {
+        let inner = self.inner.in_room_turn(&room_ref).map_err(facade_error)?;
         Ok(Self { inner })
     }
 }

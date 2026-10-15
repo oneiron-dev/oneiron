@@ -20,9 +20,7 @@ use crate::gate::ceiling::{
     fold_delegated_grants,
 };
 use crate::gate::decode::ConnectorClassRole;
-use crate::gate::decode::{
-    DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
-};
+use crate::gate::decode::{DecodedManifestCarrier, decode_policy_manifest};
 
 /// The vault ceiling on any project's depth row: the resolved manifest row,
 /// capped by the shipped ceiling. A loaded malformed manifest fails closed to
@@ -64,23 +62,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
-    let shipped =
-        decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest()?).ok_or(
-            Error::InvariantViolation("shipped sheet-answer policy manifest invalid"),
-        )?;
-    resolution.sheet_answer_default_max_count = shipped
-        .sheet_answer_limits
-        .iter()
-        .find(|row| row.artifact_ref.is_none() && row.sheet.is_none())
-        .map(|row| row.max_count);
-    resolution.sheet_answer_precedence = shipped.sheet_answer_precedence;
-    if resolution.sheet_answer_default_max_count.is_none()
-        || resolution.sheet_answer_precedence.is_none()
-    {
-        return Err(Error::InvariantViolation(
-            "shipped sheet-answer policy rows missing",
-        ));
-    }
+    let shipped = store.manifest_memo().shipped()?;
+    resolution.sheet_answer_default_max_count = Some(shipped.sheet_answer_default_max_count);
+    resolution.sheet_answer_precedence = Some(shipped.sheet_answer_precedence);
     let mut untrusted_source_rows = Vec::new();
     let mut untrusted_teacher_rows = Vec::new();
     let mut untrusted_sheet_limits = Vec::new();
@@ -121,11 +105,10 @@ pub(crate) fn resolve_policy_manifest(
         }
 
         let body = &raw.body;
-        if crate::gate::project_depth::is_project_depth_id(&id)
-            || crate::gate::project_depth::is_project_depth_contribution(body)
-        {
-            match crate::gate::decode::decode_manifest_carrier(body) {
-                Some(crate::gate::decode::DecodedManifestCarrier::ProjectDepth(row)) => {
+        let decoded_row = store.manifest_memo().row(body);
+        if crate::gate::project_depth::is_project_depth_id(&id) || decoded_row.project_depth {
+            match &decoded_row.carrier {
+                Some(DecodedManifestCarrier::ProjectDepth(row)) => {
                     // Its policy is resolved by the project-scoped causal fold,
                     // not by a local manifest:trusted sidecar or a global pack.
                     let _ = row;
@@ -139,8 +122,9 @@ pub(crate) fn resolve_policy_manifest(
         }
         let trusted =
             crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
-        match decode_manifest_carrier(body) {
-            Some(DecodedManifestCarrier::Pack(decoded)) => {
+        match &decoded_row.carrier {
+            Some(DecodedManifestCarrier::Pack(pack)) => {
+                let decoded = pack.clone();
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
@@ -232,6 +216,16 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // Every valid row carries its version's pinned membership, so
+                // the newest version among trusted packs is the floor.
+                if let Some(floor) = decoded.catastrophe_floor
+                    && resolution
+                        .catastrophe_floor
+                        .as_ref()
+                        .is_none_or(|current| current.version() < floor.version())
+                {
+                    resolution.catastrophe_floor = Some(floor);
+                }
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
@@ -282,12 +276,14 @@ pub(crate) fn resolve_policy_manifest(
                     {
                         resolution.diagnostics.malformed_manifest_seen = true;
                     }
-                    // The seeded D7 row is a FALLBACK, not an owner vote.
-                    // Byte-exact matching avoids treating a later owner update
-                    // at that same ID as another copy of the seeded default.
+                    // The seeded D7 row is a FALLBACK, not an owner vote. The
+                    // seed marker, not today's shipped bytes, says so: any
+                    // local re-authoring at that ID clears it, and a vault
+                    // seeded by an earlier release keeps its standing.
                     if id == default_manifest_id
-                        && body.as_slice()
-                            == crate::gate::default_manifest::default_policy_manifest()?.as_slice()
+                        && crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                            store, txn, &id, body,
+                        )?
                     {
                         default_retention = Some(retention);
                     } else {
@@ -744,7 +740,6 @@ pub(crate) fn retention_edit_target(
         "gate decision retention manifest missing".into(),
     ))?;
     let default_id = crate::gate::default_manifest::default_policy_manifest_id()?;
-    let seeded = crate::gate::default_manifest::default_policy_manifest()?;
     let mut owner_ids = Vec::new();
     let mut default_present = false;
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
@@ -765,7 +760,11 @@ pub(crate) fn retention_edit_target(
         if decoded.gate_decision_retention.is_none() {
             continue;
         }
-        if id == default_id && raw.body == seeded {
+        if id == default_id
+            && crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                store, txn, &id, &raw.body,
+            )?
+        {
             default_present = true;
         } else {
             owner_ids.push(id);

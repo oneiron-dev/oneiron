@@ -4,13 +4,11 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::git_wire::{GIT_WIRE_REPO_LOCK_FILE_NAME, GitWireRepoGuard};
 use crate::git_wire::{GitWire, lock_repository};
 
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
-    canonical_repo_ref_for_root, git_commit_object_available, git_common_dir,
+    admitted_repo_ref, git_commit_object_available, git_common_dir, require_pinned_head,
     resolve_mutable_repo_root, validate_base_ref, validate_commit_message, validate_git_ref_label,
     validate_relative_repo_path, validate_worktree_path,
 };
@@ -35,13 +33,6 @@ use super::worktree::{
 };
 use crate::error::CodeError;
 
-/// The repo-mutation writer lock is GitWire's repository coordinator: one
-/// advisory lock file in the canonical git common directory, shared by every
-/// GitWire ref/worktree effect and every queued mutation, so the two clusters
-/// serialize against each other across threads and processes.
-#[cfg(test)]
-pub(super) const REPO_MUTATION_LOCK_FILE_NAME: &str = GIT_WIRE_REPO_LOCK_FILE_NAME;
-
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum RepoMutationCrashPoint {
@@ -58,12 +49,6 @@ thread_local! {
     pub(super) static INJECT_REPO_MUTATION_CRASH: std::cell::Cell<RepoMutationCrashPoint> =
         const { std::cell::Cell::new(RepoMutationCrashPoint::None) };
 }
-
-/// The queue's hold on the repository writer lock. Production callers take
-/// [`lock_repository`] directly; this wrapper keeps the queue's own lock
-/// contract nameable.
-#[cfg(test)]
-pub(super) struct RepoMutationFileLock(#[allow(dead_code)] GitWireRepoGuard);
 
 #[derive(Debug, Clone)]
 pub(super) struct PreparedRepoMutation {
@@ -187,7 +172,7 @@ impl Vault {
         validate_operation(&request.operation)?;
         validate_repo_provenance_request(self, &request)?;
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
-        let repo_ref = canonical_repo_ref_for_root(&request.repo_ref, &repo_root)?;
+        let repo_ref = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let common_dir = git_common_dir(&repo_root)?;
         let _guard = lock_repository(&common_dir)?;
         let _ = prune_queue_owned_worktrees(&repo_root);
@@ -296,6 +281,11 @@ impl Vault {
     ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
+        // A reviewed write is bound to its reviewed snapshot instead; its pin
+        // was checked against HEAD when it was proposed.
+        if proposal.is_none() && writes_file(&request.operation) {
+            require_pinned_head(repo_ref, pre_action_snapshot.head.as_deref())?;
+        }
         let execution = match prepare_repo_mutation_execution(&self.store.clock, repo_root, request)
         {
             Ok(execution) => execution,
@@ -731,9 +721,12 @@ fn allocate_next_repo_mutation_seq(
     Ok(next)
 }
 
-#[cfg(test)]
-pub(super) fn repo_mutation_file_lock(git_common_dir: &Path) -> Result<RepoMutationFileLock> {
-    Ok(RepoMutationFileLock(lock_repository(git_common_dir)?))
+fn writes_file(operation: &RepoMutationOperation) -> bool {
+    matches!(
+        operation,
+        RepoMutationOperation::CommitFile { .. }
+            | RepoMutationOperation::ResolveConflictFile { .. }
+    )
 }
 
 fn operation_subject(operation: &RepoMutationOperation) -> String {

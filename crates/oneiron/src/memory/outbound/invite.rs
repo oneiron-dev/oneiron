@@ -16,9 +16,7 @@ pub const CALENDAR_INVITE_OUTBOUND_CHANNEL: &str = "calendar";
 /// dispatch chokepoint. A shorter local spelling would leave that branch dead
 /// on arrival — the invite would schedule as a generic draft and never reach
 /// the iMIP payload codec — so the value is pinned to CAL-04's, not to this
-/// module's vocabulary, and
-/// `calendar::invite::tests::verb_and_channel_match_the_cal_09_surface_constants`
-/// keeps the two spellings from drifting apart.
+/// module's vocabulary.
 pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "calendar.invite";
 
 /// iMIP method the invite surface accepts.

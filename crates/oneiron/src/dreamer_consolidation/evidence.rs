@@ -5,9 +5,10 @@ use super::SwarmEvidenceRef;
 use super::provenance::{ConsolidationEvidenceEnvelope, PromotionCandidate, source_meet};
 use super::resources::BranchResources;
 use super::support::invalid_consolidation;
+use super::turn_text::MessageSpan;
 use crate::claim::ClaimSource;
 use crate::llm::ScopeResource;
-use crate::{EntityId, Result};
+use crate::{EntityId, Result, Vault};
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -88,6 +89,8 @@ impl EvidenceLocator {
 pub(super) struct ExtractedCandidate {
     proposal: PromotionCandidate,
     refs: Vec<EvidenceLocator>,
+    /// The listed head the extractor named in `corrects`.
+    corrects: Option<EntityId>,
 }
 impl ExtractedCandidate {
     pub(super) fn new(
@@ -101,7 +104,19 @@ impl ExtractedCandidate {
         ids.sort_unstable();
         ids.dedup();
         proposal.evidence_turn_refs = ids;
-        Ok(Self { proposal, refs })
+        Ok(Self {
+            proposal,
+            refs,
+            corrects: None,
+        })
+    }
+    /// Marks the candidate as the extractor's correction of `head`.
+    pub(super) fn correcting(mut self, head: EntityId) -> Self {
+        self.corrects = Some(head);
+        self
+    }
+    pub(super) fn corrects(&self) -> Option<EntityId> {
+        self.corrects
     }
     pub(super) fn proposal(&self) -> &PromotionCandidate {
         &self.proposal
@@ -117,6 +132,8 @@ struct VerifiedCitation {
     hash: [u8; 32],
     version: ScopeResource,
     trust: ClaimSource,
+    /// The MESSAGE words a witnessed TURN locator covers; empty otherwise.
+    messages: Vec<MessageSpan>,
 }
 
 /// Private constructor; a bare ID or a caller-chosen meet cannot become a
@@ -145,6 +162,7 @@ impl VerifiedEvidenceSet {
                 hash: fact.content_hash,
                 version: resources.source_version(&locator.source_id())?,
                 trust: fact.trust_class,
+                messages: resources.message_spans(&locator.reference())?,
             });
         }
         Ok(Self::from_rows(rows, inherited_meet))
@@ -161,6 +179,7 @@ impl VerifiedEvidenceSet {
                     kept.trust = source_meet(kept.trust, row.trust);
                     if row.locator < kept.locator {
                         kept.locator = row.locator;
+                        kept.messages = row.messages;
                     }
                 }
             }
@@ -221,11 +240,46 @@ impl VerifiedEvidenceSet {
     pub(crate) fn locators(&self) -> Vec<SwarmEvidenceRef> {
         self.rows.iter().map(|r| r.locator.reference()).collect()
     }
-    pub(crate) fn verified_locators(&self) -> Vec<(SwarmEvidenceRef, [u8; 32])> {
+    /// Every MESSAGE whose words a citation names.
+    pub(crate) fn cited_messages(&self) -> Vec<EntityId> {
         self.rows
             .iter()
-            .map(|r| (r.locator.reference(), r.hash))
+            .flat_map(|row| &row.messages)
+            .map(|span| span.message)
             .collect()
+    }
+    pub(crate) fn verified_locators(&self) -> Vec<super::provenance::VerifiedLocator> {
+        self.rows
+            .iter()
+            .map(|r| (r.locator.reference(), r.hash, r.messages.clone()))
+            .collect()
+    }
+    /// The citing write's dependencies on the MESSAGE words it names, in that
+    /// write's own transaction: erasing a named MESSAGE stales `citing`
+    /// through the source-dependency index, and (with `sync`) each cited slice
+    /// records an EntityDoc citation floor at the frontier it names (the
+    /// MESSAGE's birth state when it had no document). While `citing` is live
+    /// an owner purge keeps that history, and a value-only recovery that
+    /// rebuilds the MESSAGE's document stales `citing`. Gap-queue rows are not
+    /// entities and record neither.
+    pub(crate) fn record_message_dependencies_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        citing: &EntityId,
+    ) -> Result<()> {
+        for span in self.rows.iter().flat_map(|row| &row.messages) {
+            crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &span.message)?;
+            #[cfg(feature = "sync")]
+            crate::entity_doc::record_citation_floor_in_txn(
+                &vault.store,
+                txn,
+                &span.message,
+                citing,
+                span.frontier.as_deref(),
+            )?;
+        }
+        Ok(())
     }
     pub(super) fn check_pins(&self, resources: &BranchResources<'_>) -> Result<()> {
         for row in &self.rows {
@@ -234,7 +288,10 @@ impl VerifiedEvidenceSet {
                 return Err(invalid_consolidation("verified source version changed"));
             }
             let verified = resources.verify_evidence_refs(&[row.locator.reference()])?;
-            if verified[0].content_hash != row.hash || verified[0].trust_class != row.trust {
+            if verified[0].content_hash != row.hash
+                || verified[0].trust_class != row.trust
+                || resources.message_spans(&row.locator.reference())? != row.messages
+            {
                 return Err(invalid_consolidation("verified evidence binding changed"));
             }
         }

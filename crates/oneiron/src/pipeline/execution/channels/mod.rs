@@ -2,11 +2,13 @@
 
 mod admit;
 mod categories;
+mod entity_rank;
 mod post_blend;
 mod ppr_expand;
 mod rerank;
 mod text;
 mod trace_assembly;
+mod turn_fold;
 
 use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
@@ -21,13 +23,15 @@ use super::super::blend::{
 use super::super::budget::{apply_context_pack_retrieval_budget, context_pack_evidence_abstains};
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
-use super::super::channels::execute_phonetic;
+use super::super::channels::{execute_phonetic, fusion_fetch_limit};
 use super::super::corpus_filter::CorpusFilter;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{
     capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
 };
-use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode};
+use super::super::types::{
+    ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode, TurnFold,
+};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
@@ -48,6 +52,25 @@ struct SnapshotInputs<'a> {
     recency: Option<u64>,
     explicit_time_dependent_now: Option<u64>,
     overrides: HydeAttemptOverrides<'a>,
+}
+
+/// The channel stages one snapshot runs, counted down as each opens, so a
+/// deadline gives every stage an equal share of the stage time left.
+struct StagePlan(usize);
+
+impl StagePlan {
+    fn new(planned: [bool; 6]) -> Self {
+        Self(planned.into_iter().filter(|planned| *planned).count())
+    }
+    /// The stages left, this one included; counts this one down.
+    fn next(&mut self) -> usize {
+        let left = self.0;
+        self.0 = self.0.saturating_sub(1);
+        left
+    }
+    fn next_if(&mut self, planned: bool) -> usize {
+        if planned { self.next() } else { self.0 }
+    }
 }
 
 /// One snapshot's actor-bound NOTE admission and the gates that share it.
@@ -141,6 +164,7 @@ impl PipelineBuilder<'_> {
             } = self.scoped_channel_admission(rtxn, authority_filter)?;
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
+            let mut phonetic_channel_index = None;
             let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
@@ -163,10 +187,12 @@ impl PipelineBuilder<'_> {
                 temporal_now,
             )?;
             let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
+            let device_local = self.device_local_worlds(rtxn)?;
             let mut filter_config = corpus_filter.config(self, occurred_range, authority_filter);
             filter_config.world_active_set = world_authority
                 .as_ref()
                 .map(|resolved| &resolved.active_set);
+            filter_config.device_local = device_local.as_ref();
             // Ordinary text uses D19 widening; candidate-filtered text instead
             // applies D19 during bounded scoring and needs no corpus-sized probe.
             let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
@@ -181,27 +207,38 @@ impl PipelineBuilder<'_> {
                 || self.has_strict_text_scope_filter()
                 || occurred_range.is_some()
                 || claim_gate_text_widening_active;
+            let mut stages = StagePlan::new([
+                self.vector_search.is_some(),
+                hyde_expansion.is_some(),
+                self.text_search.is_some(),
+                self.phonetic_search.is_some(),
+                self.temporal_search.is_some(),
+                self.ppr_search.is_some(),
+            ]);
 
             if let Some((query_vector, limit)) = &self.vector_search
-                && !self.deadline_reached()
+                && let Some(vector_results) =
+                    self.run_stage(RetrievalSignal::Vector, stages.next(), || {
+                        let limit = fusion_fetch_limit(*limit);
+                        self.scoped_vector_results(
+                            rtxn,
+                            query_vector,
+                            if overrides.widen_channel_limits {
+                                retry_channel_limit(limit)
+                            } else {
+                                limit
+                            },
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )
+                    })?
             {
-                let vector_results = self.scoped_vector_results(
-                    rtxn,
-                    query_vector,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(*limit)
-                    } else {
-                        *limit
-                    },
-                    filter_config,
-                    &mut metadata_cache,
-                    &mut claim_gate,
-                )?;
                 diagnostics.succeeded.push(RetrievalSignal::Vector);
                 vector_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Vector,
                     vector_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -209,30 +246,33 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some(expansion) = hyde_expansion.as_ref()
-                && !self.deadline_reached()
+                && let Some(hyde_results) =
+                    self.run_stage(RetrievalSignal::Hyde, stages.next(), || {
+                        let limit = fusion_fetch_limit(
+                            self.hyde
+                                .as_ref()
+                                .expect("hyde expansion has config")
+                                .2
+                                .channel_limit,
+                        );
+                        self.scoped_vector_results(
+                            rtxn,
+                            &expansion.embedding,
+                            if overrides.widen_channel_limits {
+                                retry_channel_limit(limit)
+                            } else {
+                                limit
+                            },
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )
+                    })?
             {
-                let limit = self
-                    .hyde
-                    .as_ref()
-                    .expect("hyde expansion has config")
-                    .2
-                    .channel_limit;
-                let hyde_results = self.scoped_vector_results(
-                    rtxn,
-                    &expansion.embedding,
-                    if overrides.widen_channel_limits {
-                        retry_channel_limit(limit)
-                    } else {
-                        limit
-                    },
-                    filter_config,
-                    &mut metadata_cache,
-                    &mut claim_gate,
-                )?;
                 acc.admit_channel(
                     RetrievalSignal::Hyde,
                     hyde_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -241,6 +281,7 @@ impl PipelineBuilder<'_> {
 
             let text_channel_index = self.run_text_channel(
                 rtxn,
+                stages.next_if(self.text_search.is_some()),
                 TextChannelInputs {
                     bm25_config,
                     hyde_expansion,
@@ -260,9 +301,8 @@ impl PipelineBuilder<'_> {
 
             #[cfg(test)]
             if text_channel_index.is_some() {
-                let hook = self
-                    .vault
-                    .test_hooks()
+                let hooks = self.vault.test_hooks();
+                let hook = hooks
                     .after_retrieval_text
                     .lock()
                     .expect("retrieval text hook")
@@ -270,43 +310,55 @@ impl PipelineBuilder<'_> {
                 if let Some(hook) = hook {
                     hook();
                 }
+                if hooks
+                    .cancel_deadline_after_retrieval_text
+                    .swap(false, std::sync::atomic::Ordering::Relaxed)
+                    && let Some(deadline) = self.deadline
+                {
+                    deadline.cancel();
+                }
             }
 
             if let Some(codes) = &self.phonetic_search
-                && !self.deadline_reached()
+                && let Some(phonetic_results) =
+                    self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
+                        execute_phonetic(&self.read, rtxn, codes)
+                    })?
             {
-                let phonetic_results = execute_phonetic(&self.vault.store, rtxn, codes)?;
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
-                acc.admit_channel(
+                phonetic_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Phonetic,
                     phonetic_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
-                )?;
+                )?);
             }
 
             if let Some(config) = &self.temporal_search
-                && !self.deadline_reached()
+                && let Some(temporal_results) =
+                    self.run_stage(RetrievalSignal::Temporal, stages.next(), || {
+                        let mut config = config.clone();
+                        config.limit = fusion_fetch_limit(config.limit);
+                        if overrides.widen_channel_limits {
+                            config.limit = retry_channel_limit(config.limit);
+                        }
+                        self.scoped_temporal_results(
+                            rtxn,
+                            &config,
+                            temporal_now,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )
+                    })?
             {
-                let mut config = config.clone();
-                if overrides.widen_channel_limits {
-                    config.limit = retry_channel_limit(config.limit);
-                }
-                let temporal_results = self.scoped_temporal_results(
-                    rtxn,
-                    &config,
-                    temporal_now,
-                    filter_config,
-                    &mut metadata_cache,
-                    &mut claim_gate,
-                )?;
                 diagnostics.succeeded.push(RetrievalSignal::Temporal);
                 acc.admit_channel(
                     RetrievalSignal::Temporal,
                     temporal_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -314,20 +366,21 @@ impl PipelineBuilder<'_> {
             }
 
             if let Some((seeds, depth)) = &self.ppr_search
-                && !self.deadline_reached()
+                && let Some(ppr) = self.run_stage(RetrievalSignal::Ppr, stages.next(), || {
+                    // ARCH-0039 Layer 2: seed specificity applies ONLY to
+                    // search_ppr — seeds are weighted 1/ln(1 + passage_count)
+                    // instead of uniform 1/n.
+                    crate::ppr::ppr_query_in_txn_with_diagnostics(
+                        &self.read,
+                        rtxn,
+                        seeds,
+                        *depth,
+                        PPR_DAMPING,
+                        self.vault.config.ppr_vad_alpha,
+                        crate::ppr::SeedWeighting::Specificity,
+                    )
+                })?
             {
-                // ARCH-0039 Layer 2: seed specificity applies ONLY to
-                // search_ppr — seeds are weighted 1/ln(1 + passage_count)
-                // instead of uniform 1/n.
-                let ppr = crate::ppr::ppr_query_in_txn_with_diagnostics(
-                    &self.vault.store,
-                    rtxn,
-                    seeds,
-                    *depth,
-                    PPR_DAMPING,
-                    self.vault.config.ppr_vad_alpha,
-                    crate::ppr::SeedWeighting::Specificity,
-                )?;
                 diagnostics.succeeded.push(RetrievalSignal::Ppr);
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
@@ -335,7 +388,7 @@ impl PipelineBuilder<'_> {
                 acc.admit_channel(
                     RetrievalSignal::Ppr,
                     ppr_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -349,17 +402,13 @@ impl PipelineBuilder<'_> {
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for scores in &mut acc.ranked_lists {
                 if self.memory_category {
-                    super::super::capabilities::retain_memory_candidates(
-                        scores,
-                        &self.vault.store,
-                        rtxn,
-                    )?;
+                    super::super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
                 }
                 super::authority::apply_types(
                     scores,
                     authority_filter,
                     self.type_filter.as_deref(),
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &mut metadata_cache,
                 )?;
@@ -367,13 +416,20 @@ impl PipelineBuilder<'_> {
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     revisions: HashMap::new(),
+                    words_bound: Default::default(),
                     diagnostics,
                     scores: Vec::new(),
+                    cited_messages: HashMap::new(),
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
-                    read_suppressed: metadata_cache
-                        .countable_suppressed(&self.vault.store, rtxn)?,
+                    read_suppressed: metadata_cache.countable_suppressed(
+                        self.vault,
+                        &self.read,
+                        rtxn,
+                        authority_filter.credential.as_ref(),
+                        filter_config.device_local,
+                    )?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
                     total_in_scope: 0,
@@ -439,8 +495,9 @@ impl PipelineBuilder<'_> {
                 RetrievalChannelIndexes {
                     vector: vector_channel_index,
                     text: text_channel_index,
+                    phonetic: phonetic_channel_index,
                 },
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
@@ -464,7 +521,7 @@ impl PipelineBuilder<'_> {
             let mut blend_base_scores = first_blend.base_scores;
             let mut blend_access_factors = first_blend.access_factors;
             let total_in_scope = if self.context_pack_budget.is_some() {
-                memory_candidate_count(&self.vault.store, rtxn, &scores)?
+                memory_candidate_count(&self.read, rtxn, &scores)?
             } else {
                 scores.len()
             };
@@ -477,7 +534,7 @@ impl PipelineBuilder<'_> {
             let before_status_gate = scores.len();
             apply_claim_status_gate(
                 &mut scores,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
@@ -498,6 +555,7 @@ impl PipelineBuilder<'_> {
                         channel_indexes: RetrievalChannelIndexes {
                             vector: vector_channel_index,
                             text: text_channel_index,
+                            phonetic: phonetic_channel_index,
                         },
                         temporal_now,
                         codebase_scope_active,
@@ -549,29 +607,56 @@ impl PipelineBuilder<'_> {
             let RerankApplied {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
+                words_revisions,
             } = self.apply_rerank_ladder(
+                rtxn,
                 &mut scores,
+                &mut metadata_cache,
+                &mut claim_gate,
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
                     blend_components: &blend_components,
-                    claim_gate: &claim_gate,
+                    filter_config,
                     rerank_query,
                     capture_retrieval_trace,
                     trace_candidate_limit,
                 },
             )?;
 
+            entity_rank::rank_unmatched_entities_below_matches(
+                &mut scores,
+                &acc.signal_components,
+                &self.read,
+                rtxn,
+                &mut metadata_cache,
+            )?;
+
             if let Some((relationship, RelMode::Demote)) = self.relationship_filter {
                 apply_relationship_filter(
                     &mut scores,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &mut metadata_cache,
                     &relationship,
                     RelMode::Demote,
                 )?;
             }
+
+            let cited_messages = if self.turn_fold == TurnFold::Off {
+                HashMap::new()
+            } else {
+                turn_fold::fold_messages_into_turns(
+                    &mut scores,
+                    &mut acc.signal_components,
+                    self.turn_fold,
+                    &self.read,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?
+            };
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
@@ -584,7 +669,7 @@ impl PipelineBuilder<'_> {
             if let Some(context_pack_budget) = self.context_pack_budget {
                 apply_context_pack_retrieval_budget(
                     &mut scores,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &mut metadata_cache,
                     context_pack_budget,
@@ -610,7 +695,8 @@ impl PipelineBuilder<'_> {
             {
                 empty_reason = Some(EmptyReason::NoData);
             }
-            let pending_vectors = pending_vectors_for_scores(&self.vault.store, rtxn, &scores)?;
+            let pending_vectors =
+                pending_vectors_for_scores(&self.vault.store, &self.read, rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
                 Some(self.assemble_retrieval_trace(TraceInputs {
                     derivation_owner: crate::federation::derivation::owner_in_txn(
@@ -655,20 +741,44 @@ impl PipelineBuilder<'_> {
                     rerank_query,
                 )
             });
+            // A hit whose indexed revision cannot be read has no pin, so it
+            // leaves the pack instead of failing the run. A MESSAGE whose text
+            // moved into an entity document is one: the migration replaced its
+            // body without retaining the revision its state still names. A
+            // reranked hit is pinned where its words were scored.
             let mut revisions = HashMap::new();
             for hit in &scores {
-                if let Some(revision) = self.vault.indexed_revision_in_txn(rtxn, &hit.id)? {
-                    revisions.insert(hit.id, revision);
+                if let Some(revision) = words_revisions.get(&hit.id) {
+                    revisions.insert(hit.id, *revision);
+                    continue;
+                }
+                match self
+                    .vault
+                    .indexed_revision_from_in_txn(&self.read, rtxn, &hit.id)
+                {
+                    Ok(Some(revision)) => {
+                        revisions.insert(hit.id, revision);
+                    }
+                    Ok(None) | Err(crate::Error::EntityNotFound) => {}
+                    Err(error) => return Err(error),
                 }
             }
             Ok(RetrievalTxnOutput {
                 revisions,
+                words_bound: words_revisions.into_keys().collect(),
                 diagnostics,
                 scores,
+                cited_messages,
                 capabilities,
                 pending_vectors,
                 claim_gate,
-                read_suppressed: metadata_cache.countable_suppressed(&self.vault.store, rtxn)?,
+                read_suppressed: metadata_cache.countable_suppressed(
+                    self.vault,
+                    &self.read,
+                    rtxn,
+                    authority_filter.credential.as_ref(),
+                    filter_config.device_local,
+                )?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
                 total_in_scope,
@@ -705,10 +815,16 @@ impl PipelineBuilder<'_> {
             self.result_limit,
             filter.include_stale,
         );
+        let device_local = self.device_local_worlds(rtxn)?.map(std::sync::Arc::new);
         accumulator.trace_claim_gate.private_note_ids = private_note_ids.clone();
+        accumulator
+            .trace_claim_gate
+            .device_local
+            .clone_from(&device_local);
         let new_gate = || ClaimStatusGateCache {
             include_stale: filter.include_stale,
             private_note_ids: private_note_ids.clone(),
+            device_local: device_local.clone(),
             ..ClaimStatusGateCache::default()
         };
         let claim_gate = new_gate();
@@ -733,6 +849,7 @@ impl PipelineBuilder<'_> {
             partition_capabilities(
                 scores,
                 self.vault,
+                &self.read,
                 rtxn,
                 signal_components,
                 self.skill_executor.as_deref(),
@@ -743,12 +860,22 @@ impl PipelineBuilder<'_> {
         if skip_ret01_abstain {
             return Ok(capabilities);
         }
+        let floors = self.no_match_floors();
+        let mut metadata_cache = EntityMetadataCache::default();
+        let mut kind_of = |id: &crate::EntityId| -> Result<Option<u8>> {
+            Ok(metadata_cache
+                .get(&self.read, rtxn, id)?
+                .map(|meta| meta.entity_type))
+        };
         if context_pack_evidence_abstains(
             &capabilities,
             signal_components,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some(),
-        ) {
+            self.vault.evidence_space(),
+            &floors,
+            &mut kind_of,
+        )? {
             capabilities.clear();
         }
 
@@ -764,7 +891,10 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.text_search.as_ref().map(|(query, _)| query.as_str()),
                 self.vector_search.is_some(),
-            )
+                self.vault.evidence_space(),
+                &floors,
+                &mut kind_of,
+            )?
         {
             scores.clear();
             *empty_reason = Some(EmptyReason::BelowThreshold);

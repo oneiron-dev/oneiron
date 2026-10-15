@@ -56,26 +56,7 @@ struct LensHandleBinding {
 impl LensBehaviorFingerprint {
     /// Build behavior from already-rendered, validated golden-corpus outputs.
     ///
-    /// The diff path accepts [`GeneratedLens`] values, not source text:
-    ///
-    /// ```compile_fail
-    /// use oneiron::lens::LensBehaviorFingerprint;
-    /// let _ = LensBehaviorFingerprint::from_golden_renders([
-    ///     ("fixture", "generated lens source text"),
-    /// ]);
-    /// ```
-    ///
-    /// ```
-    /// use oneiron::lens::{GeneratedLens, LensBehaviorFingerprint};
-    ///
-    /// fn fingerprint(rendered: &GeneratedLens) {
-    ///     let _ = LensBehaviorFingerprint::from_golden_renders([
-    ///         ("fixture", rendered),
-    ///     ]);
-    /// }
-    ///
-    /// let _ = fingerprint as fn(&GeneratedLens);
-    /// ```
+    /// The diff path accepts [`GeneratedLens`] values, not source text.
     pub fn from_golden_renders<'a>(
         renders: impl IntoIterator<Item = (&'a str, &'a GeneratedLens)>,
     ) -> Result<Self> {

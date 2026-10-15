@@ -217,7 +217,7 @@ impl Vault {
             ));
         }
         let candidate = claim.clone().into_candidate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             let held = claim.confidence
                 < policy.carry_forward_floor(claim.kind, Some(envelope.actor().entity_ref()));

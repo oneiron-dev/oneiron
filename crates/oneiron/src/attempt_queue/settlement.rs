@@ -1,6 +1,7 @@
 //! Transaction-composable completion and failure with terminal pack receipts.
 
 use crate::error::Result;
+use crate::store::Rows;
 
 use super::AttemptQueue;
 use super::encoding::{decode_record, encode_record};
@@ -24,11 +25,16 @@ impl AttemptQueue<'_> {
             }
         }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.complete_in_txn(&mut wtxn, input)?;
-        if matches!(outcome, CompleteOutcome::Completed(_)) {
-            wtxn.commit()?;
+        let outcome =
+            self.store
+                .group_write(None, |wtxn| match self.complete_in_txn(wtxn, input) {
+                    Ok(outcome @ CompleteOutcome::Completed(_)) => Rows::Commit(outcome),
+                    answer => Rows::Discard(answer),
+                })?;
+        if let CompleteOutcome::Completed(record) = &outcome {
             self.store.notify_attempt_observers();
+            // The TASK this attempt realizes folds its board status from it.
+            self.store.notify_task_updates(realized_task(record));
         }
         Ok(outcome)
     }
@@ -36,12 +42,31 @@ impl AttemptQueue<'_> {
     /// Marks a leased attempt terminally failed. Failing an already-failed attempt is
     /// an idempotent success; all other states are rejected.
     pub fn fail(&self, input: FailAttempt) -> Result<FailOutcome> {
-        let mut wtxn = self.store.env.write_txn()?;
+        let outcome =
+            self.store
+                .group_write(None, |wtxn| match self.fail_untyped_in_txn(wtxn, input) {
+                    Ok(outcome @ FailOutcome::Failed(_)) => Rows::Commit(outcome),
+                    answer => Rows::Discard(answer),
+                })?;
+        if let FailOutcome::Failed(record) = &outcome {
+            self.store.notify_attempt_observers();
+            self.store.notify_task_updates(realized_task(record));
+        }
+        Ok(outcome)
+    }
+
+    /// The generic public door's refusal and terminal write, in the caller's
+    /// transaction.
+    fn fail_untyped_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: FailAttempt,
+    ) -> Result<FailOutcome> {
         // The generic public door has no detector verdict, policy, or healer
         // case. Agent-dispatch attempts must enter the typed failure ladder;
         // only that crate-private transaction may terminalize their leases.
         let record = self
-            .get_in_write_txn(&wtxn, input.id)?
+            .get_in_write_txn(wtxn, input.id)?
             .ok_or_else(|| invalid_transition("fail", "missing"))?;
         if record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
             && crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).is_ok_and(
@@ -58,12 +83,7 @@ impl AttemptQueue<'_> {
         if record.state == AttemptState::Failed {
             return Ok(FailOutcome::AlreadyFailed(record));
         }
-        let outcome = self.fail_in_txn(&mut wtxn, input)?;
-        if matches!(outcome, FailOutcome::Failed(_)) {
-            wtxn.commit()?;
-            self.store.notify_attempt_observers();
-        }
-        Ok(outcome)
+        self.fail_in_txn(wtxn, input)
     }
 
     /// Transaction-composable [`Self::fail`], including its terminal pack receipt.
@@ -118,4 +138,12 @@ impl AttemptQueue<'_> {
     ) -> Result<FailOutcome> {
         crate::ports::JobQueue::port_job_fail(self, txn, input)
     }
+}
+
+/// The TASK an attempt realizes, when it names one.
+fn realized_task(record: &super::AttemptRecord) -> Option<crate::EntityId> {
+    record
+        .task_ref
+        .as_deref()
+        .and_then(|task| crate::EntityId::from_hex(task).ok())
 }

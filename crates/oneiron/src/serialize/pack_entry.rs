@@ -307,19 +307,18 @@ fn serialize_json(
             if entities.is_empty() {
                 continue;
             }
-            root.insert(
-                group_key(kind).to_owned(),
-                Value::Array(json_rows(&entities, true)),
-            );
+            let mut rows = json_rows(&entities, true);
+            handles.emitted_rows(&entities, &mut rows);
+            root.insert(group_key(kind).to_owned(), Value::Array(rows));
         }
     } else {
         root.insert(
             "results".to_owned(),
-            Value::Object(section_object(&prepared.results, true)),
+            Value::Object(section_object(&prepared.results, true, handles)),
         );
         root.insert(
             "neighbors".to_owned(),
-            Value::Object(section_object(&prepared.neighbors, true)),
+            Value::Object(section_object(&prepared.neighbors, true, handles)),
         );
     }
 
@@ -327,14 +326,13 @@ fn serialize_json(
         root.insert("stats".to_owned(), json_stats(&stats));
     }
     if let Some(empty) = &pack.empty
-        && let Ok(value) = serde_json::to_value(empty)
+        && let Ok(mut value) = serde_json::to_value(empty)
     {
+        handles.value(&mut value);
         root.insert("empty".to_owned(), value);
     }
 
-    let mut value = Value::Object(root);
-    handles.value(&mut value);
-    serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())
+    serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
 }
 
 fn serialize_toon(

@@ -210,11 +210,21 @@ impl SyncConnection {
 
     /// Clear only the contiguous queued updates whose bytes the home has
     /// durably acknowledged. A different digest or a missing earlier ACK
-    /// retains the whole unconfirmed suffix, including delete markers.
+    /// retains the whole unconfirmed suffix, including delete markers. A row
+    /// a device-only world keeps here is never sent, so never acknowledged:
+    /// it clears with its neighbours, and its operations stay in the window's
+    /// durable doc for the promoted vector exchange once the flag clears. A
+    /// row that cannot be judged is retained like an unacknowledged one.
     fn clear_residence_acks(&self, client: &mut crate::sync::SyncClient) -> Result<(), String> {
         let mut through = None;
         for queued in self.queue.drain_updates().map_err(|e| e.to_string())? {
             let Some(ack) = client.residence_acks.get(&queued.seq) else {
+                if client.update_verdict(&queued.window_key, &queued.encoded)
+                    == crate::sync::window::UpdateVerdict::Withheld
+                {
+                    through = Some(queued.seq);
+                    continue;
+                }
                 break;
             };
             if *ack != *blake3::hash(&queued.encoded).as_bytes() {
@@ -273,7 +283,7 @@ use crate::sync::client::{SyncClient, SyncEvent};
 #[cfg(test)]
 use crate::sync::queue::QueuedUpdate;
 #[cfg(test)]
-use crate::sync::transport::{self, TransportError, window_sub_tags};
+use crate::sync::transport::{self, window_sub_tags};
 #[cfg(test)]
 use futures_util::{SinkExt, StreamExt};
 #[cfg(test)]

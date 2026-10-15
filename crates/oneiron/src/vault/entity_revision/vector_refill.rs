@@ -26,7 +26,14 @@ pub(crate) fn schedule_vector_refills(vault: &Vault, wtxn: &mut heed::RwTxn<'_>)
             continue;
         };
         if record.entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-            && crate::embed::embeddable_payload(record.entity_type, &record.body).is_none()
+            && crate::embed::embeddable_payload_in_txn(
+                vault,
+                wtxn,
+                &id,
+                record.entity_type,
+                &record.body,
+            )?
+            .is_none()
         {
             REFILL.put(&vault.store, wtxn, &id, &())?;
         }

@@ -442,14 +442,17 @@ pub(crate) fn machine_history_ids_for_target(
 }
 
 /// A local erasure of a MACHINE claim takes its signed history with it, as
-/// the controls embed the born content: this drops the pin and the target
-/// index and returns the controls, which the caller erases after the claim
-/// row in the same writer.
+/// the controls embed the born content: this drops the pin, the target index
+/// and a host move's carry record, and returns the controls, which the caller
+/// erases after the claim row in the same writer.
 pub(crate) fn retire_machine_history_for_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     target: EntityId,
 ) -> Result<Vec<EntityId>> {
+    // A carry names the history the move carried; no later birth at this id
+    // inherits it.
+    super::history_projection::CARRY.delete(store, txn, &target)?;
     let pin = super::history_projection::pin_key(target);
     if store.vault_meta.get(txn, &pin)?.is_none() {
         return Ok(Vec::new());
@@ -600,6 +603,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
     rand_core::OsRng.fill_bytes(&mut nonce);
     rand_core::OsRng.fill_bytes(&mut challenge);
     let mut packet = super::ClaimHistoryHandoff {
+        kind: super::HandoffKind::Handoff,
         vault_id,
         genesis_hash: vault_id,
         scope: machine_history_scope_bytes(body)?,

@@ -5,7 +5,7 @@ use crate::context_pack::EmptyReason;
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::builder::PipelineBuilder;
 use super::filters::claim_status_gate_allows;
@@ -41,13 +41,15 @@ impl CorpusFilter {
             world_scope: &builder.world_scope,
             world_active_set: None,
             corpus_scope: &self.0,
+            device_local: None,
+            deadline: builder.deadline,
         }
     }
 
     pub(super) fn apply(
         &self,
         scores: &mut Vec<ScoredEntity>,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         metadata_cache: &mut EntityMetadataCache,
         gate: &mut ClaimStatusGateCache,
@@ -73,7 +75,7 @@ pub(super) fn claim_matches_corpus(scope: &CorpusScope, body: &ClaimBody) -> boo
 /// cache supplies decoded bodies, as it does on the candidate/probe path.
 pub(super) fn apply_corpus_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     scope: &CorpusScope,
     metadata_cache: &mut EntityMetadataCache,
@@ -105,7 +107,7 @@ pub(super) fn apply_corpus_filter(
 /// Production candidate and post-fusion callers have already gated these ids;
 /// this call then only reuses the decision, with no body lookup or decode.
 pub(super) fn pipeline_candidate_matches_corpus_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope: &CorpusScope,

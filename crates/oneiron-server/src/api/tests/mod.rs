@@ -1,5 +1,6 @@
 use super::*;
 
+mod ai_chat;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
@@ -12,13 +13,20 @@ use tower::ServiceExt;
 mod mcp_source_gate;
 
 mod auth_idempotency;
+mod machine_identity;
+mod off_record_rooms;
 mod org_admin;
+mod owner_healer;
 mod owner_routes;
+mod owner_secrets;
+mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
 mod billing_usage;
 mod board_host_events;
+mod board_stream_publisher;
 mod companion;
+mod context_board_history;
 mod context_board_standing;
 mod context_pack_disclosure;
 mod context_pack_v4;
@@ -27,6 +35,13 @@ mod conversation_dag;
 mod conversation_reactions;
 mod conversation_rooms;
 mod core_memory_conversations;
+mod credential_reads;
+mod device_local_reads;
+mod facet_read;
+mod mcp_booking_publication;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_code_admission;
+mod mcp_code_check;
 mod mcp_memory;
 mod mcp_paging_cursors;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -34,12 +49,14 @@ mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
-mod mcp_write_guards;
 mod reactive;
+mod recall_rerank;
 mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod run_gate;
 mod run_tree;
+mod search_deadline;
 mod support_contract;
 mod support_mcp;
 mod support_mcp_credentials;
@@ -274,6 +291,19 @@ pub(super) fn owner_bearer() -> String {
     test_bearer("jti=owner-bearer")
 }
 
+/// The dev-mode credential a local page reads as the vault's owner with: an
+/// unverified bearer naming the embedded owner as a human reader.
+pub(super) fn owner_reader_bearer(server: &SyncServer) -> String {
+    let owner = server
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    format!(
+        "Bearer v2.scope=core:read;principal_ref={};actor_class=human.00",
+        owner.to_hex()
+    )
+}
+
 pub(super) fn core_request(
     method: &str,
     uri: &str,
@@ -366,22 +396,6 @@ fn with_default_recipe(mut request: Request<Body>) -> Request<Body> {
         );
     }
     request
-}
-
-/// One call against a RETIRED plain-verb adapter.
-///
-/// ONE-1704 M1 took the seven `oneiron.*` names off the wire: neither
-/// registered endpoint resolves them, which
-/// `mcp_legacy_catalog_is_unknown_tool_on_both_endpoints` proves at the wire on
-/// both routes. Their executor BODIES survive as private adapters over the same
-/// gated vault API, and the rows below drive those adapters directly — the
-/// gate, idempotency, and stale-target semantics they pin belong to the
-/// adapter, not to a wire name.
-pub(super) struct McpLegacyCall {
-    credential: String,
-    id: String,
-    name: String,
-    arguments: Value,
 }
 
 pub(super) fn error_envelope(body: &Value) -> &Value {
@@ -863,48 +877,6 @@ pub(super) fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId,
             b"reactive local write",
         )
         .expect("seed reactive turn");
-}
-
-// ── ONE-1936: MCP write-verb validity guard ──────────────────────────────
-
-/// Seeds `subject`, an active claim, and its replacement, then supersedes —
-/// leaving `old` as a stale target whose head is `new`.
-pub(super) fn seed_superseded_claim_pair(
-    server: &SyncServer,
-    subject: oneiron::EntityId,
-    old: oneiron::EntityId,
-    new: oneiron::EntityId,
-) {
-    server
-        .vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"subject",
-        )
-        .expect("seed subject");
-    seed_active_claim(server, old, subject, "before", 100);
-    seed_active_claim(server, new, subject, "after", 200);
-    server
-        .vault
-        .supersede_claim(&new, &old, 300)
-        .expect("supersede claim");
-}
-
-/// Resolves a reported `successor_short_id` back through the SAME public
-/// short-ref door a client would use. A ref that does not round-trip is not a
-/// ref the caller can re-get with.
-pub(super) fn resolve_short_ref(server: &SyncServer, short_ref: &str) -> oneiron::EntityId {
-    let (short_id, content_hash) =
-        crate::api::parse_short_ref(short_ref).expect("successor ref must be a public short ref");
-    server
-        .vault
-        .hydrate_short_id(&short_id, content_hash)
-        .expect("hydrate successor ref")
-        .expect("successor ref must resolve")
-        .id
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

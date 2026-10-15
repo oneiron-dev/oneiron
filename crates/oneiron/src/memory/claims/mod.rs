@@ -20,9 +20,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{
-    ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
 
 /// Predicates with declared multi-cardinality supersession keys (B1c,
 /// RATIFY-20260710 R0): the prior-claim match extends

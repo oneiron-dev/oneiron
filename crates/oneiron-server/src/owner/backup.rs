@@ -5,12 +5,14 @@
 //! written under a hidden partial name and renamed into place, so a listing
 //! never shows a half-written file. File names carry the vault's directory
 //! name and a hash of its full path, so vaults sharing one backup directory
-//! never list or prune each other's files.
+//! never list or prune each other's files, then a sequence number one past
+//! the highest already there. Retention orders by that number, never by the
+//! clock, so a clock that steps back cannot make a new backup look oldest.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use oneiron::recovery::checkpoint::RestoreReason;
+use oneiron::recovery::checkpoint::SideRestoreSource;
 use serde::Serialize;
 
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
@@ -72,6 +74,8 @@ fn vault_label(vault_path: &Path) -> String {
 pub(crate) struct BackupRecord {
     pub(crate) file: String,
     pub(crate) path: PathBuf,
+    /// Position among this vault's backups: each new one takes the next.
+    pub(crate) sequence: u64,
     pub(crate) bytes: u64,
     /// RFC 3339 UTC time the backup was taken.
     pub(crate) taken: String,
@@ -89,32 +93,58 @@ pub(crate) struct BackupOutcome {
     pub(crate) pruned: Vec<String>,
 }
 
-/// Takes one backup of `vault` and prunes older ones beyond `plan.keep`.
+/// Takes one backup of `vault` and prunes older ones beyond `plan.keep`. The
+/// caller serializes backups of one vault (the writer lease, or the server's
+/// backup lock), so the next sequence number is this one's alone.
 pub(crate) fn take(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<BackupOutcome> {
+    take_as(vault, plan, None)
+}
+
+/// [`take`] on an owner's request: the snapshot rechecks `owner` in its own
+/// read transaction, so a request whose slip or ownership went away while it
+/// waited writes and prunes nothing. The engine's refusal stays the error's
+/// source.
+pub(crate) fn take_as(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    owner: Option<&oneiron::consent::AuthenticatedOwner>,
+) -> anyhow::Result<BackupOutcome> {
     create_private_dir(&plan.dir)?;
+    let sequence = list(plan)?
+        .last()
+        .map_or(Some(1), |newest| newest.sequence.checked_add(1))
+        .ok_or_else(|| anyhow::anyhow!("backup sequence exhausted in {}", plan.dir.display()))?;
     let taken_ms = now_unix_ms();
     let stamp = file_stamp(taken_ms);
     let partial = plan
         .dir
         .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    let checkpoint_id = match vault.snapshot_checkpoint(&partial, vault.now_recorded_at()) {
+    let snapshot = match owner {
+        Some(owner) => vault.snapshot_checkpoint_as(owner, &partial, vault.now_recorded_at()),
+        None => vault.snapshot_checkpoint(&partial, vault.now_recorded_at()),
+    };
+    let checkpoint_id = match snapshot {
         Ok(id) => id,
         Err(error) => {
             let _ = std::fs::remove_file(&partial);
-            return Err(anyhow::anyhow!("backup failed: {error}"));
+            return Err(anyhow::Error::new(error).context("backup failed"));
         }
     };
     let id8 = checkpoint_id.get(..8).unwrap_or(&checkpoint_id);
-    let file = format!("{}-{stamp}-{id8}{FILE_SUFFIX}", plan.label);
+    let file = format!(
+        "{}-{sequence:0SEQUENCE_WIDTH$}-{stamp}-{id8}{FILE_SUFFIX}",
+        plan.label
+    );
     let path = plan.dir.join(&file);
     std::fs::rename(&partial, &path)?;
     sync_dir(&plan.dir)?;
     let bytes = std::fs::metadata(&path)?.len();
-    let pruned = prune(plan)?;
+    let pruned = prune(plan, &file)?;
     Ok(BackupOutcome {
         backup: BackupRecord {
             file,
             path,
+            sequence,
             bytes,
             taken: rfc3339(taken_ms),
             taken_ms,
@@ -136,16 +166,19 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
     for entry in entries {
         let entry = entry?;
         let file = entry.file_name().to_string_lossy().into_owned();
-        // `<label>-<stamp>-<id8>.oneiron-backup`
-        let Some(stamp) = file
+        // `<label>-<sequence>-<stamp>-<id8>.oneiron-backup`. A backup named
+        // before sequences, `<label>-<stamp>-<id8>`, lists as sequence 0:
+        // older than every sequenced one.
+        let Some((sequence, stamp)) = file
             .strip_prefix(&prefix)
             .and_then(|rest| rest.strip_suffix(FILE_SUFFIX))
             .and_then(|rest| rest.rsplit_once('-'))
-            .map(|(stamp, _)| stamp)
+            .map(|(rest, _)| rest.split_once('-').unwrap_or(("0", rest)))
         else {
             continue;
         };
-        let Some(taken_ms) = parse_file_stamp(stamp) else {
+        let (Some(sequence), Some(taken_ms)) = (parse_sequence(sequence), parse_file_stamp(stamp))
+        else {
             continue;
         };
         // Retention may delete a file between the listing and this read.
@@ -158,19 +191,35 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
         records.push(BackupRecord {
             path: entry.path(),
             file,
+            sequence,
             bytes: metadata.len(),
             taken: rfc3339(taken_ms),
             taken_ms,
         });
     }
-    records.sort_by(|a, b| (a.taken_ms, &a.file).cmp(&(b.taken_ms, &b.file)));
+    records.sort_by(|a, b| (a.sequence, &a.file).cmp(&(b.sequence, &b.file)));
     Ok(records)
 }
 
-/// Deletes this vault's oldest backups beyond `plan.keep`; returns their names.
-pub(crate) fn prune(plan: &BackupPlan) -> anyhow::Result<Vec<String>> {
-    let records = list(plan)?;
-    let excess = records.len().saturating_sub(plan.keep.max(1));
+/// Digits a sequence number is padded to, so names also sort in order.
+const SEQUENCE_WIDTH: usize = 10;
+
+/// A sequence field `take` wrote: ASCII digits only.
+fn parse_sequence(field: &str) -> Option<u64> {
+    if field.is_empty() || !field.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    field.parse().ok()
+}
+
+/// Deletes this vault's oldest backups beyond `plan.keep`, never `spared` (the
+/// backup a `take` just wrote, which counts as one kept); returns their names.
+fn prune(plan: &BackupPlan, spared: &str) -> anyhow::Result<Vec<String>> {
+    let records: Vec<_> = list(plan)?
+        .into_iter()
+        .filter(|record| record.file != spared)
+        .collect();
+    let excess = records.len().saturating_sub(plan.keep.max(1) - 1);
     let mut pruned = Vec::new();
     for record in records.into_iter().take(excess) {
         match std::fs::remove_file(&record.path) {
@@ -202,32 +251,81 @@ pub(crate) struct Rehearsal {
     /// Doctor fields that did not decode in the restored copy; empty when sound.
     pub(crate) unreadable_fields: Vec<String>,
     pub(crate) verified: bool,
+    /// Set when another user could change a directory on the live vault's
+    /// path, read off the disk for this rehearsal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shared_path: Option<SharedPathWarning>,
+}
+
+/// A directory on the live vault's path that another user could change,
+/// found when a rehearsal or an activation read the vault off the disk. It
+/// still ran: the vault opens and writes there as it is.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SharedPathWarning {
+    pub(crate) directory: PathBuf,
+    /// What another user could do there, and the `chmod` that stops it.
+    pub(crate) fix: String,
+}
+
+#[cfg(unix)]
+fn shared_path_warning(source: &SideRestoreSource) -> Option<SharedPathWarning> {
+    source.shared_path().map(|shared| SharedPathWarning {
+        directory: shared.directory.clone(),
+        fix: shared.to_string(),
+    })
+}
+
+#[cfg(not(unix))]
+fn shared_path_warning(_: &SideRestoreSource) -> Option<SharedPathWarning> {
+    None
 }
 
 /// Restores `backup` into a scratch directory, opens it, checks it and
-/// reports. The live vault is never opened. The copy is made in a directory
-/// this call creates: `keep_at` names it and keeps it, otherwise it is a new
-/// directory under the system temp directory and is deleted afterwards.
+/// reports. The live vault is never opened; `source` is its key-custody state,
+/// read when the rehearsal starts. The copy is made in a directory this call
+/// creates: `keep_at` names it and keeps it, otherwise it is a new directory
+/// under the system temp directory and is deleted afterwards.
 pub(crate) fn rehearse(
     backup: &Path,
     config: oneiron::VaultConfig,
     keep_at: Option<&Path>,
+    source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    let scratch = Owned::create(match keep_at {
+    rehearse_in(&std::env::temp_dir(), backup, config, keep_at, source)
+}
+
+/// [`rehearse`], with a scratch directory it does not keep made under `temp`.
+pub(crate) fn rehearse_in(
+    temp: &Path,
+    backup: &Path,
+    config: oneiron::VaultConfig,
+    keep_at: Option<&Path>,
+    source: &SideRestoreSource,
+) -> anyhow::Result<Rehearsal> {
+    let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
-        None => std::env::temp_dir().join(format!(
+        None => temp.join(format!(
             "oneiron-rehearse-{}-{}",
             file_stamp(now_unix_ms()),
             oneiron::EntityId::now().to_hex()
         )),
-    })?;
-    let outcome = rehearse_into(backup, config, &scratch.vault());
+    };
+    // Checked before the scratch directory is made in it.
+    #[cfg(unix)]
+    oneiron::store::refuse_shared_path(
+        std::path::absolute(&scratch)?
+            .parent()
+            .unwrap_or(Path::new("/")),
+    )?;
+    let scratch = Owned::create(scratch)?;
+    let outcome = rehearse_into(backup, config, &scratch.vault(), source);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
         scratch.remove();
     }
     let mut rehearsal = outcome?;
     rehearsal.kept = keep_at.is_some();
+    rehearsal.shared_path = shared_path_warning(source);
     Ok(rehearsal)
 }
 
@@ -235,12 +333,15 @@ fn rehearse_into(
     backup: &Path,
     config: oneiron::VaultConfig,
     scratch: &Path,
+    source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    let (restored, report) = oneiron::Vault::restore_checkpoint(
+    // The copy sits beside the live vault, so its key custody forks: an erase
+    // in a kept scratch copy never reaches the live vault's keys.
+    let (restored, report) = oneiron::Vault::restore_checkpoint_beside(
         backup,
         scratch,
         config,
-        RestoreReason::Restore,
+        source,
         now_unix_ms() / 1_000,
     )
     .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
@@ -257,6 +358,7 @@ fn rehearse_into(
         pending_embeddings: report.pending_embeddings,
         verified: unreadable_fields.is_empty(),
         unreadable_fields,
+        shared_path: None,
     })
 }
 
@@ -265,6 +367,10 @@ fn rehearse_into(
 /// beside it stay inside, and removing it removes only what this call made.
 struct Owned {
     dir: PathBuf,
+    /// The directory itself, held open from its creation: removal goes
+    /// through it, so a directory moved in under its name is never removed.
+    #[cfg(unix)]
+    held: std::fs::File,
 }
 
 impl Owned {
@@ -278,16 +384,69 @@ impl Owned {
         builder
             .create(&dir)
             .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
-        Ok(Self { dir })
+        Self::hold(dir)
+    }
+
+    /// Opens the directory `create` just made. The open goes through its name
+    /// again, so a directory moved in under that name meanwhile is held only
+    /// if it could be the one made here: empty, this process's and owner-only.
+    /// That is a fitness test, not proof this call made it, but removal then
+    /// reaches nothing this call did not put there. Any other directory, or
+    /// one that does not open, is refused and left as it is.
+    fn hold(dir: PathBuf) -> anyhow::Result<Self> {
+        #[cfg(unix)]
+        let held = {
+            use rustix::fs::{Mode, OFlags};
+            let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            let held = rustix::fs::open(&dir, flags, Mode::empty())
+                .map(std::fs::File::from)
+                .map_err(|error| {
+                    anyhow::anyhow!("open {}: {error}; it is left as it is", dir.display())
+                })?;
+            anyhow::ensure!(
+                fresh_private_directory(&held)?,
+                "{} is not the directory this call made; it is left as it is",
+                dir.display()
+            );
+            held
+        };
+        Ok(Self {
+            dir,
+            #[cfg(unix)]
+            held,
+        })
     }
 
     fn vault(&self) -> PathBuf {
         self.dir.join("vault")
     }
 
+    /// Removes the directory with everything in it, only while its name still
+    /// holds it; otherwise both are left where they are.
     fn remove(self) {
+        #[cfg(unix)]
+        let _ = oneiron::store::remove_held_directory(&self.dir, &self.held);
+        #[cfg(not(unix))]
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// Whether `held` could be a directory this process just made: its own,
+/// owner-only and empty.
+#[cfg(unix)]
+fn fresh_private_directory(held: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = held.metadata()?;
+    if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0 {
+        return Ok(false);
+    }
+    for entry in rustix::fs::Dir::read_from(held)? {
+        let entry = entry?;
+        if entry.file_name() != c"." && entry.file_name() != c".." {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Live entity counts by registered kind, zero kinds omitted.
@@ -321,12 +480,15 @@ pub(crate) struct Restored {
 /// Restores `backup` over the stopped vault at `vault_path`.
 ///
 /// Content comes from the backup; the vault's current authority (its log,
-/// devices, slips, revocations and freshness pins) stays. The restored copy is
-/// built in a staging directory beside the vault and swapped into its path in
-/// one atomic exchange while this process holds the writer leases of both, so
-/// no server opens either half-way. A filesystem that cannot exchange two
-/// directories refuses the restore with nothing changed. The old vault is
-/// kept whole as `<vault>.pre-restore-<stamp>`; nothing is deleted.
+/// devices, slips, revocations and freshness pins) and key custody stay. The
+/// restored copy is built in a staging directory beside the vault and swapped
+/// into its path in one atomic exchange while this process holds the writer
+/// leases of both, so no server opens either half-way. A filesystem that
+/// cannot exchange two directories refuses the restore with nothing changed.
+/// The old vault is kept whole as `<vault>.pre-restore-<stamp>`; nothing is
+/// deleted. It still binds the key custody the restored vault keeps, so it is
+/// archived: it opens and reads, and refuses every write, erase and key
+/// retirement until `oneiron restore --activate` gives it custody of its own.
 ///
 /// Once the swap is done the restore has happened, so a failed sync of the
 /// directory after it is reported in `durability_warning`, never as an error
@@ -336,22 +498,30 @@ pub(crate) fn restore_over(
     vault_path: &Path,
     config: oneiron::VaultConfig,
 ) -> anyhow::Result<Restored> {
-    restore_over_syncing(backup, vault_path, config, sync_dir)
+    restore_over_syncing(backup, vault_path, config, exchange, sync_dir)
 }
 
 fn restore_over_syncing(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // Absolute from here on: a bare `vault` has an empty parent to sync.
-    let vault_path = &std::path::absolute(vault_path)?;
+    let configured = std::path::absolute(vault_path)?;
     anyhow::ensure!(
-        vault_path.join("data.mdb").is_file(),
+        configured.join("data.mdb").is_file(),
         "vault {} does not exist; nothing to restore over",
-        vault_path.display()
+        configured.display()
     );
+    // Before anything is made or opened: no other user may move an entry on
+    // the way to the vault, or in it, or the names below could change.
+    #[cfg(unix)]
+    oneiron::store::refuse_shared_vault_root(&configured)?;
+    // The directory itself, not a symlink to it: the exchange below must move
+    // the very directory the vault opens from, which the archive marks name.
+    let vault_path = &configured.canonicalize()?;
     let name = vault_path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("vault path {} has no name", vault_path.display()))?
@@ -381,7 +551,8 @@ fn restore_over_syncing(
         }
     };
     let restored_path = staging.vault();
-    let (restored, report) = match oneiron::Vault::restore_checkpoint_keeping_authority(
+    // The copy replaces the vault at its path, so it keeps the vault's key custody.
+    let (restored, report) = match oneiron::Vault::restore_checkpoint_replacing(
         backup,
         &restored_path,
         config,
@@ -403,12 +574,36 @@ fn restore_over_syncing(
         }
     };
     // One atomic exchange: the vault path never names nothing, and both
-    // directories stay leased by this process until it is done.
-    if let Err(error) = exchange(&restored_path, vault_path) {
+    // directories stay leased by this process until it is done. The old
+    // vault still binds the key custody the restored copy now holds, so the
+    // engine archives it with the swap: whichever of the two sits at the
+    // vault path is the live one, even after a crash in the middle, and the
+    // other reads but never writes, erases or shreds a key until the owner
+    // activates it as a side vault with custody of its own.
+    let exchanged = std::cell::Cell::new(false);
+    if let Err(error) = live.swap_in_replacement(&restored, || {
+        swap(&restored_path, vault_path)?;
+        exchanged.set(true);
+        Ok(())
+    }) {
         drop(restored);
+        // Once the directories were exchanged, both stay where they are: the
+        // marks keep whichever sits at the vault path live, and the staging
+        // directory may hold the previous vault.
+        if exchanged.get() {
+            anyhow::bail!(
+                "the restored copy was exchanged with {}, but the swap could not be confirmed \
+                 ({error}); nothing was removed: the other vault is at {}, and the one at {} is \
+                 the live one",
+                vault_path.display(),
+                restored_path.display(),
+                vault_path.display()
+            );
+        }
         staging.remove();
         anyhow::bail!(
-            "cannot swap the restored copy into {} atomically ({error}); nothing was changed",
+            "cannot swap the restored copy into {} ({error}); nothing was moved, and the vault \
+             there stays live only at that path",
             vault_path.display()
         );
     }
@@ -441,11 +636,44 @@ fn restore_over_syncing(
     Ok(Restored {
         backup: backup.to_path_buf(),
         checkpoint_id: report.epoch.checkpoint_id,
-        vault: vault_path.to_path_buf(),
+        vault: configured,
         previous_vault: previous,
         entities: kinds.values().sum(),
         kinds,
         durability_warning,
+    })
+}
+
+/// What `oneiron restore --activate` did.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Activated {
+    /// The previous vault, now a side vault with key custody of its own.
+    pub(crate) vault: PathBuf,
+    /// The vault that replaced it, whose custody it forked.
+    pub(crate) replaced_by: PathBuf,
+    /// Set when another user could change a directory on that vault's path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shared_path: Option<SharedPathWarning>,
+}
+
+/// Activates the archived vault a restore over `vault_path` set aside at
+/// `previous`, as a side vault of the vault that replaced it. Its key custody
+/// forks as a rehearsal's does: from then on an erase in either vault never
+/// reaches the other's keys. `vault_path` is read off the disk, so a `serve`
+/// may hold it.
+pub(crate) fn activate(
+    previous: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+) -> anyhow::Result<Activated> {
+    let source = SideRestoreSource::read(vault_path)
+        .map_err(|error| anyhow::anyhow!("read vault {}: {error}", vault_path.display()))?;
+    oneiron::Vault::activate_archived(previous, config, &source)
+        .map_err(|error| anyhow::anyhow!("activate {}: {error}", previous.display()))?;
+    Ok(Activated {
+        vault: previous.to_path_buf(),
+        replaced_by: vault_path.to_path_buf(),
+        shared_path: shared_path_warning(&source),
     })
 }
 

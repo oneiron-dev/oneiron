@@ -35,8 +35,6 @@ pub(crate) use self::door_types::{
     CredentialDoorError, DOOR_RECEIVE_PACK_EFFECTOR, DoorScanVerdict, PushedBlob, names_a_floor,
 };
 // The door tests pin the one-shot ceiling by name through `use super::*`.
-#[cfg(test)]
-use self::door_types::DOOR_ONE_SHOT_MAX_LIFETIME_SECS;
 
 #[cfg(test)]
 use self::{door_policy::*, door_types::*};

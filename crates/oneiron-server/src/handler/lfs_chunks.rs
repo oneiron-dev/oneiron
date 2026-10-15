@@ -28,8 +28,10 @@ pub(super) async fn handle(
     // The outer socket already applies its message rate budget and revocation
     // consults. One direct response per request, with no unsolicited broadcast.
     let vault = std::sync::Arc::clone(server.vault());
-    let response = tokio::task::spawn_blocking(move || {
+    let (object, response) = tokio::task::spawn_blocking(move || {
+        let object = oneiron::sync::chunks::chunk_request_object(&payload)?;
         oneiron::sync::chunks::serve_owner_chunk_request(&vault, &payload)
+            .map(|response| (object, response))
     })
     .await
     .map_err(|e| ProtocolError::Persistence(e.to_string()))?
@@ -37,7 +39,16 @@ pub(super) async fn handle(
     let frame = oneiron::sync::transport::encode_lfs_chunk_sync(&response)
         .into_result()
         .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+    state.queued_chunk_objects.push_back(object);
     direct_tx
         .send(frame)
         .map_err(|_| ProtocolError::InvalidPayload("chunk reply channel closed"))
+}
+
+/// Whether a queued chunk reply leaves now: its object, recorded when the
+/// reply was queued, is checked against the device-only flag as it stands.
+pub(super) fn chunk_reply_withheld(server: &SyncServer, state: &mut ConnState) -> bool {
+    state.queued_chunk_objects.pop_front().is_none_or(|object| {
+        oneiron::sync::chunks::lfs_object_withheld(server.vault(), object).unwrap_or(true)
+    })
 }

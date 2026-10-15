@@ -485,6 +485,108 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     Ok(())
 }
 
+/// A metered backend below the step (a host's run admission, admitting each
+/// rung on its own permit) can find the budget spent after the step's own
+/// admission passed. That is the same budget trap, with its park and its
+/// resume signal, never a model failure; the step's lease is released.
+#[test]
+fn a_backend_that_finds_the_budget_spent_opens_the_budget_trap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(LlmError::BudgetDenied(
+        crate::llm::BudgetDenied::Exhausted,
+    ))]);
+    let guard = guard_with_limit(10_000);
+
+    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect("trap outcome is Ok");
+    let StepOutcome::Trapped { trap, .. } = outcome else {
+        panic!("expected trapped step");
+    };
+    assert_eq!(trap.kind, DreamerTrapKind::Budget);
+    assert_eq!(backend.calls(), 1);
+    let parked = DreamerRunnerStore::new(&vault)
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
+    assert_eq!(parked.park_owner, trap_park_owner(&trap.trap_claim_id));
+    assert_eq!(
+        guard.read().reserved_units,
+        0,
+        "the step's lease is released"
+    );
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+/// After an answered response, a corrective call that finds the budget spent
+/// below the step fails the step as a spent correction admission does, even
+/// when that response reported no usage: it was still paid for.
+#[test]
+fn a_spent_budget_after_an_answer_without_usage_is_not_a_fresh_trap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let mut unpriced = response_fixture("not json");
+    unpriced.usage = LlmUsage::zero();
+    let backend = ScriptedBackend::new(vec![
+        Ok(unpriced),
+        Err(LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted)),
+    ]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::ClassifiedLlm {
+            source: LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted),
+            ..
+        })
+    ));
+    assert_eq!(backend.calls(), 2);
+    assert!(
+        DreamerRunnerStore::new(&vault)
+            .parked_attempt(fixture.attempt_id)?
+            .is_none()
+    );
+    Ok(())
+}
+
+/// Astra R2 #1304: the budget trap and its park committed in two
+/// transactions, so a crash or a refused park between them left an open trap
+/// over an unparked attempt; boot recovery requeued it and a fresh budget ran
+/// it without the signal. The trap now lands only with its park.
+#[test]
+fn a_budget_trap_lands_only_with_its_park() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    // Another owner holds the park, so this trap's park is refused.
+    DreamerRunnerStore::new(&vault).park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
+        reason: "driver park".to_owned(),
+        park_owner: "wake-worker".to_owned(),
+        now: 10,
+    })?;
+    let backend = ScriptedBackend::new(Vec::new()); // must never be called
+    let guard = guard_with_limit(100); // reserve 500 > limit 100 → Exhausted
+
+    block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("a refused park fails the trapped step");
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
+        0,
+        "no trap may stay open over an attempt it did not park"
+    );
+    assert_eq!(backend.calls(), 0);
+    Ok(())
+}
+
 #[test]
 fn signal_before_wait_ordering() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -1009,6 +1111,64 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     Ok(())
 }
 
+/// F11 / H151: the step claim named only the response artifact, and replay
+/// read its HEAD. Any writer that appended a version to that artifact had its
+/// bytes replayed as the original response, with no backend call and no
+/// budget admission. The claim pins the version the step appended, by
+/// number and content hash, and replay reads exactly that.
+#[test]
+fn replay_returns_the_response_the_step_recorded_not_a_later_append() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let big_text = "x".repeat(DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES + 1);
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture(&big_text))]);
+    let guard = guard_with_limit(10_000);
+    let request = request_fixture();
+    let step_hash = request.canonical_hash().expect("hash");
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request)).expect("oversize execution")
+    else {
+        panic!("expected finished step");
+    };
+
+    let claim_id =
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.expect("memo index row");
+    let body = vault.get_claim(&claim_id)?.expect("terminal claim");
+    let artifact_id = decode_step_claim_value(&body.value)?
+        .response_ref
+        .expect("oversize response lives in an artifact")
+        .artifact_id;
+    // Another version appended to the same artifact by an authorized writer.
+    let forged = response_fixture(&"y".repeat(DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES + 1));
+    vault.append_blob_artifact_version(
+        &artifact_id,
+        &serde_json::to_vec(&forged).expect("forged payload"),
+        &crate::blob_artifact::BlobVersionProvenance::AgentRun {
+            run_ref: "forged-run".to_owned(),
+        },
+        fixture.actor,
+        TimeRange {
+            start: 11_000,
+            end: 11_000,
+        },
+        11_000,
+    )?;
+
+    let backend = ScriptedBackend::new(Vec::new());
+    let StepOutcome::Finished {
+        response: replayed,
+        memoized,
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request_fixture())).expect("replay")
+    else {
+        panic!("expected finished step");
+    };
+    assert!(memoized);
+    assert_eq!(replayed, response, "replay returns the recorded response");
+    Ok(())
+}
+
 #[test]
 fn oversize_response_lands_in_blob_artifact() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -1034,7 +1194,8 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
         decoded.response.is_none(),
         "oversize response never inlines"
     );
-    let artifact_id = decoded.response_ref.expect("response_ref artifact id");
+    let response_ref = decoded.response_ref.expect("response_ref artifact id");
+    let artifact_id = response_ref.artifact_id;
     assert!(vault.get_blob_artifact(&artifact_id)?.is_some());
     let head = vault
         .blob_artifact_head(&artifact_id)?
@@ -2950,16 +3111,16 @@ fn shared_schema_shim_contains_encoded_and_draft4_reference_traps() {
         let mut request = request_fixture();
         request.envelope.response_format = ResponseFormat::Json { schema };
         assert!(matches!(
-            super::schema::validate_fallback(&request, &response_fixture(output)),
+            super::schema::validate_fallback(&request, &response_fixture(output), None),
             Err(DurableStepError::SchemaValidation { attempts: 1, .. })
         ));
     }
     let schema = json!({"$defs":{"a":{"type":"integer"}},"$ref":"#/$defs/%61"});
     let mut request = request_fixture();
     request.envelope.response_format = ResponseFormat::Json { schema };
-    assert!(super::schema::validate_fallback(&request, &response_fixture("3")).is_ok());
+    assert!(super::schema::validate_fallback(&request, &response_fixture("3"), None).is_ok());
     assert!(matches!(
-        super::schema::validate_fallback(&request, &response_fixture("\"bad\"")),
+        super::schema::validate_fallback(&request, &response_fixture("\"bad\""), None),
         Err(DurableStepError::SchemaValidation { attempts: 1, .. })
     ));
     assert!(super::validate_json_schema(&json!({"type":"integer"}), &json!(3)).is_ok());

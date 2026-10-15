@@ -210,6 +210,8 @@ pub(super) fn apply_ops_with_origin(
     require_gated_claim_materializations(claim_gate_prechecked, &claim_materializations)?;
     let mut preflight_gate_decision_ids =
         std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
+    let mut pre_analyzed_text = std::mem::take(&mut gate_mode.pre_analyzed_text);
+    let mut nsw_plans = std::mem::take(&mut gate_mode.nsw_plans);
 
     // The owner's `secrets` switch is read in this transaction, so a batch
     // and the mode it was admitted under are one snapshot.
@@ -362,6 +364,17 @@ pub(super) fn apply_ops_with_origin(
                 put_options.consent.can_resolve_pending =
                     pending_gate_consent_at_batch_start.contains(&id);
                 put_options.decision.preflight = preflight_decision_id;
+                // A TURN or MESSAGE written again may change its words under a
+                // temporal key the sieve has passed: its turn is owed a new
+                // sieve read in this commit. A new TURN is owed its first
+                // read, whatever time it claims; a MESSAGE joins one through
+                // the witness door's re-dirty.
+                let text_row = matches!(
+                    entity_type,
+                    crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+                );
+                let rewritten = text_row && stored_entity_type(store, wtxn, &id)?.is_some();
+                let born_turn = entity_type == crate::registry::ENTITY_TYPE_TURN && !rewritten;
                 let applied = apply_put(
                     store,
                     wtxn,
@@ -388,6 +401,19 @@ pub(super) fn apply_ops_with_origin(
                     },
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
+                if rewritten {
+                    crate::dreamer_wake::mark_on_publication_in_txn(store, wtxn, &id)?;
+                } else if born_turn {
+                    crate::dreamer_wake::owe_sieve_read_in_txn(store, wtxn, &id)?;
+                } else if matches!(
+                    entity_type,
+                    crate::registry::ENTITY_TYPE_ACCESS_GRANT
+                        | crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+                ) {
+                    // A grant, or a policy manifest's read grant, may let the
+                    // Dreamer read words the sieve left.
+                    crate::dreamer_wake::sieve_grant_written_in_txn(store, wtxn)?;
+                }
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
                         store,
@@ -575,21 +601,33 @@ pub(super) fn apply_ops_with_origin(
                 id,
                 vector,
                 pending_embedding_token,
+                provenance,
             } => {
                 let vector = Zeroizing::new(vector);
                 let pending_embedding_token = Zeroizing::new(pending_embedding_token);
                 let same_batch_token = pending_embedding_token
                     .as_deref()
                     .or_else(|| pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
-                let applied = apply_vector(store, config, wtxn, id, &vector, same_batch_token)?;
+                let plan = nsw_plans.get_mut(&id).and_then(VecDeque::pop_front);
+                let applied = apply_vector(
+                    store,
+                    config,
+                    wtxn,
+                    id,
+                    &vector,
+                    provenance.as_ref(),
+                    same_batch_token,
+                )?;
                 if applied.wrote_vector {
-                    crate::hnsw::hnsw_insert_batched(
+                    // A plan searched the committed graph; after an earlier
+                    // graph write in this batch it no longer describes it.
+                    crate::hnsw::hnsw_insert_planned(
                         store,
                         config,
                         wtxn,
-                        &id,
-                        &vector,
+                        (&id, vector.as_slice()),
                         &mut pending_hnsw_rebuild,
+                        plan.as_ref().filter(|_| !had_vector_mutation),
                     )?;
                     had_vector_mutation = true;
                 }
@@ -610,10 +648,14 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Text { id, fields } => {
                 let fields = Zeroizing::new(fields);
+                let analyzed = pre_analyzed_text
+                    .get_mut(&id)
+                    .and_then(VecDeque::pop_front)
+                    .flatten();
                 apply_text_index_update(
                     store,
                     wtxn,
-                    analyzer,
+                    (analyzer, analyzed.as_ref()),
                     &id,
                     &fields,
                     text_index_trusted,

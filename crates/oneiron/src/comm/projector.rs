@@ -136,7 +136,7 @@ fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
             &[task_ref.as_bytes()],
         )
         .map_err(|_| CommError::InvalidRecord)?;
-        vault.try_with_write_txn(|txn| {
+        vault.try_with_write_txn_grouped(|txn| {
             // Check the immutable source event BEFORE resolving today's party.
             // A merged shell keeps its original body, and a deleted subject has
             // no body at all. Neither should remint a PERSON or block STOPs.
@@ -270,7 +270,7 @@ pub fn record_comm_thread_event(
     joined: bool,
     occurred_at: u64,
 ) -> CommResult<()> {
-    vault.try_with_write_txn(|txn| {
+    vault.try_with_write_txn_grouped(|txn| {
         record_comm_thread_event_in_txn(vault, txn, thread_ref, party, joined, occurred_at)
     })
 }
@@ -317,7 +317,7 @@ fn record_event(
     if let Some(thread_ref) = thread_ref {
         validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
     }
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         // Resolve/create the party in the SAME transaction as the event so a
         // concurrent party deletion cannot leave the event bound to a missing
         // PERSON (which the projector would then skip forever as EntityNotFound).
@@ -347,7 +347,7 @@ pub(super) fn project_event(
     event_id: EntityId,
     index: &CommProjectorIndex,
 ) -> CommResult<ProjectorIndexDelta> {
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
             return Ok(ProjectorIndexDelta::default());
         };

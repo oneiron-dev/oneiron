@@ -69,7 +69,7 @@ pub(super) async fn state(
         .then_some(actor.actor_ref);
     let board = changed.clone();
     observations
-        .fold_own_changes(&server.vault, own, &mut changed, 16)
+        .fold_own_changes(&read, own, actor.locality(), &mut changed, 16)
         .map_err(|error| mcp_engine_error("mcp session refresh failed", error))?;
     Ok((observations, changed, board))
 }
@@ -104,13 +104,14 @@ pub(super) async fn delivered(
 }
 
 /// The empty queue is checked before reading session state or rendering. This
-/// function neither creates a frame nor enqueues an event.
+/// function neither creates a frame nor enqueues an event. Beside the frame
+/// it returns the rows the changed line it fitted in names.
 pub(super) async fn ride(
     server: &SyncServer,
     actor: &McpResolvedActor,
     frame: Option<BoardStreamFrame>,
     hits: &[CapabilityHit],
-) -> Result<Option<BoardStreamFrame>, McpGatewayError> {
+) -> Result<Option<(BoardStreamFrame, Vec<oneiron::EntityId>)>, McpGatewayError> {
     let Some(mut frame) = frame else {
         return Ok(None);
     };
@@ -123,7 +124,8 @@ pub(super) async fn ride(
         .expect("rider preserves an existing frame");
     let frame = ride_capabilities(frame, hits, &observations)?;
     delivered(server, actor, &changed, false, frame.epoch).await;
-    Ok(Some(frame))
+    let rows = crate::device_local::changed_line_rows(&changed).collect();
+    Ok(Some((frame, rows)))
 }
 
 fn ride_capabilities(

@@ -80,6 +80,51 @@ pub trait LlmBackend: Send + Sync {
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a>;
 }
 
+/// A backend whose one call is one request to one route: no retry, and no
+/// fallback to another model or origin. A run admission's gate wraps only
+/// these, so the permit it checks covers exactly the request that leaves. A
+/// wire adapter is one only over a [`SingleSend`] transport.
+pub trait SingleRouteBackend: LlmBackend {
+    /// Every check this backend makes before it sends, with no I/O: the
+    /// refusal its `generate` or `stream` would return for `request` before
+    /// any byte leaves, or `Ok` when it would send.
+    fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()>;
+
+    /// The digest of the exact request bytes `generate` or `stream` would send
+    /// for `request`, for a backend that builds them before it sends (a
+    /// credential broker's adapter, ARCH-0069 `#broker-digest`). A run's permit
+    /// for the call binds it at admission and the gate checks it at dispatch,
+    /// so the call sends only the bytes it was admitted for. `None`, the
+    /// default, binds the call by its route and offer alone.
+    fn request_digest(&self, request: &LlmRequest, stream: bool) -> LlmResult<Option<String>> {
+        let _ = (request, stream);
+        Ok(None)
+    }
+
+    /// How the credential broker that sends this backend's calls is kept
+    /// apart from the daemon, for the dispatch receipt. `None`, the default,
+    /// for a backend whose key, if any, no broker holds.
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        None
+    }
+}
+
+/// How a credential broker is kept apart from the daemon (ARCH-0069
+/// `#broker-isolation`). A call's dispatch receipt names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrokerIsolation {
+    /// The broker runs as its own OS user.
+    SeparateUser,
+    /// The broker shares the daemon's user: the run shows the unproven badge.
+    SameUser,
+}
+
+/// A transport or runtime that makes one request per call: it never retries,
+/// and never follows a redirect to another origin. Its author claims it; a
+/// retrying transport stays below a ladder, never below a run's gate.
+pub trait SingleSend {}
+
 /// Opaque admission token issued by the budget guard.
 #[derive(Clone)]
 pub struct BudgetLease {

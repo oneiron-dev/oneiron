@@ -25,6 +25,8 @@ pub(super) fn auto_enabled(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool>
 #[cfg(test)]
 pub(super) fn close_blockers_for_test(vault: &Vault) {
     vault
-        .with_write_txn(|txn| TEST_BLOCKERS_CLOSED.put(&vault.store, txn, &(), &b"1".to_vec()))
+        .with_write_txn_grouped(|txn| {
+            TEST_BLOCKERS_CLOSED.put(&vault.store, txn, &(), &b"1".to_vec())
+        })
         .expect("test-only rollout closure");
 }

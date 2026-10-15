@@ -14,6 +14,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::temporal::TimeRange;
+use std::collections::BTreeMap;
 
 use super::*;
 
@@ -55,7 +56,9 @@ impl Vault {
     /// Every id is derived from entry content (ONE-1604-D1), exactly as the
     /// single-entry door does. Encoding, validation, and derivation all happen
     /// BEFORE the write transaction opens, so a bad entry anywhere in the
-    /// batch stores nothing at all.
+    /// batch stores nothing at all. The rows stage parents first and each
+    /// signer's by sequence, in whatever order the caller gives them; the
+    /// ids come back in the caller's order.
     ///
     /// This is what makes a genesis owner-binding a single ceremony: a host
     /// composes `[genesis, bind]` and either both land or neither does. The
@@ -83,8 +86,39 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
+        // A key a handoff retired signs nothing new here (engine-crates-03).
+        let local = if entries.is_empty() {
+            None
+        } else {
+            Some(self.authority_fold_readonly_in_txn(wtxn)?)
+        };
+        // Rows of this batch, for an ancestry that runs through one.
+        let mut batch = BTreeMap::new();
+        let mut staged = Vec::with_capacity(entries.len());
+        for (entry, _, _) in entries {
+            let hash = authority_entry_hash(entry)?;
+            batch.insert(hash, entry.clone());
+            staged.push((hash, entry));
+        }
         for (entry, occurred, learned_at) in entries {
             if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
+                return Err(invalid_authority());
+            }
+            if let Some(fold) = &local
+                && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
+                && super::door_refuses_retired_standing(
+                    &self.store,
+                    fold,
+                    &authority_entry_hash(entry)?,
+                    entry,
+                    &mut |hash| match batch.get(hash) {
+                        Some(row) => Ok(Some(row.clone())),
+                        None => {
+                            super::retired_signers::stored_authority_row(&self.store, wtxn, hash)
+                        }
+                    },
+                )?
+            {
                 return Err(invalid_authority());
             }
             let data = encode_authority_log_entry_body(entry)?;
@@ -105,6 +139,14 @@ impl Vault {
         if ops.is_empty() {
             return Ok(ids);
         }
+        // The door judges each row against the rows staged before it (H72),
+        // so stage them parents first and each signer's by sequence,
+        // whatever order the caller gave.
+        let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
+        let ops: Vec<_> = super::authority_stage_order(&staged)
+            .into_iter()
+            .filter_map(|index| ops[index].take())
+            .collect();
         apply_ops(
             &self.store,
             &self.config,
@@ -149,7 +191,7 @@ impl Vault {
             return Ok(());
         }
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let backfill_key = authority_first_seen_backfill_key();
             if AUTHORITY_FIRST_SEEN_BACKFILLED.contains(&self.store, wtxn, &backfill_key)? {
                 return Ok(());
@@ -210,10 +252,10 @@ impl Vault {
 
     /// Advance the persisted authority-observation floor in test fixtures.
     /// The generic sync-state write door remains guarded.
-    #[cfg(feature = "test-hooks")]
+    #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let floor_key = authority_first_seen_clock_key();
             let previous = AUTHORITY_FIRST_SEEN
                 .get_lenient(&self.store, wtxn, &floor_key)?
@@ -243,7 +285,7 @@ impl Vault {
         self.backfill_authority_first_seen_sidecars()?;
         // Update the monotonic local observation in a committed writer before
         // the cached read view opens its own snapshot.
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let floor_key = authority_first_seen_clock_key();
             let floor = AUTHORITY_FIRST_SEEN
                 .get_lenient(&self.store, wtxn, &floor_key)?
@@ -267,7 +309,7 @@ impl Vault {
         authority_fold_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
     }
 
-    pub(super) fn authority_view_readonly_in_txn(
+    pub(crate) fn authority_view_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityView> {

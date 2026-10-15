@@ -25,7 +25,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValu
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::caps::{MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
+use crate::caps::{MAX_REMOTE_EXPORT_BYTES, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
 use crate::error::{bad_request, forbidden, transport_error};
 
 mod origin;
@@ -35,7 +35,8 @@ mod response;
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
-    ReadFailure, describe_send_failure, read_capped, read_error_envelope, serialize_request,
+    ReadFailure, describe_send_failure, read_capped, read_error_envelope, read_export,
+    serialize_request,
 };
 
 /// Path prefix every facade verb hangs off.
@@ -43,6 +44,8 @@ const FACADE_PREFIX: &str = "v1/core/facade";
 
 /// The header a slip holder's per-request proof crosses in.
 const BINDING_HEADER: &str = "x-oneiron-binding";
+/// Names the room turn a verb runs in; the server resolves its roster.
+const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
 
 /// Connect timeout: finite, so a black-holed address fails instead of hanging.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -58,10 +61,13 @@ pub(crate) struct RemoteClient {
     authorization: HeaderValue,
     holder: Option<Box<(CapabilitySlip, SigningKey)>>,
     agent: Client,
-    // Export is a single large document. Keep an export-specific total timeout,
-    // not the ordinary verbs' response-byte ceiling or short timeout.
+    // Export is a single large document. Keep an export-specific total timeout
+    // and byte ceiling, not the ordinary verbs' short timeout and 64 MiB.
     export_agent: Client,
+    export_limit: usize,
     stream_agent: reqwest::Client,
+    /// The room turn every verb runs in, named to the server per request.
+    room_turn: Option<oneiron::EntityId>,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -85,7 +91,9 @@ impl Clone for RemoteClient {
             holder: self.holder.clone(),
             agent: self.agent.clone(),
             export_agent: self.export_agent.clone(),
+            export_limit: self.export_limit,
             stream_agent: self.stream_agent.clone(),
+            room_turn: self.room_turn,
         }
     }
 }
@@ -137,6 +145,17 @@ impl RemoteClient {
             holder,
             agent,
             export_agent,
+            export_limit: MAX_REMOTE_EXPORT_BYTES,
+            room_turn: None,
+        })
+    }
+
+    /// The same connection with every verb run inside `room`'s turn.
+    pub(crate) fn in_room_turn(&self, room: oneiron::EntityId) -> Result<Self, MemoryError> {
+        crate::embedded::refuse_other_room(self.room_turn, room)?;
+        Ok(Self {
+            room_turn: Some(room),
+            ..self.clone()
         })
     }
 
@@ -169,7 +188,14 @@ impl RemoteClient {
     ) -> Result<R, MemoryError> {
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
-        let credential = self.credential_headers()?;
+        let mut credential = self.credential_headers()?;
+        if let Some(room) = self.room_turn {
+            credential.insert(
+                ROOM_TURN_HEADER,
+                HeaderValue::from_str(&room.to_hex())
+                    .map_err(|_| transport_error("could not name the room turn"))?,
+            );
+        }
         let response = (if verb == "export" {
             &self.export_agent
         } else {
@@ -188,15 +214,11 @@ impl RemoteClient {
             return Err(read_error_envelope(response, status));
         }
         // The ordinary facade has a strict success-body ceiling. Export alone
-        // streams JSON directly into its required result: there is no second
-        // whole-body buffer, and the response size is the archive's own size.
-        // The export-specific total timeout still refuses a stalled peer.
+        // streams JSON directly into its required result, under its own
+        // larger ceiling: there is no second whole-body buffer. The
+        // export-specific total timeout still refuses a stalled peer.
         if verb == "export" {
-            serde_json::from_reader(response).map_err(|error| {
-                transport_error(format!(
-                    "the server answered {status} for {verb} with an incomplete or invalid export: {error}"
-                ))
-            })
+            read_export(response, status, self.export_limit)
         } else {
             let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {
                 match failure {

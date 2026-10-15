@@ -1,15 +1,26 @@
 //! Sync server state and maintenance jobs, split by concern.
+mod board_publisher;
 mod core;
 mod embedding;
+mod housekeeping;
 mod leases;
 mod lifecycle;
 mod message_stream;
+mod oversight;
+mod recall;
+mod recall_rerank;
 mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
+pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
+pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
+pub use self::oversight::OversightStartError;
+pub(crate) use self::windows::withheld_from_peers;
 
+#[cfg(test)]
+mod housekeeping_tests;
 #[cfg(test)]
 mod slip_transport_tests;
 #[cfg(test)]

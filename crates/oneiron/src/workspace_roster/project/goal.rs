@@ -167,7 +167,7 @@ impl Vault {
         record: &GoalRecord,
         now: u64,
     ) -> Result<EntityId> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.write_project_goal_in_txn(txn, owner, project_id, record, now)
         })
     }
@@ -180,7 +180,7 @@ impl Vault {
         record: &GoalRecord,
         now: u64,
     ) -> Result<EntityId> {
-        owner.revalidate_in_txn(self, txn)?;
+        let actor = owner.revalidate_in_txn(self, txn)?;
         record.validate()?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
         if policy.diagnostics().loaded_manifest_forces_fail_closed() {
@@ -189,7 +189,7 @@ impl Vault {
         record.validate_limits(policy.goal_limits())?;
         let id = EntityId::now();
         let envelope = WriteEnvelope::new(
-            WriteActor::new(owner.actor(), EdgeActorClass::Human),
+            WriteActor::new(actor, EdgeActorClass::Human),
             ClaimSource::UserStated,
             WriteProvenance::new(Value::Map(vec![
                 (Value::from("op"), Value::from("goal.intake")),

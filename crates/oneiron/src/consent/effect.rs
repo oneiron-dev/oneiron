@@ -76,6 +76,114 @@ pub const CATASTROPHE_FLOOR_V1: [CatastropheClass; 5] = [
     CatastropheClass::MassSecretExport,
 ];
 
+/// The policy-manifest key of the floor's default row.
+pub(crate) const CATASTROPHE_FLOOR_ROW_KEY: &str = "catastrophe_floor";
+
+/// The catastrophe floor as its versioned default policy row (DEC-0006
+/// invariant 7): data in the vault's policy manifest, its membership pinned
+/// to its version. A row must list exactly its version's members, so no
+/// manifest can shrink the floor; a vault whose manifest has no row keeps
+/// the pinned floor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatastropheFloor {
+    version: u16,
+    members: Vec<CatastropheClass>,
+}
+
+impl CatastropheFloor {
+    /// The floor the engine pins for [`CATASTROPHE_FLOOR_VERSION`].
+    #[must_use]
+    pub fn pinned() -> Self {
+        Self {
+            version: CATASTROPHE_FLOOR_VERSION,
+            members: CATASTROPHE_FLOOR_V1.to_vec(),
+        }
+    }
+
+    /// The row's version, cited by every bypass grant and receipt.
+    #[must_use]
+    pub const fn version(&self) -> u16 {
+        self.version
+    }
+
+    /// The classes that ask at any trust level.
+    #[must_use]
+    pub fn members(&self) -> &[CatastropheClass] {
+        &self.members
+    }
+
+    /// Whether `class` is on this floor.
+    #[must_use]
+    pub fn contains(&self, class: CatastropheClass) -> bool {
+        self.members.contains(&class)
+    }
+
+    /// The floor member a class string names, if any.
+    #[must_use]
+    pub fn member_named(&self, class: &str) -> Option<CatastropheClass> {
+        self.members
+            .iter()
+            .copied()
+            .find(|member| member.as_str() == class)
+    }
+
+    /// The shipped manifest entry for this row.
+    pub(crate) fn manifest_entry(&self) -> (rmpv::Value, rmpv::Value) {
+        (
+            rmpv::Value::from(CATASTROPHE_FLOOR_ROW_KEY),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("version"),
+                    rmpv::Value::from(self.version),
+                ),
+                (
+                    rmpv::Value::from("members"),
+                    rmpv::Value::Array(
+                        self.members
+                            .iter()
+                            .map(|member| rmpv::Value::from(member.as_str()))
+                            .collect(),
+                    ),
+                ),
+            ]),
+        )
+    }
+
+    /// Decodes a manifest row. `None` for a malformed row, an unknown
+    /// version, or a membership other than the version's pinned one.
+    pub(crate) fn decode_row(value: &rmpv::Value) -> Option<Self> {
+        let rmpv::Value::Map(fields) = value else {
+            return None;
+        };
+        if fields.len() != 2 {
+            return None;
+        }
+        let field = |name: &str| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .map(|(_, value)| value)
+        };
+        let version = u16::try_from(field("version")?.as_u64()?).ok()?;
+        let mut members = field("members")?
+            .as_array()?
+            .iter()
+            .map(|member| CatastropheClass::parse(member.as_str()?))
+            .collect::<Option<Vec<_>>>()?;
+        let pinned = match version {
+            1 => CATASTROPHE_FLOOR_V1.to_vec(),
+            _ => return None,
+        };
+        let mut sorted = pinned.clone();
+        sorted.sort_by_key(|class| class.as_str());
+        members.sort_by_key(|class| class.as_str());
+        (members == sorted).then_some(Self {
+            version,
+            members: pinned,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Digests
 // ---------------------------------------------------------------------------
@@ -294,6 +402,19 @@ pub struct ComposedEffect {
     facts: EffectFacts,
     disclosure_requirement: Option<GrantBound>,
     action_requirement: Option<GrantBound>,
+    place: EffectPlace,
+    erase: bool,
+}
+
+/// Where one composed op runs, as the host observed it: the project and the
+/// conversation thread it acts inside, when it acts inside one. A scoped
+/// bypass grant covers an op only inside its own scope.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct EffectPlace {
+    /// The project the op acts inside.
+    pub project: Option<crate::entity_id::EntityId>,
+    /// The conversation thread the op acts inside.
+    pub thread: Option<crate::entity_id::EntityId>,
 }
 
 impl ComposedEffect {
@@ -305,7 +426,39 @@ impl ComposedEffect {
             facts,
             disclosure_requirement: None,
             action_requirement: None,
+            place: EffectPlace {
+                project: None,
+                thread: None,
+            },
+            erase: false,
         }
+    }
+
+    /// Records where the op runs. Only a bypass grant reads it.
+    #[must_use]
+    pub const fn in_place(mut self, place: EffectPlace) -> Self {
+        self.place = place;
+        self
+    }
+
+    /// Marks the op as an erase (ARCH-0038 delete ladder). No bypass grant
+    /// ever covers it (DEC-0006 invariant 7).
+    #[must_use]
+    pub const fn as_erase(mut self) -> Self {
+        self.erase = true;
+        self
+    }
+
+    /// Where the op runs.
+    #[must_use]
+    pub const fn place(&self) -> EffectPlace {
+        self.place
+    }
+
+    /// Whether the op is an erase.
+    #[must_use]
+    pub const fn is_erase(&self) -> bool {
+        self.erase
     }
 
     /// Attaches the disclosure requirement this op must satisfy.
@@ -412,6 +565,18 @@ impl ComposedEffect {
                 Some(bound) => hash_field(&mut hasher, bound.digest().as_bytes()),
                 None => hash_field(&mut hasher, &[]),
             }
+        }
+        // Appended only when set, so every digest minted before these facts
+        // existed stays the digest of the same op.
+        if self.place != EffectPlace::default() || self.erase {
+            hash_field(&mut hasher, b"place");
+            for id in [self.place.project, self.place.thread] {
+                hash_field(
+                    &mut hasher,
+                    id.as_ref().map_or(&[][..], |id| id.as_bytes().as_slice()),
+                );
+            }
+            hasher.update(&[u8::from(self.erase)]);
         }
         EffectDigest(*hasher.finalize().as_bytes())
     }

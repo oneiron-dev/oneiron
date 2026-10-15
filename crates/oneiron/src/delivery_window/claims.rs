@@ -85,25 +85,43 @@ impl DeliveryWindowPolicyClaim {
         })
     }
 
+    /// Whether the claim restricts any send at all: an approved or owner-made,
+    /// active, fresh restriction on interrupts. Which sends it restricts its
+    /// validity, channel, context and window decide.
+    pub(crate) fn restricts(&self) -> bool {
+        matches!(
+            self.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) && self.lifecycle == ClaimLifecycleStatus::Active
+            && !self.stale
+            && !(self.approval == ClaimApprovalStatus::Auto && self.generated_origin)
+            && self.applies_to == DeliveryWindowAppliesTo::Interrupt
+    }
+
+    /// Whether `other` restricts the same sends as this claim, to the same
+    /// retry: the same validity, channel, context and window. Of two such
+    /// claims, source and reason only pick which one a held send reports.
+    pub(crate) fn same_reach(&self, other: &Self) -> bool {
+        (
+            self.valid_from,
+            self.valid_to,
+            &self.channel,
+            self.context,
+            self.window,
+        ) == (
+            other.valid_from,
+            other.valid_to,
+            &other.channel,
+            other.context,
+            other.window,
+        )
+    }
+
     pub(super) fn restriction_at(
         &self,
         context: &DeliveryWindowEvaluationContext,
     ) -> Option<Restriction> {
-        if !matches!(
-            self.approval,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        ) || self.lifecycle != ClaimLifecycleStatus::Active
-            || self.stale
-        {
-            return None;
-        }
-        if self.approval == ClaimApprovalStatus::Auto && self.generated_origin {
-            return None;
-        }
-        if self.applies_to != DeliveryWindowAppliesTo::Interrupt {
-            return None;
-        }
-        if context.verb_class != DeliveryWindowVerbClass::Interrupt {
+        if !self.restricts() || context.verb_class != DeliveryWindowVerbClass::Interrupt {
             return None;
         }
         if let Some(valid_from) = self.valid_from

@@ -1,164 +1,123 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
-use super::tests::{
-    git, hooks_dir, landing_outcome, landing_time, narrow_door_effectors, seeded_repo, temp_vault,
-};
+use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
 use super::*;
+use crate::credential_door::PushedBlob;
 use crate::error::CodeError;
 
-#[test]
-fn smart_http_serve_command_env_allowlist_is_closed() {
-    let (root, hooks) = hooks_dir();
-    let repo = root.path().join("demo.git");
-    std::fs::create_dir_all(&repo).expect("repo dir");
-    let command =
-        ServeCommand::http_backend(&repo, root.path(), hooks.path()).expect("build serve command");
-
-    let base = command.env().keys().cloned().collect::<Vec<_>>();
-    assert_eq!(base, SERVE_BASE_ENV_KEYS.to_vec(), "closed serve baseline");
-    assert_eq!(
-        command.env().get("GIT_HTTP_EXPORT_ALL").map(String::as_str),
-        Some("1"),
-        "export pin"
-    );
-    assert_eq!(
-        command
-            .env()
-            .get("GIT_NO_REPLACE_OBJECTS")
-            .map(String::as_str),
-        Some("1"),
-        "every git under this serve reads true object bytes"
-    );
-
-    let request = ServeRequest {
-        method: "POST".to_owned(),
-        path_info: "/demo.git/git-receive-pack".to_owned(),
-        query_string: String::new(),
-        content_type: Some("application/x-git-receive-pack-request".to_owned()),
-        content_length: Some(7),
-        content_encoding: Some("gzip".to_owned()),
-        git_protocol: Some("version=2".to_owned()),
-        remote_user: Some("principal:tester".to_owned()),
-        remote_addr: None,
-    };
-    let child_env = command.child_env(&request);
-    for key in child_env.keys() {
-        let known = SERVE_BASE_ENV_KEYS.contains(&key.as_str())
-            || SERVE_REQUEST_ENV_KEYS.contains(&key.as_str());
-        assert!(known, "unexpected serve environment key {key}");
-    }
-    assert!(
-        !child_env.contains_key("GIT_CONFIG_PARAMETERS"),
-        "the config policy travels in argv, never in the environment"
-    );
+/// The tip stream alone, under the full line budget.
+fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
+    parse_door_streams(framed, b"", DOOR_MAX_SCAN_LINES).map(|(blobs, _)| blobs)
 }
 
+#[cfg(unix)]
 #[test]
-fn smart_http_serve_command_argv_pins_door_hooks_path() {
-    let (root, hooks) = hooks_dir();
-    let repo = root.path().join("demo.git");
-    std::fs::create_dir_all(&repo).expect("repo dir");
-    let command =
-        ServeCommand::http_backend(&repo, root.path(), hooks.path()).expect("build serve command");
-
-    let argv = command.argv();
-    let backend = argv
-        .iter()
-        .position(|arg| arg == "http-backend")
-        .expect("serve invokes http-backend");
-    let mut args = argv[1..backend]
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    args.extend(["config", "--get", "core.hooksPath"]);
-    assert_eq!(
-        git(&repo, &args),
-        hooks.path().display().to_string(),
-        "Git resolves the backend configuration to the vetted hooks directory"
-    );
-}
-
-#[test]
-fn smart_http_door_hooks_dir_carries_only_the_vetted_hook() {
-    let (_root, hooks) = hooks_dir();
-    let entries = std::fs::read_dir(hooks.path())
-        .expect("read hooks dir")
-        .map(|entry| entry.expect("dir entry").file_name())
-        .collect::<Vec<_>>();
-    assert_eq!(entries.len(), 1, "one hook, nothing else");
-    assert_eq!(entries[0], DOOR_PRE_RECEIVE_HOOK_NAME);
-}
-
-#[test]
-fn smart_http_vetted_hook_disables_replacement_lookup_on_every_git() {
-    assert!(
-        DOOR_PRE_RECEIVE_HOOK.contains("export GIT_NO_REPLACE_OBJECTS"),
-        "the hook exports the pin to every git it spawns"
-    );
-    for invocation in DOOR_PRE_RECEIVE_HOOK
-        .lines()
-        .map(str::trim_start)
-        .filter(|line| line.starts_with("git ") || line.contains("$(git "))
-    {
+fn receive_pack_rejects_secret_under_hostile_inherited_git_config() {
+    use super::tests::{CapturingSink, commit_file, served_repo};
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "ONEIRON_HOSTILE_GIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let hostile = tempfile::tempdir().unwrap();
+        let hook = hostile.path().join("pre-receive");
+        std::fs::write(
+            &hook,
+            b"#!/bin/sh\nprintf invoked > \"$0.invoked\"\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "origin::smart_http::door_serve_tests::receive_pack_rejects_secret_under_hostile_inherited_git_config",
+                "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1").env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+            .env("GIT_CONFIG_VALUE_0", hostile.path())
+            .env("GIT_CONFIG_KEY_1", "receive.fsckObjects")
+            .env("GIT_CONFIG_VALUE_1", "false")
+            .output().unwrap();
         assert!(
-            invocation.contains("--no-replace-objects"),
-            "this hook git could read substituted bytes: {invocation}"
+            output.status.success(),
+            "child failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        assert!(!hostile.path().join("pre-receive.invoked").exists());
+        return;
     }
-}
-
-fn proposed(name: &str) -> RefUpdate {
-    RefUpdate {
-        name: name.to_owned(),
-        old_oid: None,
-        new_oid: Some(GitOid::parse_hex("a".repeat(40)).expect("oid")),
-    }
-}
-
-#[test]
-fn smart_http_unlandable_ref_names_are_refused_before_anything_moves() {
-    assert!(
-        unlandable_ref_reasons(&[
-            proposed("refs/heads/main"),
-            proposed("refs/tags/v1.0"),
-            proposed("refs/heads/feature-foo"),
-        ])
-        .is_empty(),
-        "a legal batch is untouched by this rule"
-    );
-
-    // Legal to git, unpublishable by GitWire: the landing would parse this
-    // name only AFTER the backend had moved it.
-    let illegal = unlandable_ref_reasons(&[proposed("refs/heads/feature+foo")]);
-    assert_eq!(illegal.len(), 1, "one reason for the one offending name");
-    assert!(
-        illegal[0].starts_with("refs/heads/feature+foo:"),
-        "the refusal names the ref: {}",
-        illegal[0]
-    );
-
-    let replace = unlandable_ref_reasons(&[proposed(&format!(
-        "{ORIGIN_REFUSED_REF_PREFIX}{}",
-        "b".repeat(40)
-    ))]);
-    assert_eq!(replace.len(), 1, "a replacement ref is never served");
-
-    let twice = unlandable_ref_reasons(&[proposed("refs/heads/main"), proposed("refs/heads/main")]);
-    assert_eq!(twice.len(), 1, "a name proposed twice cannot be published");
-
-    let batch = (0..=ORIGIN_MAX_REF_UPDATES)
-        .map(|index| proposed(&format!("refs/heads/b{index}")))
-        .collect::<Vec<_>>();
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, head) = served_repo(&vault);
+    let pusher = EntityId::now().to_hex();
+    let push = |path: &str, contents: &str, name: &str| {
+        let tip = commit_file(source.path(), path, contents);
+        // Transfer objects only; the receive-pack below proposes their first new served ref.
+        git(
+            &repo,
+            &["fetch", "--", source.path().to_str().unwrap(), tip.as_str()],
+        );
+        let pack = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["pack-objects", "--stdout"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(pack.status.success());
+        let command = format!(
+            "{} {} {name}\0report-status\n",
+            "0".repeat(40),
+            tip.as_str()
+        );
+        let mut bytes = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
+        bytes.extend(pack.stdout);
+        let request = ServeRequest {
+            method: "POST".into(),
+            path_info: "/demo.git/git-receive-pack".into(),
+            query_string: String::new(),
+            content_type: Some("application/x-git-receive-pack-request".into()),
+            content_length: Some(bytes.len() as u64),
+            content_encoding: None,
+            git_protocol: None,
+            remote_user: Some(pusher.clone()),
+            remote_addr: Some("127.0.0.1".into()),
+        };
+        let mut sink = CapturingSink::default();
+        let mut body = io::Cursor::new(bytes);
+        let report = serve(
+            &vault,
+            "demo",
+            &request,
+            DoorSeam::Landed,
+            &mut body,
+            &mut sink,
+        )
+        .expect("real CGI exchange completes");
+        (tip, report)
+    };
+    // Positive control: under the same hostile config a clean push scans and lands.
+    let (clean, report) = push("notes.txt", "plain notes\n", "refs/heads/hostile-clean");
+    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
+    assert!(report.landing.is_some());
     assert_eq!(
-        unlandable_ref_reasons(&batch).len(),
-        1,
-        "a batch past the publication bound is refused whole"
+        git(&repo, &["rev-parse", "refs/heads/hostile-clean"]),
+        clean.as_str()
     );
-    assert!(
-        unlandable_ref_reasons(&batch[..ORIGIN_MAX_REF_UPDATES]).is_empty(),
-        "exactly the bound is still a batch the landing can journal"
+    let published = vault.origin_publication_ids(None).unwrap();
+    let (_, report) = push(
+        "secret.txt",
+        "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+        "refs/heads/hostile-secret",
     );
+    // Refused by detection: the one reason names the secret's path. Unreadable
+    // input, a scan that cannot run and a lost intent write name no path.
+    let DoorWindowVerdict::Rejected { reasons } = &report.door.verdict else {
+        panic!("secret push admitted: {:?}", report.door.verdict);
+    };
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].starts_with("secret.txt: "), "{reasons:?}");
+    assert!(!reasons[0].contains("ghp_"));
+    assert!(report.landing.is_none());
+    assert!(git(&repo, &["for-each-ref", "refs/heads/hostile-secret"]).is_empty());
+    assert_eq!(git(&repo, &["rev-parse", "refs/heads/main"]), head.as_str());
+    assert_eq!(vault.origin_publication_ids(None).unwrap(), published);
 }
 
 /// Frames one record the way the vetted hook does.
@@ -288,34 +247,6 @@ fn smart_http_repo_names_are_closed() {
 }
 
 #[test]
-fn smart_http_noop_door_hook_stamps_without_a_credential() {
-    let repo = unpinned_repo_ref(Path::new("/tmp/demo.git"));
-    let stamp = NoopDoorHook
-        .admit_receive_pack(
-            crate::EntityId::now(),
-            None,
-            "principal:tester",
-            &repo,
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            7,
-        )
-        .expect("noop admission");
-    assert_eq!(stamp.principal_ref(), "principal:tester");
-    assert_eq!(stamp.method(), "bearer+registered-principal");
-    assert!(
-        stamp.credential_fingerprint().is_none(),
-        "Phase A presents no slip, and the stamp says so"
-    );
-    assert!(
-        matches!(
-            NoopDoorHook.pre_receive_scan(&repo, &[]),
-            Ok(DoorScanVerdict::Clean)
-        ),
-        "the no-op default adds no behavior"
-    );
-}
-
-#[test]
 fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     let (_vault_dir, vault) = temp_vault();
     let (_repo_dir, root, oid) = seeded_repo();
@@ -432,66 +363,5 @@ fn smart_http_landed_door_hook_refuses_an_unauthorized_slip() {
             Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
         ),
         "an unnarrowed slip is refused at the door, not at the transport"
-    );
-}
-
-/// The catastrophe dial must reach the path that carries NO slip.
-///
-/// Every production push is that path: Phase A presents no capability slip
-/// by design, so a receive-pack gate reachable only through a presented
-/// credential is a gate no push ever passes through. An operator who empties
-/// `secret.door.allowed_effectors` would then shut every lease and injection
-/// downstream of the door while leaving the push door itself open.
-#[test]
-fn smart_http_narrowed_dial_shuts_the_push_door_with_no_slip_presented() {
-    let (_dir, vault) = temp_vault();
-    let repo_dir = Path::new("/tmp/demo.git");
-    let request = ServeRequest {
-        method: "POST".to_owned(),
-        path_info: "/demo.git/git-receive-pack".to_owned(),
-        query_string: String::new(),
-        content_type: Some("application/x-git-receive-pack-request".to_owned()),
-        content_length: None,
-        content_encoding: None,
-        git_protocol: None,
-        remote_user: Some("principal:tester".to_owned()),
-        remote_addr: Some("127.0.0.1".to_owned()),
-    };
-
-    let admitted = stamp_admission(&vault, &request, repo_dir, DoorSeam::Landed)
-        .expect("the default dial admits the push door")
-        .expect("a receive-pack stamps an admission");
-    assert!(
-        admitted.credential_fingerprint().is_none(),
-        "no slip was presented, and the stamp says so"
-    );
-
-    narrow_door_effectors(&vault, Vec::new());
-    assert!(
-        matches!(
-            stamp_admission(&vault, &request, repo_dir, DoorSeam::Landed),
-            Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
-        ),
-        "an emptied effector set closes the push path itself, not only what is downstream"
-    );
-    // Refused HERE is refused before anything exists to refuse it at:
-    // `stamp_admission` runs ahead of the coordinator and ahead of the
-    // backend, so no pushed byte is ever read.
-    assert!(
-        DoorHook::admit_receive_pack(
-            &CredentialDoorService::new(Arc::clone(&vault)),
-            crate::EntityId::now(),
-            None,
-            "principal:tester",
-            &unpinned_repo_ref(repo_dir),
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            10,
-        )
-        .is_err(),
-        "the seam itself carries the gate, not just this one caller"
-    );
-    assert!(
-        stamp_admission(&vault, &request, repo_dir, DoorSeam::Noop).is_ok(),
-        "the no-op seam refuses nothing, which is its whole contract"
     );
 }

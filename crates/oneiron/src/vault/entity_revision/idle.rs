@@ -7,7 +7,7 @@ use super::{
     ReadMode, RevisionRef,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
@@ -17,7 +17,7 @@ const DEBOUNCE: SideTable<(), u64, Raw> =
 impl Vault {
     /// Seeds the host's loop policy once; never overwrites a live manifest edit.
     pub fn seed_indexed_idle_delay_ms(&self, delay_ms: u64) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if DEBOUNCE.get(&self.store, txn, &())?.is_none() {
                 DEBOUNCE.put(&self.store, txn, &(), &delay_ms)?;
             }
@@ -134,8 +134,8 @@ impl Vault {
                 Some(_) => None,
                 None if !embeddable => None,
                 None => match embedder {
-                    Some(embedder) => match embedder.embed_revision(&input) {
-                        Ok(vector) => Some(vector),
+                    Some(embedder) => match embedder.embed_revision_marked(&input) {
+                        Ok(marked) => Some(marked),
                         Err(
                             error @ (Error::InvalidConfig(_)
                             | Error::DimensionMismatch { .. }
@@ -189,14 +189,14 @@ impl Vault {
             }
             let generated_vector = staged.vector.is_none() && embedder.is_some();
             let vector = match staged.vector {
-                Some(vector) => Some(vector),
+                Some(vector) => Some((vector, staged.provenance)),
                 // The staged vector the work started from is gone, and the copy
                 // read before is not written in its place.
                 None if snapshot_staged => {
                     report.superseded.push(input.entity);
                     continue;
                 }
-                None => generated,
+                None => generated.map(|(vector, provenance)| (vector, Some(provenance))),
             };
             let codes = super::phonetic::take_phonetic(
                 &self.store,
@@ -222,11 +222,12 @@ impl Vault {
                 },
             ];
             let wrote_vector = vector.is_some();
-            if let Some(vector) = vector {
+            if let Some((vector, provenance)) = vector {
                 ops.push(BatchOp::Vector {
                     id: input.entity,
                     vector,
                     pending_embedding_token: staged.pending_embedding_token,
+                    provenance,
                 });
             }
             if let Err(error) = apply_ops(
@@ -240,9 +241,13 @@ impl Vault {
                 false,
                 false,
             ) {
+                // Text staged before the per-document ceiling fails on its own and
+                // does not hold every publication after it.
                 if matches!(
                     error,
-                    Error::DimensionMismatch { .. } | Error::InvalidVector { .. }
+                    Error::DimensionMismatch { .. }
+                        | Error::InvalidVector { .. }
+                        | Error::Store(StoreError::IndexedTextTooLarge { .. })
                 ) {
                     report
                         .failed
@@ -265,13 +270,21 @@ impl Vault {
                 vector_refill::clear(&self.store, &mut txn, &input.entity)?;
             }
             // A moved frontier of a turn's text owes the tagger a pass again,
-            // committed with the frontier (ARCH-0036).
+            // committed with the frontier (ARCH-0036), the turn a vector of
+            // its new text (ARCH-0004), and the sieve a new read.
             crate::tagging::mark_on_publication_in_txn(
                 self,
                 &mut txn,
                 &input.entity,
                 input.entity_type,
             )?;
+            crate::embed::mark_on_publication_in_txn(
+                self,
+                &mut txn,
+                &input.entity,
+                input.entity_type,
+            )?;
+            crate::dreamer_wake::mark_on_publication_in_txn(&self.store, &mut txn, &input.entity)?;
             txn.commit()?;
             if self.config.tagging.is_some() {
                 self.store.notify_attempt_observers();
@@ -350,8 +363,8 @@ impl Vault {
         for input in candidates {
             let vector = match input.payload() {
                 None => None,
-                Some(_) => match embedder.embed_revision(&input) {
-                    Ok(vector) => Some(vector),
+                Some(_) => match embedder.embed_revision_marked(&input) {
+                    Ok(marked) => Some(marked),
                     Err(
                         error @ (Error::InvalidConfig(_)
                         | Error::DimensionMismatch { .. }
@@ -371,7 +384,7 @@ impl Vault {
                 continue;
             }
             match vector {
-                Some(vector) => {
+                Some((vector, provenance)) => {
                     if let Err(error) = apply_ops(
                         &self.store,
                         &self.config,
@@ -381,6 +394,7 @@ impl Vault {
                             id: input.entity,
                             vector,
                             pending_embedding_token: None,
+                            provenance: Some(provenance),
                         }],
                         self.text_index_trusted
                             .load(std::sync::atomic::Ordering::Acquire),
@@ -439,10 +453,28 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<super::RevisionRef>> {
-        let Some(raw) = read_entity_revision_in_txn(self, txn, id, ReadMode::Indexed)? else {
+        self.indexed_revision_from_in_txn(&self.store, txn, id)
+    }
+
+    /// [`Self::indexed_revision_in_txn`] read through `store`: a room's view
+    /// pins its overlay rows as base pins its own.
+    pub(crate) fn indexed_revision_from_in_txn(
+        &self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<super::RevisionRef>> {
+        let Some(raw) = super::storage::read_entity_revision_from_store_in_txn(
+            self,
+            store,
+            txn,
+            id,
+            ReadMode::Indexed,
+        )?
+        else {
             return Ok(None);
         };
-        Ok(Some(state(&self.store, txn, id)?.map_or_else(
+        Ok(Some(state(store, txn, id)?.map_or_else(
             || super::storage::reference(id, &raw),
             |value| value.indexed,
         )))
@@ -451,8 +483,12 @@ impl Vault {
 
 /// Drops what a revision with nothing to embed must not keep: its vector and
 /// graph node, and the pending marker, job and lease a worker would lease it
-/// by.
-fn drop_vector_state(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+/// by. A turn left with no text drops the same state.
+pub(crate) fn drop_vector_state(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
     let had_node = vault
         .store
         .hnsw_neighbors
@@ -464,6 +500,7 @@ fn drop_vector_state(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId) ->
         crate::hnsw::increment_vector_version(&vault.store, txn)?;
     }
     crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
+    crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {

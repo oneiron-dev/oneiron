@@ -5,7 +5,11 @@ use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
 
+/// A stored profile grant cannot widen this request's credential caveats: the
+/// profile store is read raw, so a credential narrowed to some records is
+/// refused before any grant is looked up.
 pub(crate) fn require_companion_profile_read(auth: &CoreAuth) -> Result<(), ApiError> {
+    auth.require_unrestricted_record_scope()?;
     if auth.has_scope(CoreScope::CompanionProfileRead) || auth.has_scope(CoreScope::Read) {
         Ok(())
     } else {

@@ -75,7 +75,7 @@ pub fn set_escalation_standing_n(vault: &Vault, n: u32) -> Result<()> {
             "a standing-policy threshold of zero rulings is not a threshold",
         )));
     }
-    vault.with_write_txn(|wtxn| STANDING_N.put(&vault.store, wtxn, &(), &StandingN(n)))
+    vault.with_write_txn_grouped(|wtxn| STANDING_N.put(&vault.store, wtxn, &(), &StandingN(n)))
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ pub(crate) fn record_escalation_at(
         budget_band: receipt.budget_band,
         at,
     };
-    vault.with_write_txn(|wtxn| ESCALATION.put(&vault.store, wtxn, &key, &row))?;
+    vault.with_write_txn_grouped(|wtxn| ESCALATION.put(&vault.store, wtxn, &key, &row))?;
     Ok(id)
 }
 

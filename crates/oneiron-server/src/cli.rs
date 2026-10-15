@@ -8,8 +8,9 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs, SecretScanSwitch,
-    ServeOnlyArgs,
+    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
+    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
+    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -48,16 +49,35 @@ pub enum Command {
     /// Open a vault and print its doctor report, with where its data lives:
     /// path, size on disk, last backup and last export.
     Doctor(DoctorArgs),
+    /// Print a stopped vault's owner principal and its vault id.
+    Whoami(Box<WhoamiArgs>),
     /// Back up a stopped vault now (`--list` shows its backups).
     Backup(Box<BackupArgs>),
+    /// Run a stopped vault's housekeeping now, every sweep, and any repair
+    /// named; print the report. A running `serve` sweeps on its own.
+    Maintain(Box<MaintainArgs>),
     /// Restore a backup over a stopped vault, or `--rehearse` it in a
     /// scratch copy without touching the vault.
     Restore(Box<RestoreArgs>),
+    /// Rebuild one sync window of a stopped vault from a canonical snapshot
+    /// of its CRDT state, repairing its rows. The snapshot stays in memory
+    /// and never touches disk; only the window's manifest is kept.
+    RecoverWindow(Box<RecoverWindowArgs>),
+    /// Let agents back in after the host clock ran ahead and was set back:
+    /// on a stopped vault, move the clock holder proofs are judged on back
+    /// to the host's clock, and refuse every proof signed before now.
+    RecoverClock(Box<RecoverClockArgs>),
     /// Export the whole vault in one of five formats.
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
     SecretScan(Box<SecretScanArgs>),
-    /// Preview, approve or decline one whole import batch.
+    /// Register a secret in a stopped vault's custody, or rotate one. The
+    /// value is read from stdin.
+    #[command(subcommand)]
+    Secrets(SecretsCommand),
+    /// Import your own history into a stopped vault (ChatGPT and Claude.ai
+    /// exports, Claude Code and Codex sessions, a folder of markdown notes),
+    /// or preview, approve or decline one whole import batch.
     #[command(subcommand)]
     Import(ImportCommand),
     /// Agent runs waiting for consent: list, review, approve or decline whole.
@@ -73,14 +93,120 @@ pub enum Command {
     Token(TokenCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
+    /// Codex), forwarding each message to a running server with a paired
+    /// credential and a fresh holder proof.
+    Mcp(McpArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
+    /// Owner acts for the vault's Dreamer.
+    #[command(subcommand)]
+    Dreamer(DreamerCommand),
+    /// Run this host's local embedder for other vaults.
+    #[command(subcommand)]
+    Embedder(EmbedderCommand),
+}
+
+#[derive(Subcommand)]
+pub enum EmbedderCommand {
+    /// Serve the local embedding model over an OpenAI-compatible
+    /// `/v1/embeddings` for vaults on the `endpoint` provider to share: one
+    /// model in memory for all of them, on a GPU where the build has one.
+    /// Point a vault at it with `init --embedder endpoint --embedder-endpoint
+    /// http://127.0.0.1:7399/v1` and the model id this prints; its vectors are
+    /// the ones a local vault makes.
+    Serve(Box<EmbedderServeArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct EmbedderServeArgs {
+    /// Config file whose `[embedder]` section names the model, as `serve
+    /// --config` reads it. With neither this, `ONEIRON_CONFIG`, the XDG
+    /// config nor `--embedder-*` flags, the default local model.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// `--embedder-*` flags, as `serve` takes them: repository, revision,
+    /// device, quantisation, input cap.
+    #[command(flatten)]
+    pub embedder: crate::config::EmbedderArgs,
+    /// Vault width the `[embedder]` section is checked against, as `serve`
+    /// checks it.
+    #[arg(long)]
+    pub dimensions: Option<usize>,
+    /// Address to listen on. Anything but loopback needs `--api-key-env`.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: std::net::IpAddr,
+    #[arg(long, default_value_t = 7399)]
+    pub port: u16,
+    /// Environment variable NAME holding the key every request must send as
+    /// a bearer token. Never the key itself.
+    #[arg(long)]
+    pub api_key_env: Option<String>,
+    /// Another name a request's `model` may give, beside the model id.
+    #[arg(long = "model-alias")]
+    pub model_aliases: Vec<String>,
+    #[arg(long, default_value = "info")]
+    pub log_level: String,
+}
+
+#[derive(Subcommand)]
+pub enum DreamerCommand {
+    /// Give a vault created before the Dreamer's policy rows shipped the
+    /// rows a fresh vault seeds, so its Dreamer can read the vault and land
+    /// routine consolidation (run once, with the server stopped; a vault that
+    /// has them is left as it is). `--extraction-route` also routes the
+    /// vault's extraction defaults.
+    Grant(Box<DreamerGrantArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct DreamerGrantArgs {
+    /// Also route the vault's extraction and consolidation defaults to this
+    /// locality (`own_server` for a model server you run, `third_party` for a
+    /// hosted API), raising the extraction bound to it if lower. Omit to leave
+    /// the vault's inference defaults as they are.
+    #[arg(long, value_parser = parse_route)]
+    pub extraction_route: Option<oneiron::ModelLocality>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+fn parse_route(value: &str) -> Result<oneiron::ModelLocality, String> {
+    match value {
+        "own_server" => Ok(oneiron::ModelLocality::OwnServer),
+        "third_party" => Ok(oneiron::ModelLocality::ThirdParty),
+        other => Err(format!("{other:?} is not own_server or third_party")),
+    }
 }
 
 #[derive(Subcommand)]
 pub enum HostCommand {
     Init(HostInitArgs),
+    /// Move a stopped self-host vault's root to a new host secret, in-chain:
+    /// the vault id stays, and every credential the old secret minted stops
+    /// working. Run it after a host secret leaks, or to change it.
+    ReRoot(Box<HostReRootArgs>),
+}
+
+/// The current secret comes from `--secret-file`, the config or
+/// `ONEIRON_AUTH_SECRET`; the new one from `--new-secret-file` or
+/// `ONEIRON_NEW_AUTH_SECRET`. Neither is read from argv or printed.
+#[derive(Args, Clone, Debug)]
+pub struct HostReRootArgs {
+    /// Read the current host secret from this file, readable by its owner
+    /// only, instead of the config or `ONEIRON_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub secret_file: Option<PathBuf>,
+
+    /// Read the new host secret from this file, readable by its owner only,
+    /// instead of `ONEIRON_NEW_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -99,6 +225,11 @@ pub enum TokenCommand {
     Bootstrap(Box<TokenBootstrapArgs>),
     /// Create a one-hour pairing link on the running server and print it.
     Pair(Box<TokenPairArgs>),
+    /// Mint a read-only credential for a local agent on the stopped vault.
+    Read(Box<TokenReadArgs>),
+    /// Mint a scoped credential for one named agent (Claude Code, Codex) on
+    /// the stopped vault, for `oneiron mcp`.
+    Agent(Box<TokenAgentArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -107,8 +238,9 @@ pub enum TokenCommand {
 /// configured path. No issuer secret is sent over HTTP or printed.
 #[derive(Args, Clone, Debug)]
 pub struct TokenBootstrapArgs {
-    /// Origin clients will contact after `serve` starts.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// Origin clients will contact after `serve` starts. The default is
+    /// where `oneiron serve` listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Optional shrink-only lifetime for the first owner slip (seconds).
@@ -123,8 +255,9 @@ pub struct TokenBootstrapArgs {
 /// the verbs here; whoever redeems the link chooses only the connection key.
 #[derive(Args, Clone, Debug)]
 pub struct TokenPairArgs {
-    /// The running server's origin. The link carries it.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// The running server's origin. The link carries it. The default is
+    /// where `oneiron serve` listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Environment variable holding a logged owner-grade capability slip.
@@ -155,6 +288,72 @@ pub struct TokenPairArgs {
     pub lifetime_secs: u64,
 }
 
+/// A local agent's read credential, minted through the same host-rooted
+/// pairing doors as `bootstrap` while the vault is stopped. The issuer key
+/// comes from the config or `ONEIRON_AUTH_SECRET`, never argv.
+#[derive(Args, Clone, Debug)]
+pub struct TokenReadArgs {
+    /// The principal the credential reads as: a 32-hex id or a short ref.
+    /// Defaults to the vault's owner (`oneiron whoami`).
+    #[arg(long = "principal-ref")]
+    pub principal_ref: Option<String>,
+
+    /// D13 actor class the credential binds: `human`, `agent` or `system`.
+    /// The owner reads its whole vault as `human`.
+    #[arg(long = "actor-class", default_value = "human")]
+    pub actor_class: String,
+
+    /// The credential's lifetime in seconds, capped by the vault's policy.
+    #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
+    pub lifetime_secs: u64,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// A named agent's credential: a paired slip for the agent's own principal,
+/// class `agent`, carrying at most read, propose and write. Never owner-grade;
+/// `token revoke` takes the slip id it prints.
+#[derive(Args, Clone, Debug)]
+pub struct TokenAgentArgs {
+    /// The agent's name, e.g. `claude-code`. One name is one agent principal,
+    /// however many times it is minted.
+    #[arg(long)]
+    pub name: String,
+
+    /// What the agent may do. The latest mint for a name holds: it sets that
+    /// agent's tier and revokes the agent's earlier slips.
+    #[arg(long, value_enum, default_value_t = AgentTier::FullAccess)]
+    pub tier: AgentTier,
+
+    /// The credential's lifetime in seconds, capped by the vault's policy.
+    #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
+    pub lifetime_secs: u64,
+
+    /// Write the credential to this new file, readable by its owner only, and
+    /// print only its slip id and principal. Without it the credential is
+    /// printed.
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// ARCH-0028's registration-time authority tiers for an agent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum AgentTier {
+    /// Retrieve and inspect; no write capability.
+    ReadOnly,
+    /// Write capability at ceiling `proposed`: what it writes waits for the
+    /// owner's review. It proposes (`core:propose`) and holds no `core:write`,
+    /// so no write door that cannot hold a write for review admits it.
+    ProposeOnly,
+    /// Write capability at ceiling `auto`: its writes land through the same
+    /// write gate as the owner's.
+    FullAccess,
+}
+
 /// Revoking one token is an explicit act on one named identity. It is
 /// deliberately not a side effect of rotation: rotation rewraps the MAC key
 /// and invalidates every token at once, which is the other lever.
@@ -175,8 +374,9 @@ pub struct TokenRevokeArgs {
 /// envelope, and the same body bytes the server sent.
 #[derive(Args, Clone, Debug)]
 pub struct ApiArgs {
-    /// Existing Oneiron server root.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// Existing Oneiron server root. The default is where `oneiron serve`
+    /// listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub base_url: String,
 
     /// Environment variable holding a bearer slip. The credential is never
@@ -245,6 +445,67 @@ pub enum ApiCommand {
         #[arg(long, value_name = "MIME")]
         content_type: Option<String>,
     },
+}
+
+/// `oneiron mcp`: a stdio MCP server in front of a running server's MCP
+/// endpoint. The endpoint is the operator's choice, made here in the agent's
+/// MCP config, or else the server's; nothing the agent sends can change it.
+#[derive(Args, Clone, Debug)]
+pub struct McpArgs {
+    /// The running server's origin. The default is where `oneiron serve`
+    /// listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
+    pub url: String,
+
+    /// Which MCP endpoint to forward to. Without it, the bridge asks the
+    /// server at the first request: `primary` when this credential may run
+    /// code there (a bound code host, and a credential `execute_code`
+    /// admits), `tool-first` otherwise.
+    #[arg(long, value_enum)]
+    pub surface: Option<McpSurface>,
+
+    /// File holding the paired credential, as `token agent --out` writes it.
+    /// Only its owner may be able to read it. Without this flag the slip and
+    /// its seed come from the two environment variables below.
+    #[arg(long, value_name = "FILE")]
+    pub credential_file: Option<PathBuf>,
+
+    /// Environment variable holding the paired slip.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Environment variable holding its binding seed (64 hex characters).
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
+
+    /// Seconds one request may take, answer included, before it fails as
+    /// `server_unreachable`.
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..))]
+    pub request_timeout_secs: u64,
+
+    /// Seconds an answer may stall once it has started arriving before the
+    /// request fails as `server_unreachable`.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+    pub idle_timeout_secs: u64,
+}
+
+/// The two MCP endpoints a server registers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum McpSurface {
+    /// `/mcp/tool-first`: one tool per exported verb.
+    ToolFirst,
+    /// `/mcp`: the code-mode catalog (`setup_oneiron`, `execute_code`).
+    Primary,
+}
+
+impl McpSurface {
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::ToolFirst => "/mcp/tool-first",
+            Self::Primary => "/mcp",
+        }
+    }
 }
 
 #[derive(Args, Clone, Debug)]
@@ -406,6 +667,7 @@ impl Cli {
 }
 
 pub async fn run() -> anyhow::Result<()> {
+    crate::logging::install_panic_hook();
     run_cli(Cli::parse()).await
 }
 
@@ -414,20 +676,36 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Serve(args) => commands::serve(*args).await,
         Command::Revoke(args) => commands::revoke(*args).await,
         Command::SkillsPack(args) => commands::skills_pack(args),
-        Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
+        Command::Init(args) => {
+            crate::logging::off_runtime("init", move || commands::init(args)).await?
+        }
         Command::Doctor(args) => commands::doctor(args),
+        Command::Whoami(args) => commands::whoami(*args),
         Command::Backup(args) => commands::backup(*args),
+        Command::Maintain(args) => commands::maintain(*args),
         Command::Restore(args) => commands::restore(*args),
+        Command::RecoverWindow(args) => commands::recover_window(*args),
+        Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
+        Command::Secrets(command) => commands::secrets(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
-        Command::Reembed(args) => commands::reembed(*args),
+        // Blocking: an endpoint's transform is read over blocking HTTP.
+        Command::Reembed(args) => {
+            crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?
+        }
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
+        Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
+        Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
+        Command::Mcp(args) => commands::mcp(args),
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
+        Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
+        Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
+        Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
     }
 }

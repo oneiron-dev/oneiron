@@ -32,14 +32,17 @@ pub const GIT_WIRE_INHERITED_ENV_KEYS: [&str; 4] = ["PATH", "TMPDIR", "LANG", "L
 /// Environment pairs forced on every child regardless of the ambient
 /// environment. `GIT_NO_LAZY_FETCH` keeps a partial-clone read from becoming a
 /// network fetch and an object write; `GIT_OPTIONAL_LOCKS` keeps inspection
-/// from taking or refreshing an index lock.
-pub const GIT_WIRE_FIXED_ENV: [(&str, &str); 8] = [
+/// from taking or refreshing an index lock; `GIT_NO_REPLACE_OBJECTS` keeps a
+/// `refs/replace/*` entry from deciding which bytes a read returns, as the
+/// origin's serve baseline does.
+pub const GIT_WIRE_FIXED_ENV: [(&str, &str); 9] = [
     ("GIT_CONFIG_NOSYSTEM", "1"),
     ("GIT_CONFIG_SYSTEM", "/dev/null"),
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
     ("GIT_TERMINAL_PROMPT", "0"),
     ("GIT_OPTIONAL_LOCKS", "0"),
     ("GIT_NO_LAZY_FETCH", "1"),
+    ("GIT_NO_REPLACE_OBJECTS", "1"),
     ("GIT_ATTR_NOSYSTEM", "1"),
     ("GIT_PAGER", "cat"),
 ];

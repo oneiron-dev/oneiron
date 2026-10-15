@@ -555,7 +555,9 @@ fn an_own_device_never_receives_the_document_of_a_note_in_a_device_only_world() 
     vault
         .put_edge(&note, crate::EdgeKind::InWorld, &world, 1.0)
         .unwrap();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
     let manager = Arc::new(WindowManager::new(
         vault,
         Arc::new(Materializer::new()),
@@ -567,4 +569,56 @@ fn an_own_device_never_receives_the_document_of_a_note_in_a_device_only_world() 
             .export_owner_document(note, &loro::VersionVector::new().encode())
             .unwrap_err(),
     );
+}
+
+/// Astra #1402 re-check finding 1: a NOTE frame the owner lane exported while
+/// its world was portable is judged again as it is released. Once the flag
+/// commits, it stays here, and so does any NOTE command or receipt carrying
+/// the NOTE's text.
+#[test]
+fn a_note_frame_exported_before_its_world_turns_device_only_is_withheld_at_release() {
+    use crate::sync::{WindowManager, bridge::Materializer};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "kept here",
+            crate::WriteActor::new(owner, crate::EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    vault
+        .put_edge(&note, crate::EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "device-only",
+    ));
+    let state = manager
+        .export_owner_document(note, &loro::VersionVector::new().encode())
+        .unwrap();
+    assert!(!document_frame_withheld(&vault, &state));
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+
+    assert!(document_frame_withheld(&vault, &state));
+    for kind in [document_sub_tags::NOTE_OPS, document_sub_tags::NOTE_RECEIPT] {
+        let frame = encode_document(note, kind, b"{\"insert\":\"kept here\"}")
+            .into_result()
+            .unwrap();
+        assert!(document_frame_withheld(&vault, &frame));
+    }
 }

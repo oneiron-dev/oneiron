@@ -14,9 +14,7 @@ use crate::edge::{
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, SyncError};
 use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
-use crate::sync::loro_support::{
-    map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
-};
+use crate::sync::loro_support::{TombstoneIndex, map_delete, map_for_each_bytes, map_get_bytes};
 use crate::sync::quarantine::{
     QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
@@ -275,7 +273,7 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     entities_map: &LoroMap,
-    tombstones_map: &LoroMap,
+    tombstones: &TombstoneIndex,
     window_key: &str,
     id: &EntityId,
     lease_vault_id: u64,
@@ -310,11 +308,17 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     //
     // Value-agnostic, entity-canonical tombstone presence (a non-binary
     // tombstone decodes HARD downstream; a case-shifted hex key still
-    // names this id) OR the permanent local `dt:` marker: an edge whose
-    // endpoint was hard-deleted must not hydrate the endpoint body back
-    // into LMDB even after hostile tombstone-map manipulation.
-    if tombstone_map_contains_id(tombstones_map, id)
+    // names this id) OR the permanent local `dt:` marker OR the row deletion
+    // fence: an edge whose endpoint was deleted here must not hydrate the
+    // endpoint body back into LMDB even after hostile tombstone-map
+    // manipulation.
+    if tombstones.contains(id)
         || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)?
+        || crate::deletion::ROW_DELETION_FENCE.contains(
+            &vault.store,
+            wtxn,
+            &crate::side_table::HexId(*id),
+        )?
     {
         return Ok(EndpointHydration::Deferred);
     }
@@ -351,7 +355,7 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // Late body/project validation can fail after staging. The edge batch
     // quarantines remote failures and commits siblings, so hydration needs
     // the same per-entity rollback boundary as the entity-delta observer.
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones_map);
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones);
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     let step = ingest_entity_in_txn(&ingest, &mut savepoint, &hex_id, Some(&blob))?;
     if let EntityStep::Quarantine(refusal) = step {
@@ -381,10 +385,17 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // This savepoint has no postcommit owner. Carry an admitted claim
     // hydration to the edge batch's OUTER transaction; only its commit may
     // re-arm the digest timer. Rollback drops that owner's marker.
-    if EntityMetadataHeader::parse(&blob)
-        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
-    {
-        crate::batch::queue_proactivity_change(vault, wtxn);
+    match EntityMetadataHeader::parse(&blob).map(|header| header.entity_type) {
+        Some(crate::registry::ENTITY_TYPE_CLAIM) => {
+            crate::batch::queue_proactivity_change(vault, wtxn);
+        }
+        // A hydrated TASK reaches board subscribers after the same commit.
+        Some(crate::registry::ENTITY_TYPE_TASK) => {
+            if let Some(id) = step.written() {
+                crate::batch::queue_task_updates(vault, wtxn, [id]);
+            }
+        }
+        _ => {}
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the
@@ -440,3 +451,7 @@ pub fn encode_edge_value_for_crdt(
 pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String {
     format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
 }
+
+#[cfg(test)]
+#[path = "companion_identity_tests.rs"]
+mod tests;

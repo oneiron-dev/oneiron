@@ -1,0 +1,50 @@
+[package]
+name = "oneiron-organ-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The engine side of the organ protocol: spawn, pool, budget, regions, sandbox"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+# The host links the engine and the open protocol, never an organ crate
+# (the of060 F4 fence in tests/organ_fence.rs).
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
+# An organ starts with its socket on fd 3 and stdio only.
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
+blake3 = { workspace = true }
+# The seal binding's DER checks, at the seal organ's exact pins: general
+# ASN.1 crates, not the organ.
+cms = { version = "=0.2.3", default-features = false, features = ["std"] }
+const-oid = "=0.9.6"
+der = { version = "=0.7.10", features = ["alloc", "oid", "std"] }
+ipnet = "2"
+# The guarded `net.fetch`: the engine already builds this client and TLS
+# stack, so this adds no crate to the graph.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+rmp-serde = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+serde = { workspace = true }
+sha2 = "=0.10.9"
+thiserror = { workspace = true }
+# reqwest's own runtime, driven here so one deadline bounds a whole fetch.
+tokio = { version = "1", features = ["rt", "time"] }
+x509-cert = { version = "=0.2.5", default-features = false, features = ["std"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Unseeded test vaults keep the blob write door open without a policy fixture.
+oneiron = { path = "../oneiron", features = ["test-support"] }
+tempfile = "3"
+toml = "0.8"
+
+[lints]
+workspace = true

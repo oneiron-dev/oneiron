@@ -2,6 +2,9 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
+    /// run. Key: ().
+    DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
@@ -77,6 +80,9 @@ side_tables! {
     DREAMER_HARNESS_EVAL_BASELINE: VaultMeta b"dreamer:harness:eval-baseline:v1:" LegacyJson;
     /// Elected MACRO-scope home-node designation (node_id, class, elected_at). Key: ().
     DREAMER_HOME_NODE: VaultMeta b"dreamer:home_node_macro:v1" Raw;
+    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
+    /// lists the same ones. Ids only, never their text. Key: id16.
+    DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
@@ -99,6 +105,19 @@ side_tables! {
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
     DREAMER_PROACTIVITY_STATE: VaultMeta b"dreamer:proactivity:state:v1" LegacyJson;
+    /// The projector rounds one TURN gave words to, for erasure. Key: id16(turn).
+    DREAMER_PROJECTION_GIVEN: VaultMeta b"dreamer:projection:given:v1:" Named;
+    /// The latest TURN the projector queued, vault-wide, its round, and whether it holds. Key: ().
+    DREAMER_PROJECTION_LATEST: VaultMeta b"dreamer:projection:latest:v1" Named;
+    /// A TURN consumed as a repeat of the held TURN: the round it rode and the TURN it repeated.
+    /// Key: u64be + id16.
+    DREAMER_PROJECTION_RIDER: VaultMeta b"dreamer:projection:rider:v1:" Named;
+    /// A rider by the TURN it repeated. Key: id16(repeated) + u64be + id16(rider).
+    DREAMER_PROJECTION_RIDER_OF: VaultMeta b"dreamer:projection:rider_of:v1:" Raw;
+    /// The temporal key one riding TURN rides under. Key: id16(turn).
+    DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
+    /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
+    DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
@@ -110,6 +129,24 @@ side_tables! {
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
+    /// Key: id16(turn).
+    DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
+    /// Where the continuous sieve stands on the TURN timeline. Key: ().
+    DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
+    /// A TURN owed a new sieve read (new, changed words or saved tags). Key: id16(turn).
+    DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
+    /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
+    DREAMER_SIEVE_QUEUE: VaultMeta b"dreamer:sieve:queue:v1:" Named;
+    /// The sieve's grant epoch and its sweep over the withheld turns. Key: ().
+    DREAMER_SIEVE_RETRY: VaultMeta b"dreamer:sieve:retry:v1" Named;
+    /// One queued span of a TURN. Key: id16(turn) + u32be(inverted score) + hash32(span).
+    DREAMER_SIEVE_SPANS: VaultMeta b"dreamer:sieve:spans:v1:" Raw;
+    /// What the sieve last read of one TURN. Key: id16(turn).
+    DREAMER_SIEVE_TURN: VaultMeta b"dreamer:sieve:turn:v1:" Named;
+    /// A TURN the sieve read with a MESSAGE the Dreamer may not read, and the grant epoch it was
+    /// read at (u64be). Key: id16(turn).
+    DREAMER_SIEVE_WITHHELD: VaultMeta b"dreamer:sieve:withheld:v1:" Raw;
     /// Dreamer step index rows, plus the 'i:' sub-index. Key: bytes.
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
@@ -121,6 +158,10 @@ side_tables! {
     /// Private binding of a Budget/Consent trap anchor claim to its owning step. Key: id16(anchor
     /// claim).
     DREAMER_TRAP_BINDING: VaultMeta b"dreamer:trap_binding:v1:" Raw;
+    /// Latest consolidation carrier of a TURN re-dirtied without moving its row: second, a
+    /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
+    /// it. Key: id16(turn).
+    DREAMER_TURN_REDIRTY: VaultMeta b"dreamer:turn-redirty:v1:" Named;
     /// Coalesced recipe input for one wake recipe. Key: u8(recipe).
     DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;
     /// Wake cursor and pending state. Key: ().
@@ -192,6 +233,9 @@ side_tables! {
     EDIT_DISTANCE_ROUTING_SERVING_MODEL: VaultMeta b"edit_distance/routing_serving_model/v1" Raw;
     /// Stranded edit proposal. Key: id16 + hash32.
     EDIT_SETTLE_STRANDED_PROPOSAL: VaultMeta b"edit_settle:stranded:v1:" Named;
+    /// The device family and runtime that computed the current embedding vector, outside the space
+    /// identity (ARCH-0036). Key: id16.
+    EMBEDDING_DEVICE: VaultMeta b"embedding/device/" Named;
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
@@ -247,12 +291,6 @@ side_tables! {
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;
-    /// Private tier-2 censored sample and source proofs. Key: hex-week ":" hex-turn.
-    FAILURE_SIGNALS_TIER2_SAMPLE: VaultMeta b"failure_signals:tier2:sample:" Raw;
-    /// Reverse source-to-sample pointer. Key: hex-source ":" full sample key.
-    FAILURE_SIGNALS_TIER2_SOURCE: VaultMeta b"failure_signals:tier2:source:" Raw;
-    /// Per-week tier-2 quota count. Key: hex-week.
-    FAILURE_SIGNALS_TIER2_WEEK: VaultMeta b"failure_signals:tier2:week:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
@@ -281,14 +319,18 @@ side_tables! {
     /// Exterior-key root binding of encrypted claim-bound gate decisions. Key: ().
     GATE_DECISION_CUSTODY_ROOT: VaultMeta b"gate_decision:custody_root:v1" Raw;
     GATE_DECISION_GRANT_REF_INDEX: VaultMeta b"gate_decision:grant_ref_index:v1:" Raw;
+    /// A committed erase whose claim-partition key retirement is still pending; the value is
+    /// the single byte 1. No hold defers that retirement or lands while it stands. Key: id16
+    /// (claim).
+    GATE_DECISION_PARTITION_ERASE_PENDING: VaultMeta b"gate_decision:partition_erase_pending:v1:" Raw;
     /// Legal hold on one exterior-key partition of the gate decision ledger; the value is the
     /// single byte 1. Key: 0 (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_HOLD: VaultMeta b"gate_decision:partition_hold:v1:" Raw;
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
-    /// Committed intent to retire one claim partition's exterior key, holding the key generation
-    /// (u64be) the sweep removed rows under. Key: id16 (claim).
+    /// Committed intent to retire one claim partition's exterior key, holding the newest key
+    /// generation (u64be) an erase or the sweep removed rows under. Key: id16 (claim).
     GATE_DECISION_PARTITION_RETIRE_PENDING: VaultMeta b"gate_decision:partition_retire_pending:v1:" Raw;
     /// Append-time retention ancestry of one gate decision; the retention-scope module's own
     /// layout. Key: id16 (decision).
@@ -388,6 +430,18 @@ side_tables! {
     /// Per-actor per-run healer receipt: submitted proposals and reversal state. Key: id16 + bytes32
     /// (actor then blake3 hash of run name).
     SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named;
+    /// The history import ledger: one row per imported source message (the conversation it landed
+    /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
+    /// (`source:native message id`).
+    INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
+    /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
+    /// and whether a run is in flight. Key: string (the sweep's code).
+    HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
+    /// A retirement deadline a door started (a secret lease's expiry, a voice print's retention
+    /// deadline, a critical confirm's window), kept for a vault that is not running to know when to
+    /// wake. Key: the sweep's tag byte, the deadline (u64 BE), then an id16 per note, so a sweep's
+    /// earliest deadline is its first row and two notes of one deadline are two rows. Value: empty.
+    HOUSEKEEPING_WAKE: VaultMeta b"housekeeping:wake:v1:" Raw;
     /// Follow-up reminder/escalation cursor state for one human task. Key: id16.
     HUMAN_TASK_FOLLOWUP: VaultMeta b"human_task.followup.v1\0" Raw;
     /// Idempotency marker recording which signal/surface-event a wait's response already produced.

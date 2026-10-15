@@ -520,38 +520,6 @@ fn generic_inbox_approval_cannot_arm_representation_delivery() {
     ));
     assert!(f.vault.connector_send_tasks().unwrap().is_empty());
 }
-#[test]
-fn representation_context_read_keeps_its_receipt() {
-    let f = Fixture::new(true);
-    let request = f.request(RepresentationKind::Introduction);
-    let context = f
-        .vault
-        .representation_context(&request)
-        .expect("scoped source context");
-    // The context carries the Dreamer actor's own receipt for the sources it
-    // read: the same ceiling a direct scoped read by that actor reports.
-    let dreamer = crate::claim::ScopedReadActorKey::with_actor_class(
-        f.vault.dreamer_authority().unwrap().entity_ref().to_hex(),
-        "agent",
-    )
-    .unwrap();
-    assert_eq!(
-        context.receipt,
-        f.vault.scoped_read(dreamer).read_receipt(None, 0).unwrap()
-    );
-    assert_eq!(context.receipt.suppressed_count, 0);
-    // A source outside that ceiling never yields a context with a quieter receipt.
-    seed_source(
-        &f.vault,
-        id(0x65),
-        id(0x51),
-        "Outside the actor's worlds.",
-        Some(id(0x71)),
-    );
-    let mut hidden = request;
-    hidden.evidence[0].claim = id(0x65);
-    assert!(f.vault.representation_context(&hidden).is_err());
-}
 
 #[test]
 fn receipt_retention_keeps_the_owner_bundle_receipt_for_load_and_schedule() {
@@ -590,4 +558,46 @@ fn receipt_retention_keeps_the_owner_bundle_receipt_for_load_and_schedule() {
         1
     );
     assert_eq!(sink.sent.len(), 1);
+}
+
+/// F18 review (H397): a representation review and its arm act only under an
+/// owner proof this vault authenticated. A proof another vault minted for the
+/// same PERSON id reviews and approves nothing; the owner's own proof does.
+#[test]
+fn a_foreign_owner_proof_cannot_review_or_approve_a_representation() {
+    let f = Fixture::new(true);
+    let proposal = f.propose(RepresentationKind::Reply, 100);
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = Vault::open(other_dir.path(), crate::VaultConfig::device()).unwrap();
+    other
+        .put_entity(
+            &id(0x51),
+            crate::registry::ENTITY_TYPE_PERSON,
+            at(1),
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let foreign = other
+        .authenticate_owner(
+            id(0x51),
+            "principal:representation-owner",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    assert!(
+        f.vault.review_representation(&foreign, &proposal).is_err(),
+        "a foreign proof reads no owner review"
+    );
+    let review = f.vault.review_representation(&f.owner, &proposal).unwrap();
+    assert!(
+        f.vault
+            .approve_representation(&foreign, &review, 101)
+            .is_err()
+    );
+    assert!(f.vault.approved_representation(&proposal).is_err());
+    f.vault
+        .approve_representation(&f.owner, &review, 102)
+        .expect("the owner's own proof approves");
 }

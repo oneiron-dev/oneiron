@@ -378,12 +378,9 @@ mod tests {
         uri: &str,
         body: Option<serde_json::Value>,
     ) -> axum::http::Request<axum::body::Body> {
-        let proof = oneiron::authority::holder_proof(
-            slip,
-            holder,
-            server.vault().capability_slip_now().unwrap(),
-        )
-        .unwrap();
+        let proof =
+            oneiron::authority::holder_proof(slip, holder, server.vault().now_recorded_at())
+                .unwrap();
         axum::http::Request::builder()
             .method(method)
             .uri(uri)
@@ -536,7 +533,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/v1/core/conversations")
+                    .uri("/v1/core/outbound/capabilities")
                     .header(AUTHORIZATION, &bearer)
                     .body(Body::empty())
                     .unwrap(),
@@ -551,7 +548,7 @@ mod tests {
                 &slip,
                 &holder,
                 "GET",
-                "/v1/core/conversations",
+                "/v1/core/outbound/capabilities",
                 None,
             ))
             .await

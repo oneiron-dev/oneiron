@@ -49,6 +49,7 @@ use oneiron::{EntityId, Vault};
 
 use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
 use super::{check_api_auth, json_payload};
+use crate::auth::ClientAddress;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -95,13 +96,12 @@ const _: fn(EntityId) -> String = booking_page_token;
 /// Which transport carried one booking request.
 ///
 /// The variant changes nothing about admission, parsing, solving, or the
-/// lifecycle: it exists so logs and the MCP result envelope can say which door
-/// a request came through, and so a future transport has a name to add.
+/// lifecycle: it exists so logs can say which door a request came through, and
+/// so a future transport has a name to add.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BookingTransport {
     PublicHttp,
     AnonymousHttp,
-    Mcp,
 }
 
 impl BookingTransport {
@@ -109,7 +109,6 @@ impl BookingTransport {
         match self {
             Self::PublicHttp => "public_http",
             Self::AnonymousHttp => "anonymous_http",
-            Self::Mcp => "mcp",
         }
     }
 }
@@ -127,9 +126,8 @@ pub(crate) struct BookingTransportContext {
 }
 
 impl BookingTransportContext {
-    /// The actor key mixed into admission. An authenticated connector actor
-    /// keys its own budget; an owner-bearer HTTP caller keys on the source
-    /// address alone, exactly as the MCP door would with no actor.
+    /// The actor key mixed into admission. An authenticated actor keys its own
+    /// budget; an owner-bearer HTTP caller keys on the source address alone.
     fn actor_key(&self) -> Option<String> {
         self.authenticated_actor_ref.as_ref().map(EntityId::to_hex)
     }
@@ -249,10 +247,11 @@ fn wants_html_fragment(headers: &HeaderMap) -> bool {
 pub(crate) async fn booking_availability(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingAvailabilityInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -288,10 +287,11 @@ pub(crate) async fn booking_availability(
 pub(crate) async fn booking_book(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingBookInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -322,10 +322,11 @@ pub(crate) async fn booking_book(
 pub(crate) async fn booking_reschedule(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingRescheduleInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -356,10 +357,11 @@ pub(crate) async fn booking_reschedule(
 pub(crate) async fn booking_cancel(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingCancelInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -625,6 +627,15 @@ async fn execute_confirm(
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
 ) -> Result<BookingOperationResponse, ApiError> {
     let session_key = session_key(page_ref, &input.session_ref);
+    // A confirm naming no live hold of this session, and no booking its hold
+    // token already made, gets the writer's own refusal here, before a
+    // booker contact is recorded for it.
+    oneiron::booking::lifecycle::confirm_event_type(
+        &server.vault,
+        &session_key,
+        &OpaqueLifecycleToken(input.hold_token.clone()),
+        now,
+    )?;
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
     let receipt = run_booking_verb(
@@ -733,32 +744,4 @@ fn unexpected_receipt(verb: &str, receipt: &BookingVerbReceipt) -> ApiError {
         "booking lifecycle answered a verb with another verb's receipt"
     );
     ApiError::internal_server_error("booking lifecycle returned an unexpected receipt")
-}
-
-// -------------------------------------------------------------------------
-// Constraint normalization
-// -------------------------------------------------------------------------
-
-// -------------------------------------------------------------------------
-// MCP adapter
-// -------------------------------------------------------------------------
-
-/// Runs one MCP booking operation through the SAME executor the HTTP routes
-/// use, and projects the shared response into the MCP result envelope.
-///
-/// The gateway performs no admission pre-check: it hands the request here and
-/// the executor makes the one and only ONE-1817 call.
-pub(crate) async fn execute_booking_operation_for_mcp(
-    server: &Arc<SyncServer>,
-    page_token: &str,
-    request: BookingOperationRequest,
-    actor_ref: EntityId,
-    source_ip: IpAddr,
-) -> Result<BookingOperationResponse, ApiError> {
-    let transport = BookingTransportContext {
-        source_ip,
-        authenticated_actor_ref: Some(actor_ref),
-        transport: BookingTransport::Mcp,
-    };
-    execute_booking_operation(server, page_token, request, &transport).await
 }

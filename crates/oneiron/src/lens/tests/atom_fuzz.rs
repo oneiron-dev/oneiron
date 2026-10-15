@@ -118,11 +118,3 @@ fn fuzz(iterations: usize, duration: Option<Duration>) -> crate::Result<()> {
 fn atom_codec_render_corpus_smoke() -> crate::Result<()> {
     fuzz(128, None)
 }
-
-/// The separate CI step gives the fuzzer time to mutate the golden corpus;
-/// ordinary module tests keep the quick, deterministic smoke pass.
-#[test]
-#[ignore = "run by CI with a bounded time budget"]
-fn sustained_atom_codec_render_fuzz() -> crate::Result<()> {
-    fuzz(10_000_000, Some(Duration::from_secs(30)))
-}

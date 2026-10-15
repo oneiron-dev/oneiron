@@ -114,6 +114,7 @@ pub struct ServeArgs {
     pub oauth_resource_indicator: Option<String>,
 
     /// Insecure local/dev escape hatch: allow requests without auth_secret.
+    /// Serve refuses it unless the listener is loopback.
     #[arg(
         long = "insecure-allow-unauthenticated",
         num_args = 0..=1,
@@ -130,6 +131,11 @@ pub struct ServeArgs {
         num_args = 1..
     )]
     pub allowed_origins: Option<Vec<String>>,
+
+    /// Comma-separated reverse proxies (`ip` or `ip/prefix`) whose
+    /// `X-Forwarded-For` the server believes when it keys a caller by address.
+    #[arg(long = "trusted-proxies", value_delimiter = ',', num_args = 1..)]
+    pub trusted_proxies: Option<Vec<String>>,
 
     /// Numeric vault scope for lease registration and revocation.
     #[arg(long)]
@@ -204,7 +210,7 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_entity_blob: Option<usize>,
 
-    /// Optional maximum bytes per LFS upload object.
+    /// Maximum bytes per LFS upload object (default 2 GiB).
     #[arg(long)]
     pub max_lfs_object_bytes: Option<u64>,
 
@@ -298,6 +304,7 @@ impl fmt::Debug for ServeArgs {
                 &self.insecure_allow_unauthenticated,
             )
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)

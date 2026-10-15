@@ -45,7 +45,7 @@ impl Vault {
 
     /// Persists the inbox review dial position.
     pub fn set_inbox_review_dial(&self, dial: InboxReviewDial) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             REVIEW_DIAL.put(&self.store, wtxn, &(), &dial)?;
             Ok(())
         })
@@ -128,7 +128,7 @@ impl Vault {
         }
 
         let bundle_ref = bundle_ref_for_group(&group.group_key);
-        let (bundle_record, item_records, vad_claim_ids) = self.with_write_txn(|wtxn| {
+        let (bundle_record, item_records, vad_claim_ids) = self.with_write_txn_grouped(|wtxn| {
             if let Some((actor, _)) = learning {
                 self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
             }
@@ -294,7 +294,7 @@ impl Vault {
         now: u64,
         learning: Option<(WriteActor, &CompilationTarget)>,
     ) -> Result<InboxAmendedApproval> {
-        let (approval, vad_claim_id) = self.with_write_txn(|wtxn| {
+        let (approval, vad_claim_id) = self.with_write_txn_grouped(|wtxn| {
             if let Some((actor, _)) = learning {
                 self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
             }

@@ -3,7 +3,10 @@
 use super::super::structural::*;
 use super::super::support::*;
 use super::super::*;
-use super::program::{AdmittedTurn, WitnessAdmission, WitnessDoor, WitnessPlan, WitnessTarget};
+use super::program::{
+    AdmittedTurn, ImportedTurnStamp, WitnessAdmission, WitnessDoor, WitnessPlan, WitnessTarget,
+};
+use super::session::Admit;
 
 use std::sync::atomic::Ordering;
 
@@ -14,6 +17,16 @@ use crate::error::{Error, OffRecordError};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
+
+/// Tags an importer holds for the turn it lands, and the cell the program
+/// leaves what they did to the turn's tagging marker in. They are settled in
+/// the turn's own write, after its marker is committed (ARCH-0036: an import
+/// that already holds tags completes its marker without a tagger call).
+#[derive(Clone, Copy)]
+pub(super) struct HeldTags<'a> {
+    pub(super) tags: &'a crate::memory::extraction::EncoderOutput,
+    pub(super) outcome: &'a std::cell::Cell<Option<crate::tagging::HeldTagsOutcome>>,
+}
 
 /// What the base guards proved inside the write transaction.
 pub(super) enum BaseGuards {
@@ -62,6 +75,50 @@ impl Memory<'_> {
             |_| Ok(()),
             |_| Ok(()),
         )
+    }
+
+    /// [`Self::witness`] for a turn whose tags the caller already holds: an
+    /// import or a backfill that tagged it elsewhere. On a vault with a
+    /// tagger, the tags are checked against the turn's text, saved, and the
+    /// turn's tagging marker settles, all in the turn's own write, so no
+    /// worker ever calls the tagger for it.
+    ///
+    /// A span's `message` indexes `turn.messages` as sent, in the order sent
+    /// and whatever their `order`; its offsets are bytes of that message's
+    /// `content`. In the write, each span moves by message id onto the text
+    /// the turn shows, which is what the tagger reads: its visible, non-empty
+    /// messages in `order`. Tags settle the turn only when they read all of
+    /// that text. So they are refused when a span names a message sent hidden
+    /// or empty, which the turn does not show, and when the turn shows a
+    /// message not sent with them: an append to a turn that already held
+    /// text, which the tagger then reads whole. Tags that break the contract
+    /// or are refused leave the marker to the tagger; the turn lands either
+    /// way. The outcome says which.
+    pub fn witness_with_held_tags(
+        &self,
+        turn: &WitnessTurn,
+        tags: &crate::memory::extraction::EncoderOutput,
+    ) -> MemoryResult<(WitnessReceipt, crate::tagging::HeldTagsOutcome)> {
+        let outcome = std::cell::Cell::new(None);
+        let receipt = self.run_witness(
+            turn,
+            WitnessTarget::Held {
+                held: HeldTags {
+                    tags,
+                    outcome: &outcome,
+                },
+            },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |_| Ok(()),
+        )?;
+        Ok((
+            receipt,
+            outcome
+                .take()
+                .unwrap_or(crate::tagging::HeldTagsOutcome::NoMarker),
+        ))
     }
 
     /// [`Self::witness`] under a session write route: the base landing a
@@ -117,20 +174,43 @@ impl Memory<'_> {
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
     /// transaction. An error rolls back row, indexes, receipt and seed deletion.
+    /// `callback` names the write door: an `effect` that runs host code is
+    /// [`crate::store::Callback::Opaque`].
     pub(crate) fn witness_with_route_and_txn_effect(
         &self,
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
+        callback: crate::store::Callback,
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.run_witness(
+        self.run_witness_as(
+            callback,
             turn,
             WitnessTarget::Base {
                 route: session_route,
             },
             WitnessDoor::Guest,
             before_txn,
+            |_| Ok(()),
+            effect,
+        )
+    }
+
+    /// Lands one turn of an imported transcript (ARCH-0027) through the same
+    /// program and ceiling door as [`Self::witness`], with `effect` (the import
+    /// ledger) in its transaction. See [`ImportedTurnStamp`] for what differs.
+    pub(crate) fn witness_imported(
+        &self,
+        turn: &WitnessTurn,
+        stamp: &ImportedTurnStamp,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness(
+            turn,
+            WitnessTarget::Imported { stamp },
+            WitnessDoor::Guest,
+            || {},
             |_| Ok(()),
             effect,
         )
@@ -158,20 +238,21 @@ impl Memory<'_> {
 
     /// The conversation and TURN a base landing writes, each with its
     /// pre-transaction "not stored yet" answer. `continuation` is the session's
-    /// on-record shell, which replaces the caller's conversation ref.
+    /// on-record shell, which replaces the caller's conversation ref. A
+    /// session door's `admit` runs first in each probe's read.
     pub(super) fn resolve_base_containers(
         &self,
         turn: &WitnessTurn,
         continuation: Option<EntityId>,
         door: WitnessDoor,
+        admit: Option<Admit<'_>>,
     ) -> MemoryResult<((EntityId, bool), (EntityId, bool))> {
+        let probe = |reference: &str, expected_type| {
+            self.resolve_or_new_container(reference, expected_type, admit)
+        };
         let conversation = match continuation {
-            Some(shell) => {
-                self.resolve_or_new_container(&shell.to_hex(), ENTITY_TYPE_CONVERSATION)?
-            }
-            None => {
-                self.resolve_or_new_container(&turn.conversation_ref, ENTITY_TYPE_CONVERSATION)?
-            }
+            Some(shell) => probe(&shell.to_hex(), ENTITY_TYPE_CONVERSATION)?,
+            None => probe(&turn.conversation_ref, ENTITY_TYPE_CONVERSATION)?,
         };
         // K7 witness-door ownership backstop (ARCH-0052 D2 backstop (a)). A
         // conversation owned by a live session overlay is witnessed through the
@@ -198,10 +279,8 @@ impl Memory<'_> {
             );
         }
         let turn = match (door, &turn.turn_ref) {
-            (WitnessDoor::HostTurn(id), _) => {
-                self.resolve_or_new_container(&id.to_hex(), ENTITY_TYPE_TURN)?
-            }
-            (_, Some(reference)) => self.resolve_or_new_container(reference, ENTITY_TYPE_TURN)?,
+            (WitnessDoor::HostTurn(id), _) => probe(&id.to_hex(), ENTITY_TYPE_TURN)?,
+            (_, Some(reference)) => probe(reference, ENTITY_TYPE_TURN)?,
             (_, None) => (self.vault.store.clock.entity_id()?, true),
         };
         Ok((conversation, turn))
@@ -382,10 +461,7 @@ impl Memory<'_> {
             // moving the TURN watermark on every CAS retry would make
             // idempotency observable downstream.
             AdmittedTurn::Existing(record) if admission.has_new_messages() => {
-                let redirtied_at = plan
-                    .turn
-                    .occurred_at
-                    .max(record.learned_at.saturating_add(1));
+                let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
                 batch = batch.put(
                     &plan.turn_id,
                     ENTITY_TYPE_TURN,
@@ -412,14 +488,26 @@ impl Memory<'_> {
             // alongside it: `put_witness_message` is reachable only with the
             // door's own value and writes exactly the bytes it proved.
             batch = batch
-                .put_witness_message(&planned.id, plan.occurred, plan.learned_at, authorized)
+                .put_witness_message(&planned.id, planned.occurred, plan.learned_at, authorized)
                 .edge(&planned.id, EdgeKind::PartOf, &plan.turn_id, 1.0)
                 .edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id, 1.0);
-            if planned.message.author != WitnessAuthor::System {
+            // An imported row's author is the source's speaker, named in its
+            // metadata; the importer did not write it.
+            if planned.message.author != WitnessAuthor::System && plan.imported.is_none() {
                 batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, &self.actor, 1.0);
             }
         }
         batch.apply(wtxn)?;
+        // The re-put moves the TURN only to `old + 1`, which a scope cursor a
+        // later TURN advanced can already be past; the re-dirty carrier puts it
+        // past every cursor in this same commit.
+        if matches!(admission.turn, AdmittedTurn::Existing(_)) && admission.has_new_messages() {
+            crate::dreamer_consolidation::redirty::redirty_turn_in_txn(
+                self.vault,
+                wtxn,
+                &plan.turn_id,
+            )?;
+        }
         let text_ops: Vec<BatchOp> = plan
             .messages
             .iter()
@@ -441,6 +529,11 @@ impl Memory<'_> {
                 false,
                 true,
             )?;
+        }
+        // An imported turn happened in its source, not in the sitting that is
+        // open now: it neither bumps the session nor joins it.
+        if plan.imported.is_some() {
+            return Ok(());
         }
         // RT-03 (ONE-1685): a witnessed turn bumps the open session's
         // activity clock — atomically with the turn write, so a crash
@@ -468,14 +561,24 @@ impl Memory<'_> {
         Ok(())
     }
 
-    /// The base receipt: canonical short ids, hex when none exists.
-    pub(super) fn base_receipt(&self, plan: &WitnessPlan<'_>) -> MemoryResult<WitnessReceipt> {
+    /// The base receipt, read in the transaction `txn` that wrote the turn:
+    /// canonical short ids, hex when none exists.
+    pub(super) fn base_receipt_in_txn(
+        &self,
+        plan: &WitnessPlan<'_>,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let short_ref = |id: &EntityId| -> MemoryResult<String> {
+            Ok(self
+                .short_ref_of_in_txn(txn, id)?
+                .unwrap_or_else(|| id.to_hex()))
+        };
         let mut message_short_ids = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            message_short_ids.push(self.short_ref_or_hex(&planned.id)?);
+            message_short_ids.push(short_ref(&planned.id)?);
         }
         Ok(WitnessReceipt {
-            turn_short_id: self.short_ref_or_hex(&plan.turn_id)?,
+            turn_short_id: short_ref(&plan.turn_id)?,
             message_short_ids,
             receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
         })
@@ -485,12 +588,17 @@ impl Memory<'_> {
         &self,
         reference: &str,
         expected_type: u8,
+        admit: Option<Admit<'_>>,
     ) -> MemoryResult<(EntityId, bool)> {
+        let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if let Some(admit) = admit {
+            admit(&rtxn)?;
+        }
         let trimmed = reference.trim();
         if trimmed.len() == 32 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
             let id = EntityId::from_hex(trimmed)
                 .map_err(|_| MemoryError::bad_request(format!("invalid entity id {trimmed:?}")))?;
-            return match self.vault.get_entity_type(&id)? {
+            return match self.vault.get_entity_type_in_txn(&rtxn, &id)? {
                 Some(entity_type) if entity_type == expected_type => Ok((id, false)),
                 Some(entity_type) => Err(MemoryError::bad_request(format!(
                     "ref {trimmed:?} resolves to kind {} but {} was expected",
@@ -500,8 +608,8 @@ impl Memory<'_> {
                 None => Ok((id, true)),
             };
         }
-        let id = self.resolve_ref(reference)?;
-        match self.vault.get_entity_type(&id)? {
+        let id = resolve_entity_ref_in_txn(self.vault, &rtxn, trimmed)?;
+        match self.vault.get_entity_type_in_txn(&rtxn, &id)? {
             Some(entity_type) if entity_type == expected_type => Ok((id, false)),
             Some(entity_type) => Err(MemoryError::bad_request(format!(
                 "ref {reference:?} resolves to kind {} but {} was expected",
@@ -512,5 +620,23 @@ impl Memory<'_> {
                 "entity {reference:?} does not resolve"
             ))),
         }
+    }
+}
+
+/// [`resolve_entity_ref`] in `rtxn`: a short ref resolves in that snapshot. A
+/// hex id or a malformed ref reads nothing, so it takes the shared path.
+fn resolve_entity_ref_in_txn(
+    vault: &crate::Vault,
+    rtxn: &heed::RoTxn<'_>,
+    reference: &str,
+) -> MemoryResult<EntityId> {
+    match crate::entity_id::parse_short_ref_syntax(reference) {
+        Ok((short_id, content_hash)) => vault
+            .hydrate_short_id_in(rtxn, short_id, content_hash)?
+            .map(|entry| entry.id)
+            .ok_or_else(|| {
+                MemoryError::not_found(format!("short ref {reference:?} does not resolve"))
+            }),
+        Err(_) => resolve_entity_ref(vault, reference),
     }
 }

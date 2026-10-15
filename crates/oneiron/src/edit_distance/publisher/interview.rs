@@ -97,7 +97,9 @@ fn put_interview(vault: &Vault, session: InterviewSession) -> Result<()> {
         topic_ref: session.topic_ref.to_hex(),
         state: session.state.as_str().to_owned(),
     };
-    vault.with_write_txn(|wtxn| INTERVIEW.put(&vault.store, wtxn, &session.digest_artifact, &row))
+    vault.with_write_txn_grouped(|wtxn| {
+        INTERVIEW.put(&vault.store, wtxn, &session.digest_artifact, &row)
+    })
 }
 
 /// Reads the session recorded against `digest_artifact`.

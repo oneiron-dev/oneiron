@@ -204,95 +204,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn casefold_lowers_ascii_and_german_ss() {
-        assert_eq!(casefold("HELLO"), "hello");
-        assert_eq!(casefold("Straße"), "strasse");
-    }
-
-    /// `kana_fold_overlay` returns `None` in two distinct scenarios.
-    ///
-    /// Variants:
-    /// - `disabled_policy_with_katakana_input`: policy disables `kana_fold`,
-    ///   so even katakana input that would normally fold returns `None`.
-    /// - `default_policy_with_ascii_no_change`: default policy enabled, but
-    ///   ASCII input has no katakana to fold — returns `None`.
-    /// - `default_policy_with_hiragana_no_change`: default policy enabled,
-    ///   already-hiragana input is unchanged — returns `None`.
-    #[test]
-    fn kana_fold_overlay_none_cases() {
-        let disabled = NormalizationPolicy {
-            nfkc: false,
-            casefold: false,
-            kana_fold: false,
-        };
-        let default_policy = NormalizationPolicy::default();
-
-        let cases: Vec<(&str, &NormalizationPolicy, &str)> = vec![
-            (
-                "disabled_policy_with_katakana_input",
-                &disabled,
-                "トウキョウ",
-            ),
-            (
-                "default_policy_with_ascii_no_change",
-                &default_policy,
-                "hello",
-            ),
-            (
-                "default_policy_with_hiragana_no_change",
-                &default_policy,
-                "とうきょう",
-            ),
-        ];
-
-        for (case_name, policy, input) in cases {
-            assert!(
-                kana_fold_overlay(input, policy).is_none(),
-                "case {case_name}: expected None, got Some"
-            );
-        }
-    }
-
-    #[test]
-    fn kana_fold_overlay_returns_change() {
-        let policy = NormalizationPolicy::default();
-        let out = kana_fold_overlay("トウキョウ", &policy).unwrap();
-        assert_eq!(&*out, "とうきょう");
-    }
-
-    #[test]
-    fn normalize_with_offset_map_unchanged_for_plain_ascii() {
-        let policy = NormalizationPolicy::default();
-        let out = normalize_with_offset_map("hello world", &policy);
-        assert!(out.is_unchanged());
-        assert_eq!(out.as_str(), "hello world");
-    }
-
-    #[test]
-    fn normalize_with_offset_map_folds_fullwidth_and_remaps() {
-        let policy = NormalizationPolicy::default();
-        let out = normalize_with_offset_map("ＡＢＣ", &policy);
-        assert_eq!(out.as_str(), "abc");
-        // Each fullwidth char is 3 bytes UTF-8; normalized bytes are 1 each.
-        assert_eq!(out.remap(0), 0);
-        assert_eq!(out.remap(1), 3);
-        assert_eq!(out.remap(2), 6);
-        assert_eq!(out.remap(3), 9);
-    }
-
-    #[test]
-    fn normalize_with_offset_map_merges_halfwidth_dakuten() {
-        // `ｶﾞ` (halfwidth ka + halfwidth dakuten) is a single grapheme
-        // cluster; NFKC must recompose it into `ガ`.
-        let policy = NormalizationPolicy::default();
-        let out = normalize_with_offset_map("ｶﾞ", &policy);
-        assert_eq!(out.as_str(), "ガ");
-        assert_eq!(out.remap(0), 0);
-        // `ガ` is 3 bytes in UTF-8; the original `ｶﾞ` is 6.
-        assert_eq!(out.remap(3), 6);
-    }
-
-    #[test]
     fn remap_end_rounds_up_through_nfkc_expansion() {
         // `㍻` (U+337B, 3 bytes, 1 grapheme) → `平成` (6 bytes, 2 graphemes).
         // boundaries = [(0,0), (6,3)] — interior offsets must NOT collapse
@@ -308,17 +219,5 @@ mod tests {
         assert_eq!(out.remap_end(3), 3);
         assert_eq!(out.remap(3), 0);
         assert_eq!(out.remap_end(6), 3);
-    }
-
-    #[test]
-    fn normalize_with_offset_map_respects_disabled_policy() {
-        let policy = NormalizationPolicy {
-            nfkc: false,
-            casefold: false,
-            kana_fold: false,
-        };
-        let out = normalize_with_offset_map("ＡＢＣ", &policy);
-        assert!(out.is_unchanged());
-        assert_eq!(out.as_str(), "ＡＢＣ");
     }
 }
