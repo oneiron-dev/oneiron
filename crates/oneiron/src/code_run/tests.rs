@@ -808,6 +808,7 @@ fn code_run_put_claim_trap_ignores_guest_source_and_g2_sees_generated() -> Resul
 fn code_run_claim_overwrite_drops_the_prior_query_hints() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_first_party_actor(&vault);
+    install_self_memory_allow_policy(&vault, actor)?;
     let subject = seed_person(&vault, 0xB5);
     let claim = EntityId::from_bytes([0xD6; 16]).expect("claim id");
     let candidate = |value: &str| {
@@ -818,11 +819,13 @@ fn code_run_claim_overwrite_drops_the_prior_query_hints() -> Result<()> {
             0.8,
         )
     };
+    // The run's own earlier claim, written with hints through the batch door:
+    // a self-overwrite is the one a code run may make.
     let envelope = crate::write_envelope::WriteEnvelope::new(
-        WriteActor::new(seed_person(&vault, 0xB6), EdgeActorClass::Human),
-        ClaimSource::UserStated,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        ClaimSource::Generated,
         crate::write_envelope::WriteProvenance::new(Value::from("fixture"))?,
-        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimApprovalStatus::Proposed,
     );
     vault
         .batch()
@@ -844,7 +847,6 @@ fn code_run_claim_overwrite_drops_the_prior_query_hints() -> Result<()> {
         Some(claim)
     );
 
-    install_self_memory_allow_policy(&vault, actor)?;
     let dispatcher = HostSelfDispatcher::new(
         &vault,
         WriteActor::new(actor, EdgeActorClass::Agent),
