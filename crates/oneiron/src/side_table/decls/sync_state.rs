@@ -40,6 +40,9 @@ side_tables! {
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
     /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
     AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
+    /// The facet a paired credential's writes are born in, as the owner named it on the link
+    /// (raw id). Key: hex64 (the slip id).
+    AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw;
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
     AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson;
@@ -101,6 +104,15 @@ side_tables! {
     /// Durable settlement receipt (before/after causal frontier) for one fork's merge/switch/reject
     /// verdict, keyed by entity then receipt id. Key: hex32 ":" hex32.
     ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named;
+    /// A federated `FacetOf` stamp sent ahead of its source row, held out of the window document
+    /// until the same sender's birth of the row has applied here. Local to this vault: never
+    /// replicated or exported. Value: when it was held (u64 big-endian), the grant it was held
+    /// under (a flag byte, then its 16 raw bytes when set), then the stamp's edge value.
+    /// Key: hex32 (source) hex32 (facet) then the sender's lane.
+    FEDERATION_PARKED_FACET_STAMP: SyncState b"fedpark:" Raw;
+    /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
+    /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
+    FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
@@ -301,6 +313,10 @@ side_tables! {
     /// Terminal/pending status receipt (hand-rolled MessagePack map) for one foreign vault-import
     /// artifact, keyed by its content-derived receipt id. Key: hex64.
     VAULT_IMPORT_RECEIPT: SyncState b"vault_import_receipt:v1:" Raw;
+    /// The facet stamps a foreign artifact staged ahead of their rows, kept with its receipt while
+    /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
+    /// of them again. Key: hex64.
+    VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
     /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
     RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;

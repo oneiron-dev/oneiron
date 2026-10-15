@@ -492,6 +492,7 @@ impl<'v> Memory<'v> {
     /// narrows: every check the actor's reads already make still runs.
     pub fn for_room_turn(&self, room: EntityId) -> MemoryResult<super::RoomTurnHandle<'v>> {
         self.verified_actor_class()?;
+        self.require_room_in_facets(room)?;
         let ceiling = match self.room_turn_now()? {
             Some(now) if now.room == room => now,
             Some(_) => {

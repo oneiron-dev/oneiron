@@ -192,6 +192,8 @@ pub enum ErrorKind {
     SyncEngineError,
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
+    #[cfg(feature = "sync")]
+    HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
     KillSwitchDisabled,
     OffRecordSessionAlreadyExists,
@@ -303,6 +305,7 @@ pub enum ErrorKind {
     HeadAdvanceOffTrunk,
     InvalidConversationDag,
     InvalidScopeSummary,
+    InvalidPairingScope,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,
