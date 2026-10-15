@@ -75,7 +75,9 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         ("mailbox", |v, i, w| {
             bind_delegated_mailbox(v, i, i.delegated_mailbox.as_ref().expect("mailbox"), w)
         }),
-        ("roster", |v, i, w| record_roster_member(v, i, w, None)),
+        ("roster", |v, i, w| {
+            record_roster_member(v, i, w, MailboxProofs::one(None))
+        }),
         ("journal reservation", |v, i, w| {
             write_journal(
                 v,
@@ -86,7 +88,7 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
                     completed_at: None,
                 },
                 w,
-                None,
+                MailboxProofs::one(None),
             )
         }),
     ];
@@ -192,7 +194,7 @@ fn final_roster_write_observes_revocation_while_waiting_for_writer_lock() -> Res
         let worker = scope.spawn(|| -> Result<()> {
             require_workspace_authority(&vault, VAULT_ID, &owner)?;
             ready_tx.send(()).expect("notify successful preflight");
-            record_roster_member(&vault, &intent, &owner, None)
+            record_roster_member(&vault, &intent, &owner, MailboxProofs::one(None))
         });
         ready_rx
             .recv_timeout(std::time::Duration::from_secs(10))
@@ -222,7 +224,7 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
         None,
         MemberOnboardingStep::MailboxBound,
     )?;
-    record_roster_member(&vault, &intent, &owner, None)?;
+    record_roster_member(&vault, &intent, &owner, MailboxProofs::one(None))?;
     require_workspace_authority(&vault, VAULT_ID, &owner)?;
     vault.put_authority_log_entry(
         &revoke,
@@ -242,7 +244,7 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
             completed_at: Some(AT),
         },
         &owner,
-        None,
+        MailboxProofs::one(None),
     )
     .expect_err("revoked admin cannot publish completion");
     assert_eq!(err.kind(), ErrorKind::WriteConcurrentWithRevocation);
@@ -361,7 +363,7 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
     );
     let before = durable_rows(&vault)?;
     assert_eq!(
-        record_roster_member(&vault, &intent, &owner, None)
+        record_roster_member(&vault, &intent, &owner, MailboxProofs::one(None))
             .expect_err("demoted admin")
             .kind(),
         ErrorKind::InvalidClaimBody
@@ -659,6 +661,113 @@ fn a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorizati
     Ok(())
 }
 
+/// Merges `member` into the vault owner, so the member's proof no longer
+/// names a live PERSON.
+fn merge_member_away(vault: &Vault, member: EntityId) {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    };
+    let owner = member_person();
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred)
+        .with_actor(WriteActor::new(owner, EdgeActorClass::Human));
+    vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![member],
+                survivor: owner,
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "member merged away".into(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &write,
+            200,
+        )
+        .expect("merge the member away");
+}
+
+/// A member's consent that lapses after the onboarding's member check, while
+/// the grant mint waits for its writer, mints nothing: the mint checks the
+/// member again in its committing transaction, beside the owner (Sol and
+/// Astra mailbox r1 F2).
+#[test]
+fn a_member_consent_that_lapses_before_the_grant_mint_mints_no_grant() -> Result<()> {
+    let (_dir, vault, mut intent, owner) = mailbox_fixture()?;
+    let member = crate::test_util::non_owner_proof(&vault);
+    let member_id = member.actor_for_read(&vault)?;
+    intent.person_ref = member_id;
+    let identity = intent
+        .delegated_mailbox
+        .as_ref()
+        .expect("mailbox")
+        .identity_ref;
+    assert!(
+        vault
+            .onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)
+            .is_err()
+    );
+    activate_mailbox(&vault, identity)?;
+    let grants = type_count(&vault, ENTITY_TYPE_ACCESS_GRANT);
+
+    set_consent_window_for_test(move |vault| merge_member_away(vault, member_id));
+    let result =
+        vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner);
+    assert!(
+        matches!(
+            result,
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), grants);
+    assert_eq!(
+        type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
+        0
+    );
+    assert_ne!(
+        read_journal(&vault, &intent.onboarding_id)?.map(|row| row.step),
+        Some(MemberOnboardingStep::MailboxBound)
+    );
+    Ok(())
+}
+
+/// A completed onboarding's replay checks the member's consent inside the
+/// snapshot its publication fence covers: a consent that lapses after the
+/// replay's preflight and before the fence's revision capture is refused,
+/// not published under (Astra mailbox r1 F3).
+#[test]
+fn a_member_consent_that_lapses_before_the_publication_fence_is_refused() -> Result<()> {
+    let (_dir, vault, mut intent, owner) = mailbox_fixture()?;
+    let member = crate::test_util::non_owner_proof(&vault);
+    let member_id = member.actor_for_read(&vault)?;
+    intent.person_ref = member_id;
+    let identity = intent
+        .delegated_mailbox
+        .as_ref()
+        .expect("mailbox")
+        .identity_ref;
+    assert!(
+        vault
+            .onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)
+            .is_err()
+    );
+    activate_mailbox(&vault, identity)?;
+    vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)?;
+
+    set_consent_window_for_test(move |vault| merge_member_away(vault, member_id));
+    let result =
+        vault.onboard_workspace_member_with_owner(intent, &writer(WRITER), &member, &owner);
+    assert!(
+        matches!(
+            result,
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+        ),
+        "{result:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn mailbox_actor_identity_context_and_rung_mismatches_leave_no_effect() -> Result<()> {
     let (_dir, vault, intent, owner) = mailbox_fixture()?;
@@ -754,7 +863,15 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                     .onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))
                     .is_err()
             );
-            assert!(record_roster_member(&vault, &intent, &writer(WRITER), Some(&owner)).is_err());
+            assert!(
+                record_roster_member(
+                    &vault,
+                    &intent,
+                    &writer(WRITER),
+                    MailboxProofs::one(Some(&owner))
+                )
+                .is_err()
+            );
             assert!(
                 write_journal(
                     &vault,
@@ -765,7 +882,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                         completed_at: Some(AT)
                     },
                     &writer(WRITER),
-                    Some(&owner),
+                    MailboxProofs::one(Some(&owner)),
                 )
                 .is_err()
             );
@@ -818,7 +935,7 @@ fn mailbox_publication_fence_rejects_a_mutation_after_successful_verification() 
     ));
     activate_mailbox(&vault, requested.identity_ref)?;
     let state = vault.apply_channel_identity_autonomy(&requested.autonomy, &owner)?;
-    let revision = verify_mailbox_revision(&vault, &intent, Some(&owner))?;
+    let revision = verify_mailbox_revision(&vault, &intent, MailboxProofs::one(Some(&owner)))?;
     vault.revoke_access_grant(
         &state.mode.read_grant_ref.expect("read"),
         crate::unix_seconds_now(),

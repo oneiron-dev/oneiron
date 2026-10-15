@@ -193,7 +193,13 @@ impl Vault {
                     bind_delegated_mailbox(self, intent, mailbox, writer)?;
                     require_mailbox_owner(self, intent, proofs)?;
                     let owner = proofs.grant_owner()?;
-                    self.apply_channel_identity_autonomy(&mailbox.autonomy, owner)?;
+                    consent_window(self);
+                    // The member's consent again where the grants commit.
+                    self.apply_channel_identity_autonomy_checked(
+                        &mailbox.autonomy,
+                        owner,
+                        |txn| require_mailbox_member_in_txn(self, txn, intent, proofs),
+                    )?;
                     self.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
                     Ok(())
                 }
