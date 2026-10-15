@@ -49,12 +49,31 @@ fn accepted<T>(result: Result<T>) -> Result<bool> {
     }
 }
 
+/// A settled `coping.outcome` prior about `subject` whose strategy turn is
+/// `turn`.
+fn coping_prior_body(subject: EntityId, turn: EntityId) -> Result<ClaimBody> {
+    use crate::affect::VadDelta;
+    use crate::affect::coping::{
+        COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy, coping_outcome_value,
+    };
+    let delta = VadDelta::new(0.2, -0.1, 0.1)?;
+    let value = CopingOutcomeValue::new(subject, turn, CopingStrategy::CogChg, delta, 0.8, 1)?;
+    let mut body = reader_body();
+    body.predicate = COPING_OUTCOME_PREDICATE.to_owned();
+    body.value = coping_outcome_value(&value);
+    body.confidence = 0.8;
+    body.valid_from = Some(1);
+    Ok(body)
+}
+
+/// A standing question about `subject` and its one answer: the question's id
+/// and the answer's claim.
 fn seed_question_answer(
     vault: &Vault,
     principal: EntityId,
     subject: EntityId,
     reader: ConsolidationReader,
-) -> Result<EntityId> {
+) -> Result<(EntityId, EntityId)> {
     use crate::llm::decision::questions::{
         AnswerProposal, OutcomeBinding, OutcomeSource, QuestionActivation, QuestionDefinition,
         RefreshPolicy, RefreshTrigger, create_question, refresh_question,
@@ -126,7 +145,29 @@ fn seed_question_answer(
     )?;
     assert_eq!(answers.len(), 1, "{reader:?}: answer fixture");
     assert_eq!(answers[0].unit, subject, "{reader:?}: answer unit");
-    Ok(question)
+    Ok((question, answers[0].claim))
+}
+
+/// The change-log rows the claim door writes beside a body, which the wake
+/// count discovers claims by. The table seeds bodies raw.
+fn log_claim_mutations(vault: &Vault, ids: &[EntityId]) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        for id in ids {
+            crate::ports::audit_mutation_in_txn(
+                &vault.store,
+                txn,
+                crate::ports::MutationAudit {
+                    entity: *id,
+                    op: crate::ports::ChangeOp::Create,
+                    actor_principal: None,
+                    occurred_at: 1,
+                    input: id.as_bytes(),
+                    reason: None,
+                },
+            )?;
+        }
+        Ok(())
+    })
 }
 
 fn project_one(vault: &Vault, id: EntityId) -> Result<usize> {
@@ -146,7 +187,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
         let subject = test_id(0x21);
         let claim = test_id(0x40);
         let control = test_id(0x41);
-        let head = test_id(0x42);
+        let head = test_id(0x48);
         let principal = test_id(0x43);
         put_raw_entity_row(&vault, &subject, ENTITY_TYPE_PERSON, b"subject")?;
         put_raw_entity_row(&vault, &principal, ENTITY_TYPE_PERSON, b"reader")?;
@@ -235,24 +276,39 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         Err(error) => Err(error),
                     }
                 })?;
+                // Coping folds two turns' annotations into a settled prior;
+                // only the later turn's annotation waits for its confirm.
+                let baseline = test_id(0x45);
+                let later = test_id(0x46);
+                for (turn, valence) in [(baseline, 0.1), (later, 0.6)] {
+                    put_raw_entity_row(&vault, &turn, ENTITY_TYPE_TURN, b"observation")?;
+                    vault.annotate_turn_vad(
+                        &turn,
+                        VadAnnotation {
+                            vad: Vad {
+                                valence,
+                                arousal: 0.5,
+                                dominance: 0.5,
+                            },
+                            source: VadAnnotationSource::UserSelfReport,
+                            annotated_at: 2,
+                        },
+                    )?;
+                }
+                put_claim_body(&vault, &control, &coping_prior_body(subject, baseline)?)?;
+                let held = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &later)?;
+                check_transition(&vault, held, reader, |v, _| {
+                    accepted(
+                        v.update_coping_outcome_from_turn_vad(&control, &baseline, &later, 0.8, 10),
+                    )
+                })?;
             }
             ConsolidationReader::CopingOutcome => {
                 use crate::affect::VadDelta;
-                use crate::affect::coping::{
-                    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy,
-                    coping_outcome_value,
-                };
                 let turn = test_id(0x44);
                 put_raw_entity_row(&vault, &turn, ENTITY_TYPE_TURN, b"observation")?;
                 let delta = VadDelta::new(0.2, -0.1, 0.1)?;
-                let value =
-                    CopingOutcomeValue::new(subject, turn, CopingStrategy::CogChg, delta, 0.8, 1)?;
-                let mut body = reader_body();
-                body.predicate = COPING_OUTCOME_PREDICATE.to_owned();
-                body.value = coping_outcome_value(&value);
-                body.confidence = 0.8;
-                body.valid_from = Some(1);
-                put_claim_body(&vault, &claim, &body)?;
+                put_claim_body(&vault, &claim, &coping_prior_body(subject, turn)?)?;
                 check_transition(&vault, claim, reader, |v, id| {
                     match v.update_coping_outcome_from_turn_vad_delta(id, turn, delta, 0.8, 10) {
                         Ok(update) => {
@@ -297,30 +353,31 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::GraphSignal => {
-                let conversation = test_id(0x47);
-                put_raw_entity_row(
-                    &vault,
+                // The Dreamer opens the branch, as a consolidation pass does.
+                let conversation = test_id(0x49);
+                vault.put_entity(
                     &conversation,
                     crate::registry::ENTITY_TYPE_SESSION,
+                    test_time(1),
+                    1,
                     b"session",
                 )?;
-                crate::test_util::authorize_readers(&vault, &[&principal.to_hex()]);
                 vault.put_edge(&claim, EdgeKind::ClaimOf, &subject, 1.0)?;
-                let actor = WriteActor::new(principal, EdgeActorClass::Human);
+                let actor = vault.dreamer_authority()?;
                 check_transition(&vault, claim, reader, |v, id| {
                     v.graph_source_in_slice_for_test(actor, conversation, id)
                 })?;
             }
             ConsolidationReader::ExplicitPrior => {
-                let conversation = test_id(0x47);
-                put_raw_entity_row(
-                    &vault,
+                let conversation = test_id(0x49);
+                vault.put_entity(
                     &conversation,
                     crate::registry::ENTITY_TYPE_SESSION,
+                    test_time(1),
+                    1,
                     b"session",
                 )?;
-                crate::test_util::authorize_readers(&vault, &[&principal.to_hex()]);
-                let actor = WriteActor::new(principal, EdgeActorClass::Human);
+                let actor = vault.dreamer_authority()?;
                 check_transition(&vault, claim, reader, |v, id| {
                     Ok(v.explicit_prior_ids_for_test(actor, conversation, *id)?
                         .contains(id))
@@ -414,9 +471,10 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                     }
                 })?;
             }
-            ConsolidationReader::ArrivalProjection => {
+            ConsolidationReader::ArrivalFact => {
                 use crate::llm::decision::questions::calibration_pairs;
-                let question = seed_question_answer(&vault, principal, subject, reader)?;
+                let (question, _) = seed_question_answer(&vault, principal, subject, reader)?;
+                // The arrival road: a held fact projects no label.
                 check_transition(&vault, claim, reader, |v, id| {
                     let count = project_one(v, *id)?;
                     let pairs = calibration_pairs(
@@ -427,10 +485,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                     )?;
                     assert_eq!(count, pairs.len(), "{reader:?}: reader output");
                     match count {
-                        0 => {
-                            assert!(pairs.is_empty(), "{reader:?}: reader output");
-                            Ok(false)
-                        }
+                        0 => Ok(false),
                         1 => {
                             assert_eq!(pairs[0].outcome.fact, *id, "{reader:?}: reader output");
                             Ok(true)
@@ -438,11 +493,8 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         other => panic!("{reader:?}: unexpected projected labels: {other}"),
                     }
                 })?;
-            }
-            ConsolidationReader::ArrivalFact => {
-                use crate::llm::decision::questions::calibration_pairs;
-                let question = seed_question_answer(&vault, principal, subject, reader)?;
-                assert_eq!(project_one(&vault, claim)?, 1, "{reader:?}: reader output",);
+                // The read road: a label already projected reads back only
+                // while its fact is settled.
                 let initial = calibration_pairs(
                     &vault,
                     principal,
@@ -465,6 +517,85 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         assert_eq!(pairs[0].outcome.fact, *id, "{reader:?}: reader output");
                         Ok(true)
                     }
+                })?;
+            }
+            ConsolidationReader::StateIndexSignal => {
+                use crate::affect::state_index::{ENGAGEMENT, GOAL_VELOCITY, StateIndexEvidence};
+                use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
+                let turn = test_id(0x44);
+                put_raw_entity_row(&vault, &turn, ENTITY_TYPE_TURN, b"observation")?;
+                vault.annotate_turn_vad(
+                    &turn,
+                    VadAnnotation {
+                        vad: Vad {
+                            valence: 0.5,
+                            arousal: 0.5,
+                            dominance: 0.5,
+                        },
+                        source: VadAnnotationSource::UserSelfReport,
+                        annotated_at: 2,
+                    },
+                )?;
+                for (id, predicate) in [(claim, GOAL_VELOCITY), (control, ENGAGEMENT)] {
+                    let mut body = reader_body();
+                    body.subject = ClaimSubject::Entity(subject);
+                    body.predicate = predicate.to_owned();
+                    body.value = Value::F32(0.5);
+                    put_claim_body(&vault, &id, &body)?;
+                }
+                let evidence = StateIndexEvidence {
+                    vad_turns: vec![turn],
+                    goal_velocity: claim,
+                    engagement: control,
+                };
+                check_transition(&vault, claim, reader, |v, _| {
+                    accepted(v.derive_state_index(&subject, &evidence, 10))
+                })?;
+            }
+            ConsolidationReader::AnswerPrediction => {
+                use crate::llm::decision::questions::calibration_pairs;
+                let (question, answer) = seed_question_answer(&vault, principal, subject, reader)?;
+                let pairs = |v: &Vault| {
+                    calibration_pairs(
+                        v,
+                        principal,
+                        question,
+                        crate::claim::CallerLocality::OnDevice,
+                    )
+                };
+                // The arrival road: a held answer lends the settled fact no label.
+                check_transition(&vault, answer, reader, |v, _| {
+                    let count = project_one(v, claim)?;
+                    assert_eq!(count, pairs(v)?.len(), "{reader:?}: reader output");
+                    match count {
+                        0 => Ok(false),
+                        1 => Ok(true),
+                        other => panic!("{reader:?}: unexpected projected labels: {other}"),
+                    }
+                })?;
+                // The read road: a label already projected reads back only
+                // while its answer is settled.
+                let initial = pairs(&vault)?;
+                assert_eq!(initial.len(), 1, "{reader:?}: reader output");
+                check_transition(&vault, answer, reader, |v, _| {
+                    let read = pairs(v)?;
+                    if read.is_empty() {
+                        Ok(false)
+                    } else {
+                        assert_eq!(read, initial, "{reader:?}: reader output");
+                        Ok(true)
+                    }
+                })?;
+            }
+            ConsolidationReader::WakeCount => {
+                log_claim_mutations(&vault, &[claim, control])?;
+                check_transition(&vault, claim, reader, |v, id| {
+                    let pending = v.wake_pending_records_for_test()?;
+                    assert!(
+                        pending.contains(&control.to_hex()),
+                        "{reader:?}: settled control missing"
+                    );
+                    Ok(pending.contains(&id.to_hex()))
                 })?;
             }
             ConsolidationReader::DerivedSupport => {

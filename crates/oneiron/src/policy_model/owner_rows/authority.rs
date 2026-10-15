@@ -92,6 +92,18 @@ fn personal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Ent
 /// `None` for a personal vault. A shared vault whose creating owner holds no
 /// live Owner grant fails closed.
 fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<LiveMembers>> {
+    shared_members_in_txn(vault, txn, true)
+}
+
+/// The members whose grants confer now. `live_persons` also requires each
+/// member's PERSON to be live; without it, the census still names a member
+/// whose PERSON is deleted, merged or split, so a recorded owner stays told
+/// apart from someone who never was one.
+fn shared_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    live_persons: bool,
+) -> Result<Option<LiveMembers>> {
     // Grant expiry is read from the vault clock, not a caller-chosen event time.
     let now = vault.store.clock.now_recorded_at();
     let Some(raw) = vault.store.vault_meta.get(txn, SHARED_CREATION_KEY)? else {
@@ -131,7 +143,8 @@ fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Op
             && fold
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
-            && crate::consent::person_is_live_in_txn(vault, txn, &grant.member_ref)?
+            && (!live_persons
+                || crate::consent::person_is_live_in_txn(vault, txn, &grant.member_ref)?)
             && crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
         {
             grants.push(grant);
@@ -156,6 +169,31 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         is_live_vault_owner_in_txn(self, &txn, &owner.actor())
+    }
+
+    /// Authenticates `actor` only if this vault records it as an owner: its
+    /// embedded owner, or an Owner-role member a conferring grant names in a
+    /// shared vault, whether or not that member's PERSON is still live. `None`
+    /// for anyone else, whose request is an ordinary one. A recorded owner
+    /// that no longer authenticates (a deleted, merged or split PERSON) is an
+    /// error, so a door binding an owner proof refuses it instead of treating
+    /// its request as an ordinary one.
+    pub fn authenticate_recorded_owner(
+        &self,
+        actor: EntityId,
+        principal_ref: &str,
+        decision_id: crate::store::GateDecisionId,
+    ) -> Result<Option<crate::consent::AuthenticatedOwner>> {
+        let recorded = actor == crate::vault::embedded_owner_actor_id()? || {
+            let txn = self.store.env.read_txn()?;
+            shared_members_in_txn(self, &txn, false)?
+                .is_some_and(|members| members.owners.contains(&actor))
+        };
+        if !recorded {
+            return Ok(None);
+        }
+        self.authenticate_owner(actor, principal_ref, true, decision_id)
+            .map(Some)
     }
 
     /// Everyone whose membership confers authority now: the embedded owner of

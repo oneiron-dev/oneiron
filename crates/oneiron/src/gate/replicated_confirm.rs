@@ -6,7 +6,9 @@ use crate::error::Result;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 
 use super::ceiling::PolicyCriticality;
-use super::confirm::GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED;
+use super::confirm::{
+    GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM, pending_row_holds_critical_confirm,
+};
 use super::constants::POLICY_SCHEMA_VERSION;
 use super::decision::{GateOutcome, GateReasonCode};
 use super::doors::GateConsentBinding;
@@ -15,6 +17,17 @@ use super::resolution::{GateRetentionContext, resolve_policy_manifest};
 
 /// Called only for a new or changed replicated body, after put validation.
 /// Replication still lands the peer's bytes; its Auto stamp is not a local Clear.
+/// The hold stays until this device's owner clears or declines it, and it never
+/// rewrites the peer's bytes.
+///
+/// An ordinary pending row this device holds reviewed an earlier body, so it
+/// cannot hold the arriving Auto revision: this device's own confirm replaces
+/// it. A critical-confirm row already holds the claim, and an invalidated
+/// ceremony stays held by its durable invalidation. A reserved predicate never
+/// takes the confirm road on this device: only its owning door writes it, past
+/// the criticality ladder. A restrictive `comm.*` claim only adds suppression,
+/// and a restriction always lands usable: a Decline here would retract it
+/// outside the opt-out's own clear.
 pub(crate) fn attach_replicated_critical_confirm_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -23,8 +36,11 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
 ) -> Result<()> {
     if body.lifecycle != ClaimLifecycleStatus::Active
         || body.approval != ClaimApprovalStatus::Auto
-        || body.predicate.starts_with("comm.")
-        || store.pending_gate_consent_in_txn(wtxn, claim_id)?.is_some()
+        || crate::comm::is_restrictive_comm_predicate(&body.predicate)
+        || crate::claim::is_reserved_predicate(&body.predicate)
+        || store
+            .pending_gate_consent_in_txn(wtxn, claim_id)?
+            .is_some_and(|row| pending_row_holds_critical_confirm(&row))
         || store.critical_confirm_invalidation_exists_in_txn(wtxn, claim_id)?
     {
         return Ok(());
@@ -73,7 +89,7 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
         created_at: decision.created_at,
         diff_handle: decision.diff_handle,
         read_frontier_hash: decision.read_frontier_hash,
-        reason_codes: vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()],
+        reason_codes: vec![GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM.to_owned()],
         // A peer body supplies no authenticated local Dreamer envelope.
         dreamer_run_id: None,
     };

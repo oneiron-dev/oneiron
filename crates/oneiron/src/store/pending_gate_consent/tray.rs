@@ -38,6 +38,7 @@ impl Store {
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
         vet_pending_gate_consent_record(record)?;
+        let mut carried = None;
         if let Some(existing) = TRAY.get(self, &*wtxn, &record.claim_id)? {
             if existing.claim_id != record.claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
@@ -46,7 +47,20 @@ impl Store {
             self.delete_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &existing)?;
             // A replacement keeps its insertion order, but an explicit delete
             // removes it; do not allocate a caller-controlled ordering key.
+            //
+            // A review of a later revision is not the owner's answer to the
+            // critical confirm it replaces: it carries that hold until it
+            // settles itself.
+            if crate::gate::pending_row_holds_critical_confirm(&existing)
+                && !crate::gate::pending_row_holds_critical_confirm(record)
+            {
+                let mut held = record.clone();
+                held.reason_codes
+                    .push(crate::gate::GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED.to_owned());
+                carried = Some(held);
+            }
         }
+        let record = carried.as_ref().unwrap_or(record);
         TRAY.put(self, wtxn, &record.claim_id, record)?;
         self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
         self.put_pending_gate_consent_critical_confirm_index_in_txn(wtxn, record)?;

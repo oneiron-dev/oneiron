@@ -241,6 +241,14 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
     ]
 }
 
+/// Whether `predicate` is a restrictive row of [`claim_class_descriptors`]:
+/// its heads only add suppression.
+pub(crate) fn is_restrictive_comm_predicate(predicate: &str) -> bool {
+    claim_class_descriptors()
+        .iter()
+        .any(|row| row.restrictive && row.predicate == predicate)
+}
+
 /// Typed value carried by one claim in the `comm.*` family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

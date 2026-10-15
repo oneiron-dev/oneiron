@@ -186,7 +186,7 @@ fn project(
                 store,
                 txn,
                 id,
-                crate::gate::ConsolidationReader::ArrivalProjection,
+                crate::gate::ConsolidationReader::ArrivalFact,
             )?
         {
             continue;
@@ -365,7 +365,14 @@ pub(super) fn evaluate_fact(
         || prediction.predicate != "judgment.answer"
         || prediction.subject != ClaimSubject::Entity(answer.unit)
         || prediction.value != expected
-        || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &answer.claim)?
+        // The answer is a claim input too: matching its recorded value is not
+        // its owner's Clear.
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &answer.claim,
+            crate::gate::ConsolidationReader::AnswerPrediction,
+        )?
     {
         return Ok(None);
     }

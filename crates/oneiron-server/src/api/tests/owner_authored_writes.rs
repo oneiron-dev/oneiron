@@ -198,3 +198,30 @@ async fn a_revoked_owner_proof_refuses_the_write_it_was_bound_to() {
         "a revoked owner credential fell back to the ordinary writer"
     );
 }
+
+/// The owner's own full credential binds an owner proof only while its PERSON
+/// still authenticates. Once that PERSON is deleted, a request the credential
+/// opened is refused at the facade's door, never downgraded to the ordinary
+/// writer.
+#[tokio::test]
+async fn a_deleted_owners_credential_is_refused_not_downgraded() {
+    let (_dir, server) = auth_test_server();
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+    let full = format!(
+        "jti=owner-deleted;principal_ref={};actor_class=human",
+        owner.to_hex()
+    );
+    let auth = slip_credentials::authenticate(&server, &full);
+    assert!(
+        matches!(
+            crate::api::facade::owner_authorship(&auth, &server),
+            Ok(Some(_))
+        ),
+        "the live owner's credential binds an owner proof"
+    );
+    assert!(server.vault.delete_entity(&owner).unwrap());
+    assert!(
+        crate::api::facade::owner_authorship(&auth, &server).is_err(),
+        "FAILBEFORE R6 facade: a deleted owner's credential fell back to the ordinary writer"
+    );
+}

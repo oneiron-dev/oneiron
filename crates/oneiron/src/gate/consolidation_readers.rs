@@ -6,12 +6,17 @@ use crate::store::Store;
 use crate::vault::Vault;
 
 /// Every reader that consolidates a claim: folds it into derived state, holds
-/// it as a prior, ranks a candidate by it, or counts it as evidence. Each asks
+/// it as a prior, ranks a candidate by it, counts it as evidence, or counts it
+/// toward waking a Dreamer pass. Each asks
 /// [`claim_consolidation_eligible_in_txn`] before it reads a head, so a
 /// critical claim whose owner confirmation is outstanding reaches none of
 /// them (ARCH-0026 §G3). A write its owner authored in person attaches no
-/// confirmation, so it is eligible at once. The invariant check walks this
-/// list.
+/// confirmation, so it is eligible at once. A reserved predicate never carries
+/// one either: its owning door writes it past the criticality ladder, and a
+/// replicated one attaches none. Readers that consume only reserved heads
+/// (provider priors under `actor.*`, skill reliability and hub provenance
+/// under `skill.*`) are therefore not on this list. The invariant check walks
+/// this list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConsolidationReader {
     /// Affect VAD consolidation of one claim.
@@ -36,17 +41,22 @@ pub(crate) enum ConsolidationReader {
     PrecommitEvidence,
     /// A claim anchor of the entity-resolution waterfall.
     ResolutionWaterfall,
-    /// A fact a question's arrival projects.
-    ArrivalProjection,
-    /// A fact a question's answer is checked against.
+    /// A fact a question's answer is checked against, when its arrival is
+    /// projected into a label and when a label is read back.
     ArrivalFact,
+    /// The answer claim whose prediction that fact labels, on both roads.
+    AnswerPrediction,
     /// A head derived-attachment verification counts as support.
     DerivedSupport,
+    /// A goal-velocity or engagement signal the state index blends.
+    StateIndexSignal,
+    /// A new record the Dreamer wake policy counts toward a pass.
+    WakeCount,
 }
 
 impl ConsolidationReader {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 14] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::ClaimVad,
         Self::CopingOutcome,
         Self::VadAnnotation,
@@ -58,9 +68,11 @@ impl ConsolidationReader {
         Self::PromotionEvidence,
         Self::PrecommitEvidence,
         Self::ResolutionWaterfall,
-        Self::ArrivalProjection,
         Self::ArrivalFact,
+        Self::AnswerPrediction,
         Self::DerivedSupport,
+        Self::StateIndexSignal,
+        Self::WakeCount,
     ];
 
     const fn code(self) -> &'static str {
@@ -76,9 +88,11 @@ impl ConsolidationReader {
             Self::PromotionEvidence => "promotion_evidence",
             Self::PrecommitEvidence => "precommit_evidence",
             Self::ResolutionWaterfall => "resolution_waterfall",
-            Self::ArrivalProjection => "arrival_projection",
             Self::ArrivalFact => "arrival_fact",
+            Self::AnswerPrediction => "answer_prediction",
             Self::DerivedSupport => "derived_support",
+            Self::StateIndexSignal => "state_index_signal",
+            Self::WakeCount => "wake_count",
         }
     }
 }

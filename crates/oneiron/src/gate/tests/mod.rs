@@ -47,6 +47,7 @@ mod connector_budget;
 mod consent_bundle;
 mod consolidation_readers;
 mod credential_lifetimes;
+mod critical_confirm_holds;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
