@@ -390,8 +390,8 @@ impl ChangedEvent {
 /// The rows one lifecycle row names: the row, and its successor if it was
 /// superseded. An installed pack's row is the pack's name, however it reads,
 /// and names no row: its source is named apart.
-pub(super) fn lifecycle_refs(id: &str, state: &ServedLifecycle) -> impl Iterator<Item = String> {
-    row_refs(id, state).map(str::to_owned)
+pub(super) fn lifecycle_refs(id: &str, state: &ServedLifecycle) -> Vec<String> {
+    row_refs(id, state).map(str::to_owned).collect()
 }
 
 fn row_refs<'a>(id: &'a str, state: &'a ServedLifecycle) -> impl Iterator<Item = &'a str> {
