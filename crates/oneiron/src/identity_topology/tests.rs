@@ -3030,6 +3030,13 @@ fn a_deleted_claim_leaves_no_reassignment_row() {
     vault
         .delete_entity_with_reason(&purged, crate::deletion::DeleteReason::UserHardDelete)
         .expect("purge assigned claim");
+    // The origin goes before the next two claims, and their ClaimOf edges
+    // with it: their rows are found by the claim id they carry.
+    vault
+        .batch()
+        .delete(&original)
+        .commit()
+        .expect("batch delete the split origin");
     vault
         .batch()
         .delete(&batch_deleted)

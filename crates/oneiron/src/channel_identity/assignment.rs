@@ -182,6 +182,19 @@ pub(crate) fn maintain_assignment_put(
             "delegated identity must be born Requested",
         )));
     }
+    // A deleted self-held id still holds its own address; coming back on
+    // another one would drop that hold with its marker (H102).
+    if ERASED.get(store, txn, id)?.is_some() {
+        let own = index_key(&key);
+        for item in SLOTS.iter_from(store, &*txn, &[])? {
+            let (held, slot) = item?;
+            if held != own && slot[..16] == *id.as_bytes() {
+                return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                    "channel identity assignment, custody and binding are immutable",
+                )));
+            }
+        }
+    }
     let mut slot = read_slot(store, txn, &key)?;
     if next.occupies_assignment_key() {
         if slot.occupant.is_some_and(|other| other != *id) {

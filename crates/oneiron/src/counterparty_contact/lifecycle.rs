@@ -8,7 +8,6 @@ use super::storage::{
     CONTACT_INDEX, counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
     counterparty_contact_matches_channel_class, counterparty_contacts_by_party_full_scan,
     read_counterparty_contact_in_txn, remove_counterparty_contact_from_every_party_channel,
-    remove_counterparty_contact_party_channel_index,
 };
 use super::types::{
     COUNTERPARTY_CONTACT_CLAIM_PREDICATES, COUNTERPARTY_CONTACT_SCHEMA_VERSION,
@@ -402,23 +401,9 @@ pub(crate) fn drop_contact_index_rows_in_txn(
     if CONTACT_INDEX.get(store, &*wtxn, &index_key)? == Some(*contact_id) {
         CONTACT_INDEX.delete(store, wtxn, &index_key)?;
     }
-    let channel_class = match counterparty_contact_channel_class(store, &*wtxn, &record) {
-        Ok(class) => class,
-        // A deleted identity's shell names no channel.
-        Err(error) if error.kind() == crate::error::ErrorKind::InvalidChannelIdentityBody => None,
-        Err(error) => return Err(error),
-    };
-    match channel_class {
-        Some(channel_class) => remove_counterparty_contact_party_channel_index(
-            store,
-            wtxn,
-            &record.counterparty,
-            &channel_class,
-            *contact_id,
-        )?,
-        // The class the leg was filed under at write time cannot be named
-        // now, so no pair may keep the id.
-        None => remove_counterparty_contact_from_every_party_channel(store, wtxn, *contact_id)?,
-    }
+    // The class the party leg was filed under is the identity's at write
+    // time; the identity at `identity_ref` now (gone, a shell, or a later row
+    // at the same id) cannot name it, so no pair may keep the id.
+    remove_counterparty_contact_from_every_party_channel(store, wtxn, *contact_id)?;
     Ok(())
 }

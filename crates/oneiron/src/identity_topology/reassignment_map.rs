@@ -441,9 +441,9 @@ fn write_reassignment_rows_in_txn(
     Ok(())
 }
 
-/// Deletes every assignment row of `claim`, both directions, before a
-/// physical delete tears its `ClaimOf` edges, so a deleted claim stays
-/// assigned to no one (H175). Its origins are its own subjects.
+/// Deletes every assignment row of `claim`, both directions, so a deleted
+/// claim stays assigned to no one (H175). The rows are found by the claim id
+/// they carry: the claim's `ClaimOf` origin may already be gone.
 pub(crate) fn forget_claim_reassignments_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -452,27 +452,17 @@ pub(crate) fn forget_claim_reassignments_in_txn(
     if crate::batch::stored_entity_type(store, wtxn, claim)? != Some(ENTITY_TYPE_CLAIM) {
         return Ok(());
     }
-    let origins: Vec<EntityId> = store
-        .port_edges(
-            wtxn,
-            claim,
-            crate::ports::EdgeDirection::Out,
-            Some(EdgeKind::ClaimOf),
-            None,
-        )?
-        .map(|edge| edge.map(|edge| edge.target))
-        .collect::<Result<_>>()?;
-    for origin in origins {
-        for ((origin, event, held), row) in
-            REASSIGNMENT_ORIGIN_INDEX.scan_from(store, wtxn, origin.as_bytes())?
-        {
-            if held != *claim {
-                continue;
-            }
-            REASSIGNMENT_ORIGIN_INDEX.delete(store, wtxn, &(origin, event, held))?;
-            if let Some(target) = row.0 {
-                REASSIGNMENT_TARGET_INDEX.delete(store, wtxn, &(target, event, held))?;
-            }
+    let mut held = Vec::new();
+    for row in REASSIGNMENT_ORIGIN_INDEX.iter_from(store, &*wtxn, &[])? {
+        let ((origin, event, assigned), row) = row?;
+        if assigned == *claim {
+            held.push((origin, event, row.0));
+        }
+    }
+    for (origin, event, target) in held {
+        REASSIGNMENT_ORIGIN_INDEX.delete(store, wtxn, &(origin, event, *claim))?;
+        if let Some(target) = target {
+            REASSIGNMENT_TARGET_INDEX.delete(store, wtxn, &(target, event, *claim))?;
         }
     }
     Ok(())

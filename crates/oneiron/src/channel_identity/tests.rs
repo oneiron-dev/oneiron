@@ -725,6 +725,23 @@ fn deleting_a_self_held_identity_lands_and_keeps_its_address_bound() -> Result<(
             );
         }
     }
+    // The batch-deleted id has no tombstone; it may not come back on another
+    // address and drop the hold on its own.
+    assert_eq!(
+        vault
+            .create_channel_identity(&entity(0xD8), &requested("elsewhere@example.test"))
+            .expect_err("a deleted id keeps its own address")
+            .kind(),
+        ErrorKind::InvalidChannelIdentityBody,
+    );
+    vault.rebuild_channel_identity_assignment_index()?;
+    assert_eq!(
+        vault
+            .create_channel_identity(&entity(0xB3), &requested("batch-delete@example.test"))
+            .expect_err("the hold survives the refused re-birth")
+            .kind(),
+        ErrorKind::ChannelIdentityAlreadyExists,
+    );
     Ok(())
 }
 

@@ -143,30 +143,8 @@ pub(super) fn put_counterparty_contact_party_channel_index(
     Ok(())
 }
 
-/// Removes `contact_ref` from the canonical de-duplicated set for this pair,
-/// deleting the entry entirely when nothing is left in it.
-pub(super) fn remove_counterparty_contact_party_channel_index(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    party_ref: &str,
-    channel_class: &str,
-    contact_ref: EntityId,
-) -> Result<()> {
-    let digest = party_channel_digest(party_ref, channel_class)?;
-    let Some(ContactRefs(mut refs)) = PARTY_CHANNEL_INDEX.get(store, &*wtxn, &digest)? else {
-        return Ok(());
-    };
-    refs.retain(|id| *id != contact_ref);
-    if refs.is_empty() {
-        PARTY_CHANNEL_INDEX.delete(store, wtxn, &digest)?;
-    } else {
-        PARTY_CHANNEL_INDEX.put(store, wtxn, &digest, &ContactRefs(refs))?;
-    }
-    Ok(())
-}
-
-/// Removes `contact_ref` from every pair that lists it, for a record whose
-/// class can no longer be named (its sending identity is gone).
+/// Removes `contact_ref` from every pair that lists it. A contact's own row
+/// cannot name the pair its leg was filed under (see the caller).
 pub(super) fn remove_counterparty_contact_from_every_party_channel(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
