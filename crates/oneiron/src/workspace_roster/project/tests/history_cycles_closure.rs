@@ -289,7 +289,6 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
         ProjectHistoryPolicy {
             max_revisions: 3,
             cycle_worlds_max: 1,
-            ..ProjectHistoryPolicy::default()
         },
     )?;
     let c3 = signed_over(&vault, c, &c2, holder, |_| {})?;
@@ -316,25 +315,25 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
 
 /// Bug repro (Sol r15 F5, Astra r15 F6): A is an owner-door project under
 /// B. A host successor over A's boundary waits for its slip's mint. B's
-/// board puts B under A past a bound of one world: dark, and A still lists
+/// leader puts B under A past a bound of one world: dark, and A still lists
 /// the waiting successor.
 #[cfg(feature = "sync")]
 #[test]
 fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let (a, b) = (EntityId::now(), EntityId::now());
-    let (holder, b0) = {
+    let holder = {
         let vault = open(&dir)?;
-        let (root, root_row, holder) = root_leader(&vault)?;
-        // An owner-door row needs no signed birth before the vault is rooted.
-        let mut unsigned = ProjectRecord::new(a, Some(root), root, holder)?;
-        vault.put_project(a, &unsigned, 1)?;
+        let (root, _, holder) = root_leader(&vault)?;
+        // Owner-door births need no signed birth before the vault is rooted.
+        let mut b_row = ProjectRecord::new(b, Some(root), root, holder)?;
+        b_row.depth_remaining = 6;
+        vault.put_project(b, &b_row, 1)?;
+        let mut a_row = ProjectRecord::new(a, Some(b), b, holder)?;
+        a_row.depth_remaining = 5;
+        vault.put_project(a, &a_row, 2)?;
         set_bound(&vault, 1)?;
-        let b0 = spawn_signed(&vault, root, b, holder, holder, root_row.slice, 2)?;
-        unsigned.parents = vec![b.to_hex()];
-        unsigned.depth_remaining = 5;
-        vault.put_project(a, &unsigned, 3)?;
-        (holder, b0)
+        holder
     };
     // Signed on a copy, so this vault holds no mint for its slip.
     let (_minted_dir, minted) = copy_of(&dir)?;
@@ -346,12 +345,15 @@ fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
         put_companion(&vault, revision, at)?;
     }
     let waiting = chain.last().ok_or_else(invalid)?.0;
-    let b1 = signed_over(&vault, b, &b0, holder, |row| {
+    // The owner signs B's row; B's leader then puts B under A.
+    let mut signed = vault.project(b)?.ok_or(Error::EntityNotFound)?;
+    put_signed_project(&vault, b, &mut signed, holder, 10)?;
+    let b1 = signed_over(&vault, b, &signed, holder, |row| {
         row.parents = vec![a.to_hex()];
         row.depth_remaining = 0;
     })?;
     let (_, b1) = revisions_of_row(b, &b1)?.pop().ok_or_else(invalid)?;
-    put_companion(&vault, &b1, 10)?;
+    put_companion(&vault, &b1, 11)?;
     assert!(!lit(&vault, a)? && !lit(&vault, b)?);
     let listed = vault.project_revisions(a)?;
     assert!(
