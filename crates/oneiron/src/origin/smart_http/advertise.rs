@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::evidence::local_repo_ref;
+use super::exchange_idle::Progress;
 use super::paths::serve_failed;
 use super::serve::ServeSink;
 use crate::Vault;
@@ -72,6 +73,8 @@ pub(super) struct AdvertisedRefGate<'a> {
     repo_dir: PathBuf,
     /// Whether the projection may wait for a writer holding the repository.
     wait_for_repository: bool,
+    /// The exchange's idle clock, held still while the projection runs.
+    clock: &'a Progress,
     inner: &'a mut dyn ServeSink,
     /// Off until the CGI headers prove this really is an advertisement.
     gating: bool,
@@ -93,12 +96,14 @@ impl<'a> AdvertisedRefGate<'a> {
         vault: &Arc<Vault>,
         repo_dir: &Path,
         wait_for_repository: bool,
+        clock: &'a Progress,
         inner: &'a mut dyn ServeSink,
     ) -> Self {
         Self {
             vault: Arc::clone(vault),
             repo_dir: repo_dir.to_path_buf(),
             wait_for_repository,
+            clock,
             inner,
             gating: false,
             carry: Vec::new(),
@@ -265,6 +270,11 @@ impl<'a> AdvertisedRefGate<'a> {
         if self.projection.is_some() || self.unresolved {
             return;
         }
+        // The projection is the server's own work, and it may wait for room
+        // to check published LFS objects with its own deadline: the client
+        // is not idle meanwhile.
+        let clock = self.clock;
+        let _still = clock.hold_still();
         match resolve_advertisement_projection(
             &self.vault,
             &self.repo_dir,

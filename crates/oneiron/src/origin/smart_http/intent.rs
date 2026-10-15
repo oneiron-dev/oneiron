@@ -14,7 +14,7 @@ use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer};
 use crate::origin::residence::OriginAuthorityStamp;
@@ -371,6 +371,13 @@ impl Vault {
                     &attribution,
                 )
             })();
+            // A check that waited past the host's room for an LFS read
+            // decided nothing: the ref stays Pending, and the caller hears
+            // so rather than answer as if it had recovered, or wait as long
+            // again for the next ref.
+            if matches!(result, Err(Error::Code(CodeError::LfsReadRoomWaitedOut))) {
+                return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+            }
             if let Ok(receipt) = result {
                 intent.refs[index].status = ReceivePackRefStatus::Published;
                 self.save_receive_pack_intent(key, intent)?;

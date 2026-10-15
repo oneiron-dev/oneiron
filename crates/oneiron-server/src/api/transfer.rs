@@ -352,7 +352,6 @@ struct OriginReads {
     reads: Arc<ByteLine>,
     questions: Arc<LimitQuestions>,
     wait: Duration,
-    runtime: Handle,
 }
 
 impl OriginReads {
@@ -362,19 +361,10 @@ impl OriginReads {
         questions: &Arc<LimitQuestions>,
         wait: Duration,
     ) {
-        // Every serve path builds its server on the runtime that serves it.
-        let Ok(runtime) = Handle::try_current() else {
-            tracing::warn!(
-                kind = "lfs_read_room",
-                "transfers built off a runtime lend the origin no room for LFS reads"
-            );
-            return;
-        };
         vault.set_lfs_read_room(Arc::new(Self {
             reads: Arc::clone(reads),
             questions: Arc::clone(questions),
             wait,
-            runtime,
         }));
     }
 }
@@ -382,7 +372,14 @@ impl OriginReads {
 impl oneiron::origin::lfs::LfsReadRoom for OriginReads {
     fn hold(&self, row_bytes: u64) -> Option<Box<dyn Any + Send>> {
         let bytes = usize::try_from(manifest_room(row_bytes)).unwrap_or(usize::MAX);
-        self.runtime
+        // The check runs on a thread that may block (a transfer worker, or
+        // the blocking pool), whether or not the server was built on a
+        // runtime: its wait runs on a timer of its own.
+        let timer = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .ok()?;
+        timer
             .block_on(self.reads.reserve_alone(bytes, self.wait, &self.questions))
             .map(|held| Box::new(held) as Box<dyn Any + Send>)
     }

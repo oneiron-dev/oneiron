@@ -558,7 +558,8 @@ fn run_exchange(
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
         let streamed = if request.is_ref_advertisement() {
-            let mut gate = AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, &mut sink);
+            let mut gate =
+                AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, clock, &mut sink);
             stream_response(stdout, &mut gate)
         } else {
             stream_response(stdout, &mut sink)
