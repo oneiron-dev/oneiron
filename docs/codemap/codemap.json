@@ -1259,7 +1259,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 4
      }
     },
@@ -3300,7 +3300,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/apply/mod.rs",
@@ -8109,8 +8109,8 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
-      "fn": 7
+      "crate-vis": 25,
+      "fn": 8
      }
     },
     {
@@ -8120,7 +8120,8 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -8316,8 +8317,8 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
-      "fn": 1
+      "crate-vis": 10,
+      "fn": 3
      }
     },
     {
@@ -12143,9 +12144,9 @@
      "path": "src/context_board/read_set.rs",
      "purpose": "Session read-set tracking, separate from the stateless board renderer",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
-      "fn": 11,
+      "fn": 13,
       "struct": 5
      }
     },
@@ -12350,7 +12351,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/surfaces_tests.rs",
@@ -12593,6 +12594,7 @@
      "path": "src/context_pack/psych_mirror.rs",
      "purpose": "Psych-mirror salience and entropy scoring, plus the stored-profile pack section it feeds",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -13207,7 +13209,7 @@
      "path": "src/counterparty_contact/doors.rs",
      "purpose": "Counterparty contact Vault doors: create, opt-out, revoke, reads, and claim apply",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -21381,12 +21383,12 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)",
      "surface": {
       "enum": 3,
-      "fn": 25,
+      "fn": 26,
       "struct": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/interlocutor/tests.rs",
@@ -22485,7 +22487,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/graph_ask_tests.rs",
@@ -22574,7 +22576,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/standing_tests.rs",
@@ -29174,6 +29176,7 @@
      "path": "src/psych_profile/store.rs",
      "purpose": "Vault put/get/state maintenance-gated persistence for profiles",
      "surface": {
+      "crate-vis": 2,
       "fn": 5
      }
     },
@@ -31075,7 +31078,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "fn": 4
      }
     },
@@ -31097,7 +31100,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "re-export": 3
      }
     },
@@ -31124,16 +31127,6 @@
      "path": "src/secret_custody/owner_door/tests.rs",
      "purpose": "ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody…",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/secret_custody/replication.rs",
-     "purpose": "Name-index planning for admitted same-vault custody replay",
-     "surface": {
-      "crate-vis": 3
-     }
     },
     {
      "bucket": "L",
@@ -34948,7 +34941,7 @@
       "const": 1,
       "crate-vis": 8,
       "enum": 4,
-      "fn": 9,
+      "fn": 11,
       "struct": 5,
       "trait": 1
      }
@@ -34974,7 +34967,7 @@
      "purpose": "Inbound surface event, source and action types, channel routing, and route receipts",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 7,
       "fn": 15,
       "struct": 5
@@ -35361,6 +35354,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -39070,7 +39064,7 @@
      "path": "src/voice_identity/vault.rs",
      "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -39557,7 +39551,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "re-export": 1,
       "struct": 6
      }
@@ -40537,7 +40531,7 @@
     "batch": {
      "files": 99,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -41494,7 +41488,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 9,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41816,9 +41810,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 41,
+   "over_bar": 40,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2531,
+   "source_files": 2530,
    "test_files": 826
   },
   "oneiron-android": {
@@ -50516,7 +50510,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -50556,7 +50550,7 @@
      "path": "src/api/context_pack/response.rs",
      "purpose": "Response DTOs and engine-to-wire mapping functions for context-pack assembly",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -51384,7 +51378,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/board_host_events.rs",
@@ -51408,13 +51402,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_board_history.rs",
      "purpose": "Board history on the board's own surface (ARCH-0067 §3): hydrations that name their TURN record its board…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -51498,7 +51492,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/device_local_reads.rs",
@@ -51798,7 +51792,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_events.rs",
@@ -53123,7 +53117,7 @@
      "path": "src/idempotency.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {

@@ -220,6 +220,33 @@ impl Vault {
         self.room_audience_members_in_txn(&txn, room)
     }
 
+    /// [`Self::room_audience_members`] as `read` reads the room, in one
+    /// snapshot: a room `read` cannot read is a missing room, unless
+    /// `member` is one of its members, who reads its roster by membership as
+    /// its room turns do. Membership never widens the credential: one
+    /// narrowed on any read axis or whose records leave the room out, or a
+    /// caller whose locality keeps it here, reads it as missing.
+    pub fn room_audience_members_under(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        room: EntityId,
+        member: Option<EntityId>,
+    ) -> Result<Vec<EntityId>> {
+        read.persist_grant_clock()?;
+        let txn = self.store.env.read_txn()?;
+        let policy = read.live_policy_manifest_in(&txn)?;
+        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+            return self.room_audience_members_in_txn(&txn, room);
+        }
+        if !read.reaches_by_membership_in(&txn, &room)? {
+            return Err(Error::EntityNotFound);
+        }
+        self.room_audience_members_in_txn(&txn, room)
+            .ok()
+            .filter(|members| member.is_some_and(|id| members.contains(&id)))
+            .ok_or(Error::EntityNotFound)
+    }
+
     /// [`Self::room_audience_members`] in the caller's snapshot.
     pub(crate) fn room_audience_members_in_txn(
         &self,

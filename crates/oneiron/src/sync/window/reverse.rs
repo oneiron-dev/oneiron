@@ -270,7 +270,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         };
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when
-        // a local dial narrows an existing portable credential.
+        // a carrier landed before the custody seal.
         if (!claim_sync_allowed(&raw) && !retained_shell)
             || is_unsyncable_secret_custody(&raw)
             || is_delegated_channel_identity_carrier(&raw)
@@ -511,12 +511,12 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
         )
 }
 
-/// Local-only diagnostics and credentials refused by the same-vault locality predicate.
+/// Local-only rows: diagnostics, and every credential (custody is sealed from
+/// sync whatever its class or dial).
 pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
         header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            || (header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
-                && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
+            || header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
     })
 }
 
