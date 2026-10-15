@@ -295,14 +295,13 @@ impl TestNode {
         let key = WindowKey::new(WINDOW);
         let prepared = window::prepare_replacement(
             &self.vault,
+            &self.materializer,
             &key,
             self.doc(WINDOW),
             snapshot,
             &std::collections::HashMap::new(),
         )
         .unwrap();
-        window::forward_rematerialize(&self.vault, &prepared.doc, &self.materializer, &key)
-            .unwrap();
         self.windows.remove(WINDOW);
         let window = LoadedWindow::from_doc(prepared.doc, key, &self.vault, &self.materializer);
         self.windows.insert(WINDOW.to_owned(), window);

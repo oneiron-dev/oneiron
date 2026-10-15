@@ -963,6 +963,7 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
 
         let prepared = prepare_replacement(
             &vault,
+            &materializer,
             &key,
             &old,
             &snapshot,
@@ -1079,6 +1080,7 @@ fn install(
     let snapshot = hub.export(ExportMode::shallow_snapshot(root)).unwrap();
     prepare_replacement(
         vault,
+        &Materializer::new(),
         key,
         old,
         &snapshot,
@@ -1370,6 +1372,7 @@ fn a_refused_replacement_keeps_its_pending_mirror() {
 
         let prepared = prepare_replacement(
             &vault,
+            &Materializer::new(),
             &key,
             &old,
             &snapshot,
@@ -1437,6 +1440,7 @@ fn a_refused_install_leaves_this_vaults_rows_alone() {
 
     let refused = prepare_replacement(
         &vault,
+        &Materializer::new(),
         &key,
         &old,
         &snapshot,
