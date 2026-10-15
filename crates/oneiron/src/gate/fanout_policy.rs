@@ -54,16 +54,8 @@ pub(crate) struct FanoutScopedRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FanoutPolicyTrace {
-    pub(crate) level: &'static str,
-    pub(crate) row_ref: String,
-    pub(crate) role: &'static str,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedFanoutPolicy {
     pub(crate) policy: ConsultFanOutPolicy,
-    pub(crate) quota_trace: FanoutPolicyTrace,
     /// Shipped default rows read in place of rows the vault manifest lacks.
     pub(crate) shipped_rows: Vec<String>,
 }
@@ -75,8 +67,6 @@ pub(crate) struct ShippedFanoutRows {
     pub(crate) controls: FanoutControls,
     pub(crate) precedence: FanoutPrecedence,
 }
-
-pub(crate) const VAULT_ROW_REF: &str = "oneiron.default.fanout.v1";
 
 /// Names the shipped row a decision read in place of a missing vault row;
 /// `key` is the manifest key a holder writes to map the row by hand.
@@ -176,14 +166,6 @@ impl ConsultFanOutScope {
                 .as_ref()
                 .is_none_or(|id| self.thread_ref.as_ref() == Some(id))
     }
-    fn level_name(&self) -> &'static str {
-        match self.level() {
-            0 => "vault",
-            1 => "project",
-            2 => "sub-project",
-            _ => "thread",
-        }
-    }
 }
 
 fn stricter_mode(a: FanoutApprovalMode, b: FanoutApprovalMode) -> FanoutApprovalMode {
@@ -247,14 +229,10 @@ pub(crate) fn resolve(
         ));
         shipped.threshold
     });
-    let (controls, controls_row) = match controls {
-        Some(controls) => (controls, VAULT_ROW_REF.to_owned()),
-        None => {
-            let row_ref = shipped_row_ref(POLICY_CONSULT_FANOUT_CONTROLS_KEY);
-            shipped_rows.push(row_ref.clone());
-            (&shipped.controls, row_ref)
-        }
-    };
+    let controls = controls.unwrap_or_else(|| {
+        shipped_rows.push(shipped_row_ref(POLICY_CONSULT_FANOUT_CONTROLS_KEY));
+        &shipped.controls
+    });
     let precedence = precedence.unwrap_or_else(|| {
         shipped_rows.push(shipped_row_ref(POLICY_CONSULT_FANOUT_PRECEDENCE_KEY));
         shipped.precedence
@@ -267,11 +245,6 @@ pub(crate) fn resolve(
     };
     let mut effective = ResolvedFanoutPolicy {
         policy: vault.clone(),
-        quota_trace: FanoutPolicyTrace {
-            level: "vault",
-            row_ref: controls_row,
-            role: "owner",
-        },
         shipped_rows,
     };
     let mut matches: Vec<_> = rows
@@ -285,7 +258,6 @@ pub(crate) fn resolve(
             .then_with(|| a.row_ref.cmp(&b.row_ref))
     });
     for row in matches {
-        let was = effective.policy.create_rate;
         effective.policy =
             if row.holder_ref.is_some() && precedence == FanoutPrecedence::NestedNarrowing {
                 // An authenticated holder can loosen its parent, but the vault is
@@ -294,17 +266,6 @@ pub(crate) fn resolve(
             } else {
                 narrow(&effective.policy, &row.policy)
             };
-        if effective.policy.create_rate != was {
-            effective.quota_trace = FanoutPolicyTrace {
-                level: row.scope.level_name(),
-                row_ref: row.row_ref.clone(),
-                role: if row.holder_ref.is_some() {
-                    "holder"
-                } else {
-                    "owner"
-                },
-            };
-        }
     }
     Ok(effective)
 }

@@ -672,6 +672,20 @@ impl CoreContextPackResponse {
         Ok(ids)
     }
 
+    /// The rows this pack names beyond its documents, each of which a keyed
+    /// replay re-admits: every known contact it stamps and every capability
+    /// it discovered.
+    pub(crate) fn replay_admits(&self) -> Vec<oneiron::EntityId> {
+        let contacts = self
+            .interlocutors
+            .iter()
+            .flatten()
+            .filter(|stamp| stamp.class == oneiron::interlocutor::InterlocutorClass::KnownContact)
+            .filter_map(|stamp| oneiron::EntityId::from_hex(&stamp.speaker).ok());
+        let capabilities = self.capabilities.iter().map(|hit| hit.id);
+        contacts.chain(capabilities).collect()
+    }
+
     /// Records the served rows on the session, folding that read's receipt
     /// into this response's `narrowing` and its withheld-data notice.
     pub(super) fn observe_rows(
