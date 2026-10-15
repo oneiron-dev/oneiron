@@ -1,5 +1,6 @@
-//! The table's arms for the question readers: a graph answer, a standing
-//! answer's pinned sources and a refresh's claim unit.
+//! The table's arms for the question readers: an answer's calibration label,
+//! a graph answer, a standing answer's pinned sources and a refresh's claim
+//! unit.
 
 use super::*;
 use crate::llm::decision::questions::{
@@ -30,7 +31,7 @@ fn question_readers(vault: &Vault, principal: EntityId, subject: EntityId) -> Re
 fn provider() -> ProviderPin {
     ProviderPin {
         rung: DecisionRung::Rule,
-        model: "fixture".into(),
+        model: "local/fixture".into(),
         version: "one".into(),
     }
 }
@@ -179,5 +180,46 @@ pub(super) fn question_refresh_source(
             "{reader:?}: a held unit reached the answerer"
         );
         Ok(answered)
+    })
+}
+
+/// A held answer lends its settled fact no calibration label.
+pub(super) fn answer_prediction(
+    vault: &Vault,
+    [principal, subject, claim]: [EntityId; 3],
+    reader: ConsolidationReader,
+) -> Result<()> {
+    use crate::llm::decision::questions::calibration_pairs;
+    let (question, answer) = seed_question_answer(vault, principal, subject, reader)?;
+    let pairs = |v: &Vault| {
+        calibration_pairs(
+            v,
+            principal,
+            question,
+            crate::claim::CallerLocality::OnDevice,
+        )
+    };
+    // The arrival road: a held answer lends the settled fact no label.
+    check_transition(vault, answer, reader, |v, _| {
+        let count = project_one(v, claim)?;
+        assert_eq!(count, pairs(v)?.len(), "{reader:?}: reader output");
+        match count {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => panic!("{reader:?}: unexpected projected labels: {other}"),
+        }
+    })?;
+    // The read road: a label already projected reads back only while its
+    // answer is settled.
+    let initial = pairs(vault)?;
+    assert_eq!(initial.len(), 1, "{reader:?}: reader output");
+    check_transition(vault, answer, reader, |v, _| {
+        let read = pairs(v)?;
+        if read.is_empty() {
+            Ok(false)
+        } else {
+            assert_eq!(read, initial, "{reader:?}: reader output");
+            Ok(true)
+        }
     })
 }

@@ -4,6 +4,7 @@ use crate::Vault;
 use crate::gate::ConsolidationReader;
 use std::collections::BTreeSet;
 
+mod history;
 mod identity;
 mod questions;
 mod reserved;
@@ -607,39 +608,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::AnswerPrediction => {
-                use crate::llm::decision::questions::calibration_pairs;
-                let (question, answer) = seed_question_answer(&vault, principal, subject, reader)?;
-                let pairs = |v: &Vault| {
-                    calibration_pairs(
-                        v,
-                        principal,
-                        question,
-                        crate::claim::CallerLocality::OnDevice,
-                    )
-                };
-                // The arrival road: a held answer lends the settled fact no label.
-                check_transition(&vault, answer, reader, |v, _| {
-                    let count = project_one(v, claim)?;
-                    assert_eq!(count, pairs(v)?.len(), "{reader:?}: reader output");
-                    match count {
-                        0 => Ok(false),
-                        1 => Ok(true),
-                        other => panic!("{reader:?}: unexpected projected labels: {other}"),
-                    }
-                })?;
-                // The read road: a label already projected reads back only
-                // while its answer is settled.
-                let initial = pairs(&vault)?;
-                assert_eq!(initial.len(), 1, "{reader:?}: reader output");
-                check_transition(&vault, answer, reader, |v, _| {
-                    let read = pairs(v)?;
-                    if read.is_empty() {
-                        Ok(false)
-                    } else {
-                        assert_eq!(read, initial, "{reader:?}: reader output");
-                        Ok(true)
-                    }
-                })?;
+                questions::answer_prediction(&vault, [principal, subject, claim], reader)?;
             }
             ConsolidationReader::WakeCount => {
                 log_claim_mutations(&vault, &[claim, control])?;
@@ -717,14 +686,14 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
             ConsolidationReader::SkillHubPrior => skill::hub_prior(&vault, reader)?,
             ConsolidationReader::SkillScanPrior => skill::scan_prior(&vault, reader)?,
             ConsolidationReader::SkillOptimizeHubVouch => {
-                skill::optimize_hub_vouch(&vault, reader)?
+                skill::optimize_hub_vouch(&vault, reader)?;
             }
             ConsolidationReader::SkillOptimizeCitations => {
-                skill::optimize_citations(&vault, reader)?
+                skill::optimize_citations(&vault, reader)?;
             }
             ConsolidationReader::HubDefaultPresence => skill::hub_default_presence(&vault, reader)?,
             ConsolidationReader::ActorSkillFit => {
-                identity::actor_skill_fit(&vault, subject, reader)?
+                identity::actor_skill_fit(&vault, subject, reader)?;
             }
             ConsolidationReader::EditCost => identity::edit_cost(&vault, subject, reader)?,
             ConsolidationReader::PeerBinding => identity::peer_binding(&vault, principal, reader)?,
@@ -733,6 +702,11 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
             }
             ConsolidationReader::DefaultFacet => identity::default_facet(&vault, reader)?,
             ConsolidationReader::EdgeProvenance => identity::edge_provenance(reader)?,
+            ConsolidationReader::MachineHistory => history::machine_history(reader)?,
+            ConsolidationReader::EsignLedger => history::esign_ledger(reader)?,
+            ConsolidationReader::RepresentationSource => {
+                identity::representation_source(reader)?;
+            }
             ConsolidationReader::GraphAnswer => {
                 questions::graph_answer(&vault, [principal, subject, claim, control], reader)?;
             }

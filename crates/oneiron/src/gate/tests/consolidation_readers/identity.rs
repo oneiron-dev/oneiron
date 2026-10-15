@@ -1,6 +1,6 @@
-//! The table's arms for actor, attribution and vault-default readers. Each
-//! head is a reserved write, so each lands on a claim id whose owner-answer
-//! obligation is open.
+//! The table's arms for actor, attribution, representation and vault-default
+//! readers. Each head is a reserved write, so each lands on a claim id whose
+//! owner-answer obligation is open.
 
 use super::skill::{observed, put_reserved};
 use super::*;
@@ -51,13 +51,28 @@ pub(super) fn edit_cost(
     subject: EntityId,
     reader: ConsolidationReader,
 ) -> Result<()> {
+    let session = test_id(0x45);
+    let turn = test_id(0x46);
+    put_raw_entity_row(
+        vault,
+        &session,
+        crate::registry::ENTITY_TYPE_SESSION,
+        b"session",
+    )?;
+    put_raw_entity_row(vault, &turn, ENTITY_TYPE_TURN, b"turn")?;
     let mut body = observed(
         crate::claim::PREDICATE_ACTOR_EDIT_COST,
         subject,
         Value::F32(0.75),
     )?;
     body.valid_from = Some(10);
-    body.scope = Some(crate::actor_claims::edit_cost_scope("outbound"));
+    body.evidence =
+        Some(crate::actor_claims::ActorClaimEvidence::chat(session, vec![turn], 1)?.to_value());
+    let Value::Map(mut scope) = crate::actor_claims::edit_cost_scope("outbound") else {
+        panic!("{reader:?}: edit cost scope is not a map");
+    };
+    scope.push((Value::from("evidence_taint"), Value::from("generated")));
+    body.scope = Some(Value::Map(scope));
     put_reserved(vault, test_id(HELD), &body)?;
     check_transition(vault, test_id(HELD), reader, |v, _| {
         Ok(
@@ -179,5 +194,63 @@ pub(super) fn edge_provenance(reader: ConsolidationReader) -> Result<()> {
             2000,
         )?;
         Ok(edge_provenance_flags(v, &source, EdgeKind::Mentions, &target)? == confirmed)
+    })
+}
+
+/// A held source is a missing required source: no representation is planned
+/// from it.
+pub(super) fn representation_source(reader: ConsolidationReader) -> Result<()> {
+    use crate::dreamer_runner::maintenance::representation::{
+        RepresentationKind, RepresentationRequest, RepresentationSourceRef,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    crate::test_util::provision_engine_machines(&vault);
+    let owner = test_id(0x43);
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let dreamer = vault.dreamer_authority()?.entity_ref();
+    crate::test_util::authorize_readers(&vault, &[&dreamer.to_hex()]);
+    let [evidence, voice] = [test_id(HELD), test_id(0x54)];
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(owner, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(Value::from("representation source"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    for (id, text) in [
+        (evidence, "The report is ready for review."),
+        (voice, "Keep it brief. Thanks, Alex."),
+    ] {
+        let candidate = ClaimCandidate::new(
+            "profile.representation_sample",
+            ClaimSubject::Entity(owner),
+            Value::from(text),
+            1.0,
+        );
+        vault
+            .batch()
+            .claim_candidate(&id, candidate, &envelope, test_time(1), 1)
+            .commit()?;
+    }
+    let request = RepresentationRequest {
+        owner,
+        kind: RepresentationKind::Reply,
+        verb: "send".into(),
+        channel: "email".into(),
+        target: "counterparty:fixture".into(),
+        evidence: vec![RepresentationSourceRef { claim: evidence }],
+        voice: vec![RepresentationSourceRef { claim: voice }],
+    };
+    check_transition(&vault, evidence, reader, |v, id| {
+        match v.representation_context(&request) {
+            Ok(context) => {
+                assert_eq!(context.evidence.len(), 1, "{reader:?}: evidence");
+                assert_eq!(context.evidence[0].claim, *id, "{reader:?}: evidence");
+                assert_eq!(context.voice[0].claim, voice, "{reader:?}: voice");
+                Ok(true)
+            }
+            Err(Error::InvalidClaimBody(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
     })
 }
