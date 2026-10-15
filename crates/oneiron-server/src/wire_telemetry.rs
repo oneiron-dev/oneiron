@@ -78,8 +78,7 @@ pub enum LimitRow {
     CodeRuns,
     /// Code-mode compaction passes at once.
     CompactionPasses,
-    /// Requests the embedder endpoint's model works on at once, each
-    /// priority its own.
+    /// Requests the embedder endpoint holds at once.
     EmbedderRequests,
     /// Bytes the embedder endpoint's request bodies hold at once.
     EmbedderBodyBytes,
@@ -97,7 +96,7 @@ impl LimitRow {
         Self::EmbedderRequests,
         Self::EmbedderBodyBytes,
     ];
-    /// The config key that sets the row, or, for a bound the embedder
+    /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
     pub const fn key(self) -> &'static str {
         match self {
@@ -109,7 +108,7 @@ impl LimitRow {
             Self::CodeRuns => "models.code_mode.max_runs",
             // As many passes as runs: at most one per run is in flight.
             Self::CompactionPasses => "models.code_mode.max_runs:compaction",
-            Self::EmbedderRequests => "embedder.serve:requests",
+            Self::EmbedderRequests => "limits.embedder_requests",
             Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
         }
     }
@@ -184,16 +183,22 @@ impl LimitQuestions {
             .get(&row)
             .map(|open| open.question.clone())
     }
-    /// The questions not kept yet, each with its window, marked kept.
-    fn take_unkept(&self) -> Vec<(u64, WireLimitQuestion)> {
+    /// The questions not kept yet, each with its row and window.
+    fn unkept(&self) -> Vec<(LimitRow, u64, WireLimitQuestion)> {
         lock(&self.asked)
-            .values_mut()
-            .filter(|open| !open.kept)
-            .map(|open| {
-                open.kept = true;
-                (open.window, open.question.clone())
-            })
+            .iter()
+            .filter(|(_, open)| !open.kept)
+            .map(|(row, open)| (*row, open.window, open.question.clone()))
             .collect()
+    }
+    /// Marks `question` kept, unless a crossing since changed it.
+    fn kept(&self, row: LimitRow, window: u64, question: &WireLimitQuestion) {
+        if let Some(open) = lock(&self.asked).get_mut(&row)
+            && open.window == window
+            && open.question == *question
+        {
+            open.kept = true;
+        }
     }
 }
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -238,12 +243,15 @@ impl WireTelemetry {
             .map(|b| decode(&b))
             .transpose()
     }
+    /// Keeps each pending question; one whose write fails stays pending for
+    /// the next flush.
     fn save_limit_questions(&self) -> Result<()> {
-        for (window, question) in self.limits.take_unkept() {
+        for (row, window, question) in self.limits.unkept() {
             self.vault.sync_state_put(
                 &format!("{LIMIT_QUESTION}{}:{window:020}", question.row),
                 &encode(&question)?,
             )?;
+            self.limits.kept(row, window, &question);
         }
         Ok(())
     }

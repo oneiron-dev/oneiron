@@ -39,6 +39,10 @@ pub struct LimitsConfig {
     /// LFS uploads and downloads at once, each one blocking worker. Past it,
     /// transfers queue.
     pub lfs_transfers: usize,
+    /// Requests `embedder serve` holds at once, reading their bodies, waiting
+    /// for the model or embedding. Past it, requests queue. The model itself
+    /// works on a few at a time whatever this is; the rest wait their turn.
+    pub embedder_requests: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
     /// when it declares none. Past it, an upload still lands and the row asks.
@@ -65,6 +69,7 @@ impl Default for LimitsConfig {
             body_idle_timeout_ms: 60_000,
             git_exchanges: 2_048,
             lfs_transfers: 2_048,
+            embedder_requests: 2_048,
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
@@ -108,6 +113,7 @@ impl LimitsConfig {
             body_idle_timeout_ms,
             git_exchanges,
             lfs_transfers,
+            embedder_requests,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             queue_wait_timeout_ms,
@@ -122,6 +128,7 @@ impl LimitsConfig {
         set(&mut self.body_idle_timeout_ms, body_idle_timeout_ms);
         set(&mut self.git_exchanges, git_exchanges);
         set(&mut self.lfs_transfers, lfs_transfers);
+        set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
@@ -142,6 +149,7 @@ impl LimitsConfig {
             ("body_idle_timeout_ms", self.body_idle_timeout_ms),
             ("git_exchanges", self.git_exchanges as u64),
             ("lfs_transfers", self.lfs_transfers as u64),
+            ("embedder_requests", self.embedder_requests as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
@@ -170,6 +178,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) body_idle_timeout_ms: Option<u64>,
     pub(super) git_exchanges: Option<usize>,
     pub(super) lfs_transfers: Option<usize>,
+    pub(super) embedder_requests: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,

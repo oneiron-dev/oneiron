@@ -111,6 +111,7 @@ header_read_timeout_ms = 30000    # headers must arrive within it; also idle kee
 body_idle_timeout_ms = 60000      # a request body may pause this long between pieces
 git_exchanges = 2048              # git smart-HTTP exchanges at once (one child each); past it they queue
 lfs_transfers = 2048              # LFS uploads, downloads and verifies at once; past it they queue
+embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
@@ -244,12 +245,13 @@ not HTTPS, so reach a remote embedder through a TLS proxy such as
 key before it reads any of a request's body, and reads bodies only within a
 budget (16 MiB for bodies up to 256 KiB, 64 MiB for larger ones, each body at
 most 32 MiB), so neither strangers nor key holders can make it hold more. A
-body must declare its `Content-Length` (411 otherwise). Past a full budget,
-and past the requests the model works on at once, a request with the key waits
-its turn in order and is never refused for how many wait; a wait ends at the
-default `queue_wait_timeout_ms` (503, to retry, nothing read), and the first
-wait of each crossing logs a `limit_crossed` question. A body has 120 s to
-arrive once its budget is reserved (408 after).
+body must declare its `Content-Length` (411 otherwise). It reads `[limits]`
+from the same config: past `embedder_requests`, past a full budget, and past
+the few requests the model works on at once, a request with the key waits its
+turn in order and is never refused for how many wait. Each wait ends at
+`queue_wait_timeout_ms` (503, to retry, nothing started), and crossing the
+row or a budget logs a `limit_crossed` question. A body has 120 s to arrive
+once its budget is reserved (408 after).
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:

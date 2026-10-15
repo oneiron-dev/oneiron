@@ -191,6 +191,35 @@ impl Drop for Reservation {
     }
 }
 
+/// A worker that ended without an answer: it panicked, or its thread never
+/// started.
+pub(super) type WorkerGone = tokio::sync::oneshot::error::RecvError;
+
+/// Runs a transfer's `work` on a thread of its own and answers when it ends.
+///
+/// Never the runtime's shared blocking pool: a transfer works for as long as
+/// its body keeps moving and the transfer rows admit thousands, so on that
+/// pool (512 threads) one credential's slow transfers could hold every thread
+/// the rest of the server needs, and work behind them would wait in the
+/// pool's own line, with no deadline and no turns. Each worker holds its
+/// permit, so the rows bound these threads.
+pub(super) fn spawn_worker<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> tokio::sync::oneshot::Receiver<T> {
+    let (answer, answered) = tokio::sync::oneshot::channel();
+    // A thread that cannot start drops `work`, and with it the permit; the
+    // caller reads a worker that ended without an answer.
+    if let Err(error) = std::thread::Builder::new()
+        .name("transfer-worker".to_owned())
+        .spawn(move || {
+            let _ = answer.send(work());
+        })
+    {
+        tracing::warn!(kind = ?error.kind(), "a transfer worker thread did not start");
+    }
+    answered
+}
+
 /// One piece of a request body on its way to the worker; `Ok(None)` is the
 /// body's clean end.
 pub(super) type BodyPiece = io::Result<Option<Bytes>>;

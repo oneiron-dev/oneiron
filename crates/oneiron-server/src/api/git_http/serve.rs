@@ -88,7 +88,7 @@ pub(super) async fn run_serve(
     ));
 
     let runtime = Handle::current();
-    let worker = tokio::task::spawn_blocking(move || {
+    let worker = transfer::spawn_worker(move || {
         let _held = (turn, permit);
         let mut reader = BodyReader::new(request_rx);
         let mut sink = ChannelSink {
@@ -137,7 +137,7 @@ pub(super) async fn run_serve(
 pub(super) async fn held_response(
     head: oneshot::Receiver<ResponseHead>,
     mut chunks: mpsc::Receiver<Bytes>,
-    worker: tokio::task::JoinHandle<oneiron::Result<smart_http::ServeReport>>,
+    worker: oneshot::Receiver<oneiron::Result<smart_http::ServeReport>>,
 ) -> Response {
     let head = head.await.ok();
     let mut body = Vec::new();
@@ -180,7 +180,7 @@ pub(super) async fn held_response(
 pub(super) fn landed_response(
     head: Option<ResponseHead>,
     body: Vec<Bytes>,
-    joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
+    joined: Result<oneiron::Result<smart_http::ServeReport>, transfer::WorkerGone>,
 ) -> Response {
     let report = match joined {
         Ok(Ok(report)) => report,
@@ -226,7 +226,7 @@ fn waited_out() -> Response {
 }
 
 pub(super) fn serve_failure(
-    joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
+    joined: Result<oneiron::Result<smart_http::ServeReport>, transfer::WorkerGone>,
 ) -> Response {
     if let Ok(Err(error)) = &joined {
         tracing::warn!(kind = ?error.kind(), "git smart-http worker failed");

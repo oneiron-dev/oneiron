@@ -35,7 +35,7 @@ pub(super) async fn exchange(
     };
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
-    let (object, bytes, permit) = tokio::task::spawn_blocking(move || {
+    let (object, bytes, permit) = crate::api::transfer::spawn_worker(move || {
         let object = oneiron::sync::chunks::chunk_request_object(&body)?;
         oneiron::sync::chunks::serve_chunk_request(&vault, principal, scope, &body)
             .map(|bytes| (object, bytes, permit))

@@ -26,6 +26,15 @@ pub(super) type UploadHold = (Permit, Arc<DiskClaim>);
 /// How often, in bytes read, an upload looks at the disk again.
 const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
 
+/// The room the stored copy of a `bytes` object may take on the vault's
+/// disk: its chunks, each rounded up to whole pages (an eighth more at the
+/// smallest chunk), and the rows each chunk and the object add, counted
+/// generously at a quarter more. Copy-on-write growth while readers hold old
+/// pages is not counted; the reserve is the margin for it.
+pub(super) fn stored_copy(bytes: u64) -> u64 {
+    bytes.saturating_add(bytes / 4)
+}
+
 /// One upload's terms, fixed before its worker starts.
 pub(super) struct UploadTerms {
     pub(super) oid: LfsOid,
@@ -74,7 +83,7 @@ pub(super) async fn upload(
         looked_at: None,
         asked: declared.is_some_and(|size| size > size_row),
     };
-    let mut worker = tokio::task::spawn_blocking(move || {
+    let mut worker = transfer::spawn_worker(move || {
         let _hold = hold;
         // The size row is not a cap: only the disk floor ends an upload.
         vault.put_lfs_object_stream_with_cap(
@@ -148,7 +157,7 @@ impl Read for FloorReader {
         // its end, once its size is known.
         let needed = if count == 0 {
             self.reservation.cover(&self.vault, self.read);
-            Some(self.read)
+            Some(stored_copy(self.read))
         } else if self
             .looked_at
             .is_none_or(|at| self.read - at >= FLOOR_EVERY_BYTES)
@@ -158,7 +167,7 @@ impl Read for FloorReader {
                 |declared| {
                     declared
                         .saturating_sub(written)
-                        .saturating_add(declared.max(self.read))
+                        .saturating_add(stored_copy(declared.max(self.read)))
                 },
             ))
         } else {
@@ -176,7 +185,7 @@ impl Read for FloorReader {
 }
 
 fn finished(
-    joined: Result<oneiron::Result<LfsPutOutcome>, tokio::task::JoinError>,
+    joined: Result<oneiron::Result<LfsPutOutcome>, transfer::WorkerGone>,
 ) -> Result<LfsPutOutcome, ApiError> {
     joined
         .map_err(|_| ApiError::internal_server_error("lfs upload worker failed"))?
@@ -214,7 +223,8 @@ pub(super) fn download(vault: Arc<Vault>, oid: LfsOid, permit: Permit, idle: Dur
     let (sender, receiver) = mpsc::channel(2);
     let reader = Arc::clone(&vault);
     let runtime = Handle::current();
-    tokio::task::spawn_blocking(move || {
+    // Detached: the worker answers nobody; it ends with the stream.
+    drop(transfer::spawn_worker(move || {
         let _permit = permit;
         let mut writer = ChannelWriter {
             chunks: sender,
@@ -229,7 +239,7 @@ pub(super) fn download(vault: Arc<Vault>, oid: LfsOid, permit: Permit, idle: Dur
         // Bounded like every other chunk: a client that stopped reading
         // never takes this worker with it.
         let _ = transfer::send_within(&writer.runtime, &writer.chunks, Err(ending), idle);
-    });
+    }));
     // Each buffered chunk is released only while no device-only world keeps
     // the object; a flag set mid-download ends the body with an error.
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {

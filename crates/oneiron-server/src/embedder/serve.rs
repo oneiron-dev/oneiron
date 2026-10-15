@@ -35,11 +35,12 @@
 //! is read. A body must declare its length, and is read only once that fits a
 //! budget, which it holds until its request's work ends: small bodies
 //! (queries, a vault's document batches) and large ones each have their own,
-//! so a recall never waits behind an upload. Past a full budget, and past
-//! the requests the model works on at once, a request with the key waits its
-//! turn in order, up to the queue deadline; it is never refused for how many
-//! wait (the owner's rate law, ARCH-0044 C5), and the first wait of each
-//! crossing asks whether everything is okay (OF-520). A body that does not
+//! so a recall never waits behind an upload. Past the `embedder_requests`
+//! row of `[limits]`, past a full budget, and past the few requests the
+//! model works on at once, a request with the key waits its turn in order,
+//! each wait up to the queue deadline; it is never refused for how many wait
+//! (the owner's rate law, ARCH-0044 C5). Crossing the requests row or a
+//! budget asks whether everything is okay (OF-520). A body that does not
 //! arrive in time gives its budget back, so however many callers wait, the
 //! server holds little more than both budgets.
 
@@ -85,11 +86,13 @@ const LARGE_BODIES_BYTES: usize = 2 * MAX_BODY_BYTES;
 /// still arriving then is refused, and its reservation returned: a stalled
 /// upload holds a budget for this long at most.
 const BODY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-/// Bulk requests in flight at once. The model runs one forward at a time
+/// Bulk requests the model works on at once. It runs one forward at a time
 /// anyway; two keep it busy while the next request is tokenised, and the rest
-/// wait here rather than each holding a blocking thread a query may need.
+/// wait their turn rather than each holding a blocking thread a query may
+/// need. This is the model's scheduling, not a row: the row is
+/// `embedder_requests`.
 const BULK_REQUESTS: usize = 2;
-/// Query requests in flight at once, for the same reason.
+/// Query requests the model works on at once, for the same reason.
 const QUERY_REQUESTS: usize = 64;
 /// The longest query instruction a request may carry. A vault's is a line;
 /// each input is embedded behind its own copy, so the cap is what bounds a
@@ -106,6 +109,8 @@ pub(crate) struct Listen {
     pub(crate) key: Option<Zeroizing<String>>,
     /// Names a request's `model` may give besides the space id.
     pub(crate) aliases: Vec<String>,
+    /// The `[limits]` the endpoint serves under.
+    pub(crate) limits: crate::config::LimitsConfig,
 }
 
 /// Loads the configured local model and serves it until interrupted.
@@ -131,12 +136,17 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         auth = listen.key.is_some(),
         "embedder endpoint serving /v1/embeddings"
     );
-    let served = Arc::new(Served::new(embedder, listen.aliases, listen.key));
+    let served = Arc::new(Served::new(
+        embedder,
+        listen.aliases,
+        listen.key,
+        &listen.limits,
+    ));
     let questions = Arc::clone(&served.questions);
     crate::http_listener::serve(
         listener,
         routes(served),
-        crate::config::LimitsConfig::default().connections(),
+        listen.limits.connections(),
         questions,
         async {
             let _ = tokio::signal::ctrl_c().await;
@@ -204,11 +214,15 @@ struct Served {
     /// The space id first, then the aliases.
     names: Vec<String>,
     key: Option<Zeroizing<String>>,
-    /// Admission, held until the request's embedding work ends, not only its
-    /// handler: a client that hangs up does not free a turn its work still
-    /// takes. Past it a request waits its turn.
-    bulk: Admission<()>,
-    queries: Admission<()>,
+    /// Requests held at once, from the key check until the request's
+    /// embedding work ends: the `embedder_requests` row. Past it a request
+    /// waits its turn.
+    requests: Admission<()>,
+    /// The model's turns, held until the request's embedding work ends, not
+    /// only its handler: a client that hangs up does not free a turn its work
+    /// still takes. Past them a request waits in order, up to `wait`.
+    bulk: Arc<tokio::sync::Semaphore>,
+    queries: Arc<tokio::sync::Semaphore>,
     /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]).
     small_bodies: BodyBudget,
     large_bodies: BodyBudget,
@@ -302,25 +316,24 @@ impl Served {
         embedder: Arc<dyn ServedModel>,
         aliases: Vec<String>,
         key: Option<Zeroizing<String>>,
+        limits: &crate::config::LimitsConfig,
     ) -> Self {
         let mut names = vec![embedder.model_id().to_owned()];
         names.extend(aliases.into_iter().filter(|alias| !alias.is_empty()));
         let questions = Arc::new(LimitQuestions::default());
-        let wait = crate::config::LimitsConfig::default().queue_wait();
-        let requests = |bound| {
-            Admission::new(
-                LimitRow::EmbedderRequests,
-                Arc::clone(&questions),
-                bound,
-                wait,
-            )
-        };
+        let wait = limits.queue_wait();
         Self {
             embedder,
             names,
             key,
-            bulk: requests(BULK_REQUESTS),
-            queries: requests(QUERY_REQUESTS),
+            requests: Admission::new(
+                LimitRow::EmbedderRequests,
+                Arc::clone(&questions),
+                limits.embedder_requests,
+                wait,
+            ),
+            bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
+            queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
             small_bodies: BodyBudget::new(SMALL_BODIES_BYTES),
             large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
             questions,
@@ -344,7 +357,12 @@ fn router(
     aliases: Vec<String>,
     key: Option<Zeroizing<String>>,
 ) -> Router {
-    routes(Arc::new(Served::new(embedder, aliases, key)))
+    routes(Arc::new(Served::new(
+        embedder,
+        aliases,
+        key,
+        &crate::config::LimitsConfig::default(),
+    )))
 }
 
 /// Every request's key is checked from its headers first, before any route
@@ -541,6 +559,9 @@ async fn read_body(
 }
 
 async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Response {
+    let Ok(held) = served.requests.admit(()).await else {
+        return waited_out();
+    };
     let (body_held, body) = match read_body(&served, request).await {
         Ok(read) => read,
         Err(refused) => return refused,
@@ -639,21 +660,18 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             &format!("an instruction is at most {MAX_INSTRUCTION_BYTES} bytes"),
         );
     }
-    let admitted = match priority {
-        Priority::Query => served.queries.admit(()).await,
-        Priority::Bulk => served.bulk.admit(()).await,
+    let turns = match priority {
+        Priority::Query => &served.queries,
+        Priority::Bulk => &served.bulk,
     };
-    let Ok(admitted) = admitted else {
-        return refuse(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "server_error",
-            "the request waited past its deadline for its turn; nothing was started; retry",
-        );
+    let Ok(Ok(turn)) = tokio::time::timeout(served.wait, Arc::clone(turns).acquire_owned()).await
+    else {
+        return waited_out();
     };
     let embedder = Arc::clone(&served.embedder);
     let instruction = request.instruction;
     let embedded = tokio::task::spawn_blocking(move || {
-        let _held = (admitted, body_held);
+        let _held = (held, turn, body_held);
         embedder.embed_raw(&texts, side, instruction.as_deref(), priority)
     })
     .await;
@@ -731,6 +749,15 @@ fn unauthorised(served: &Served, headers: &HeaderMap) -> Option<Response> {
 }
 
 /// An OpenAI-shaped error body. The message never echoes an input.
+/// A wait for a turn reached the queue deadline.
+fn waited_out() -> Response {
+    refuse(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "server_error",
+        "the request waited past its deadline for its turn; nothing was started; retry",
+    )
+}
+
 fn refuse(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,

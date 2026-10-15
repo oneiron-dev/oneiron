@@ -161,8 +161,9 @@ pub(crate) async fn lfs_upload(
     }
     // A declared upload writes its spool and then its stored copy.
     let floor = server.transfers.disk.clone();
+    let room = |size: u64| size.saturating_add(super::streaming::stored_copy(size));
     if let Some(size) = declared
-        && !floor.has_room_for(size.saturating_mul(2))
+        && !floor.has_room_for(room(size))
     {
         return Ok(lfs_disk_floor());
     }
@@ -173,7 +174,7 @@ pub(crate) async fn lfs_upload(
     // under the permit just taken: at most as many reads as transfers, and
     // none on the runtime.
     let reserving = Arc::clone(&server);
-    let (reserved, permit) = tokio::task::spawn_blocking(move || {
+    let (reserved, permit) = crate::api::transfer::spawn_worker(move || {
         let size = declared.unwrap_or(size_row);
         let reserved = reserving.transfers.reserve_lfs(&reserving.vault, size);
         (reserved, permit)
@@ -186,7 +187,7 @@ pub(crate) async fn lfs_upload(
     // will write is room no other upload counts as free.
     let claim = floor.claim();
     if let Some(size) = declared
-        && !floor.hold(&claim, size.saturating_mul(2))
+        && !floor.hold(&claim, room(size))
     {
         return Ok(lfs_disk_floor());
     }
@@ -247,7 +248,7 @@ pub(crate) async fn lfs_download(
         return Ok(lfs_waited_out());
     };
     let vault = Arc::clone(&server.vault);
-    let (verified, permit) = tokio::task::spawn_blocking(move || {
+    let (verified, permit) = crate::api::transfer::spawn_worker(move || {
         (vault.verify_lfs_object(oid, record.size_bytes), permit)
     })
     .await
@@ -299,7 +300,7 @@ pub(crate) async fn lfs_verify(
     };
     let vault = Arc::clone(&server.vault);
     let size = request.size;
-    let ok = tokio::task::spawn_blocking(move || {
+    let ok = crate::api::transfer::spawn_worker(move || {
         let _permit = permit;
         vault.verify_lfs_object(oid, size)
     })
