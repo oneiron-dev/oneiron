@@ -7,6 +7,9 @@ impl Vault {
     ///
     /// The writer needs an admin federation grant over the target vault;
     /// `mailbox_owner` authenticates the member PERSON, independently of the writer.
+    /// For a delegated mailbox it also authorizes the autonomy grants minted for
+    /// it, which only the vault's owner may do: a member who does not own the
+    /// vault onboards through [`Vault::onboard_workspace_member_with_owner`].
     /// Requested/PendingFulfillment stay resumable. External fulfillment requires
     /// policy-gated Bind ([`Vault::apply_channel_identity_lifecycle_intent`]), then
     /// trusted manual/API completion ([`Vault::fulfill_channel_identity`]). Onboarding
@@ -29,6 +32,28 @@ impl Vault {
         ))
     }
 
+    /// [`Vault::onboard_workspace_member`] for a member who does not own the
+    /// vault: `member` is the member PERSON's own consent to the delegated
+    /// mailbox, and `owner` is the vault owner's authorization of the autonomy
+    /// grants minted for it. Each is checked on its own tier.
+    pub fn onboard_workspace_member_with_owner(
+        &self,
+        intent: MemberOnboardingIntent,
+        authenticated_writer: &WriteActor,
+        member: &AuthenticatedOwner,
+        owner: &AuthenticatedOwner,
+    ) -> Result<MemberOnboardingOutcome> {
+        self.onboard_workspace_member_with_proofs(
+            intent,
+            authenticated_writer,
+            MailboxProofs::separate(member, owner),
+            MemberOnboardingStep::Complete,
+        )?
+        .ok_or(Error::InvariantViolation(
+            "workspace onboarding halted before Complete",
+        ))
+    }
+
     /// [`Vault::onboard_workspace_member`], stopping after `halt_after`.
     ///
     /// Crate-internal because "stop half way" is not a product verb — it is how
@@ -42,9 +67,24 @@ impl Vault {
         mailbox_owner: Option<&AuthenticatedOwner>,
         halt_after: MemberOnboardingStep,
     ) -> Result<Option<MemberOnboardingOutcome>> {
+        self.onboard_workspace_member_with_proofs(
+            intent,
+            authenticated_writer,
+            MailboxProofs::one(mailbox_owner),
+            halt_after,
+        )
+    }
+
+    fn onboard_workspace_member_with_proofs(
+        &self,
+        intent: MemberOnboardingIntent,
+        authenticated_writer: &WriteActor,
+        proofs: MailboxProofs<'_>,
+        halt_after: MemberOnboardingStep,
+    ) -> Result<Option<MemberOnboardingOutcome>> {
         intent.validate()?;
         if intent.delegated_mailbox.is_some() {
-            require_mailbox_owner(self, &intent, mailbox_owner)?;
+            require_mailbox_owner(self, &intent, proofs)?;
         }
         require_workspace_authority(
             self,
@@ -61,7 +101,7 @@ impl Vault {
                     ));
                 }
                 if let Some(completed_at) = record.completed_at {
-                    let revision = verify_mailbox_revision(self, &intent, mailbox_owner)?;
+                    let revision = verify_mailbox_revision(self, &intent, proofs)?;
                     with_workspace_authority(
                         self,
                         intent.workspace.workspace_vault_id,
@@ -90,7 +130,7 @@ impl Vault {
                         completed_at: None,
                     },
                     authenticated_writer,
-                    mailbox_owner,
+                    proofs,
                 )?;
                 0
             }
@@ -105,7 +145,7 @@ impl Vault {
                 intent.workspace.workspace_vault_id,
                 authenticated_writer,
             )?;
-            self.run_onboarding_step(step, &intent, authenticated_writer, mailbox_owner)?;
+            self.run_onboarding_step(step, &intent, authenticated_writer, proofs)?;
             let completed_at =
                 (step == MemberOnboardingStep::Complete).then_some(intent.occurred_at);
             write_journal(
@@ -117,7 +157,7 @@ impl Vault {
                     completed_at,
                 },
                 authenticated_writer,
-                mailbox_owner,
+                proofs,
             )?;
             done = step.rank();
             if step == halt_after {
@@ -138,7 +178,7 @@ impl Vault {
         step: MemberOnboardingStep,
         intent: &MemberOnboardingIntent,
         writer: &WriteActor,
-        mailbox_owner: Option<&AuthenticatedOwner>,
+        proofs: MailboxProofs<'_>,
     ) -> Result<()> {
         match step {
             MemberOnboardingStep::Started => Ok(()),
@@ -151,16 +191,15 @@ impl Vault {
             MemberOnboardingStep::MailboxBound => match &intent.delegated_mailbox {
                 Some(mailbox) => {
                     bind_delegated_mailbox(self, intent, mailbox, writer)?;
-                    let owner = require_mailbox_owner(self, intent, mailbox_owner)?;
+                    require_mailbox_owner(self, intent, proofs)?;
+                    let owner = proofs.grant_owner()?;
                     self.apply_channel_identity_autonomy(&mailbox.autonomy, owner)?;
                     self.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
                     Ok(())
                 }
                 None => Ok(()),
             },
-            MemberOnboardingStep::Complete => {
-                record_roster_member(self, intent, writer, mailbox_owner)
-            }
+            MemberOnboardingStep::Complete => record_roster_member(self, intent, writer, proofs),
         }
     }
 

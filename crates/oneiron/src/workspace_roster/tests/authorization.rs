@@ -577,6 +577,88 @@ fn mailbox_consent_owner_cannot_be_inferred_from_admin_write_actor() -> Result<(
     Ok(())
 }
 
+/// A member who owns nothing onboards their own delegated mailbox (Engine
+/// ruling Q1 on the F18 tier flip): their proof is their consent, and the
+/// vault owner's separate proof authorizes the autonomy grants. The member's
+/// proof mints no grant, alone or as both proofs, and the owner's proof is
+/// no consent of the member's. A completed replay rechecks both.
+#[test]
+fn a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorization() -> Result<()> {
+    let refused = |result: Result<MemberOnboardingOutcome>| {
+        matches!(
+            result,
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+        )
+    };
+    let (_dir, vault, mut intent, owner) = mailbox_fixture()?;
+    let member = crate::test_util::non_owner_proof(&vault);
+    intent.person_ref = member.actor_for_read(&vault)?;
+    let identity = intent
+        .delegated_mailbox
+        .as_ref()
+        .expect("mailbox")
+        .identity_ref;
+    assert!(matches!(
+        vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner),
+        Err(Error::Record(
+            RecordError::WorkspaceMailboxAutonomyNotReady { .. }
+        ))
+    ));
+    activate_mailbox(&vault, identity)?;
+
+    for (proofs, member_proof, owner_proof) in [
+        ("the member's proof alone", &member, None),
+        ("the member's proof as both", &member, Some(&member)),
+        ("the owner's proof as both", &owner, Some(&owner)),
+    ] {
+        let result = match owner_proof {
+            None => {
+                vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(member_proof))
+            }
+            Some(owner_proof) => vault.onboard_workspace_member_with_owner(
+                intent.clone(),
+                &writer(WRITER),
+                member_proof,
+                owner_proof,
+            ),
+        };
+        assert!(refused(result), "{proofs} onboarded the mailbox");
+        assert_eq!(
+            type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
+            0,
+            "{proofs} minted a grant"
+        );
+    }
+    assert!(refused(vault.onboard_workspace_member(
+        intent.clone(),
+        &writer(WRITER),
+        Some(&owner)
+    )));
+
+    let outcome = vault.onboard_workspace_member_with_owner(
+        intent.clone(),
+        &writer(WRITER),
+        &member,
+        &owner,
+    )?;
+    assert_eq!(outcome.person_ref, intent.person_ref);
+    assert_eq!(outcome.delegated_identity_ref, Some(identity));
+    assert_eq!(
+        read_journal(&vault, &intent.onboarding_id)?.and_then(|row| row.completed_at),
+        Some(AT)
+    );
+    assert!(refused(vault.onboard_workspace_member(
+        intent.clone(),
+        &writer(WRITER),
+        Some(&member)
+    )));
+    assert_eq!(
+        vault.onboard_workspace_member_with_owner(intent, &writer(WRITER), &member, &owner)?,
+        outcome
+    );
+    Ok(())
+}
+
 #[test]
 fn mailbox_actor_identity_context_and_rung_mismatches_leave_no_effect() -> Result<()> {
     let (_dir, vault, intent, owner) = mailbox_fixture()?;
