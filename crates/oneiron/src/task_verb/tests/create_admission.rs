@@ -512,10 +512,6 @@ fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
             vault.with_write_txn(|txn| record_task_create(&vault, txn, actor, 0, rate)),
             Err(crate::Error::CorruptedIndex(_))
         ));
-        assert!(matches!(
-            vault.with_write_txn(|txn| consume_create_rate_slot(&vault, txn, actor, 0, rate)),
-            Err(crate::Error::CorruptedIndex(_))
-        ));
     }
     Ok(())
 }

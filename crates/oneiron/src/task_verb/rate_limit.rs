@@ -72,9 +72,7 @@ pub(super) fn task_actor_ceiling(
 }
 
 /// Tags an ask's window key, so asks count on their own key beside the create
-/// window. The fan-out gate refuses on the create count alone; an actor's own
-/// asks must never spend its fan-out slots (own actions are never refused on
-/// count).
+/// window.
 const ASK_WINDOW_KEY_TAG: u64 = 1 << 63;
 
 pub(super) fn record_task_create(
@@ -137,27 +135,6 @@ fn record_window(
         },
     )?;
     Ok(next)
-}
-
-/// Fan-out admission gate on the generic create quota: refuses (without
-/// recording) once the actor's current-window count reaches the limit, else
-/// records one slot and admits. C07 consult fan-out is the only caller; the
-/// generic create lane stays accounting-only (OF-520).
-pub(super) fn consume_create_rate_slot(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: EntityId,
-    now: u64,
-    rate_limit: TaskCreateRateLimit,
-) -> Result<bool> {
-    let window_seconds = rate_limit.window_seconds.max(1);
-    let window = now / window_seconds;
-    let count = read_window(vault, wtxn, actor, window_seconds, window)?;
-    if count >= rate_limit.limit as u64 {
-        return Ok(false);
-    }
-    record_task_create(vault, wtxn, actor, now, rate_limit)?;
-    Ok(true)
 }
 
 fn read_window(

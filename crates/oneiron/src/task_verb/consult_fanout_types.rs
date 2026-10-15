@@ -14,7 +14,10 @@ pub struct ConsultFanOutPolicy {
     pub mode: ConsultFanOutMode,
     /// Optional anomaly detector, not a spend cap. Crossings pause visibly.
     pub peer_rate: Option<ConsultFanOutRate>,
-    /// The owner-authored actor request quota. One admitted fan-out uses one slot.
+    /// The owner-authored actor request rate. Past it a fan-out still lands,
+    /// and the first request past it in a window leaves an OF-520 check.
+    /// Every fan-out of an actor counts against the vault's row; a scoped
+    /// row's rate composes into its policy but does not move the check.
     pub create_rate: TaskCreateRateLimit,
 }
 

@@ -895,8 +895,7 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
 
 // H328: one ask counts once on the asker's own ask window, whatever its
 // recipients; its replay never counts again. It counts beside the create
-// window, never in it: the fan-out gate refuses on the create count, and an
-// actor's own asks must not spend its fan-out slots.
+// window, never in it.
 #[test]
 fn an_ask_counts_once_on_the_askers_own_window() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
@@ -911,7 +910,7 @@ fn an_ask_counts_once_on_the_askers_own_window() -> Result<()> {
     assert_eq!(
         fixture.vault.task_create_count(fixture.owner, 60)?,
         0,
-        "an ask spent a create slot the fan-out gate refuses on"
+        "an ask counted on the create window"
     );
     Ok(())
 }
