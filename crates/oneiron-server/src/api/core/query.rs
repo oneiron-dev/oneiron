@@ -288,7 +288,12 @@ where
         }
         ids.push(id);
     }
-    let next_cursor = fetched.resume_after.as_ref().map(oneiron::EntityId::to_hex);
+    // A full page resumes after its last item, as the list always has; a page
+    // the run left short resumes where the run stopped.
+    let next_cursor = fetched.resume_after.map(|resume_after| {
+        let last_served = ids.last().filter(|_| ids.len() == limit);
+        last_served.unwrap_or(&resume_after).to_hex()
+    });
     Ok((ids, next_cursor))
 }
 
