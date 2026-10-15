@@ -326,14 +326,16 @@ impl Vault {
         // itself: this door's record would make it current (the Engine's Q2
         // on Astra #1422c). So a key whose signers the new pin leaves out
         // keeps its wraps, and the old trust set's silence never overrides a
-        // removal in the new one (Astra #1422d F2). This machine's record of
-        // one id vouches for no other bytes under it, such as those a seed
-        // retry opens (Astra #1422e F2). Such a key is still opened, and a
-        // kit restore keeps it usable.
+        // removal in the new one (Astra #1422d F2). A record of one id,
+        // this machine's own or a standing one, vouches for no other bytes
+        // under it, such as those a seed retry or the old pin opens (Astra
+        // #1422e F2, #1422f F1). Such a key is still opened, and a kit
+        // restore keeps it usable.
         let stands = |id: &WorldKeyId, key: &WorldKey, owner: EntityId| {
             let stands_in = |fold: &AuthorityFold| {
-                fold.world_key(id)
-                    .is_some_and(|key| fold.world_key_stands(key))
+                fold.world_key(id).is_some_and(|held| {
+                    fold.world_key_stands(held) && !other_bytes(held, key, owner)
+                })
             };
             let none_removed = || {
                 [&start.old, &mid]

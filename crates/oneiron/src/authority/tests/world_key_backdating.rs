@@ -6,7 +6,8 @@
 //! row, and no re-wrap door, lends such a key that standing (Astra #1422d
 //! F2), and no such row conflicts a key a standing machine signed or hides
 //! its envelopes (F3). A machine's own record of a key stands for the bytes
-//! it signed, never for other bytes under the same id (Astra #1422e F2).
+//! it signed, never for other bytes under the same id (Astra #1422e F2), and
+//! so does a standing record another machine signed (Astra #1422f F1).
 use super::machine_identity::host;
 use super::world_chain_reads::hash;
 use super::world_key_arrival::{Graph, graph, over};
@@ -564,5 +565,174 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
     assert_eq!(
         fold.current_world_key(world).map(|key| key.commitment),
         Some(genuine)
+    );
+}
+
+/// Astra #1422f F1. R0 anchors B, which makes the world `MyMachines` and
+/// mints K under id I; R0's anchor then marks B work or school, so B is not
+/// mine under R0 and K still stands there. From an install that never saw
+/// K, R1 anchors A and B. Someone holding A's install key records other
+/// bytes J under I on A's and B's admissions and B's edit, wrapped to B,
+/// and R1's anchor removes A: under R1, J is I's one counted pair, and no
+/// machine that stands signed it. B pins R1, which withholds I as
+/// conflicted, then pins R0 again: B is mine under R1 and not under R0, so
+/// the door pre-wraps what it opened under R1. B writes no record of J, I
+/// is withheld as conflicted, and J is not current on an install pinned to
+/// R1. A pre-wrap of the standing pair's own bytes still happens
+/// (world_reissue's `a_recipients_key_survives_an_explicit_re_assertion`).
+/// Fails before: K's standing record under R0 stood for any bytes under I,
+/// so B's pre-wrap signed J, which became current under R1.
+#[test]
+fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
+    let host = host();
+    let world = world_row(&host);
+    let [first, second, a, b] = [(); 4].map(|()| fresh_install(&host));
+    let r0 = issue(&first, &[]);
+    admit(&first, &r0, &b);
+    set_on(&b, world, ReadLocation::MyMachines);
+    let (id, genuine) = {
+        let fold = b.vault.authority_fold().unwrap();
+        let key = fold.current_world_key(world).unwrap();
+        (key.id, key.commitment)
+    };
+    let home = r0.seed.anchor();
+    let demotion = {
+        let fold = b.vault.authority_fold().unwrap();
+        let current = fold.machine(b.machine()).unwrap().anchored[&home.verifying_key().to_bytes()]
+            .profile
+            .clone();
+        let profile = MachineProfile {
+            role: MachineRole::Owned(MachineOwnership::WorkSchool),
+            revision: current.revision + 1,
+            ..current
+        };
+        anchor_signed_entry(&fold, &home, AuthorityOp::MachineProfile(profile), 2).unwrap()
+    };
+    b.vault.put_authority_log_entry(&demotion, AT, 3).unwrap();
+    let fold = b.vault.authority_fold().unwrap();
+    assert!(fold.trusted_machine(b.machine()).is_none());
+    assert!(
+        fold.world_key(&id)
+            .is_some_and(|key| fold.world_key_stands(key))
+    );
+
+    let r1 = issue(&second, &[]);
+    admit(&second, &r1, &a);
+    let request = own_request(&b.vault);
+    second
+        .vault
+        .anchor_machine(
+            &second.owner,
+            HERE,
+            &r1.seed,
+            &request,
+            Some(request.code()),
+            None,
+        )
+        .unwrap();
+    sync(&second.vault, &b.vault);
+    let graph = Graph {
+        host,
+        world,
+        issuer: second,
+        root: r1,
+        a,
+        b,
+        key: id,
+    };
+    let anchor = graph.root.seed.anchor().verifying_key().to_bytes();
+    let fold = graph.b.vault.authority_fold().unwrap();
+    let admissions = [graph.a.machine(), graph.b.machine()]
+        .map(|machine| fold.machine(machine).unwrap().anchored[&anchor].entry);
+    let removal = graph.removal(&graph.b.vault);
+    graph
+        .b
+        .vault
+        .put_authority_log_entry(&removal, AT, 3)
+        .unwrap();
+    let by_b = graph.rows_by(&graph.b.vault, graph.b.machine());
+    let edit = by_b
+        .iter()
+        .find(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
+        .unwrap();
+    let minted = by_b
+        .iter()
+        .find(|entry| matches!(&entry.op, AuthorityOp::WorldKeyWraps(record) if record.key == id))
+        .unwrap();
+    let AuthorityOp::WorldKeyWraps(record) = &minted.op else {
+        panic!("B's record of K");
+    };
+    assert_eq!(record.commitment, genuine);
+    let j = WorldKey::other_bytes_for_test(id).unwrap();
+    let to_b = WrapRecipient::Machine(graph.b.machine());
+    let public = oneiron_crypto::HybridPublicKey::from_bytes(
+        &graph
+            .b
+            .vault
+            .machine_encryption_key(graph.host.vault_id)
+            .unwrap()
+            .key,
+    )
+    .unwrap();
+    let binding = WorldKeyBinding {
+        vault_id: minted.vault_id.unwrap(),
+        key: id,
+        owner: record.owner,
+        policy: record.policy,
+        commitment: j.commitment(),
+    };
+    let envelope = seal_world_key(&binding, to_b, &public, &j).unwrap();
+    let forged = graph.signed_as_a(
+        minted,
+        1,
+        vec![admissions[0], admissions[1], hash(edit)],
+        AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
+            commitment: j.commitment(),
+            machine: graph.a.machine(),
+            wraps: vec![(to_b, envelope.to_bytes())],
+            ..record.clone()
+        }),
+    );
+    graph
+        .b
+        .vault
+        .put_authority_log_entry(&forged, AT, 3)
+        .unwrap();
+
+    let report = graph
+        .b
+        .vault
+        .pin_owner_root(&graph.b.owner, HERE, graph.root.root)
+        .unwrap();
+    assert!(
+        report.withheld.contains(&(id, Withheld::Conflicted)),
+        "{:?}",
+        report.withheld
+    );
+    let fold = graph.b.vault.authority_fold().unwrap();
+    assert!(fold.trusted_machine(graph.b.machine()).is_some());
+    let counted = fold.world_key(&id).unwrap();
+    assert_eq!(counted.commitment, j.commitment());
+    assert!(!counted.conflicted && !fold.world_key_stands(counted));
+
+    let report = graph
+        .b
+        .vault
+        .pin_owner_root(&graph.b.owner, HERE, r0.root)
+        .unwrap();
+    assert!(
+        report.withheld.contains(&(id, Withheld::Conflicted)),
+        "{:?}",
+        report.withheld
+    );
+    let by_b = graph.rows_by(&graph.b.vault, graph.b.machine());
+    assert!(by_b.iter().all(|entry| !matches!(&entry.op,
+        AuthorityOp::WorldKeyWraps(record) if record.commitment == j.commitment())));
+    sync(&graph.b.vault, &graph.issuer.vault);
+    assert_eq!(pinned(&graph.issuer.vault), Some(graph.root.root));
+    let fold = graph.issuer.vault.authority_fold().unwrap();
+    assert!(
+        fold.current_world_key(world)
+            .is_none_or(|key| key.commitment != j.commitment())
     );
 }
