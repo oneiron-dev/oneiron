@@ -149,9 +149,9 @@ fn a_seal_superseding_one_on_a_sibling_branch_installs_in_a_component() -> Resul
 
 /// Bug repro (Sol r15 F4, Astra r15 F3): C froze at C2 (C1 under P, C2 back
 /// to R with `{kept, extra}`), and P's board put P under C with `{kept,
-/// extra}`. C4, a narrowing below the frozen head, lands by the drain: P no
-/// longer fits C, and the record the batch end persists for P is the one a
-/// fresh read serves.
+/// extra}`. C4, a narrowing below the frozen head, arrives as a companion
+/// alone and lands by the batch end's drain: P no longer fits C, and the
+/// record the batch end persists for P is the one a fresh read serves.
 #[cfg(feature = "sync")]
 #[test]
 fn a_frozen_drain_in_a_component_persists_what_is_served() -> Result<()> {
@@ -187,7 +187,8 @@ fn a_frozen_drain_in_a_component_persists_what_is_served() -> Result<()> {
     let narrow = signed_over(&vault, c, &c3, holder, |row| {
         row.slice.readable = readable(KEPT);
     })?;
-    replay_project(&vault, c, &narrow, 8)?;
+    let (_, narrow) = revisions_of_row(c, &narrow)?.pop().ok_or_else(invalid)?;
+    put_companion(&vault, &narrow, 8)?;
     let served = vault.project_frontier(p)?.ok_or(Error::EntityNotFound)?;
     assert_eq!(served.effective, None);
     let txn = vault.store.env.read_txn()?;
