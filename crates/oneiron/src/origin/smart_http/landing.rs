@@ -252,23 +252,11 @@ impl Vault {
                     authority,
                     learned_at,
                 )?,
-                None => {
-                    let landed = landed_wire_outcome(wire.publish_refs(
-                        handle,
-                        vec![update.publication()?],
-                        learned_at,
-                    )?)?;
-                    // The deleted name's visible slot has nothing left to
-                    // advertise. A crash before this line leaves the ref
-                    // pending, and its recovery lands here again.
-                    self.retire_origin_visible_ref(
-                        wire,
-                        handle,
-                        repo_id,
-                        &GitRefName::parse_full(update.name.clone())?,
-                    )?;
-                    landed
-                }
+                None => landed_wire_outcome(wire.publish_refs(
+                    handle,
+                    vec![update.publication()?],
+                    learned_at,
+                )?)?,
             };
             // One publication per ref, not an atomic multi-ref push. Preserve
             // each successful ref's attachment even if a later ref is refused.

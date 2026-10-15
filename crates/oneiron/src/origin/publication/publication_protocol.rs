@@ -187,13 +187,6 @@ impl Vault {
             };
             items.push((publication_id, disposition));
         }
-        // A slot whose ref is gone without its deletion retiring it (one
-        // deleted before deletions did) goes here.
-        for publication_id in self.origin_visible_ref_rows(&repo_id)? {
-            if let Some(record) = self.origin_publication(publication_id)? {
-                self.retire_origin_visible_ref(git, repo, repo_id, &record.ref_name)?;
-            }
-        }
         self.sweep_orphan_origin_publication_owners(git, repo_id, repo, learned_at)?;
         Ok(OriginCensusReport { items })
     }

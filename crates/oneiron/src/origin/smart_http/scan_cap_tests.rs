@@ -1,6 +1,6 @@
 //! No origin scan refuses for how many rows it reads (rule 5): a repository
-//! keeps taking pushes, advertisements and fetches past every scan's row, a
-//! settled push leaves no intent row, and a deleted ref leaves no slot.
+//! keeps taking pushes, advertisements and fetches past every scan's row, and
+//! a settled push leaves no intent row.
 
 use super::tests::{
     PublicationTestOrigin, advertise, commit_file, fixture_intent, git, landed_repo_id,
@@ -48,8 +48,7 @@ fn publish_refs_past_the_row(vault: &Vault, root: &Path) -> RepoRef {
 
 /// A stock client pushes, deletes, lists and fetches past every scan's row.
 /// Each settled push leaves no intent row, so the journal scan reads pending
-/// pushes only; admission reads no publication history; the deleted ref's
-/// slot goes with it.
+/// pushes only, and admission reads no publication history.
 #[test]
 fn a_repository_keeps_serving_past_every_scan_row() {
     let (_vault_dir, vault) = temp_vault();
@@ -111,8 +110,8 @@ fn a_repository_keeps_serving_past_every_scan_row() {
             .origin_visible_ref_rows(&repo_id)
             .expect("visible slots")
             .len(),
-        1 + live.len(),
-        "the deleted name left no slot"
+        1 + branches.len(),
+        "the deleted name keeps the slot its publication advertises through"
     );
     assert_eq!(checks_raised(&vault, OriginScan::VisibleRefRows), 1);
     assert_eq!(

@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
-    GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWire, GitWireCommitOutcome, GitWireRepo,
+    GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWireCommitOutcome, GitWireRepo,
 };
 use crate::origin::scan_check::{OriginScan, ScanCount};
 
@@ -120,9 +120,10 @@ impl Vault {
     }
 
     /// The publication each of one repository's visible slots names: one
-    /// per ref name its protocol published and has not seen deleted. Never
-    /// refused for their number (rule 5); past the threshold row the scan
-    /// raises an origin scan check.
+    /// per ref name its protocol ever published. A deleted name keeps its
+    /// slot, the one advertisement a re-drive or a recreation of its
+    /// publication has. Never refused for their number (rule 5); past the
+    /// threshold row the scan raises an origin scan check.
     pub(in crate::origin) fn origin_visible_ref_rows(
         &self,
         repo_id: &EntityId,
@@ -147,31 +148,6 @@ impl Vault {
         Ok(rows)
     }
 
-    /// Drops the visible slot of a ref name the repository no longer has.
-    ///
-    /// The slot names the last publication of a ref that is gone, so it has
-    /// nothing left to advertise or keep: the projection hides it, and the
-    /// census releases that publication's pins whether or not the slot is
-    /// there. Dropping it keeps an advertisement walking live ref names, not
-    /// every name the repository ever had. A slot whose ref exists stays.
-    /// Callers hold the repository coordinator.
-    pub(in crate::origin) fn retire_origin_visible_ref(
-        &self,
-        git: &GitWire<'_>,
-        repo: &GitWireRepo,
-        repo_id: EntityId,
-        ref_name: &GitRefName,
-    ) -> Result<()> {
-        if git.read_ref(repo, ref_name)?.is_some() {
-            return Ok(());
-        }
-        let key = visible_ref_key(&repo_id, ref_name);
-        self.with_write_txn_grouped(|wtxn| {
-            VISIBLE_REF.delete(&self.store, wtxn, &key)?;
-            Ok(())
-        })
-    }
-
     /// Takes one Published row's CAS row and the backfill marker away: the
     /// state a vault written before Published rows kept their CAS row opens
     /// in.
@@ -183,17 +159,6 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             CAS_INTENT.delete(&self.store, wtxn, &CasIntentKey::new(record))?;
             CAS_BACKFILL.delete(&self.store, wtxn, &())?;
-            Ok(())
-        })
-    }
-
-    /// Gives a ref name with no live ref to a Published re-drive that may
-    /// recreate it, whichever publication its slot named before. Callers
-    /// hold the coordinator and have read the ref absent.
-    pub(super) fn claim_origin_visible_ref(&self, record: &OriginPublicationRecord) -> Result<()> {
-        let key = visible_ref_key(&record.repo_id, &record.ref_name);
-        self.with_write_txn_grouped(|wtxn| {
-            VISIBLE_REF.put(&self.store, wtxn, &key, &record.publication_id)?;
             Ok(())
         })
     }

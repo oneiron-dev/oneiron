@@ -336,8 +336,8 @@ impl Vault {
         record: OriginPublicationRecord,
         learned_at: u64,
     ) -> Result<OriginPublicationReceipt> {
-        let live = git.read_ref(repo, &record.ref_name)?;
-        let already_applied = live.as_ref() == Some(&record.new_oid);
+        let already_applied =
+            git.read_ref(repo, &record.ref_name)?.as_ref() == Some(&record.new_oid);
         if self
             .origin_availability_failure(git, repo, &record)?
             .is_some()
@@ -345,15 +345,6 @@ impl Vault {
             return Err(Error::InvariantViolation(
                 "published origin ref no longer has its required objects",
             ));
-        }
-        // A name with no live ref has no owner: its deletion retired the
-        // slot, or the census will. The re-drive that may recreate the ref
-        // claims the name before its CAS, so no crash leaves the ref live
-        // without its slot. A slot alone advertises nothing until the
-        // projection proves the live ref, and while the ref stays absent the
-        // census retires it again.
-        if live.is_none() {
-            self.claim_origin_visible_ref(&record)?;
         }
         let outcome = git.update_ref_cas(
             repo,
