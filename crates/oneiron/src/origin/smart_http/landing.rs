@@ -157,15 +157,13 @@ impl Vault {
             Some(attribution) => attribution,
             None => {
                 let existing = self
-                    .origin_publication_rows(Some(repo_id))?
-                    .into_iter()
-                    .find(|row| {
+                    .find_origin_publication(repo_id, |row| {
                         outcome.ref_updates.iter().any(|update| {
                             row.ref_name.as_str() == update.name
                                 && row.expected_old_oid == update.old_oid
                                 && Some(&row.new_oid) == update.new_oid.as_ref()
                         })
-                    })
+                    })?
                     .ok_or_else(|| {
                         receive_pack_provenance_refused("no journal-backed operation to replay")
                     })?;
@@ -311,13 +309,11 @@ impl Vault {
                 // create a new publication. Recover attribution only from the
                 // durable publication it is actually replaying.
                 let existing = self
-                    .origin_publication_rows(Some(repo_id))?
-                    .into_iter()
-                    .find(|row| {
+                    .find_origin_publication(repo_id, |row| {
                         row.ref_name == ref_name
                             && row.expected_old_oid == update.old_oid
                             && row.new_oid == *next
-                    })
+                    })?
                     .ok_or_else(|| {
                         Error::Code(CodeError::ReceivePackLandingRefused {
                             reason: "receive-pack needs authenticated actor and durable provenance"

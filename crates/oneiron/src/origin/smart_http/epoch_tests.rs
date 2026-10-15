@@ -436,6 +436,13 @@ fn epoch_delete_crash_drains_before_mirror_cutover_and_stale_replay_cannot_delet
     git(&root, &["update-ref", "refs/heads/deleted", first.as_str()]);
     let update = ref_update("refs/heads/deleted", Some(&first), None);
     epoch_intent(&vault, &root, actor, &lease, vec![update.clone()]);
+    let source = EntityId::from_hex(
+        &vault.receive_pack_intents(&root).expect("pending deletion")[0]
+            .1
+            .refs[0]
+            .outcome_id,
+    )
+    .expect("source");
     git(&root, &["update-ref", "-d", "refs/heads/deleted"]);
     drop(vault);
     let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
@@ -448,11 +455,11 @@ fn epoch_delete_crash_drains_before_mirror_cutover_and_stale_replay_cannot_delet
             .expect("no advancing publication")
             .is_empty()
     );
-    let rows = reopened
-        .receive_pack_intents(&root)
-        .expect("durable deletion");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
-    let source = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("source");
+    assert_eq!(
+        reopened.receive_pack_intent_rows_for_test(&root),
+        0,
+        "the drained deletion settled"
+    );
     git(&root, &["update-ref", "refs/heads/deleted", tip.as_str()]);
     let outcome = ReceivePackOutcome {
         repo_root: root.clone(),

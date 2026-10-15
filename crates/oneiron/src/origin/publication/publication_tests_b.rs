@@ -605,4 +605,74 @@ mod tests {
         assert_eq!(claim_count(&vault), 1);
         assert_eq!(reflog(&root), log);
     }
+
+    /// A published move is consumed in one CAS row, not found by reading the
+    /// journal. Past the publication scan's row a new move still publishes,
+    /// and the same move under another provenance is refused without a scan;
+    /// in a vault whose Published rows predate the kept CAS row too, once the
+    /// open has backfilled it.
+    #[test]
+    fn publication_admission_reads_one_cas_row_not_the_history() {
+        use crate::origin::scan_check::OriginScan;
+        use crate::test_util::{
+            clear_default_policy_manifest_for_legacy_tests, embedding_test_config,
+        };
+
+        let (vault_dir, vault) = test_vault();
+        vault
+            .set_origin_scan_threshold(OriginScan::PublicationRows, 2)
+            .expect("lower the row");
+        let (_repo_dir, root, base) = seeded_repo();
+        let moves: Vec<GitOid> = (0..4)
+            .map(|index| commit(&root, &format!("move {index}"), &format!("{index}\n")))
+            .collect();
+        force_ref(&root, &base);
+        let wire = GitWire::new(&vault).expect("wire");
+        let mut from = base;
+        let mut last = None;
+        for next in &moves {
+            let repo = open_repo(&wire, &root, &from);
+            let repo_id = repo_id_of(&vault, &repo);
+            let ask = request(&vault, &repo, repo_id, Some(from.clone()), next.clone());
+            let receipt = vault
+                .publish_origin_ref(&wire, ask.clone())
+                .expect("a new move publishes past the scan's row");
+            assert_eq!(receipt.record.status, OriginPublicationStatus::Published);
+            from = next.clone();
+            last = Some((ask, receipt.record));
+        }
+        let (consumed, record) = last.expect("a published move");
+        let mut duplicate = consumed.clone();
+        duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
+        assert!(matches!(
+            vault.publish_origin_ref(&wire, duplicate),
+            Err(crate::error::Error::ConcurrentWrite(_))
+        ));
+        assert!(
+            vault
+                .origin_scan_checks()
+                .expect("checks")
+                .iter()
+                .all(|check| check.scan != OriginScan::PublicationRows.code()),
+            "no admission read the publication history"
+        );
+
+        vault
+            .forget_origin_cas_intent_for_test(&record)
+            .expect("the row a vault from before kept CAS rows lacks");
+        drop(wire);
+        drop(vault);
+        let vault = crate::Vault::open(vault_dir.path(), embedding_test_config()).expect("reopen");
+        clear_default_policy_manifest_for_legacy_tests(&vault);
+        let wire = GitWire::new(&vault).expect("wire");
+        let mut duplicate = consumed;
+        duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
+        assert!(
+            matches!(
+                vault.publish_origin_ref(&wire, duplicate),
+                Err(crate::error::Error::ConcurrentWrite(_))
+            ),
+            "the open gave the older Published row its CAS row"
+        );
+    }
 }

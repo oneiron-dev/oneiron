@@ -50,9 +50,6 @@ pub const ORIGIN_PUBLICATION_MAX_FAILURE_BYTES: usize = 512;
 /// Largest required-object set one publication may name.
 pub const ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS: usize = 4096;
 
-/// Largest number of journal rows a single scan will walk before refusing.
-pub const ORIGIN_PUBLICATION_MAX_ROWS: usize = 100_000;
-
 // ---------------------------------------------------------------------------
 // Protocol types
 // ---------------------------------------------------------------------------

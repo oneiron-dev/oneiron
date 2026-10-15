@@ -73,11 +73,12 @@ impl Vault {
             .to_str()
             .ok_or(Error::InvariantViolation("origin repo path must be UTF-8"))?;
         // A pin only proves which object store the handle names, and only a
-        // commit can: any commit this repository published will do. Which
-        // object the ref names NOW is the projection's answer below, as for an
-        // advertisement, and only a commit there holds a manifest.
+        // commit can: any commit this repository published will do, and a
+        // visible slot names one without reading the publication history.
+        // Which object the ref names NOW is the projection's answer below, as
+        // for an advertisement, and only a commit there holds a manifest.
         let mut repo = None;
-        for id in self.origin_publication_ids(Some(repo_id))? {
+        for id in self.origin_visible_ref_rows(&repo_id)? {
             let Some(record) = self.origin_publication(id)? else {
                 continue;
             };

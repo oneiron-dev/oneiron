@@ -28,10 +28,15 @@ use super::publication_types::{
 pub(super) const PUBLICATIONS: SideTable<EntityId, OriginPublicationRow, Named> =
     SideTable::new(&side_table::ORIGIN_PUBLICATION_RECORD);
 
-/// One in-flight owner of `(repo, ref, expected, new)`, independent of provenance (value =
-/// owning publication id). Key: repo id "\x00" ref_name "\x00" expected_old_oid "\x00" new_oid.
+/// The owner of `(repo, ref, expected, new)`, independent of provenance (value = owning
+/// publication id): in flight while Prepared, and for good once Published, since the move is then
+/// consumed. Key: repo id "\x00" ref_name "\x00" expected_old_oid "\x00" new_oid.
 pub(super) const CAS_INTENT: SideTable<CasIntentKey, EntityId, Raw> =
     SideTable::new(&side_table::ORIGIN_CAS_INTENT);
+
+/// Present once every Published row has its CAS row. Key: ().
+pub(super) const CAS_BACKFILL: SideTable<(), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_CAS_BACKFILL);
 
 /// The publication currently advertised for one repository's ref name (value = publication id).
 /// Key: repo id "\x00" ref_name.
