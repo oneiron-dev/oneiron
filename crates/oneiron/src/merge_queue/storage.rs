@@ -84,6 +84,10 @@ impl MergeQueue<'_> {
         Ok(batch)
     }
 
+    pub(super) fn batch_exists(&self, id: &str) -> Result<bool> {
+        Ok(self.read(BATCHES, self.batch_key(id))?.is_some())
+    }
+
     pub(super) fn require_current(&self, queue: &QueueRecord) -> Result<()> {
         if queue.intent.is_some() {
             return Err(Error::ConcurrentWrite("merge effect needs recovery"));
@@ -100,9 +104,9 @@ impl MergeQueue<'_> {
     fn read_queue(&self) -> Result<Option<QueueRecord>> {
         let record = self.read(QUEUE_STATE, self.queue_key())?;
         if let Some(record) = &record
-            && (record.schema_version != 1 || record.sequence > 100_000)
+            && record.schema_version != 1
         {
-            return Err(Error::CorruptedIndex("merge queue schema or bound"));
+            return Err(Error::CorruptedIndex("merge queue schema"));
         }
         Ok(record)
     }
