@@ -406,3 +406,128 @@ fn only_an_owner_tier_approval_answers_the_obligation() -> Result<()> {
     }
     Ok(())
 }
+
+/// The owner's Clear of a critical decay settles on a MACHINE claim whose
+/// history holds a carrier: the restriction lands, and the history still reads
+/// back only after that carrier's own answer (F14 H244-narrowed, Astra A2).
+#[test]
+fn a_cleared_decay_lands_on_a_held_machine_history() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let [machine, owner, target] = [test_id(0x52), test_id(0x43), test_id(0x53)];
+    vault.put_entity(&machine, ENTITY_TYPE_MACHINE, test_time(1), 1, b"machine")?;
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let issuer = crate::test_util::provision_engine_machines(&vault);
+    vault.provision_host_machine_identity(&issuer, machine)?;
+    crate::test_util::bind_test_owner(&vault, owner);
+    let mut policy = crate::gate::default_policy_manifest()?;
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("system", &machine.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, crate::gate::default_policy_manifest_id()?, &policy)?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine fact"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "profile.color",
+        ClaimSubject::Entity(machine),
+        Value::from("blue"),
+        1.0,
+    );
+    let signed = crate::test_util::sign_machine_candidate(&vault, &target, &candidate, &envelope);
+    vault
+        .batch()
+        .claim_candidate(&target, candidate, &signed, test_time(10), 10)
+        .commit()?;
+    vault.approve_machine_claim_as(target, WriteActor::new(owner, EdgeActorClass::Human))?;
+    let pin = vault.resolved_machine_claim(target)?.handoff_digest;
+    let carrier = EntityId::from_bytes(pin[..16].try_into().expect("content id"))?;
+    // The owner then marks the predicate critical, so a decay waits for them.
+    rewrite_policy_manifest_entries(&mut policy, |entries| {
+        for (key, value) in entries {
+            if key.as_str() == Some(POLICY_RULES_KEY) {
+                let Value::Array(rules) = value else {
+                    unreachable!("rules are an array");
+                };
+                rules.push(Value::Map(vec![
+                    ("prefix".into(), "profile.color".into()),
+                    ("exact".into(), true.into()),
+                    (
+                        "axes".into(),
+                        Value::Map(vec![
+                            ("criticality".into(), "critical".into()),
+                            ("sensitivity".into(), "normal".into()),
+                        ]),
+                    ),
+                ]));
+            }
+        }
+    });
+    put_policy_manifest_bytes(&vault, crate::gate::default_policy_manifest_id()?, &policy)?;
+    let decay = crate::claim::ClaimDemotionAction::Decay {
+        new_claim_of_weight: 0.5,
+    };
+    let error = vault
+        .apply_claim_demotion(&target, decay, crate::unix_seconds_now())
+        .expect_err("held for the owner");
+    assert_eq!(error.kind(), crate::ErrorKind::GateWriteRejected);
+    let pending = vault
+        .with_write_txn(|txn| vault.store.pending_gate_consent_in_txn(txn, &target))?
+        .expect("the decay's confirm");
+    // The present handoff waits for its own answer.
+    let held = critical_confirm_pending(carrier, 0x73, crate::unix_seconds_now());
+    vault.with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &held))?;
+    let (_, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0x74,
+    );
+    vault.log_host_op_for_test(&issuer, clear.op)?;
+    let binding = critical_write_confirm_binding(&pending)?;
+    assert_eq!(
+        vault
+            .settle_critical_write_confirm(binding.confirm_id)
+            .unwrap_or_else(|error| {
+                panic!("FAILBEFORE A2: the cleared decay did not settle: {error:?}")
+            }),
+        CriticalWriteConfirmResolution::Cleared
+    );
+    let live = stored_claim_body(&vault, &target)?;
+    assert_eq!(
+        crate::claim::claim_demotion_rung(&live)?,
+        Some(crate::claim::ClaimDemotionRung::Decayed)
+    );
+    assert_eq!(live.approval, ClaimApprovalStatus::Approved);
+    assert!(
+        matches!(
+            vault.resolved_machine_claim(target),
+            Err(Error::Claim(
+                crate::error::ClaimError::MachineClaimHistoryIncomplete
+            ))
+        ),
+        "the held history read back"
+    );
+    // The carrier's own answer lets the decayed history read back.
+    vault.with_write_txn(|txn| {
+        let removal = crate::gate::owner_answer::close_owner_answer_obligation_in_txn(
+            &vault.store,
+            txn,
+            &carrier,
+            &held.diff_handle,
+            crate::gate::owner_answer::OwnerAnswer::authority_log(),
+        )?;
+        vault
+            .store
+            .remove_pending_gate_consent_in_txn(txn, &carrier, removal)
+    })?;
+    let view = vault.resolved_machine_claim(target)?;
+    assert_eq!(
+        crate::claim::claim_demotion_rung(&view.current)?,
+        Some(crate::claim::ClaimDemotionRung::Decayed)
+    );
+    assert_eq!(view.current.approval, ClaimApprovalStatus::Approved);
+    Ok(())
+}
