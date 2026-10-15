@@ -362,6 +362,43 @@ fn receive_pack_recovery_resumes_from_progress_saved_mid_push() {
     assert_eq!(git(&root, &["rev-parse", &names[0]]), later.as_str());
 }
 
+/// A progress row is applied only as its writer saves it: exactly its own
+/// batch of its own intent (review round 3, both F2). A row that runs into the
+/// next batch, falls short of its own, or names a batch past the intent is
+/// refused, never read as settling a ref.
+#[test]
+fn receive_pack_progress_rows_of_another_shape_are_refused() {
+    let refs = ORIGIN_REF_UPDATE_BATCH + 1;
+    let settled = |count: usize| vec![(true, ReceivePackRefStatus::Published); count];
+    for (batch, row) in [
+        (0, settled(refs)),
+        (0, settled(ORIGIN_REF_UPDATE_BATCH - 1)),
+        (2, Vec::new()),
+    ] {
+        let (_vault_dir, vault) = temp_vault();
+        let (_repo_dir, root, oid) = seeded_repo();
+        let updates = (0..refs)
+            .map(|index| ref_update(&format!("refs/heads/shaped-{index:03}"), None, Some(&oid)))
+            .collect();
+        fixture_intent(&vault, &root, updates);
+        let (key, _) = vault
+            .receive_pack_intents(&root)
+            .expect("journal")
+            .remove(0);
+        vault
+            .put_receive_pack_progress_for_test(&key, batch, row.clone())
+            .expect("planted row");
+        assert!(
+            matches!(
+                vault.receive_pack_intents(&root),
+                Err(Error::CorruptedIndex("receive-pack progress batch"))
+            ),
+            "batch {batch} with {} refs",
+            row.len()
+        );
+    }
+}
+
 #[test]
 fn receive_pack_no_hook_advertisement_recovers_a_pre_outcome_crash() {
     let (vault_dir, vault) = temp_vault();

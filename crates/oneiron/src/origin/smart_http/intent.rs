@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
     SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_INTENT);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct ReceivePackIntentKey {
     repo_identity_hex: String,
     operation_id: EntityId,
@@ -299,6 +299,29 @@ impl Vault {
         Ok(())
     }
 
+    /// Writes a progress row as given, for tests of rows no writer makes.
+    #[cfg(test)]
+    pub(super) fn put_receive_pack_progress_for_test(
+        &self,
+        key: &ReceivePackIntentKey,
+        batch: u64,
+        refs: Vec<(bool, ReceivePackRefStatus)>,
+    ) -> Result<()> {
+        let progress_key = ReceivePackProgressKey {
+            intent: key.clone(),
+            batch,
+        };
+        self.with_write_txn_grouped(|wtxn| {
+            PROGRESS.put(
+                &self.store,
+                wtxn,
+                &progress_key,
+                &ReceivePackBatchProgress { refs },
+            )?;
+            Ok(())
+        })
+    }
+
     pub(in crate::origin) fn has_pending_receive_pack_operations(
         &self,
         repo_root: &Path,
@@ -335,15 +358,20 @@ impl Vault {
             key.encode_into(&mut prefix);
             for row in PROGRESS.iter_from(&self.store, &rtxn, &prefix)? {
                 let (progress_key, progress) = row?;
-                let start = usize::try_from(progress_key.batch)
+                // A row holds exactly its own batch of its own intent, as its
+                // writer saves it; any other shape is refused, never applied.
+                let refs = intent.refs.len();
+                let batch = usize::try_from(progress_key.batch)
                     .ok()
                     .and_then(|batch| batch.checked_mul(ORIGIN_REF_UPDATE_BATCH))
+                    .filter(|start| *start < refs)
+                    .map(|start| start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs))
+                    .filter(|batch| {
+                        progress_key.intent == *key && batch.len() == progress.refs.len()
+                    })
                     .ok_or(Error::CorruptedIndex("receive-pack progress batch"))?;
-                for (offset, (observed, status)) in progress.refs.into_iter().enumerate() {
-                    let entry = intent
-                        .refs
-                        .get_mut(start + offset)
-                        .ok_or(Error::CorruptedIndex("receive-pack progress ref"))?;
+                for (entry, (observed, status)) in intent.refs[batch].iter_mut().zip(progress.refs)
+                {
                     entry.observed = observed;
                     entry.status = status;
                 }
