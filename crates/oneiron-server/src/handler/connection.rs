@@ -371,22 +371,13 @@ async fn handle_connection(
                     }
                     Ok(None) => break,
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
-                        // Reconnect replays persisted document subscriptions and VVs.
-                        // App replay alone cannot repair a missed text-document notice.
-                        if !conn_state.documents.is_empty()
-                            || conn_state.window_sync_mode
-                                == super::conn_state::WindowSyncMode::FullWindow
-                        {
-                            transport.close().await;
-                            break;
+                        // Rule 5: lag never closes a socket. Each subscription it
+                        // holds is told again, through the direct queue's doors.
+                        for frame in super::lag_resync::lag_resync_frames(&server, &conn_state) {
+                            let _ = direct_tx.send(frame);
                         }
                         app_connection.replay_after_lag();
-                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
-                    }
-                    Err(crate::broadcast::BroadcastError::TooManyLags) => {
-                        tracing::warn!(conn_id, "too many lags — disconnecting");
-                        transport.close().await;
-                        break;
+                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resynced");
                     }
                 }
                 continue;
