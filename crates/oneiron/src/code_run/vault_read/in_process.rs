@@ -222,7 +222,10 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         apply_context_pack_response_retrieval_budget(&mut pack.value, response_budget);
         pack.value.results.truncate(request.limit);
         pack.value.neighbors.truncate(max_neighbors);
-        scrub_context_pack_visible_stats(&mut pack.value);
+        scrub_context_pack_visible_stats(
+            &mut pack.value,
+            self.scoped_read.actor_key().reads_as_vault_owner(),
+        );
         // Publish LAST, off the post-filter, post-truncate pack: the durable
         // run row then carries exactly the ids this actor received, so a
         // denied entity is as absent from telemetry as it is from the
@@ -446,8 +449,10 @@ fn apply_context_pack_response_retrieval_budget(
 
 /// Accepted visible-stat scrub, copied from the accepted route's
 /// `scrub_context_pack_visible_stats`: the counters a caller can see describe
-/// the pack it actually received, never the wider internal retrieval.
-pub(super) fn scrub_context_pack_visible_stats(pack: &mut ContextPack) {
+/// the pack it actually received, never the wider internal retrieval. Only a
+/// `whole_vault` reader's empty pack keeps the reason the retrieval found;
+/// any other reads alike whether or not a match it cannot read exists.
+pub(super) fn scrub_context_pack_visible_stats(pack: &mut ContextPack, whole_vault: bool) {
     // How many claims the scope withheld is a count of rows the caller may
     // not read: it never leaves as a stat (F19).
     pack.stats.claims_suppressed = 0;
@@ -456,7 +461,7 @@ pub(super) fn scrub_context_pack_visible_stats(pack: &mut ContextPack) {
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
     if pack.results.is_empty() && pack.neighbors.is_empty() {
-        if let Some(empty) = pack.empty.as_mut() {
+        if let Some(empty) = pack.empty.as_mut().filter(|_| whole_vault) {
             empty.total_in_scope = 0;
         } else {
             pack.empty = Some(EmptyContext {

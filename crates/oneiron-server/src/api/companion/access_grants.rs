@@ -4,11 +4,13 @@ use super::super::json_payload;
 use super::super::parse_entity_id_param;
 use super::super::parse_optional_entity_id;
 use super::super::unix_seconds_now;
+use super::auth::auth_bound_principal_ref;
 use super::auth::require_companion_access_grant_write;
 use super::auth::require_companion_access_grant_write_for_principal;
 use super::errors::companion_create_error;
 use super::errors::companion_engine_error;
 use crate::auth::CoreAuth;
+use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
@@ -158,8 +160,8 @@ pub(crate) async fn create_companion_access_grant(
         (status = 200, description = "AccessGrant revoked.", body = CompanionAccessGrantResponse, content_type = "application/json"),
         (status = 400, description = "Malformed grant id or request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks companion:access-grant:write or core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "AccessGrant was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:access-grant:write or core:auth, or carries record caveats.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "AccessGrant was not found, or is not a companion grant this caller may revoke.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant revoke failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -173,42 +175,40 @@ pub(crate) async fn revoke_companion_access_grant(
     let req = json_payload(payload)?;
     let revoked_at = req.revoked_at.unwrap_or_else(unix_seconds_now);
 
-    // The verb is checked before any lookup, and a grant the caller may not
-    // revoke reads as one that does not exist: no status tells a missing
-    // grant, another principal's grant, or a row of another type apart.
+    // The verb and the credential's record bounds are checked before any
+    // lookup, and the engine admits the grant in the write that revokes it.
+    // A grant the caller may not revoke reads as one that does not exist: no
+    // status tells a missing or deleted grant, another principal's grant, a
+    // grant of another scope or a row of another type apart.
     require_companion_access_grant_write(&auth)?;
+    auth.require_unrestricted_record_scope()?;
     let absent = || ApiError::not_found("access_grant", None);
-    let existing = match server.vault.get_access_grant(&grant_id) {
-        Ok(Some(grant)) => grant,
-        Ok(None) => return Err(absent().into()),
-        Err(error) if error.kind() == oneiron::ErrorKind::InvalidEntityType => {
+    let principal = if auth.has_scope(CoreScope::Auth) {
+        None
+    } else {
+        Some(auth_bound_principal_ref(&auth)?.ok_or_else(absent)?)
+    };
+    let grant = match server
+        .vault
+        .revoke_companion_access_grant(&grant_id, revoked_at, principal)
+    {
+        Ok(grant) => grant,
+        Err(error)
+            if matches!(
+                error.kind(),
+                oneiron::ErrorKind::EntityNotFound | oneiron::ErrorKind::InvalidEntityType
+            ) =>
+        {
             return Err(absent().into());
         }
         Err(error) => {
-            tracing::error!(kind = ?error.kind(), "companion access grant read failed");
+            tracing::error!(kind = ?error.kind(), id = %grant_id.to_hex(), "companion access grant revoke failed");
             return Err(companion_engine_error(
-                "companion access grant read failed",
+                "companion access grant revoke failed",
                 error,
             ));
         }
     };
-    require_companion_access_grant_write_for_principal(&auth, &existing.principal_ref)
-        .map_err(|_| absent())?;
-    if existing.scope.companion_profile_refs().is_none() {
-        return Err(ApiError::bad_request(
-            "grant is not companion_profile scoped",
-            Some("grant_id"),
-        )
-        .into());
-    }
-
-    let grant = server
-        .vault
-        .revoke_access_grant(&grant_id, revoked_at)
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), id = %grant_id.to_hex(), "companion access grant revoke failed");
-            companion_engine_error("companion access grant revoke failed", error)
-        })?;
 
     Ok(Json(companion_access_grant_response(&grant_id, &grant)))
 }

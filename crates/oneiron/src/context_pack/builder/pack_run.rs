@@ -135,12 +135,19 @@ impl UnfinalizedContextPack<'_> {
     }
 
     /// [`Self::clamped_out`] as a caller reading through `read` may learn
-    /// it: only dropped rows `read` reads count, so the number never says
-    /// that a row the caller cannot read matched. Denial reads as absence.
+    /// it: only dropped rows `read` would retrieve count, judged in one
+    /// snapshot under its own retrieval floor, so the number never says that
+    /// a row the caller cannot retrieve matched. A TURN counts only while
+    /// every message in it does: its words are theirs. Denial reads as
+    /// absence.
     pub fn clamped_out_under(&self, read: &crate::claim::ScopedRead<'_>) -> Result<u64> {
+        use crate::ppr::PprNodeVisibility as _;
+        read.persist_grant_clock()?;
+        let rtxn = read.vault().store.env.read_txn()?;
+        let visibility = read.retrieval_visibility_in(&rtxn, None)?;
         let mut count: u64 = 0;
         for id in &self.clamped {
-            if read.is_entity_readable(id)? {
+            if visibility.ppr_node_visible(&rtxn, id)? {
                 count = count.saturating_add(1);
             }
         }

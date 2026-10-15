@@ -230,7 +230,7 @@ fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
             .scoped_read(ScopedReadActorKey::new(actor).expect("actor key"))
             .filter_context_pack(&mut assembly.value)
             .expect("scope filter");
-        scrub_context_pack_visible_stats(&mut assembly.value);
+        scrub_context_pack_visible_stats(&mut assembly.value, false);
         let finished = assembly
             .finish_post_filter()
             .expect("finalize filtered pack");

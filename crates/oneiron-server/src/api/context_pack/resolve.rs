@@ -229,6 +229,8 @@ pub(crate) async fn run_context_pack(
             results: req.limit,
             neighbors: max_neighbors,
             retrieval: retrieval_budget,
+            whole_vault: req.conversation_id.is_none()
+                && super::super::core_auth_reads_whole_vault(auth, &scoped_read),
         },
         memories,
         disclosure,
@@ -518,6 +520,9 @@ pub(crate) struct ContextPackResponseLimits {
     pub(crate) results: usize,
     pub(crate) neighbors: usize,
     pub(crate) retrieval: oneiron::ContextPackRetrievalBudget,
+    /// The caller reads the whole vault (`core_auth_reads_whole_vault`) and
+    /// no room narrows it: only then does an empty pack keep its reason.
+    pub(crate) whole_vault: bool,
 }
 
 pub(crate) fn apply_context_pack_response_limits(
@@ -527,7 +532,7 @@ pub(crate) fn apply_context_pack_response_limits(
     apply_context_pack_response_retrieval_budget(pack, limits.retrieval);
     pack.results.truncate(limits.results);
     pack.neighbors.truncate(limits.neighbors);
-    scrub_context_pack_visible_stats(pack);
+    scrub_context_pack_visible_stats(pack, limits.whole_vault);
 }
 
 pub(crate) fn apply_context_pack_response_retrieval_budget(
@@ -555,7 +560,10 @@ pub(crate) fn apply_context_pack_response_retrieval_budget(
     });
 }
 
-pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) {
+/// `whole_vault`: the caller reads the whole vault, so an empty pack keeps
+/// the reason the retrieval found. For any other caller every empty pack
+/// reads alike: a reason would tell a match it cannot read from no match.
+pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack, whole_vault: bool) {
     // How many claims the scope withheld is a count of rows the caller may
     // not read: it never leaves as a stat (F19).
     pack.stats.claims_suppressed = 0;
@@ -564,7 +572,7 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
     if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
-        if let Some(empty) = pack.empty.as_mut() {
+        if let Some(empty) = pack.empty.as_mut().filter(|_| whole_vault) {
             empty.total_in_scope = 0;
         } else {
             pack.empty = Some(oneiron::EmptyContext {

@@ -228,6 +228,112 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
         "cross-principal revoke must not mutate the grant"
     );
 
+    // F19 review round 1: a grant this writer may not revoke through the
+    // companion door reads as missing as well. Its own principal's calendar
+    // grant (Sol F2) and its own deleted companion grant (Astra F3) give the
+    // same 404, and neither changes.
+    let other_principal = oneiron::EntityId::from_hex(&other_principal_ref).expect("principal id");
+    let calendar_grant = seeded_test_entity_id(0x1265_000a);
+    server
+        .vault
+        .put_access_grant(
+            &calendar_grant,
+            &oneiron::AccessGrant::calendar_disclosure(
+                other_principal,
+                seeded_test_entity_id(0x1265_000b),
+                oneiron::booking::DisclosureRung::Titles,
+                10,
+            ),
+        )
+        .expect("seed a calendar grant");
+    let deleted_grant = seeded_test_entity_id(0x1265_000c);
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/companion/access-grants",
+            "companion:access-grant:write",
+            &other_principal_ref,
+            Some(&json!({
+                "id": deleted_grant.to_hex(),
+                "principal_ref": other_principal_ref,
+                "scope": {
+                    "kind": "companion_profile",
+                    "person_ref": other_person_ref,
+                    "persona_ref": persona_ref,
+                },
+                "created_at": 10_u64,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        server
+            .vault
+            .delete_entity(&deleted_grant)
+            .expect("delete grant")
+    );
+    for id in [calendar_grant, deleted_grant] {
+        let (status, body) = revoke_as(id.to_hex(), "companion:access-grant:write").await;
+        assert_eq!(
+            (
+                status,
+                error_envelope(&body)["code"].clone(),
+                error_envelope(&body)["details"].clone(),
+            ),
+            answers[2],
+            "{body}"
+        );
+    }
+    assert_eq!(
+        server
+            .vault
+            .get_access_grant(&calendar_grant)
+            .expect("read calendar grant")
+            .expect("calendar grant exists")
+            .status,
+        oneiron::access_grant::AccessGrantStatus::Active,
+        "the companion door never revokes a calendar grant"
+    );
+
+    // F19 review round 1 (Astra F4): a writer whose credential names other
+    // records is refused before any lookup, so its own grant stays active and
+    // reads as a missing id does.
+    let attenuated = |id: String| {
+        route_json(
+            server.clone(),
+            core_request_with_authz(
+                "POST",
+                &format!("/v1/companion/access-grants/{id}/revoke"),
+                test_bearer(&format!(
+                    "scope=companion:access-grant:write;principal_ref={principal_ref};records={missing}"
+                )),
+                Some(&revoke_request),
+            ),
+        )
+    };
+    let (own_status, own_body) = attenuated(grant_id.clone()).await;
+    let (missing_status, missing_body) = attenuated(missing.clone()).await;
+    assert_eq!(own_status, StatusCode::FORBIDDEN, "{own_body}");
+    assert_eq!(
+        (own_status, error_envelope(&own_body)["details"].clone()),
+        (
+            missing_status,
+            error_envelope(&missing_body)["details"].clone()
+        )
+    );
+    assert_eq!(
+        server
+            .vault
+            .get_access_grant(&oneiron::EntityId::from_hex(&grant_id).expect("test grant id"))
+            .expect("read grant")
+            .expect("grant exists")
+            .status,
+        oneiron::access_grant::AccessGrantStatus::Active,
+        "a records-bound credential never revokes a grant it does not name"
+    );
+
     let (status, body) = route_json(
         server.clone(),
         core_request_with_principal_ref(
