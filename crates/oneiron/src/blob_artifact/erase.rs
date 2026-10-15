@@ -34,10 +34,22 @@ use super::versions::{VERSIONS, blob_artifact_asset_entity_id};
 
 type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 
-/// The `blob.version` claims a hard erase took, and the ASSET carrying the bytes it took, each
-/// valued with that erase's tombstone wire value. Key: id16 (claim or ASSET).
+/// The `blob.version` claims a hard erase took, each valued with that erase's tombstone wire
+/// value. Key: id16 (claim).
 const ERASED_REFERENCE: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_REFERENCE);
+
+/// The ASSETs carrying bytes a hard erase took here, each valued with that erase's tombstone wire
+/// value: an ASSET row the walk tore, or the id the bytes' hash names where no row stood. Never
+/// another kind's row. A text derived from one goes with it. Key: id16 (ASSET).
+const ERASED_ASSET: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_ASSET);
+
+/// The texts a DerivedFrom edge named as derived from an erased ASSET before their bodies arrived
+/// here: each body is scrubbed and fenced on arrival. Key: id16 (the text); value: id16 (the
+/// ASSET).
+const ERASED_DERIVATION: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_DERIVATION);
 
 /// The bytes a hard erase took, each valued with that erase's tombstone wire value. A reference to
 /// them that arrives later arrives erased, and they are never stored here again. Key: bytes32.
@@ -177,10 +189,6 @@ pub(crate) fn erase_holds_in_txn(
         if !ERASED_CONTENT.contains(store, wtxn, &holding.hash)? {
             ERASED_CONTENT.put(store, wtxn, &holding.hash, &tombstone.to_vec())?;
         }
-        // The ASSET goes too: a text derived from it that arrives later goes with it.
-        if !ERASED_REFERENCE.contains(store, wtxn, &holding.asset)? {
-            ERASED_REFERENCE.put(store, wtxn, &holding.asset, &tombstone.to_vec())?;
-        }
         for holder in holders(store, wtxn, &holding.hash, &[*artifact, holding.asset])? {
             ASSET_REF.delete(store, wtxn, &(holding.hash, holder))?;
             forget_hold(store, wtxn, &holding.hash, &holder)?;
@@ -239,9 +247,9 @@ pub(crate) fn asset_holding_in_txn(
 }
 
 /// A `blob.version` claim that arrives after the hard erase that took the bytes it names, or after
-/// a hard erase of its artifact or of itself was decided here: a replica learns which bytes an
-/// erase took only from the bodies naming them, and one can arrive after the tombstones, or
-/// between an erase's publication and its purge.
+/// a hard erase of its artifact was decided here: a vault learns which bytes an erase took only
+/// from the bodies naming them, and one can arrive after the erase, or between its publication
+/// and its purge.
 #[derive(Debug)]
 #[cfg_attr(not(any(feature = "sync", test)), allow(dead_code))]
 pub(crate) struct LateReference {
@@ -264,6 +272,13 @@ pub(crate) enum LateReach {
 }
 
 /// The erase `claim` arrives after, when it is a late reference ([`LateReference`]).
+///
+/// Only typed evidence counts, as an erase is never walked back: `claim` among the references a
+/// walk here took, the bytes it names among those a walk here took, or its artifact's hard erase
+/// decided here where a version chain was recorded for it ([`artifact_erase_in_txn`]). A bare
+/// hard-delete marker proves nothing about any bytes, on the claim's id, its subject or the id the
+/// bytes' hash names: a peer can cause one on an id it controls, and a row of any kind can stand
+/// at those ids.
 pub(crate) fn late_reference_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -275,21 +290,9 @@ pub(crate) fn late_reference_in_txn(
     };
     let (erase, reach) = if let Some(erase) = ERASED_REFERENCE.get(store, txn, claim)? {
         (erase, LateReach::Taken)
-    } else if let Some((erase, pierced)) = bytes_erase_in_txn(store, txn, &hash)? {
-        let reach = if pierced {
-            LateReach::Reference
-        } else {
-            LateReach::Bytes
-        };
-        (erase, reach)
-    } else if let Some(erase) = crate::deletion::HARD_DELETE_MARKER
-        .get(store, txn, &HexId(*claim))?
-        .or(crate::deletion::HARD_DELETE_MARKER.get(store, txn, &HexId(artifact))?)
-    {
-        (erase, LateReach::Bytes)
-    } else if let Some(erase) =
-        crate::deletion::hard_delete_in_flight_in_txn(store, txn, &artifact)?
-    {
+    } else if let Some(erase) = ERASED_CONTENT.get(store, txn, &hash)? {
+        (erase, LateReach::Reference)
+    } else if let Some(erase) = artifact_erase_in_txn(store, txn, &artifact)? {
         (erase, LateReach::Bytes)
     } else {
         return Ok(None);
@@ -306,54 +309,26 @@ pub(crate) fn late_reference_in_txn(
     }))
 }
 
-/// An erase's tombstone wire value, and whether a walk here already took the bytes it erased.
-pub(crate) type BytesErase = (Vec<u8>, bool);
-
-/// The erase that took the bytes `hash` names here, with whether a walk here already took them:
-/// an erase whose tombstone named their ASSET took them too, though no body here named the bytes
-/// before.
-pub(crate) fn bytes_erase_in_txn(
+/// The tombstone wire value of a hard erase of `artifact` decided here, published or in flight,
+/// when a version chain was recorded for it here: its high-water mark, kept after its delete,
+/// shows it was an artifact. A hard-delete marker on any other id names no artifact.
+fn artifact_erase_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
-    hash: &ContentHash,
-) -> Result<Option<BytesErase>> {
-    if let Some(erase) = ERASED_CONTENT.get(store, txn, hash)? {
-        return Ok(Some((erase, true)));
+    artifact: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    if !super::versions::versioned_here(store, txn, artifact)? {
+        return Ok(None);
     }
-    let asset = blob_artifact_asset_entity_id(hash)?;
-    Ok(crate::deletion::HARD_DELETE_MARKER
-        .get(store, txn, &HexId(asset))?
-        .map(|erase| (erase, false)))
+    if let Some(erase) = crate::deletion::HARD_DELETE_MARKER.get(store, txn, &HexId(*artifact))? {
+        return Ok(Some(erase));
+    }
+    crate::deletion::hard_delete_in_flight_in_txn(store, txn, artifact)
 }
 
 /// Whether a hard erase here took `body`'s bytes.
 pub(crate) fn bytes_erased(store: &Store, txn: &RoTxn<'_>, body: &[u8]) -> Result<bool> {
-    Ok(bytes_erase_in_txn(store, txn, blake3::hash(body).as_bytes())?.is_some())
-}
-
-/// The holding of bytes `body` carries, for an ASSET arriving with bytes a hard erase took.
-#[cfg(any(feature = "sync", test))]
-pub(crate) fn body_holding_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    body: &[u8],
-) -> Result<(Holding, Option<BytesErase>)> {
-    let hash = *blake3::hash(body).as_bytes();
-    let asset = blob_artifact_asset_entity_id(&hash)?;
-    let erase = bytes_erase_in_txn(store, txn, &hash)?;
-    let others = if erase.is_some() {
-        live_holders(store, txn, &hash, &[asset])?
-    } else {
-        Vec::new()
-    };
-    Ok((
-        Holding {
-            hash,
-            asset,
-            others,
-        },
-        erase,
-    ))
+    ERASED_CONTENT.contains(store, txn, blake3::hash(body).as_bytes())
 }
 
 /// Releases each of `holdings`' bytes nothing holds any more but `holder`, which a hard erase is
@@ -475,9 +450,66 @@ pub(crate) fn other_versions_in_txn(
     Ok(found.into_iter().collect())
 }
 
-/// Whether a hard erase took the reference `claim` is, or the ASSET `claim` names.
+/// Whether a hard erase took the reference `claim` is.
 pub(crate) fn reference_erased(store: &Store, txn: &RoTxn<'_>, claim: &EntityId) -> Result<bool> {
     ERASED_REFERENCE.contains(store, txn, claim)
+}
+
+/// Marks `assets`, the ASSET ids a hard erase's walk owned (an ASSET row it tears, or the id the
+/// bytes' hash names where no row stands), as erased with `tombstone`.
+pub(crate) fn mark_erased_assets_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    assets: &[EntityId],
+    tombstone: &[u8],
+) -> Result<()> {
+    for asset in assets {
+        if !ERASED_ASSET.contains(store, wtxn, asset)? {
+            ERASED_ASSET.put(store, wtxn, asset, &tombstone.to_vec())?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a hard erase's walk here took the ASSET `asset`.
+#[cfg(feature = "sync")]
+pub(crate) fn asset_erased(store: &Store, txn: &RoTxn<'_>, asset: &EntityId) -> Result<bool> {
+    ERASED_ASSET.contains(store, txn, asset)
+}
+
+/// Keeps the obligation a DerivedFrom edge leaves when it names `text`, not stored here yet, as
+/// derived from `asset`, an ASSET a hard erase took: `text`'s body is scrubbed on arrival.
+#[cfg(feature = "sync")]
+pub(crate) fn record_erased_derivation_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    text: &EntityId,
+    asset: &EntityId,
+) -> Result<()> {
+    if ERASED_DERIVATION.contains(store, wtxn, text)? {
+        return Ok(());
+    }
+    ERASED_DERIVATION.put(store, wtxn, text, &asset.as_bytes().to_vec())
+}
+
+/// Whether a DerivedFrom edge left the obligation to scrub `text` on arrival.
+pub(crate) fn erased_derivation_pending(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    text: &EntityId,
+) -> Result<bool> {
+    ERASED_DERIVATION.contains(store, txn, text)
+}
+
+/// Discharges the obligation [`record_erased_derivation_in_txn`] kept for `text`.
+#[cfg(any(feature = "sync", test))]
+pub(crate) fn discharge_erased_derivation_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    text: &EntityId,
+) -> Result<()> {
+    ERASED_DERIVATION.delete(store, wtxn, text)?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -721,6 +721,16 @@ fn read_blob_artifact_highwater_in_txn(
     Ok(Some(version))
 }
 
+/// Whether a version chain was ever recorded here for `artifact`: its high-water mark outlives
+/// the artifact's delete, and only an artifact's own append writes one.
+pub(super) fn versioned_here(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<bool> {
+    HIGHWATER.contains(store, rtxn, artifact_id)
+}
+
 pub(crate) fn read_blob_artifact_head_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,

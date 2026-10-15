@@ -437,16 +437,51 @@ fn a_derived_text_arriving_after_the_erase_goes_with_the_bytes() {
     );
 }
 
-/// Bug repro (#1465 R2, Astra F10; Engine ruling): a vault that erased an artifact before any
-/// reference to its bytes reached it learns the bytes from the reference that arrives later. It
-/// takes its own references to them then and tombstones them under the erase's request, so a
-/// third vault holding only another reference to the bytes learns of the erase too.
+/// Bug repro (#1465 R3, Sol 5; Astra 3; Engine ruling 2): a text derived from bytes a hard erase
+/// took, whose DerivedFrom edge reaches the erasing vault in one update and its body in a later
+/// one, goes there as it does when both arrive together: the edge leaves an obligation keyed by
+/// the text's id, and the text's arrival is scrubbed and fenced at once.
+#[test]
+fn a_derived_text_arriving_after_its_edge_goes_with_the_bytes() {
+    let (mut a, b) = vault_pair();
+    let erased = upload(&mut a, T0, &[PIERCED]);
+    let asset = asset_of(&a.vault, PIERCED).expect("A stores the bytes");
+    delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
+    let text = EntityId::now();
+    map_insert_bytes(
+        &b.doc(WINDOW).get_map("edges"),
+        &format_edge_key(&text, EdgeKind::DerivedFrom, &asset),
+        &encode_edge_value_for_crdt(EdgeKind::DerivedFrom, 1.0, T0 + 30, None, None).unwrap(),
+    );
+    b.doc(WINDOW).commit();
+    exchange(&a, &b, WINDOW);
+    b.put_entity_in_window(
+        WINDOW,
+        &text,
+        &make_entity_blob(
+            ENTITY_TYPE_ASSET_TEXT,
+            T0 + 30,
+            b"words from the erased bytes",
+        ),
+    );
+    exchange(&a, &b, WINDOW);
+    assert!(
+        !has_body(&a, &text),
+        "a text arriving after its edge kept the words of the erased bytes"
+    );
+}
+
+/// Bug repro (#1465 R2, Astra F10; Engine ruling): a vault that erased an artifact before a
+/// version B appended to it reached it learns those bytes from the reference that arrives later:
+/// the artifact's version chain was recorded here, so its erase is typed evidence. It takes its
+/// own references to the bytes then and tombstones them under the erase's request, so a third
+/// vault holding only another reference to the bytes learns of the erase too.
 #[test]
 fn a_late_reference_carries_the_erase_to_a_vault_holding_only_another_reference() {
     let (mut a, mut b) = vault_pair();
     let mut c = TestNode::new("node-c", 3);
     c.open_window(WINDOW);
-    let erased = upload(&mut a, T0, &[]);
+    let erased = upload(&mut a, T0, &[UNIQUE]);
     sync_through_doors(&a, &b);
     // B appends the bytes to A's artifact; A erases it before B's version reaches it.
     let person = EntityId::now();

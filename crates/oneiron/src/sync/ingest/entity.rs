@@ -332,12 +332,13 @@ fn admit(
     }
     let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
         || crate::registry::is_delete_protected_engine_record(header.entity_type);
-    // ARCH-0005a: bytes a hard erase took here, and a late reference to them, never materialize,
-    // and teach which bytes the erase took even at an id a tombstone took: so BEFORE delete-wins.
+    // ARCH-0005a: bytes a hard erase took here, a late reference to them, and a text derived from
+    // them never materialize, and a late reference teaches which bytes the erase took even at an
+    // id a tombstone took: so BEFORE delete-wins.
     if vault.refuse_erased_blob_arrival_in_txn(
         wtxn,
         &id,
-        header.entity_type,
+        header,
         &blob[ENTITY_METADATA_HEADER_LEN..],
     )? {
         return Ok(EntityStep::Skip);

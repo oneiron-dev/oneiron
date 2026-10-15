@@ -411,10 +411,13 @@ pub(super) fn validate_domain_carriers(
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
     }
     // ARCH-0005a: bytes a hard erase took are never stored here again, under any id, and a
-    // carrier it scrubbed is never written again here.
+    // carrier it scrubbed, or a text an edge named as derived from them, is never written here.
     if (entity_type == crate::registry::ENTITY_TYPE_ASSET
         && crate::blob_artifact::bytes_erased(store, txn, data)?)
         || (!replicated && crate::blob_artifact::erase_fenced(store, txn, &id)?)
+        || (!replicated
+            && entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+            && crate::blob_artifact::erased_derivation_pending(store, txn, &id)?)
     {
         return Err(crate::Error::Artifact(
             crate::error::ArtifactError::BlobContentErased,

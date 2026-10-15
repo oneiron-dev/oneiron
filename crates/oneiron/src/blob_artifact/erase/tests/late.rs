@@ -10,7 +10,7 @@ fn arrive(source: &Vault, target: &Vault, id: &EntityId) -> Result<bool> {
         target.refuse_erased_blob_arrival_in_txn(
             txn,
             id,
-            header.entity_type,
+            &header,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
     })
@@ -26,13 +26,23 @@ fn fenced(vault: &Vault, id: &EntityId) -> Result<bool> {
 #[test]
 fn a_late_reference_at_an_id_another_kind_holds_leaves_that_row_alone() -> Result<()> {
     let origin = Shared::open()?;
-    let claim = origin.erased_version.claim_id;
+    let claim = origin.shared.claim_id;
     let (_dir, replica) = open_test_vault_with(embedding_test_config());
+    // The replica's own walk takes the bytes, so a reference to them arrives late.
+    replicate(
+        &origin.vault,
+        &replica,
+        &[origin.person, origin.erased, origin.erased_version.claim_id],
+    )?;
     apply_tombstone(
         &replica,
         &origin.erased,
         &tombstone(TombstoneReason::GdprDelete),
     )?;
+    {
+        let txn = replica.store.env.read_txn()?;
+        assert!(content_erased(&replica.store, &txn, &origin.shared.content_hash)?.is_some());
+    }
     replica.put_entity(&claim, ENTITY_TYPE_PERSON, at(20), 20, b"someone else")?;
     assert_eq!(replicate(&origin.vault, &replica, &[claim])?, [false]);
     assert_eq!(
@@ -50,45 +60,28 @@ fn a_late_reference_at_an_id_another_kind_holds_leaves_that_row_alone() -> Resul
     Ok(())
 }
 
-/// Bug repro (#1465 R2, Sol F1 and Astra F4): a replica that applied the tombstone of the erased
-/// bytes' ASSET before any body named them learns the bytes from the first body that does. A
-/// reference to them arriving later, at any id, is pierced on arrival, and the bytes are refused
-/// at a fresh id.
-#[test]
-fn an_asset_tombstone_first_teaches_the_bytes_to_every_later_body() -> Result<()> {
+/// The erasing vault of [`Shared`] after a hard erase of `erased`, and a late reference to bytes
+/// the erase did not reach yet: a `blob.version` claim naming `erased` with `OTHER_ONLY`, as a
+/// second vault appended them to the artifact before the erase reached it. `other` still holds
+/// `OTHER_ONLY` as v1 here.
+fn erased_with_late_reference() -> Result<(Shared, tempfile::TempDir, Vault, EntityId)> {
     let origin = Shared::open()?;
-    let (_dir, replica) = open_test_vault_with(embedding_test_config());
-    apply_tombstone(
-        &replica,
-        &origin.asset()?,
-        &tombstone(TombstoneReason::GdprDelete),
-    )?;
-    assert_eq!(
-        replicate(
-            &origin.vault,
-            &replica,
-            &[origin.person, origin.other, origin.shared.claim_id]
-        )?,
-        [true, true, false],
-        "a reference to the erased bytes materialized"
-    );
-    {
-        let txn = replica.store.env.read_txn()?;
-        assert!(reference_erased(
-            &replica.store,
-            &txn,
-            &origin.shared.claim_id
-        )?);
-        assert!(content_erased(&replica.store, &txn, &origin.shared.content_hash)?.is_some());
-    }
-    assert!(
-        matches!(
-            replica.put_entity(&EntityId::now(), ENTITY_TYPE_ASSET, at(30), 30, SHARED),
-            Err(Error::Artifact(ArtifactError::BlobContentErased))
-        ),
-        "the erased bytes were stored at a fresh id"
-    );
-    Ok(())
+    let (dir, appender) = open_test_vault_with(embedding_test_config());
+    replicate(&origin.vault, &appender, &[origin.person, origin.erased])?;
+    let late = appender
+        .append_blob_artifact_version(
+            &origin.erased,
+            OTHER_ONLY,
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(origin.person, EdgeActorClass::Human),
+            at(15),
+            15,
+        )?
+        .claim_id;
+    origin
+        .vault
+        .delete_entity_with_reason(&origin.erased, DeleteReason::GdprDelete)?;
+    Ok((origin, dir, appender, late))
 }
 
 /// Bug repro (#1465 R2, Sol F9 and Astra F7): a late reference whose walk would tear a carrier
@@ -96,34 +89,31 @@ fn an_asset_tombstone_first_teaches_the_bytes_to_every_later_body() -> Result<()
 /// retries it; it never fails the pass. Once the hold is released, the next arrival pierces.
 #[test]
 fn a_held_carrier_defers_a_late_reference_without_failing_the_pass() -> Result<()> {
-    let origin = Shared::open()?;
-    let (_dir, replica) = open_test_vault_with(embedding_test_config());
-    let held = origin.shared.claim_id;
-    let late = origin.erased_version.claim_id;
-    replicate(
-        &origin.vault,
-        &replica,
-        &[origin.person, origin.other, held, origin.erased],
-    )?;
-    apply_tombstone(
-        &replica,
-        &origin.erased,
-        &tombstone(TombstoneReason::GdprDelete),
-    )?;
-    replica.set_gate_decision_partition_hold(Some(*held.as_bytes()), true)?;
+    let (origin, _dir, appender, late) = erased_with_late_reference()?;
+    let vault = &origin.vault;
+    let held = vault
+        .blob_artifact_version_metadata(&origin.other, 1)?
+        .expect("the other artifact's first version")
+        .claim_id;
+    let hash = *blake3::hash(OTHER_ONLY).as_bytes();
+    vault.set_gate_decision_partition_hold(Some(*held.as_bytes()), true)?;
     assert!(
-        arrive(&origin.vault, &replica, &late)?,
+        arrive(&appender, vault, &late)?,
         "a held carrier let the late reference materialize"
     );
-    assert!(!fenced(&replica, &late)? && !fenced(&replica, &held)?);
+    assert!(!fenced(vault, &late)? && !fenced(vault, &held)?);
     {
-        let txn = replica.store.env.read_txn()?;
-        assert!(!reference_erased(&replica.store, &txn, &held)?);
-        assert!(content_erased(&replica.store, &txn, &origin.shared.content_hash)?.is_none());
+        let txn = vault.store.env.read_txn()?;
+        assert!(!reference_erased(&vault.store, &txn, &held)?);
+        assert!(content_erased(&vault.store, &txn, &hash)?.is_none());
     }
-    replica.set_gate_decision_partition_hold(Some(*held.as_bytes()), false)?;
-    assert!(arrive(&origin.vault, &replica, &late)?);
-    assert!(erased(replica.read_blob_artifact_version(&origin.other, 2)));
+    assert_eq!(
+        vault.read_blob_artifact_version(&origin.other, 1)?,
+        Some(OTHER_ONLY.to_vec())
+    );
+    vault.set_gate_decision_partition_hold(Some(*held.as_bytes()), false)?;
+    assert!(arrive(&appender, vault, &late)?);
+    assert!(erased(vault.read_blob_artifact_version(&origin.other, 1)));
     Ok(())
 }
 

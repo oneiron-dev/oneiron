@@ -124,6 +124,8 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
+        // A text derived from one of them that arrives later goes with it.
+        crate::blob_artifact::mark_erased_assets_in_txn(&self.store, wtxn, &assets, tombstone)?;
         crate::blob_artifact::release_erased_bytes_in_txn(&self.store, wtxn, id, &holdings)?;
         let mut carriers = assets;
         carriers.extend(&scrubbed);
@@ -309,10 +311,15 @@ impl Vault {
     }
 
     /// ARCH-0005a (Engine ruling (b) on #1465): an ASSET_TEXT `source` derived from `target`, an
-    /// ASSET whose bytes a hard erase took here, is scrubbed and fenced as the erase's walk
-    /// scrubs every text derived from the bytes, with a sweep row: it arrived after the walk, or
-    /// on a vault that learned the bytes from a tombstone. Returns whether it was, so the edge
-    /// is not written.
+    /// ASSET whose bytes a hard erase's walk here took, is scrubbed and fenced as that walk
+    /// scrubs every text derived from the bytes, with a sweep row: it arrived after the walk.
+    /// Returns whether it was, so the edge is not written.
+    ///
+    /// Only the walk's own mark on `target` counts, and never while another kind's row stands
+    /// there: a hard-delete marker a peer can cause on an id it controls names no erased bytes.
+    /// A `source` not stored here yet leaves an obligation keyed by its id, and its body is
+    /// scrubbed and fenced when it arrives, so the edge and the text give the same result in
+    /// either order (Engine ruling on #1465 R3).
     #[cfg(feature = "sync")]
     pub(crate) fn scrub_text_derived_from_erased_in_txn(
         &self,
@@ -320,14 +327,26 @@ impl Vault {
         source: &EntityId,
         target: &EntityId,
     ) -> Result<bool> {
-        if !crate::blob_artifact::reference_erased(&self.store, wtxn, target)?
-            && !HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(*target))?
-        {
+        if !crate::blob_artifact::asset_erased(&self.store, wtxn, target)? {
+            return Ok(false);
+        }
+        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, target)?.is_some_and(
+            |raw| {
+                EntityMetadataHeader::parse(&raw).map(|header| header.entity_type)
+                    != Some(crate::registry::ENTITY_TYPE_ASSET)
+            },
+        ) {
             return Ok(false);
         }
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, source)?
         else {
-            return Ok(false);
+            crate::blob_artifact::record_erased_derivation_in_txn(
+                &self.store,
+                wtxn,
+                source,
+                target,
+            )?;
+            return Ok(true);
         };
         if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type)
             != Some(crate::registry::ENTITY_TYPE_ASSET_TEXT)
@@ -363,30 +382,31 @@ impl Vault {
     }
 
     /// ARCH-0005a at replicated ingest, BEFORE the delete-wins shortcut: an ASSET carrying bytes a
-    /// hard erase took here, and a late `blob.version` claim (a `LateReference`),
-    /// never materialize. A body at an id a tombstone already took still teaches which bytes the
-    /// erase took. A refused id is fenced, so the export door drops its carrier, with a sweep row
-    /// for it.
+    /// hard erase took here, a late `blob.version` claim (a `LateReference`), and a text a
+    /// DerivedFrom edge named as derived from an ASSET a hard erase took, never materialize. A
+    /// refused id is fenced, so the export door drops its carrier, with a sweep row for it.
     ///
-    /// A body that is the first word here of the erased bytes runs the erase's walk for them now:
+    /// A claim that is the first word here of the erased bytes runs the erase's walk for them now:
     /// a sweep row covers what it scrubbed, and each reference and ASSET it newly pierced is
     /// tombstoned under the erase's own request, so a replica holding only another reference
-    /// learns of the erase too.
+    /// learns of the erase too. Only typed evidence of the erase counts (`late_reference_in_txn`).
     ///
     /// Nothing is refused or touched before the put's own checks would pass: another kind at the
-    /// id, or a claim that fails validation, is left to the put. A walk that would tear a carrier
-    /// under a legal hold defers: the body is skipped with nothing marked, and the window's next
-    /// pass tries again. Returns whether the body is refused.
+    /// id, or a claim the replicated put would not admit, is left to the put. A walk that would
+    /// tear a carrier under a legal hold defers: the body is skipped with nothing marked, and the
+    /// window's next pass tries again. Returns whether the body is refused.
     #[cfg(any(feature = "sync", test))]
     pub(crate) fn refuse_erased_blob_arrival_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        entity_type: u8,
+        header: &EntityMetadataHeader,
         data: &[u8],
     ) -> Result<bool> {
         use crate::blob_artifact::LateReach;
-        if entity_type != crate::registry::ENTITY_TYPE_ASSET && entity_type != ENTITY_TYPE_CLAIM {
+        use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
+        let entity_type = header.entity_type;
+        if ![ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM].contains(&entity_type) {
             return Ok(false);
         }
         if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
@@ -395,36 +415,73 @@ impl Vault {
         {
             return Ok(false);
         }
-        let (holding, erase, reach) = if entity_type == ENTITY_TYPE_CLAIM {
-            let Ok(body) = crate::claim::decode_claim_body(data, true) else {
-                return Ok(false);
-            };
-            let Some(late) =
-                crate::blob_artifact::late_reference_in_txn(&self.store, wtxn, id, &body)?
-            else {
-                return Ok(false);
-            };
-            if crate::claim::validate_claim_body_and_decode(data, true).is_err() {
-                return Ok(false);
+        let late = match entity_type {
+            ENTITY_TYPE_CLAIM => {
+                let Ok(body) = crate::claim::decode_claim_body(data, true) else {
+                    return Ok(false);
+                };
+                let Some(late) =
+                    crate::blob_artifact::late_reference_in_txn(&self.store, wtxn, id, &body)?
+                else {
+                    return Ok(false);
+                };
+                // A body widens an erase only as the replicated put would admit it: a forged
+                // machine claim changes nothing.
+                let occurred = crate::TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                };
+                if crate::batch::admit_replicated_claim_in_txn(
+                    &self.store,
+                    wtxn,
+                    *id,
+                    occurred,
+                    header.learned_at,
+                    data,
+                    self.privacy_posture(),
+                )
+                .is_err()
+                {
+                    return Ok(false);
+                }
+                Some(late)
             }
-            (late.holding, late.erase, late.reach)
-        } else {
-            let (holding, erase) =
-                crate::blob_artifact::body_holding_in_txn(&self.store, wtxn, data)?;
-            match erase {
-                None => return Ok(false),
-                // The bytes themselves are no reference: an ASSET at a fresh id carrying them
-                // brings nothing new but its own carrier.
-                Some((erase, true)) => (holding, erase, LateReach::Taken),
-                Some((erase, false)) => (holding, erase, LateReach::Bytes),
+            // The bytes themselves are no reference: an ASSET at any id carrying them brings
+            // nothing new but its own carrier.
+            ENTITY_TYPE_ASSET => {
+                if !crate::blob_artifact::bytes_erased(&self.store, wtxn, data)? {
+                    return Ok(false);
+                }
+                None
+            }
+            // A text a DerivedFrom edge named as derived from an erased ASSET before it arrived.
+            _ => {
+                if !crate::blob_artifact::erased_derivation_pending(&self.store, wtxn, id)? {
+                    return Ok(false);
+                }
+                if self
+                    .store
+                    .gate_partition_held_in_txn(wtxn, Some(id.as_bytes()))?
+                {
+                    return Ok(true);
+                }
+                crate::blob_artifact::discharge_erased_derivation_in_txn(&self.store, wtxn, id)?;
+                None
             }
         };
         let deleted_before = ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*id))?
             || HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(*id))?;
+        let Some(crate::blob_artifact::LateReference {
+            holding,
+            erase,
+            reach,
+        }) = late
+        else {
+            return self.fence_refused_arrival_in_txn(wtxn, id, deleted_before, Vec::new());
+        };
         let mut carriers = Vec::new();
         match reach {
-            LateReach::Taken if entity_type == ENTITY_TYPE_CLAIM => return Ok(true),
-            LateReach::Taken => {}
+            LateReach::Taken => return Ok(true),
             LateReach::Reference => {
                 if self
                     .store
@@ -455,9 +512,7 @@ impl Vault {
                 let holdings = vec![holding];
                 let mut references =
                     crate::blob_artifact::references_in_txn(&self.store, wtxn, id, &holdings)?;
-                if entity_type == ENTITY_TYPE_CLAIM {
-                    references.push(*id);
-                }
+                references.push(*id);
                 let walk = self.walk_holdings_in_txn(wtxn, id, holdings, references)?;
                 for carrier in walk.scrubbed.iter().chain(&walk.assets).chain([id]) {
                     if self
@@ -484,6 +539,19 @@ impl Vault {
                 self.stage_late_walk_tombstones_in_txn(wtxn, tombstoned, &erase)?;
             }
         }
+        self.fence_refused_arrival_in_txn(wtxn, id, deleted_before, carriers)
+    }
+
+    /// Fences `id`, a body the ingest gate refused, unless a delete fenced it before, and queues
+    /// one sweep row for it and the `carriers` its walk scrubbed. Returns that it is refused.
+    #[cfg(any(feature = "sync", test))]
+    fn fence_refused_arrival_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        deleted_before: bool,
+        mut carriers: Vec<EntityId>,
+    ) -> Result<bool> {
         if !deleted_before {
             crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, id, false)?;
             carriers.push(*id);

@@ -76,11 +76,19 @@ side_tables! {
     /// the transaction that writes its receipt and sweep row. Key: id16 (the erased record);
     /// value: the carriers' id16s.
     BLOB_ARTIFACT_ERASE_SCOPE: VaultMeta b"blob_artifact:erase_scope:v1:" Raw;
+    /// The ASSETs carrying bytes a hard erase's walk took here, each valued with that erase's
+    /// tombstone wire value: a text derived from one goes with it. Never another kind's row. Key:
+    /// id16 (ASSET).
+    BLOB_ARTIFACT_ERASED_ASSET: VaultMeta b"blob_artifact:erased_asset:v1:" Raw;
     /// Version bytes a hard erase took, each valued with that erase's tombstone wire value: a
     /// later reference to them arrives erased, and they are never stored again. Key: bytes32.
     BLOB_ARTIFACT_ERASED_CONTENT: VaultMeta b"blob_artifact:erased_content:v1:" Raw;
-    /// `blob.version` claims a hard erase took with the bytes they name, and the ASSET carrying
-    /// those bytes, each valued with that erase's tombstone wire value. Key: id16 (claim or ASSET).
+    /// The texts a DerivedFrom edge named as derived from an erased ASSET before their bodies
+    /// arrived: each is scrubbed and fenced on arrival. Key: id16 (the text); value: id16 (the
+    /// ASSET).
+    BLOB_ARTIFACT_ERASED_DERIVATION: VaultMeta b"blob_artifact:erased_derivation:v1:" Raw;
+    /// `blob.version` claims a hard erase took with the bytes they name, each valued with that
+    /// erase's tombstone wire value. Key: id16 (claim).
     BLOB_ARTIFACT_ERASED_REFERENCE: VaultMeta b"blob_artifact:erased_reference:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;

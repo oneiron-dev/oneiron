@@ -106,6 +106,38 @@ pub(super) fn admit_claim_put(
     Ok(body)
 }
 
+/// The replicated put door's CLAIM admission, read-only: the body `data` would be admitted at `id`
+/// by sync replay. A gate that acts on a replicated claim's body before its put (the hard-erase
+/// ingest gate) asks this first, so an inadmissible body, a forged machine claim among them,
+/// changes nothing.
+#[cfg(any(feature = "sync", test))]
+pub(crate) fn admit_replicated_claim_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+    data: &[u8],
+    posture: crate::HostingPrivacyPosture,
+) -> Result<Option<ClaimBody>> {
+    admit_claim_put(
+        store,
+        txn,
+        id,
+        ClaimPutAdmission {
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_reserved_predicate: true,
+            write_envelope: None,
+            replicated: true,
+            posture,
+            transition: None,
+        },
+    )
+}
+
 // The ledger is immutable birth identity, never a second text plane. This
 // shared guard covers local writes and replicated/window rematerialization.
 pub(super) fn validate_note_birth_put(

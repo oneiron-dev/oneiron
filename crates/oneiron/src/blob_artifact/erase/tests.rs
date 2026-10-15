@@ -11,6 +11,9 @@ use crate::test_util::{embedding_test_config, open_test_vault_with};
 use crate::write_envelope::WriteActor;
 
 mod late;
+#[cfg(feature = "sync")]
+mod order;
+mod typed;
 
 const SHARED: &[u8] = b"bytes the erased artifact and another both hold";
 const OTHER_ONLY: &[u8] = b"bytes only the other artifact holds";
@@ -379,7 +382,8 @@ fn an_erased_reference_put_again_brings_no_bytes_back() -> Result<()> {
 }
 
 /// Copies each id's stored row to `target` as replicated ingest does, one transaction per row:
-/// the erase gate first, then the replicated put door. Returns whether each row was stored.
+/// the erase gate first, then delete-wins, then the replicated put door. Returns whether each row
+/// was stored.
 fn replicate(source: &Vault, target: &Vault, ids: &[EntityId]) -> Result<Vec<bool>> {
     let mut taken = Vec::new();
     for id in ids {
@@ -387,7 +391,10 @@ fn replicate(source: &Vault, target: &Vault, ids: &[EntityId]) -> Result<Vec<boo
         let header = EntityMetadataHeader::parse(&raw).expect("stored header");
         let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
         let stored = target.with_write_txn_grouped(|txn| {
-            if target.refuse_erased_blob_arrival_in_txn(txn, id, header.entity_type, data)? {
+            if target.refuse_erased_blob_arrival_in_txn(txn, id, &header, data)?
+                || crate::deletion::HARD_DELETE_MARKER.contains(&target.store, txn, &HexId(*id))?
+                || crate::deletion::ROW_DELETION_FENCE.contains(&target.store, txn, &HexId(*id))?
+            {
                 return Ok(false);
             }
             target
@@ -426,11 +433,13 @@ fn apply_tombstone(replica: &Vault, id: &EntityId, value: &[u8]) -> Result<()> {
     })
 }
 
-/// Bug repro (Engine ruling on #1465, 10-15) and done-means: a replica learns which bytes an
-/// erased artifact held only from its version claims, and those can arrive after the erase's
-/// tombstone. In every arrival order the replica ends with no bytes, the other artifact's
-/// reference erased and no hold on the bytes, and a stale carrier of the bytes sent afterwards is
-/// never stored.
+/// Done-means (Engine rulings on #1465, 10-15): the erasing vault tombstones the artifact, each
+/// reference it pierced and the bytes' ASSET under the erase's request, and a replica can get those
+/// tombstones and the bodies in any order: a reference can arrive after the artifact's tombstone
+/// and before its own. In every order the replica ends with no bytes, no hold on them and no body
+/// of the other artifact's reference, and a stale carrier of the bytes sent afterwards is never
+/// stored. The replica learns which bytes the erase took only from a body it stored before that
+/// body's own tombstone: no hard-delete marker teaches it any bytes (R3 ruling 1).
 #[test]
 fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
     let origin = Shared::open()?;
@@ -439,42 +448,53 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
     let hash = origin.shared.content_hash;
     let (erased_claim, other_claim) = (origin.erased_version.claim_id, origin.shared.claim_id);
     let tombstone = tombstone(crate::deletion::TombstoneReason::GdprDelete);
-    let erase_on = |replica: &Vault| apply_tombstone(replica, &origin.erased, &tombstone);
-    let before = [
+    let erase_on = |replica: &Vault, ids: &[EntityId]| -> Result<()> {
+        for id in ids {
+            apply_tombstone(replica, id, &tombstone)?;
+        }
+        Ok(())
+    };
+    let bodies = [
         origin.erased,
         origin.other,
         erased_claim,
         other_claim,
         asset,
     ];
-    // Claims first, tombstone after; tombstone first, the erased artifact's claim before the other
-    // artifact's reference and the bytes; tombstone first, its claim last.
-    let orders: [&[&[EntityId]]; 3] = [
-        &[&before],
-        &[
-            &[origin.erased, erased_claim],
-            &[origin.other, other_claim, asset],
-        ],
-        &[
-            &[origin.other, other_claim, asset],
-            &[origin.erased, erased_claim],
-        ],
-    ];
-    for (n, order) in orders.iter().enumerate() {
+    let pierced = [erased_claim, other_claim, asset];
+    for n in 0..4 {
         let (_dir, replica) = open_test_vault_with(embedding_test_config());
         replicate(source, &replica, &[origin.person])?;
-        if n > 0 {
-            erase_on(&replica)?;
-        }
-        for ids in *order {
-            replicate(source, &replica, ids)?;
-        }
-        if n == 0 {
-            assert!(
-                replica.get_raw(&asset)?.is_some(),
-                "order {n}: the bytes reached the replica"
-            );
-            erase_on(&replica)?;
+        match n {
+            // Every body, then every tombstone.
+            0 => {
+                replicate(source, &replica, &bodies)?;
+                assert!(
+                    replica.get_raw(&asset)?.is_some(),
+                    "order {n}: the bytes reached the replica"
+                );
+                erase_on(&replica, &[origin.erased])?;
+                erase_on(&replica, &pierced)?;
+            }
+            // Every tombstone, then every body.
+            1 => {
+                erase_on(&replica, &[origin.erased])?;
+                erase_on(&replica, &pierced)?;
+                replicate(source, &replica, &bodies)?;
+            }
+            // The artifact's tombstone, every body, then the pierced carriers' tombstones.
+            2 => {
+                erase_on(&replica, &[origin.erased])?;
+                replicate(source, &replica, &bodies)?;
+                erase_on(&replica, &pierced)?;
+            }
+            // The other artifact's carriers, every tombstone, then the erased artifact's.
+            _ => {
+                replicate(source, &replica, &[origin.other, other_claim, asset])?;
+                erase_on(&replica, &[origin.erased])?;
+                erase_on(&replica, &pierced)?;
+                replicate(source, &replica, &[origin.erased, erased_claim])?;
+            }
         }
         assert!(
             replica.get_raw(&asset)?.is_none(),
@@ -484,14 +504,18 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
             holds(&replica, &hash)?.is_empty(),
             "order {n}: a hold survived"
         );
-        let txn = replica.store.env.read_txn()?;
         assert!(
-            reference_erased(&replica.store, &txn, &other_claim)?,
-            "order {n}: the other artifact's reference was not erased"
+            replica
+                .get_raw(&other_claim)?
+                .is_none_or(|raw| raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN),
+            "order {n}: the other artifact's reference kept its body"
         );
-        drop(txn);
         // A stale carrier of the bytes, and the other reference again, store nothing.
-        replicate(source, &replica, &[other_claim, asset])?;
+        assert_eq!(
+            replicate(source, &replica, &[other_claim, asset])?,
+            [false, false],
+            "order {n}: a stale carrier was stored again"
+        );
         assert!(
             replica.get_raw(&asset)?.is_none(),
             "order {n}: a stale carrier stored the erased bytes again"

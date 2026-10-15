@@ -38,15 +38,18 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
-#[cfg(feature = "sync")]
-pub(crate) use self::erase::reference_erased;
 pub(crate) use self::erase::{
     Holding, asset_holding_in_txn, bytes_erased, claim_holding_in_txn, erase_holds_in_txn,
-    holdings_in_txn, other_versions_in_txn, record_erase_scope_in_txn, references_in_txn,
-    release_erased_bytes_in_txn, take_erase_scope_in_txn, unerased_holdings_in_txn,
+    erased_derivation_pending, holdings_in_txn, mark_erased_assets_in_txn, other_versions_in_txn,
+    record_erase_scope_in_txn, references_in_txn, release_erased_bytes_in_txn,
+    take_erase_scope_in_txn, unerased_holdings_in_txn,
 };
 #[cfg(any(feature = "sync", test))]
-pub(crate) use self::erase::{LateReach, body_holding_in_txn, late_reference_in_txn};
+pub(crate) use self::erase::{
+    LateReach, LateReference, discharge_erased_derivation_in_txn, late_reference_in_txn,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::erase::{asset_erased, record_erased_derivation_in_txn};
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::{
