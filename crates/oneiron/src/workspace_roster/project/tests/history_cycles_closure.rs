@@ -1,25 +1,27 @@
 //! Everything a component's decision rests on is read inside it (Sol and
-//! Astra on #1434, rounds 15 and 16): a frozen member's re-check reaches past
+//! Astra on #1434, rounds 15 to 17): a frozen member's re-check reaches past
 //! its owner seal, a seal that supersedes another on a sibling branch still
 //! installs, a frozen drain is decided with before the other members are
-//! persisted and only within the batch's refresh rounds, a seal the frozen
-//! record never read names no parent, and a dark unsigned member still lists
-//! its held revisions.
+//! persisted and only within the batch's refresh rounds, a component that
+//! grows in a batch is decided once, a seal the frozen record never read
+//! names no parent, and a dark unsigned member still lists its held
+//! revisions.
 use super::super::history_policy::{PROJECT_FRONTIER, ProjectHistoryPolicy};
 use super::super::read::ProjectVerdict;
 use super::super::revision::{
-    ProjectRevision, ProjectRevisionHash, project_revision_type, revisions_of_row,
+    ProjectRevision, ProjectRevisionHash, project_revision_type, revision_entity_id,
+    revisions_of_row,
 };
 use super::super::*;
 use super::authority::{
-    FIXTURE_HOST, put_signed_project, replay_authority, replay_missing, replay_project,
-    root_leader, sign_project, spawn_signed,
+    FIXTURE_HOST, put_signed_project, replay_authority, replay_missing_together, replay_project,
+    root_leader, sign_project, sign_with, spawn_signed,
 };
 use super::cycle_model::{EXTRA, KEPT};
 use super::history::{copy_of, open, signed_over};
 use super::history_cycles::{owner, readable, set_bound};
 use super::history_resolution::put_companion;
-use crate::authority::HostSlipIssuer;
+use crate::authority::{CapabilitySlip, HostSlipIssuer};
 
 fn lit(vault: &Vault, id: EntityId) -> Result<bool> {
     let frontier = vault.project_frontier(id)?.ok_or(Error::EntityNotFound)?;
@@ -245,6 +247,78 @@ fn a_drain_past_the_refresh_rounds_waits_for_the_next_refresh() -> Result<()> {
     Ok(())
 }
 
+/// Bug repro (Sol and Astra r17 F2): Q's saved record (Q2, under H) outlived
+/// the revocation of Q1's slip, and the owner once put H over Q (H1, then
+/// back to R). One batch holds Q3, which freezes Q once it counts and so ties
+/// Q to H through its saved parent, and a row of H still waiting for its
+/// mint. Every touched project counts its new rows first, so the batch end
+/// decides {H, Q} once, never H alone and then again.
+#[cfg(feature = "sync")]
+#[test]
+fn a_component_that_grows_in_a_batch_is_decided_once() -> Result<()> {
+    use super::super::refresh::DECISIONS;
+    let dir = tempfile::tempdir()?;
+    // H, the lesser id, is refreshed first.
+    let mut ids = [EntityId::now(), EntityId::now()];
+    ids.sort();
+    let [h, q] = ids;
+    let (holder, h2, q3) = {
+        let vault = open(&dir)?;
+        budget(&vault, 3)?;
+        let (root, root_row, holder) = root_leader(&vault)?;
+        let lead = EntityId::now();
+        let h0 = spawn_signed(&vault, root, h, holder, lead, root_row.slice.clone(), 2)?;
+        let q0 = spawn_signed(&vault, root, q, holder, lead, root_row.slice, 3)?;
+        let mut h1 = h0.clone();
+        h1.parents = vec![q.to_hex()];
+        sign_with(&vault, h, &mut h1, None, Some(h0.anchor()), None)?;
+        let mut h2 = h1.clone();
+        h2.parents = vec![root.to_hex()];
+        sign_with(&vault, h, &mut h2, None, Some(h1.anchor()), None)?;
+        for (at, row) in [(4, &h1), (5, &h2)] {
+            let (_, revision) = revisions_of_row(h, row)?.pop().ok_or_else(invalid)?;
+            put_companion(&vault, &revision, at)?;
+        }
+        let q1 = signed_over(&vault, q, &q0, holder, |row| {
+            row.parents = vec![h.to_hex()];
+            row.depth_remaining = 0;
+        })?;
+        vault.put_project(q, &q1, 6)?;
+        let q2 = signed_over(&vault, q, &q1, holder, |_| {})?;
+        vault.put_project(q, &q2, 7)?;
+        assert!(lit(&vault, q)?);
+        let proof = q1.write_proof.as_ref().ok_or_else(invalid)?;
+        let slip = CapabilitySlip::from_token(&proof.slip_wire)?.claims.slip_id;
+        vault.revoke_capability_slip(&HostSlipIssuer::from_secret(FIXTURE_HOST)?, slip)?;
+        let q3 = signed_over(&vault, q, &q2, holder, |_| {})?;
+        (holder, h2, q3)
+    };
+    // Signed on a copy, so this vault holds no mint for its slip.
+    let (_copy_dir, copy) = copy_of(&dir)?;
+    let waiting = signed_over(&copy, h, &h2, holder, |_| {})?;
+    let vault = open(&dir)?;
+    let (_, waiting) = revisions_of_row(h, &waiting)?.pop().ok_or_else(invalid)?;
+    let (_, q3) = revisions_of_row(q, &q3)?.pop().ok_or_else(invalid)?;
+    let kind = project_revision_type(&vault.store).ok_or_else(invalid)?;
+    let before = DECISIONS.with(std::cell::Cell::get);
+    vault.with_write_txn(|txn| {
+        let mut batch = vault.batch_in();
+        for (at, revision) in [(20, &q3), (21, &waiting)] {
+            batch = batch.put_replicated(
+                &revision_entity_id(revision.hash()?)?,
+                kind,
+                TimeRange { start: at, end: at },
+                at,
+                &revision.canonical_bytes()?,
+            );
+        }
+        batch.apply(txn)
+    })?;
+    assert_eq!(DECISIONS.with(std::cell::Cell::get) - before, 1);
+    assert!(lit(&vault, h)? && !lit(&vault, q)?);
+    Ok(())
+}
+
 /// Bug repro (Sol and Astra r16 F1): C froze at C2, every saved state under
 /// R, and P's board put P under C. On a copy, C's board had signed D1 under
 /// P over C0, the owner had sealed it back to R (N1), and C's board had
@@ -301,7 +375,9 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
     assert!(lit(&vault, c)? && lit(&vault, p)?);
     replay_authority(&copy, &vault)?;
     let kind = project_revision_type(&copy.store).ok_or_else(invalid)?;
-    replay_missing(&copy, &vault, kind)?;
+    // In one batch, so no refresh sees the seal before N2 and N3 keep C
+    // past its budget (Sol and Astra r17 F1).
+    replay_missing_together(&copy, &vault, kind)?;
     assert!(matches!(
         vault
             .project_frontier(c)?

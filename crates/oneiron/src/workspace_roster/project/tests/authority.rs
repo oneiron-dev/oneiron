@@ -269,29 +269,60 @@ pub(super) fn replay_rows(from: &Vault, to: &Vault, ids: &[EntityId]) -> Result<
 /// Replays every authority-log entry `to` lacks.
 #[cfg(feature = "sync")]
 pub(super) fn replay_authority(from: &Vault, to: &Vault) -> Result<()> {
-    replay_missing(from, to, crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
+    let kind = crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+    replay_rows(from, to, &missing(from, to, kind)?)
 }
 
-/// Replays every row of `kind` that `to` lacks.
+/// Every row of `kind` in `from` that `to` lacks.
 #[cfg(feature = "sync")]
-pub(super) fn replay_missing(from: &Vault, to: &Vault, kind: u8) -> Result<()> {
+fn missing(from: &Vault, to: &Vault, kind: u8) -> Result<Vec<EntityId>> {
     let ids: Vec<EntityId> = {
         let txn = from.store.env.read_txn()?;
         from.store
             .port_entity_ids_by_type(&txn, kind, None)?
             .collect::<Result<_>>()?
     };
-    let missing: Vec<EntityId> = {
-        let txn = to.store.env.read_txn()?;
-        let mut missing = Vec::new();
-        for id in ids {
-            if to.store.entities.get(&txn, id.as_bytes())?.is_none() {
-                missing.push(id);
-            }
+    let txn = to.store.env.read_txn()?;
+    let mut missing = Vec::new();
+    for id in ids {
+        if to.store.entities.get(&txn, id.as_bytes())?.is_none() {
+            missing.push(id);
         }
-        missing
+    }
+    Ok(missing)
+}
+
+/// Replays every row of `kind` that `to` lacks, in one batch.
+#[cfg(feature = "sync")]
+pub(super) fn replay_missing_together(from: &Vault, to: &Vault, kind: u8) -> Result<()> {
+    let ids = missing(from, to, kind)?;
+    let rows: Vec<(EntityId, Vec<u8>)> = {
+        let txn = from.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for id in ids {
+            let raw = from.store.port_entity_raw(&txn, &id)?;
+            rows.push((id, raw.ok_or(Error::EntityNotFound)?));
+        }
+        rows
     };
-    replay_rows(from, to, &missing)
+    to.with_write_txn(|txn| {
+        let mut batch = to.batch_in();
+        for (id, raw) in &rows {
+            let header = crate::batch::EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("replayed header"))?;
+            batch = batch.put_replicated(
+                id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            );
+        }
+        batch.apply(txn)
+    })
 }
 
 #[cfg(feature = "sync")]

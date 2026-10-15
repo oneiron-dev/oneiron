@@ -29,6 +29,8 @@ thread_local! {
     /// The rounds allowed, scaled down for a test.
     pub(super) static REFRESH_ROUNDS: std::cell::Cell<Option<u32>> =
         const { std::cell::Cell::new(None) };
+    /// How many component decisions this thread's refreshes made.
+    pub(super) static DECISIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 fn max_rounds() -> u32 {
@@ -59,6 +61,12 @@ pub(crate) fn refresh_project_frontiers(
     let Some(kind) = project_type(store) else {
         return Ok(());
     };
+    // Every touched project's new rows count before any decision, so no
+    // component grows under a member that has spent its rounds (Sol and
+    // Astra r17 F2).
+    for project in touched {
+        authenticate_pending(store, txn, posture, *project, kind)?;
+    }
     let mut queue = touched.clone();
     let mut rounds: BTreeMap<EntityId, u32> = BTreeMap::new();
     while let Some(project) = queue.pop_first() {
@@ -158,7 +166,9 @@ struct Drained {
 /// is decided again (Sol r15 F4). Each decision is a round of every member;
 /// at the last round a drain is left for the project's next refresh, so no
 /// member's record is written from a decision its drain changed (Sol and
-/// Astra r16 F2). Returns each member with whether its served view changed.
+/// Astra r16 F2). A component holding a member that has spent its rounds is
+/// not decided again and waits for its next refresh (r17 F2). Returns each
+/// member with whether its served view changed.
 fn refresh_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -172,8 +182,17 @@ fn refresh_component(
     let mut authenticated = BTreeSet::from([project]);
     let mut changed: BTreeMap<EntityId, bool> = BTreeMap::new();
     loop {
-        let (members, dark, plans) =
-            decide_component(store, txn, posture, kind, project, now, &mut authenticated)?;
+        let Some((members, dark, plans)) = decide_component(
+            store,
+            txn,
+            posture,
+            (kind, project, now),
+            &mut authenticated,
+            rounds,
+        )?
+        else {
+            return Ok(changed.into_iter().collect());
+        };
         let drained: BTreeSet<EntityId> = (plans.iter())
             .filter(|(_, (_, refresh))| {
                 matches!(refresh, Refresh::Frozen(_, drained) if !drained.applied.is_empty())
@@ -206,23 +225,20 @@ fn refresh_component(
 type Decision = (Vec<EntityId>, bool, Vec<(EntityId, Plan)>);
 
 /// One decision of `project`'s component after every member's pending rows
-/// are authenticated.
+/// are authenticated; `None`, deciding nothing, when a member has spent its
+/// rounds.
 fn decide_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
-    kind: u8,
-    project: EntityId,
-    now: u64,
+    (kind, project, now): (u8, EntityId, u64),
     authenticated: &mut BTreeSet<EntityId>,
-) -> Result<Decision> {
+    rounds: &BTreeMap<EntityId, u32>,
+) -> Result<Option<Decision>> {
     loop {
         let mut waiting = Vec::new();
         {
             let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
-            let Some(decided) = reader.decide(project)? else {
-                return Ok((Vec::new(), false, Vec::new()));
-            };
             let members = reader.component(project)?.to_vec();
             for member in &members {
                 if authenticated.insert(*member) && !pending(store, txn, *member)?.is_empty() {
@@ -230,13 +246,26 @@ fn decide_component(
                 }
             }
             if waiting.is_empty() {
+                let spent = |member: &EntityId| {
+                    rounds
+                        .get(member)
+                        .is_some_and(|round| *round >= max_rounds())
+                };
+                if members.iter().any(spent) {
+                    return Ok(None);
+                }
+                #[cfg(test)]
+                DECISIONS.with(|count| count.set(count.get() + 1));
+                let Some(decided) = reader.decide(project)? else {
+                    return Ok(Some((Vec::new(), false, Vec::new())));
+                };
                 let dark = matches!(&decided.frontier.disposition,
                     ProjectDisposition::Unauthorized { reason } if reason.as_str() == super::fold::reason::CYCLE_BOUND);
                 let mut plans = Vec::new();
                 for member in &members {
                     plans.push((*member, plan(&reader, store, txn, kind, *member, now)?));
                 }
-                return Ok((members, dark, plans));
+                return Ok(Some((members, dark, plans)));
             }
         }
         // A member's newly authenticated rows can change the component.
