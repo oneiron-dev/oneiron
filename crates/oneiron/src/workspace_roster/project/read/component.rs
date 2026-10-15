@@ -77,7 +77,7 @@ impl ProjectReader<'_, '_> {
         } else {
             cx.seal_tips()?
         };
-        let sealed = sealed_tree(&cx, &seals)?;
+        let sealed = sealed_tree(&cx, &seals);
         if !over_budget {
             // Each state a fold reading parents can judge names its parents
             // here: under one owner seal, only its tree, which is all such a
@@ -220,14 +220,14 @@ impl ProjectReader<'_, '_> {
 fn sealed_tree(
     cx: &FoldCx<'_, '_, '_>,
     tips: &BTreeSet<ProjectRevisionHash>,
-) -> Result<Option<BTreeSet<ProjectRevisionHash>>> {
+) -> Option<BTreeSet<ProjectRevisionHash>> {
     let only = (tips.len() == 1).then(|| tips.first().copied()).flatten();
     let Some(tip) = only else {
-        return Ok(None);
+        return None;
     };
     let mut tree = BTreeSet::new();
     let Some(ProjectRevision::Seal { seal: active, .. }) = cx.row(&tip) else {
-        return Ok(Some(tree));
+        return Some(tree);
     };
     let mut seals = vec![tip];
     let mut read = BTreeSet::new();
@@ -249,5 +249,5 @@ fn sealed_tree(
         }
     }
     tree.extend(below);
-    Ok(Some(tree))
+    Some(tree)
 }
