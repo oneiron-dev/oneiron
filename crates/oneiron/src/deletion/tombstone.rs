@@ -401,6 +401,10 @@ pub(crate) fn fence_deleted_row_in_txn(
 
 /// Set once [`ROW_DELETION_FENCE`] has been backfilled from the applied
 /// soft-delete markers of a vault written before the fence existed.
+/// The window label a delete in a scoped (`@`) window recorded for its row.
+pub(crate) const DELETION_WINDOW_LABEL: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_WINDOW_LABEL);
+
 pub(crate) const ROW_DELETION_FENCE_BACKFILLED: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_ROW_FENCE_BACKFILLED);
 

@@ -67,7 +67,4 @@ pub(super) struct AppliedPut {
     /// Shell-edge sources an ONE-1604-D1 dominance eviction orphaned, for the
     /// caller's explicit-source reconciliation. Empty on every other path.
     pub(super) evicted_shell_sources: BTreeSet<EntityId>,
-    /// The refusal a late `blob.version` reference ends its batch with, after every other check
-    /// (`blob_artifact::late_reference_refusal`).
-    pub(super) late_reference: Option<crate::error::ArtifactError>,
 }

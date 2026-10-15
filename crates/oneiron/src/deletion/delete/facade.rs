@@ -520,31 +520,13 @@ impl Vault {
             let scrub_is_the_linearization_point = !authority_settled;
             let mut changed = vec![*id];
             changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
-            // HardErase pierces refcounting BEFORE this scrub drops the version chain and claim
-            // pairs the walk reads; the purge below walks again for anything that came since.
-            // What it took is kept for the purge's receipt and sweep row, which a crash before
-            // the purge leaves to the replay that completes it.
-            let pierced = self.cascade_hard_erase_to_blob_references_in_txn(
-                &mut wtxn,
-                id,
-                &tombstone.encode(),
-                true,
-            )?;
-            changed.extend(pierced.changed);
-            crate::blob_artifact::record_erase_scope_in_txn(
-                &self.store,
-                &mut wtxn,
-                id,
-                &pierced.carriers,
-            )?;
+            let pierced = self.pierce_for_scrub_in_txn(&mut wtxn, id, &tombstone, &mut changed)?;
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
-            // Their reservations and markers stage once the scrub released the bytes.
-            let tombstoned =
-                self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced.tombstoned, &tombstone)?;
+            let staged = self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced, &tombstone)?;
             if existed && let Some(captured) = &captured {
                 changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
@@ -610,7 +592,7 @@ impl Vault {
             if existed {
                 self.notify_local_delete_materialized(&changed);
             }
-            self.publish_pierced_tombstones(&tombstoned, &tombstone)?;
+            self.publish_pierced_tombstones(&staged, &tombstone)?;
             self.store.clock.now_recorded_at()
         } else {
             tombstone_complete_at
@@ -728,29 +710,12 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        // ARCH-0005a (ARCH-0038 carrier 13): HardErase pierces refcounting. BEFORE the purge,
-        // which drops the version chain and claim pairs the walk reads, and in this same
-        // transaction: the bytes and every reference to them go with the artifact.
-        let pierced = self.cascade_hard_erase_to_blob_references_in_txn(
-            &mut wtxn,
-            id,
-            &tombstone.encode(),
-            true,
-        )?;
-        affected.extend(pierced.changed);
-        let mut erased_blob_carriers =
-            crate::blob_artifact::take_erase_scope_in_txn(&self.store, &mut wtxn, id)?;
-        erased_blob_carriers.extend(pierced.carriers);
-        erased_blob_carriers.sort_unstable();
-        erased_blob_carriers.dedup();
-        scope
-            .entity_ids
-            .extend(erased_blob_carriers.iter().map(EntityId::to_hex));
+        let pierced =
+            self.pierce_for_purge_in_txn(&mut wtxn, id, &tombstone, &mut affected, &mut scope)?;
         let (existed, citing) =
             self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
         affected.extend(citing);
-        let tombstoned =
-            self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced.tombstoned, &tombstone)?;
+        let staged = self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced, &tombstone)?;
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
@@ -823,7 +788,7 @@ impl Vault {
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
-        self.publish_pierced_tombstones(&tombstoned, &tombstone)?;
+        self.publish_pierced_tombstones(&staged, &tombstone)?;
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),

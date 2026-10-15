@@ -689,11 +689,6 @@ pub(in crate::batch) fn apply_put(
         replicated,
     )?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
-    // ARCH-0005a: a late reference is refused once every other check of the batch passed.
-    let late_reference = match decoded_claim_body.as_ref() {
-        Some(body) => crate::blob_artifact::late_reference_refusal(store, wtxn, &id, body)?,
-        None => None,
-    };
     stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
     stage_optional_side_row(store, wtxn, hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
@@ -799,6 +794,5 @@ pub(in crate::batch) fn apply_put(
         had_vector_mutation: embedding.had_vector_mutation,
         is_lexical_query_hint_claim,
         evicted_shell_sources,
-        late_reference,
     })
 }

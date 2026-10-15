@@ -450,7 +450,7 @@ impl Vault {
     /// No CRDT in this build: nothing publishes, and each `pt:` marker stays for a sync-enabled
     /// boot to replay.
     #[cfg(not(feature = "sync"))]
-    #[allow(clippy::unnecessary_wraps)]
+    #[expect(clippy::unnecessary_wraps)]
     pub(super) fn write_settled_crdt_tombstones(
         &self,
         _window_label: &str,

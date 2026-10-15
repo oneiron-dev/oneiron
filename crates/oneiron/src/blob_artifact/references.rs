@@ -17,8 +17,8 @@ use rmpv::Value;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Result};
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::error::{ArtifactError, Error, Result};
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 
@@ -78,8 +78,8 @@ pub(super) fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, Con
 ///
 /// A late reference (`super::erase::LateReference`) records nothing: a claim a hard erase took, a
 /// claim naming bytes a hard erase took here, or a claim naming an artifact whose hard erase was
-/// decided here. Its put refuses it ([`late_reference_refusal`]) once every other check of the
-/// batch passed. Replicated ingest pierces such a claim before it reaches this put
+/// decided here. Its batch refuses it ([`refuse_late_references_in_txn`]) once every other check
+/// passed. Replicated ingest pierces such a claim before it reaches this put
 /// (`Vault::refuse_erased_blob_arrival_in_txn`); every other door gets the refusal.
 pub(crate) fn record_version_claim(
     store: &Store,
@@ -112,11 +112,40 @@ pub(crate) fn record_version_claim(
     Ok(())
 }
 
-/// The refusal a put of `body` at `claim` ends with when it is a late reference
-/// (`super::erase::LateReference`): `BlobVersionErased` for a reference a hard erase took,
-/// `BlobContentErased` otherwise. The batch raises it after its every other check, so a gate that
-/// probes the put learns that nothing else would refuse it.
-pub(crate) fn late_reference_refusal(
+/// Refuses a batch that stores a late reference (`super::erase::LateReference`) at any of `ids`,
+/// the entities it materialized, with `late_reference_refusal`. The batch runs this after its
+/// every other check (`batch::base_apply`), so a gate that probes the put learns that nothing
+/// else would refuse it.
+pub(crate) fn refuse_late_references_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<()> {
+    let predicate = BLOB_VERSION_CLAIM_PREDICATE.as_bytes();
+    for id in ids {
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            continue;
+        };
+        // Only a body naming the version predicate can be a reference; no other is decoded again.
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN
+            || raw[0] != ENTITY_TYPE_CLAIM
+            || !raw
+                .windows(predicate.len())
+                .any(|window| window == predicate)
+        {
+            continue;
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if let Some(refusal) = late_reference_refusal(store, txn, id, &body)? {
+            return Err(Error::Artifact(refusal));
+        }
+    }
+    Ok(())
+}
+
+/// The refusal a put of `body` at `claim` ends with when it is a late reference:
+/// `BlobVersionErased` for a reference a hard erase took, `BlobContentErased` otherwise.
+fn late_reference_refusal(
     store: &Store,
     txn: &RoTxn<'_>,
     claim: &EntityId,

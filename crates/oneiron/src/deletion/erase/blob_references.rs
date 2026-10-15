@@ -532,10 +532,10 @@ impl Vault {
         self.fence_refused_arrival_in_txn(wtxn, id, carriers)
     }
 
-    /// Whether the replicated put would take `data` at `id` as far as its claim chokepoint, where
-    /// it refuses a late reference: every check that can refuse a replicated row runs before that
-    /// point (`batch::put_apply::apply`). Probed in a savepoint that is always rolled back, so a
-    /// body the put refuses for anything else widens no erase.
+    /// Whether the replicated put of `data` at `id` fails only as a late reference: its batch
+    /// refuses one after every other check passed (`blob_artifact::refuse_late_references_in_txn`).
+    /// Probed in a savepoint that is always rolled back, so a body the put refuses for anything
+    /// else widens no erase.
     #[cfg(any(feature = "sync", test))]
     fn put_reaches_late_reference_refusal_in_txn(
         &self,

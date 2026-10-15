@@ -8,6 +8,7 @@ use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
 
 use super::super::erase::PiercedCarrier;
+use super::super::receipt::RedactionScope;
 use super::super::rendezvous::maybe_fail_first_txn_pending_tombstone;
 #[cfg(feature = "sync")]
 use super::super::tombstone::TOMBSTONE_VALUE_V2_LEN;
@@ -135,6 +136,50 @@ impl Vault {
         Ok(())
     }
 
+    /// The GDPR/policy scrub's walk (ARCH-0005a, ARCH-0038 carrier 13): HardErase pierces
+    /// refcounting BEFORE the scrub drops the version chain and claim pairs the walk reads; the
+    /// purge walks again for anything that came since. What it took is kept for the purge's
+    /// receipt and sweep row, which a crash before the purge leaves to the replay that completes
+    /// it. Returns the carriers to tombstone once the scrub released the bytes.
+    pub(in crate::deletion) fn pierce_for_scrub_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        tombstone: &TombstoneValueV2,
+        changed: &mut Vec<EntityId>,
+    ) -> Result<Vec<PiercedCarrier>> {
+        let pierced =
+            self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &tombstone.encode(), true)?;
+        changed.extend(pierced.changed);
+        crate::blob_artifact::record_erase_scope_in_txn(&self.store, wtxn, id, &pierced.carriers)?;
+        Ok(pierced.tombstoned)
+    }
+
+    /// The purge's walk: BEFORE the purge drops the version chain and claim pairs the walk reads,
+    /// and in its transaction, the bytes and every reference to them go with the record. The
+    /// receipt scope gets one line per carrier, the scrub's included. Returns the carriers to
+    /// tombstone once the purge released the bytes.
+    pub(in crate::deletion) fn pierce_for_purge_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        tombstone: &TombstoneValueV2,
+        affected: &mut Vec<EntityId>,
+        scope: &mut RedactionScope,
+    ) -> Result<Vec<PiercedCarrier>> {
+        let pierced =
+            self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &tombstone.encode(), true)?;
+        affected.extend(pierced.changed);
+        let mut carriers = crate::blob_artifact::take_erase_scope_in_txn(&self.store, wtxn, id)?;
+        carriers.extend(pierced.carriers);
+        carriers.sort_unstable();
+        carriers.dedup();
+        scope
+            .entity_ids
+            .extend(carriers.iter().map(EntityId::to_hex));
+        Ok(pierced.tombstoned)
+    }
+
     /// Stages the tombstone of each carrier a hard erase pierced (ARCH-0005a) under the erase's
     /// own request, in the transaction that pierced it: its reservation and `pt:` marker, as
     /// the erase's own destructive commit stages them. A carrier another hard request owns keeps
@@ -158,10 +203,11 @@ impl Vault {
             }
             self.put_pending_tombstone_in_txn(wtxn, &carrier.window_label, &carrier.id, value)?;
             if carrier.window_label.contains('@') {
-                self.store.sync_state.put(
+                super::super::tombstone::DELETION_WINDOW_LABEL.put(
+                    &self.store,
                     wtxn,
-                    &format!("m:dw:{}", carrier.id.to_hex()),
-                    carrier.window_label.as_bytes(),
+                    &HexId(carrier.id),
+                    &carrier.window_label.as_bytes().to_vec(),
                 )?;
             }
             staged.push(carrier);
