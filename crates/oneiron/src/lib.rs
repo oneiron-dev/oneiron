@@ -19,6 +19,7 @@ pub mod deletion;
 pub mod edge;
 pub mod entity_id;
 pub mod error;
+pub mod housekeeping;
 pub(crate) mod identity;
 pub(crate) mod limits;
 pub mod maintain;
