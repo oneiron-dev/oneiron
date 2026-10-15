@@ -48,7 +48,9 @@ fn publish_refs_past_the_row(vault: &Vault, root: &Path) -> RepoRef {
 
 /// A stock client pushes, lists and fetches past every scan's row.
 /// Each settled push leaves no intent row, so the journal scan reads pending
-/// pushes only, and admission reads no publication history.
+/// pushes only. (The test origin's outcome-only replay of each push reads
+/// the publication journal, so admission's single CAS-row read is proved in
+/// `publication_admission_reads_one_cas_row_not_the_history` instead.)
 #[test]
 fn a_repository_keeps_serving_past_every_scan_row() {
     let (_vault_dir, vault) = temp_vault();
@@ -111,11 +113,6 @@ fn a_repository_keeps_serving_past_every_scan_row() {
         checks_raised(&vault, OriginScan::ReceivePackIntents),
         0,
         "the journal scan read only pending pushes"
-    );
-    assert_eq!(
-        checks_raised(&vault, OriginScan::PublicationRows),
-        0,
-        "no push read the publication history"
     );
 }
 
