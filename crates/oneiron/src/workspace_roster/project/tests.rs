@@ -143,14 +143,9 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
-        let owner = EntityId::now();
-        vault.put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"member",
-        )?;
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
         let id = EntityId::now();
         let project = ProjectRecord::new(id, Some(root), root, owner)?;
         vault.put_project(id, &project, 2)?;
@@ -292,17 +287,12 @@ fn mint_fixture(
         ConsentActionKind, ConsentActorIdentity, ConsentSurface, PROJECT_PROPOSAL_MINT_ACTION_ID,
         ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
     };
-    let person = crate::test_util::entity(0x78);
+    let person = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let message = crate::test_util::entity(0x79);
     let skill = crate::test_util::entity(0x7A);
     let at = TimeRange { start: 20, end: 20 };
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        20,
-        b"owner",
-    )?;
     // A source message must go through the witness door, never a raw MESSAGE put.
     let staging = EntityId::now();
     let staging_project = ProjectRecord::new(

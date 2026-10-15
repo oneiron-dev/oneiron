@@ -1540,6 +1540,7 @@ fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -1638,6 +1639,7 @@ fn failed_suite_retains_hold_revert_clears_candidate_and_revision_is_exact() -> 
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -1812,6 +1814,7 @@ fn strict_permission_narrow_and_tool_removal_qualify_without_reconsent() -> Resu
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
@@ -1907,6 +1910,7 @@ fn failed_or_malformed_revision_revert_keeps_the_qualified_hold() -> Result<()> 
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),

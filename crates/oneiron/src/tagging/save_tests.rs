@@ -853,6 +853,7 @@ fn erase_a_saved_turns_text(mode: TaggingMode) -> Erased {
     let message = saved.mentions[0].message;
     let writer = speaker(&vault);
     let actor = WriteActor::new(writer, EdgeActorClass::Human);
+    crate::test_util::bind_test_owner(&vault, writer);
     let owner = vault
         .authenticate_owner(
             writer,

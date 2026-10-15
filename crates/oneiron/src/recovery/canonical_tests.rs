@@ -234,19 +234,14 @@ fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifac
 fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() -> Result<()> {
     use crate::consent::AuthenticatedOwner;
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
-    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+    use crate::registry::ENTITY_TYPE_ASSET;
     use crate::store::GateDecisionId;
 
     let source_dir = tempfile::tempdir()?;
     let source = Vault::open(source_dir.path(), VaultConfig::default())?;
-    let author = EntityId::now();
-    source.put_entity(
-        &author,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"author",
-    )?;
+    let author = source
+        .ensure_embedded_owner_actor()
+        .map_err(|_| Error::InvariantViolation("embedded owner"))?;
     let actor = WriteActor::new(author, EdgeActorClass::Human);
     let owner: AuthenticatedOwner = source.authenticate_owner(
         author,

@@ -142,6 +142,7 @@ fn setup_with_secret(
             b"actor",
         )?;
     }
+    crate::test_util::bind_test_owner(&vault, owner_id);
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:script-owner",

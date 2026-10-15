@@ -38,6 +38,7 @@ mod fold_engine;
 mod fold_state;
 mod handoff_equivocation;
 mod history_transfer;
+mod host_actor;
 mod host_re_root;
 mod ingest_observation;
 mod install_fold;

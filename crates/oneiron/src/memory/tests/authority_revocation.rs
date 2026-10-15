@@ -93,57 +93,132 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
         .expect("self-retraction never needs an owner binding");
 }
 
+/// The three owner verbs, as `facade` asks them: a PERSON mint, a retract of
+/// another actor's claim, and a delete of `subject`.
+fn owner_verbs(facade: &Memory<'_>, claim: &str, subject: EntityId) -> [MemoryResult<()>; 3] {
+    [
+        facade
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".to_owned(),
+                body: serde_json::json!({"name": "minted"}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 700,
+                learned_at: None,
+            })
+            .map(drop),
+        facade.claim_retract(claim).map(drop),
+        facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .map(drop),
+    ]
+}
+
+/// An agent's claim about `subject`, for an owner to retract.
+fn agent_claim(vault: &crate::Vault, agent: EntityId, subject: EntityId, seed: u8) -> String {
+    vault
+        .memory(agent, EdgeActorClass::Agent)
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!(format!("calm-{seed}")),
+        ))
+        .expect("agent claim")
+        .claim_short_id
+}
+
 /// H149 (security scan, W3-T7): an unrooted vault holds no signed owner
 /// binding, so naming a PERSON as `human` must not hand it the owner verbs.
 /// The actor key an embedded host takes (`human:<id>`, as napi `as_actor`
-/// parses it) names an agent's persona PERSON here, and then the embedded
-/// owner itself: until the host roots the vault and binds its owner, all
-/// three owner verbs refuse both with OWNER_BINDING_REQUIRED.
+/// parses it) names an agent's persona PERSON, then another PERSON: each is
+/// refused all three owner verbs with OWNER_BINDING_REQUIRED.
 #[test]
-fn an_unrooted_vault_gives_no_person_the_owner_verbs() {
+fn an_unrooted_vault_gives_no_other_person_the_owner_verbs() {
     let (_dir, vault) = open_vault();
     let persona = put_person(&vault, 0x63);
+    let other = put_person(&vault, 0x6D);
     let agent = put_person(&vault, 0x64);
     let subject = put_person(&vault, 0x65);
-    let agent_facade = vault.memory(agent, EdgeActorClass::Agent);
-    let embedded_owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
-    for (seed, named) in [(0x66, persona), (0x67, embedded_owner)] {
-        let claim = agent_facade
-            .claim_upsert(&claim_input(
-                "profile.mood",
-                &subject,
-                "observed",
-                serde_json::json!(format!("calm-{seed}")),
-            ))
-            .expect("agent claim");
+    for (seed, named) in [(0x66, persona), (0x67, other)] {
+        let claim = agent_claim(&vault, agent, subject, seed);
         let (actor, class) =
             crate::memory::parse_actor_key(&vault, &format!("human:{}", named.to_hex()))
                 .expect("store truth parses the key");
         assert_eq!(class, EdgeActorClass::Human);
-        let facade = vault.memory(actor, class);
-        for err in [
-            facade
-                .put_structural(&StructuralPutInput {
-                    id: None,
-                    kind: "PERSON".to_owned(),
-                    body: serde_json::json!({"name": "minted"}),
-                    text_fields: None,
-                    edges: None,
-                    occurred_at: 700,
-                    learned_at: None,
-                })
-                .expect_err("PERSON mint on an unrooted vault"),
-            facade
-                .claim_retract(&claim.claim_short_id)
-                .expect_err("cross-actor retract on an unrooted vault"),
-            facade
-                .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
-                .expect_err("delete on an unrooted vault"),
-        ] {
+        for verb in owner_verbs(&vault.memory(actor, class), &claim, subject) {
+            let err = verb.expect_err("an owner verb on an unrooted vault");
             assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{named:?}");
         }
     }
     assert!(vault.get_raw(&subject).expect("read").is_some());
+}
+
+/// H149, the positive control: an unrooted vault's own embedded owner keeps
+/// the owner verbs. The host holding the vault in process acts as it anyway,
+/// and an embedded vault has no root to bind it under.
+#[test]
+fn an_unrooted_vault_keeps_the_owner_verbs_for_its_embedded_owner() {
+    let (_dir, vault) = open_vault();
+    let agent = put_person(&vault, 0x6E);
+    let subject = put_person(&vault, 0x6F);
+    let claim = agent_claim(&vault, agent, subject, 0x70);
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    for verb in owner_verbs(&facade_for(&vault, owner), &claim, subject) {
+        verb.expect("the embedded owner's owner verb");
+    }
+}
+
+/// H149: a deleted embedded owner passes as no one. Deleted or erased, the
+/// owner's id is refused the owner verbs on an unrooted vault, as any other
+/// PERSON is.
+#[test]
+fn a_deleted_embedded_owner_holds_no_owner_verbs() {
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::UserHardDelete,
+    ] {
+        let (_dir, vault) = open_vault();
+        let agent = put_person(&vault, 0x71);
+        let subject = put_person(&vault, 0x72);
+        let claim = agent_claim(&vault, agent, subject, 0x73);
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        vault
+            .delete_entity_with_reason(&owner, reason)
+            .expect("delete the owner");
+        for verb in owner_verbs(&facade_for(&vault, owner), &claim, subject) {
+            let err = verb.expect_err("a deleted owner's owner verb");
+            if matches!(reason, crate::DeleteReason::UserDelete) {
+                assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
+            }
+        }
+        assert!(vault.get_raw(&subject).expect("read").is_some());
+    }
+}
+
+/// H149: the host's own root is the ceremony. A self-hosted root binds the
+/// vault's embedded owner as `human` in the transaction that roots it, so the
+/// owner keeps all three owner verbs, and an agent's persona PERSON named
+/// `human` on the same vault is refused them.
+#[test]
+fn a_self_hosted_root_binds_its_owner_and_no_one_else() {
+    let (_dir, vault) = open_vault();
+    let persona = put_person(&vault, 0x68);
+    let agent = put_person(&vault, 0x69);
+    let subject = put_person(&vault, 0x6A);
+    vault
+        .ensure_host_root_slip(&crate::test_util::test_host_issuer())
+        .expect("host root");
+    let claim = agent_claim(&vault, agent, subject, 0x6B);
+    for verb in owner_verbs(&facade_for(&vault, persona), &claim, subject) {
+        let err = verb.expect_err("a persona's owner verb");
+        assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
+    }
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    for verb in owner_verbs(&facade_for(&vault, owner), &claim, subject) {
+        verb.expect("the rooted owner's owner verb");
+    }
 }
 
 /// A recipient committed after owner revocation must never be read under an

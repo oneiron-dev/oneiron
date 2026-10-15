@@ -27,6 +27,7 @@ fn span_fixture() -> Result<SpanFixture> {
     put_person(&vault, &actor_id)?;
     let actor =
         crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
+    crate::test_util::bind_test_owner(&vault, actor_id);
     let owner = vault.authenticate_owner(
         actor_id,
         "principal:span-test",
@@ -100,6 +101,7 @@ fn quote_fixture() -> Result<SpanFixture> {
     let target = crate::EntityId::from_hex(&message.id_hex)?;
     let actor =
         crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
+    crate::test_util::bind_test_owner(&vault, actor_id);
     let owner = vault.authenticate_owner(
         actor_id,
         "principal:quote-test",

@@ -296,6 +296,7 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
             b"subject",
         )
         .expect("subject");
+    crate::test_util::bind_test_owner(&vault, owner);
     let body = ClaimBody::new(
         "profile.city",
         ClaimSubject::Entity(subject),

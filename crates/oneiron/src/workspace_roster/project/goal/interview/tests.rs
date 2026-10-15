@@ -452,14 +452,9 @@ fn loaded_interview(dedupe: &str) -> Result<Interview> {
     let project = vault.root_project()?;
     let mut spec = vault.project(project)?.unwrap();
     let agent = EntityId::from_hex(&spec.leader)?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     spec.roster.push(human.to_hex());
     vault.put_project(project, &spec, 2)?;
     let room = EntityId::from_hex(&spec.home_room)?;

@@ -3896,6 +3896,7 @@ fn the_typed_memory_door_still_refuses_an_agent_explicit_user_write() {
 #[test]
 fn facade_retract_still_closes_an_ordinary_claim() -> Result<()> {
     let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    crate::test_util::bind_test_owner(&vault, human.entity_ref());
     let ordinary = guard_claim(&vault, &subject, "osaka", 2);
     let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
 

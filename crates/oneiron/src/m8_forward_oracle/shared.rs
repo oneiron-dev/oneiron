@@ -99,6 +99,7 @@ pub(super) fn install_oracle_scoped_fixture(vault: &Vault) -> OracleScopedFixtur
     vault
         .put_entity(&owner, ENTITY_TYPE_PERSON, t(1), 1, b"owner")
         .expect("owner person");
+    crate::test_util::bind_test_owner(vault, owner);
     let auth = vault
         .authenticate_owner(
             owner,

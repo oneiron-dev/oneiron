@@ -416,14 +416,9 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
         let root_record = vault.project(root)?.unwrap();
-        let human = EntityId::now();
-        vault.put_entity(
-            &human,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"human",
-        )?;
+        let human = vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
         let project = EntityId::now();
         vault.put_project(
             project,
@@ -596,14 +591,9 @@ fn superseded_goal_erases_after_its_project_is_deleted() -> Result<()> {
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
-        let human = EntityId::now();
-        vault.put_entity(
-            &human,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"human",
-        )?;
+        let human = vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
         let project = EntityId::now();
         vault.put_project(
             project,

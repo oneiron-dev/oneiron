@@ -840,6 +840,7 @@ fn an_edit_that_changes_a_message_document_marks_its_turn_again() {
     assert_eq!(read.traces.len(), 1);
 
     let actor = WriteActor::new(writer, EdgeActorClass::Human);
+    crate::test_util::bind_test_owner(&vault, writer);
     let owner = vault
         .authenticate_owner(
             writer,
@@ -922,6 +923,7 @@ fn a_stream_continuation_marks_its_turn_again() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
     let writer = speaker(&vault);
+    crate::test_util::bind_test_owner(&vault, writer);
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let mut streamed = message(0, "");
     streamed.id = Some("67676767676767676767676767676767".into());
@@ -1022,6 +1024,7 @@ fn restoring_a_lost_message_document_marks_its_turn_again() {
     let tagger = Scripted::new(Answer::Good);
     let reconciler = reconciler(&vault, &tagger);
     assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
+    crate::test_util::bind_test_owner(&vault, writer);
     let owner = vault
         .authenticate_owner(
             writer,
@@ -1094,6 +1097,7 @@ fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
             .memory(writer, EdgeActorClass::Human)
             .witness(&turn(None, vec![first.clone()]))
             .expect("witness");
+        crate::test_util::bind_test_owner(&vault, writer);
         let owner = vault
             .authenticate_owner(
                 writer,
@@ -3214,6 +3218,7 @@ fn an_earlier_message_in_an_entity_document_ends_the_window() {
         .expect("witness");
     let second = witness_at(&vault, "Grace stayed behind", NOW + 1);
     let third = witness_at(&vault, "they wrote letters", NOW + 2);
+    crate::test_util::bind_test_owner(&vault, writer);
     let owner = vault
         .authenticate_owner(
             writer,

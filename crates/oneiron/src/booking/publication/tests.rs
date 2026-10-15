@@ -26,6 +26,7 @@ fn open() -> (tempfile::TempDir, Vault) {
             .put_entity(&entity, kind, TimeRange { start: 1, end: 1 }, 1, b"fixture")
             .expect("entity");
     }
+    crate::test_util::bind_test_owner(&vault, id(2));
     let config = fixture_config();
     vault
         .put_claim(

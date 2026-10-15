@@ -697,9 +697,8 @@ fn migrated_non_note_document_edits_invalidate_pre_provider_pins() -> TestResult
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let unit = EntityId::now();
-    person(&vault, owner)?;
     vault.put_entity(
         &unit,
         crate::registry::ENTITY_TYPE_PERSON,

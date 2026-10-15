@@ -953,18 +953,10 @@ fn a_solo_stretch_on_record_stops_saving_once_its_owners_proof_lapses() -> Resul
 // ─── ONE-1570 Arm B — retrieval-run context receipts follow the transcript ──
 
 /// Seeds base content the room can retrieve, through the production witness
-/// door so the text is really BM25-indexed.
+/// door so the text is really BM25-indexed. The vault's owner witnesses it
+/// and is returned.
 fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
-    let actor = EntityId::from_bytes([0xA7; 16]).expect("actor id");
-    vault
-        .put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"arm-b person",
-        )
-        .expect("put actor");
+    let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
     vault
         .memory(actor, EdgeActorClass::Human)
         .witness(&crate::memory::WitnessTurn {

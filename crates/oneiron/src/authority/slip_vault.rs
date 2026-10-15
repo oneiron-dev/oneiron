@@ -185,7 +185,9 @@ impl Vault {
     }
 
     /// Bootstrap Genesis + host root slip atomically, and only on a truly empty
-    /// log. A rooted vault must already recognize this host. A rejected cached
+    /// log; a self-hosted root binds the vault's embedded owner as `human` in
+    /// the same transaction, so owner verbs hold for the owner alone (H149).
+    /// A rooted vault must already recognize this host. A rejected cached
     /// root is never silently replaced (revocation stays terminal).
     pub fn ensure_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<CapabilitySlip> {
         let mut txn = self.store.env.write_txn()?;
@@ -272,6 +274,13 @@ impl Vault {
         let fresh = self.authority_view_readonly_in_txn(txn)?;
         slip.verify_authority(&issuer.public_key(), &fresh, now)?;
         HOST_ROOT_SLIP_CACHE.put(&self.store, txn, &cache_key, &slip.to_token()?)?;
+        // A root written here binds the vault's owner with it (H149).
+        if pending
+            .first()
+            .is_some_and(|entry| matches!(entry.op, AuthorityOp::Genesis { .. }))
+        {
+            self.bind_rooted_owner_in_txn(txn, issuer)?;
+        }
         Ok(slip)
     }
     /// Proves the local retained host secret through its actual logged root slip.
@@ -637,7 +646,9 @@ impl Vault {
         self.bind_host_actor_for_test(issuer, person, "human")
     }
 
-    /// Binds `person` at `class` under the host root.
+    /// Binds `person` at `class` under the host root. The host key holds one
+    /// live binding, and a self-hosted root binds the embedded owner, so a
+    /// fixture that names another actor rebinds the key to it.
     pub(crate) fn bind_host_actor_for_test(
         &self,
         issuer: &HostSlipIssuer,
@@ -645,18 +656,34 @@ impl Vault {
         class: &str,
     ) -> Result<()> {
         let fold = self.authority_fold()?;
-        let now = self.now_recorded_at();
-        let bind = next_entry(
-            issuer,
-            &fold,
-            AuthorityOp::BindActor {
-                authority_key: issuer.public_key(),
-                actor_ref: person,
-                actor_class: class.into(),
-                epoch: 1,
+        let held = fold.actor_bindings.get(&issuer.public_key());
+        if held.is_some_and(|binding| {
+            binding.status == ActorBindingStatus::Active
+                && binding.actor_ref == person
+                && binding.actor_class == class
+        }) {
+            return Ok(());
+        }
+        let epoch = held.map_or(1, |binding| binding.epoch + 1);
+        let (authority_key, actor_ref, actor_class) = (issuer.public_key(), person, class.into());
+        let op = match held {
+            Some(binding) if binding.status == ActorBindingStatus::Active => {
+                AuthorityOp::RebindActor {
+                    authority_key,
+                    actor_ref,
+                    actor_class,
+                    epoch,
+                }
+            }
+            _ => AuthorityOp::BindActor {
+                authority_key,
+                actor_ref,
+                actor_class,
+                epoch,
             },
-            now,
-        )?;
+        };
+        let now = self.now_recorded_at();
+        let bind = next_entry(issuer, &fold, op, now)?;
         let at = TimeRange {
             start: now,
             end: now,
@@ -671,12 +698,16 @@ impl Vault {
     pub(crate) fn revoke_host_actor_for_test(&self, issuer: &HostSlipIssuer) -> Result<()> {
         let fold = self.authority_fold()?;
         let now = self.now_recorded_at();
+        let epoch = fold
+            .actor_bindings
+            .get(&issuer.public_key())
+            .map_or(1, |binding| binding.epoch);
         let revoke = next_entry(
             issuer,
             &fold,
             AuthorityOp::RevokeActor {
                 authority_key: issuer.public_key(),
-                epoch: 1,
+                epoch,
             },
             now,
         )?;

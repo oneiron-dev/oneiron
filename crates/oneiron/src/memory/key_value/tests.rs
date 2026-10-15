@@ -1,7 +1,7 @@
 //! Behavior proofs through the real facade and production gate.
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::memory::tests::{append_actor_ceiling_rows, open_vault, put_person};
+use crate::memory::tests::{append_actor_ceiling_rows, open_vault, put_owner, put_person};
 use serde_json::json;
 
 fn address(namespace: &[&str], key: &str) -> KeyValueAddress {
@@ -202,7 +202,7 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
     };
 
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 101);
+    let owner = put_owner(&vault);
     let other = put_person(&vault, 102);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let mut request = input(&["private"], "canary", "old", 1);
@@ -560,7 +560,7 @@ fn duplicate_actor_or_class_evidence_never_selects_an_owner() {
 #[test]
 fn erased_shells_do_not_wedge_other_keys_or_replay_the_erased_request() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 107);
+    let owner = put_owner(&vault);
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let request = input(&["private"], "erased", "one", 1);
     let erased = memory.key_value_put(&request).unwrap();

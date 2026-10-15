@@ -160,6 +160,7 @@ fn register_active_scoped_connector_key_with_budgets(
             b"owner",
         )
         .expect("owner person");
+    crate::test_util::bind_test_owner(vault, owner);
     let auth = vault
         .authenticate_owner(
             owner,
@@ -1519,6 +1520,7 @@ fn register_scoped_key(vault: &Vault, key_id: &EntityId, grant_id: &EntityId, se
             b"owner",
         )
         .unwrap();
+    crate::test_util::bind_test_owner(vault, owner);
     let auth = vault
         .authenticate_owner(
             owner,
@@ -1876,6 +1878,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
             b"owner",
         )
         .unwrap();
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault
         .authenticate_owner(
             owner,

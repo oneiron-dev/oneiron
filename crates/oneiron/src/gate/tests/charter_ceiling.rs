@@ -158,6 +158,7 @@ fn qualify_scoped_fixture(vault: &crate::Vault, key_id: &EntityId) -> Result<()>
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
         &owner.to_hex(),
