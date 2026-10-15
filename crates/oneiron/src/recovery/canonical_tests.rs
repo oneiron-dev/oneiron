@@ -234,7 +234,7 @@ fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifac
 fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() -> Result<()> {
     use crate::consent::AuthenticatedOwner;
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
-    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+    use crate::registry::ENTITY_TYPE_ASSET;
     use crate::store::GateDecisionId;
 
     let source_dir = tempfile::tempdir()?;
