@@ -690,7 +690,7 @@ impl Vault {
 
     /// Moves the host root's one human binding to `person` at `epoch`, as a
     /// host that hands its key to another human does.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "sync"))]
     pub(crate) fn rebind_host_owner_for_test(
         &self,
         issuer: &HostSlipIssuer,
