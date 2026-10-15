@@ -445,7 +445,7 @@ fn a_non_owner_persons_proof_shares_no_vault() -> Result<()> {
     let (_dir, vault, owner, person) = fixture();
     let members = [InitialSharedMember {
         member_ref: person.actor(),
-        role: Some(Role::Owner),
+        role: Some(FederationGrantRole::Owner),
     }];
     assert!(matches!(
         vault.initialize_shared_vault(&person, 42, None, &members, 10),
