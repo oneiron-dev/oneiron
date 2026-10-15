@@ -398,7 +398,8 @@ fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
 /// row after its next revision was learned in a later month, and shipped it
 /// without that revision, so a peer seated the removed member again. The
 /// rematerialized window carries it, and so do a resident window's export,
-/// a promoted device's and a persisted snapshot.
+/// the replacement a promoted connection below its floor gets, and a
+/// persisted snapshot.
 #[cfg(feature = "sync")]
 #[test]
 fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
@@ -424,17 +425,20 @@ fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
     let s1_row = revision_entity_id(head_of(id, &s1)?)?.to_hex();
 
     let none = loro::VersionVector::default().encode();
+    let floor = crate::sync::window::promotion_baseline(&promoted)?;
+    let crate::sync::window::WindowExport::Update(update) =
+        crate::sync::window::export_window_updates_since(&vault, &key, &resident, &none)?
+    else {
+        panic!("an empty peer of a full window gets an update");
+    };
+    let crate::sync::window::WindowExport::Replacement(replacement) =
+        crate::sync::window::export_window_since(&vault, &key, &promoted, &none, Some(&floor))?
+    else {
+        panic!("a peer below the promotion floor gets a replacement");
+    };
     for (door, update) in [
-        (
-            "resident",
-            crate::sync::window::export_window_updates_since(&vault, &key, &resident, &none)?,
-        ),
-        (
-            "promoted",
-            crate::sync::window::export_promoted_window_updates_since(
-                &vault, &key, &promoted, &none,
-            )?,
-        ),
+        ("resident", update),
+        ("promoted replacement", replacement),
         (
             "persisted",
             crate::sync::server_state::persist_window_snapshot(&vault, &key, &persisted)?,

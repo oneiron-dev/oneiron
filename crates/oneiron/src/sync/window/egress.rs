@@ -21,11 +21,11 @@ use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, W
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncError};
+use crate::error::{Error, Result};
 use crate::sync::local_claims::{
     claim_sync_allowed, local_claim_sync_allowed, withheld_claim_carriers,
 };
-use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
+use loro::{CommitOptions, ExportMode, LoroDoc};
 
 /// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling
 /// R-20260807-06).
@@ -435,92 +435,9 @@ pub(super) fn scrub_redacted_attribution_carriers(
     Ok(!keys.is_empty())
 }
 
-/// Exports a full-window response without carrying pre-scrub operation bytes.
-/// The peer VV is still decoded first so malformed-VV requests never become a
-/// full-export fallback. A window of a world flagged device-only, or one
-/// carrying such a world's claim or an edge naming one, ships nothing,
-/// against the flag as it stands now. So does a delta that inserts one, to a
-/// receiver that already holds part of the window; an empty receiver gets
-/// the history-free snapshot.
-pub fn export_window_updates_since(
-    vault: &Vault,
-    key: &WindowKey,
-    doc: &LoroDoc,
-    remote_vv: &[u8],
-) -> Result<Vec<u8>> {
-    let remote = VersionVector::decode(remote_vv).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "decode version vector",
-            source,
-        })
-    })?;
-    if super::device_only::export_withheld(vault, key, doc, &remote)? {
-        return super::device_only::withheld_window_update();
-    }
-    crate::sync::note::refresh(vault, doc, key)?;
-    let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
-    let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
-    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
-    // A resident window ships every held revision of each PROJECT row it
-    // carries, whatever month it was learned in (Astra #1434 F2).
-    if super::project_history::carry_project_history(vault, doc)? {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    }
-    let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed || withdrawn_scrubbed;
-    if scrubbed
-        || history_free_window_required(vault, key)?
-        || doc.is_shallow()
-        || (remote.is_empty()
-            && super::device_only::delta_carries_device_only(vault, doc, &remote)?)
-    {
-        export_history_free_window_snapshot(doc)
-    } else {
-        super::loro_support::export_updates_since(doc, remote_vv)
-    }
-}
-
-/// A promoted device holds the canonical shallow frontier. When the home
-/// sends its VV, ship ONLY the post-frontier tail: re-exporting a shallow
-/// snapshot on every reply can discard the device's later unconfirmed op
-/// during a merge. If a scrub pinned this window to history-free transport,
-/// retain the existing snapshot policy instead.
-pub(crate) fn export_promoted_window_updates_since(
-    vault: &Vault,
-    key: &WindowKey,
-    doc: &LoroDoc,
-    remote_vv: &[u8],
-) -> Result<Vec<u8>> {
-    let remote = VersionVector::decode(remote_vv).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "decode promoted version vector",
-            source,
-        })
-    })?;
-    if super::device_only::export_withheld(vault, key, doc, &remote)? {
-        return super::device_only::withheld_window_update();
-    }
-    crate::sync::note::refresh(vault, doc, key)?;
-    let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
-    let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
-    // A promoted window holds an older window's PROJECT carriers too: the
-    // same closure as a resident one (Astra #1434 F2).
-    if super::project_history::carry_project_history(vault, doc)? {
-        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    }
-    let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
-    if scrubbed
-        || history_free_window_required(vault, key)?
-        || (remote.is_empty()
-            && super::device_only::delta_carries_device_only(vault, doc, &remote)?)
-    {
-        export_history_free_window_snapshot(doc)
-    } else {
-        super::loro_support::export_updates_since(doc, remote_vv)
-    }
-}
-
+/// The window's state with no history at all: a snapshot rooted at its newest operation, for local
+/// persistence only. Nothing exports it: every snapshot a peer or a promotion receives is cut and
+/// checked by [`super::history_free`].
 pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
@@ -533,8 +450,9 @@ pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u
         })
 }
 
-/// Scrubs the live state and chooses ordinary versus shallow snapshot bytes
-/// using the durable per-window history-free pin.
+/// Scrubs the live state and persists it: a pinned window keeps only the history
+/// [`super::history_free::HistoryCheck`] ships where a root allows it, every other window all
+/// it holds.
 pub(in crate::sync) fn export_scrubbed_window_snapshot(
     vault: &Vault,
     key: &WindowKey,
@@ -550,9 +468,11 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
-    if history_free_window_required(vault, key)? || doc.is_shallow() {
-        export_history_free_window_snapshot(doc)
+    if history_free_window_required(vault, key)? {
+        let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
+        super::history_free::persisted_history_free_snapshot(doc, &check)
     } else {
+        // A shallow doc's snapshot keeps its own root.
         export_snapshot(doc)
     }
 }
@@ -563,6 +483,49 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
 /// not cleared while the room holds the id, so a P5 promote releases the turn
 /// to sync through this same ordinary path later.
 pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
+    replay_mirrors(vault, doc, window_key, &mut Markers::ClearNow)
+}
+
+/// [`replay_pending_mirrors`] into a detached copy of the window: the markers it would clear are
+/// returned instead, for the transaction that persists the copy's outcome to clear. Work refused
+/// before that transaction leaves every marker for the next open.
+pub(super) fn replay_pending_mirrors_kept(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+) -> Result<Vec<WindowEntityKey>> {
+    let mut done = Vec::new();
+    replay_mirrors(vault, doc, window_key, &mut Markers::Collect(&mut done))?;
+    Ok(done)
+}
+
+/// What a replay does with a marker whose mirror it settled.
+enum Markers<'a> {
+    ClearNow,
+    Collect(&'a mut Vec<WindowEntityKey>),
+}
+
+impl Markers<'_> {
+    fn settle(&mut self, vault: &Vault, marker: &WindowEntityKey) -> Result<()> {
+        match self {
+            Self::ClearNow => vault.with_write_txn_grouped(|wtxn| {
+                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
+                Ok(())
+            }),
+            Self::Collect(done) => {
+                done.push(marker.clone());
+                Ok(())
+            }
+        }
+    }
+}
+
+fn replay_mirrors(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    settled: &mut Markers<'_>,
+) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
 
     // A key that does not decode to a hex entity id is silently skipped here
@@ -606,10 +569,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             Some(r) => r,
             None => {
                 // Stale marker — clear it
-                vault.with_write_txn_grouped(|wtxn| {
-                    OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-                    Ok(())
-                })?;
+                settled.settle(vault, marker_key)?;
                 continue;
             }
         };
@@ -637,20 +597,14 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 require_history_free_window(vault, window_key)?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
-            vault.with_write_txn_grouped(|wtxn| {
-                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-                Ok(())
-            })?;
+            settled.settle(vault, marker_key)?;
             continue;
         }
 
         if crate::identity_topology::attribution_carrier_key(&raw)
             .is_some_and(|key| redacted_authors.contains(&key))
         {
-            vault.with_write_txn_grouped(|wtxn| {
-                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-                Ok(())
-            })?;
+            settled.settle(vault, marker_key)?;
             continue;
         }
 
@@ -661,10 +615,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         let protected_tombstone =
             quarantine_outbound_protected_tombstones(vault, window_key, &tombstones, id, &raw)?;
         if !protected_tombstone && tombstones.contains(id) {
-            vault.with_write_txn_grouped(|wtxn| {
-                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-                Ok(())
-            })?;
+            settled.settle(vault, marker_key)?;
             continue;
         }
 
@@ -731,10 +682,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 replayed += 1;
             }
 
-            vault.with_write_txn_grouped(|wtxn| {
-                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-                Ok(())
-            })?;
+            settled.settle(vault, marker_key)?;
             continue;
         }
 
@@ -742,10 +690,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // receipts are LMDB-local accountability rows; undecodable bytes
         // fail closed using the same gate as reverse remat.
         if reverse_remat_skip_redaction_receipt_mirror(&raw) {
-            vault.with_write_txn_grouped(|wtxn| {
-                OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-                Ok(())
-            })?;
+            settled.settle(vault, marker_key)?;
             continue;
         }
         map_insert_bytes(&entities_map, hex_id.as_str(), outbound.as_slice())?;
@@ -780,10 +725,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
 
         // Clear the marker
-        vault.with_write_txn_grouped(|wtxn| {
-            OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
-            Ok(())
-        })?;
+        settled.settle(vault, marker_key)?;
 
         replayed += 1;
     }
