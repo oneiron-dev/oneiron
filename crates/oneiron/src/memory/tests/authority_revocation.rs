@@ -1501,8 +1501,14 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     // valid; together they are a collapse.
     let (genesis_a, _) = authority_root(0x74);
     let (genesis_b, _) = authority_root(0x75);
-    vault
-        .put_authority_log_entries(&[(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)])
+    let rows = [(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)];
+    // The local door holds a rival genesis (H72): a caller with local put
+    // access cannot brick the vault's authority with one.
+    assert_eq!(
+        vault.put_authority_log_entries(&rows).unwrap_err().kind(),
+        crate::error::ErrorKind::AuthorityLogSignerPending
+    );
+    crate::authority::with_authority_doors_open_for_test(|| vault.put_authority_log_entries(&rows))
         .expect("two independent roots are individually valid rows");
 
     let fold = vault.authority_fold().expect("fold");
