@@ -402,6 +402,28 @@ fn precision_as_displayed_falls_back_where_excels_stored_value_is_unknown() {
     ));
 }
 
+#[test]
+fn a_join_cut_through_a_character_outside_the_bmp_falls_back() {
+    // Excel for Windows 16.0.20430 (job probe-w2-parse-7, SC05 and SC02) keeps
+    // half of a character that a join past 32,767 UTF-16 units cuts through:
+    // IFERROR(LEN(..),42) is 32766 and ISERROR(..) is FALSE. The engine's
+    // #N/IMPL! there was caught, so the fork at d890db6d cached 42 and TRUE.
+    // No Rust string holds half a character, so the workbook falls back.
+    let join = "A1&amp;_xlfn.UNICHAR(128512)";
+    for formula in [
+        format!("IFERROR(LEN({join}),42)"),
+        format!("ISERROR({join})"),
+    ] {
+        let cells =
+            format!(r#"<c r="A1"><f>REPT("a",32766)</f></c><c r="B1"><f>{formula}</f></c>"#);
+        let reason = fallback(&fixture("", &cells, false));
+        assert!(
+            reason.contains("a join cut through a character"),
+            "{reason}"
+        );
+    }
+}
+
 /// `Result!A1:A3` repeat one shared formula over the defined name `rate` and
 /// the `Prices` table on `Input`; `B1` totals a table column.
 fn names_tables_and_shared_formulas() -> Vec<u8> {
