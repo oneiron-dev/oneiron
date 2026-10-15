@@ -28,18 +28,22 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 /// The largest page LMDB writes in (`MAX_PAGESIZE`).
 const LARGEST_PAGE: u64 = 32 * 1024;
 
-/// The most one LFS chunk exchange holds at once, in frames: its request as
-/// read and as decoded, the chunks it answers with, and its reply as encoded
-/// and as sent, each at most a frame, with room for the buffers' growth.
-pub(crate) const LFS_FRAME_ROOM: u64 = 6 * oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
+/// The most one LFS transfer holds in memory at once: six times the 8 MiB
+/// it reads whole. A chunk exchange's frame is read and decoded, and its
+/// reply built from the chunks, encoded and sent; an upload's install reads
+/// its object (or, past 8 MiB, an edge-split segment) whole for the
+/// credential scan, as bytes and as text (up to three bytes a byte), with
+/// room for the buffers' growth.
+pub(crate) const LFS_MEMORY_ROOM: u64 = 6 * oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
 
 /// Descriptors the process keeps whatever its transfers do (the vault's
 /// files, the listener, the runtime's own), counted generously.
 pub(crate) const OWN_DESCRIPTORS: u64 = 256;
 
-/// Descriptors one git exchange holds: its child's three pipes, and two more
-/// while the child starts.
-pub(crate) const GIT_DESCRIPTORS: u64 = 5;
+/// Descriptors one git exchange may hold at its peak: both ends of its
+/// child's three pipes and of the exec-error channel while the child starts,
+/// and a push's repository lock file.
+pub(crate) const GIT_DESCRIPTORS: u64 = 9;
 
 /// Descriptors one LFS transfer holds: an upload's spool.
 const LFS_DESCRIPTORS: u64 = 1;
@@ -54,9 +58,13 @@ pub(crate) struct Transfers {
     pushes: Mutex<HashMap<PathBuf, Arc<Admission<String>>>>,
     /// One LFS upload or download worker each, keyed by principal.
     lfs: Admission<String>,
-    /// Room for one LFS chunk exchange's whole frames each
-    /// ([`LFS_FRAME_ROOM`]), keyed by principal.
+    /// Room in memory for one LFS chunk exchange each ([`LFS_MEMORY_ROOM`]),
+    /// keyed by principal: half the memory row.
     lfs_frames: Admission<String>,
+    /// Room in memory for one upload's install each, keyed by principal:
+    /// the other half. A worker takes it once its body is spooled, so it is
+    /// held only for server-side work, never while a client sends.
+    lfs_installs: Arc<Admission<String>>,
     /// Bytes past which LFS storage asks whether everything is okay.
     lfs_quota: u64,
     /// Bytes uploads in flight have reserved against `lfs_quota`.
@@ -98,12 +106,19 @@ impl Transfers {
             pushes: Mutex::default(),
             lfs: Admission::new(LimitRow::LfsTransfers, Arc::clone(&questions), lfs, wait),
             lfs_frames: Admission::of_bytes(
-                LimitRow::LfsFrameBytes,
+                LimitRow::LfsMemoryBytes,
                 Arc::clone(&questions),
-                limits.lfs_frame_bytes,
-                LFS_FRAME_ROOM,
+                limits.lfs_memory_bytes / 2,
+                LFS_MEMORY_ROOM,
                 wait,
             ),
+            lfs_installs: Arc::new(Admission::of_bytes(
+                LimitRow::LfsMemoryBytes,
+                Arc::clone(&questions),
+                limits.lfs_memory_bytes / 2,
+                LFS_MEMORY_ROOM,
+                wait,
+            )),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
             disk: DiskFloor::new(
@@ -186,7 +201,7 @@ impl Transfers {
             .await
     }
 
-    /// Room for one LFS chunk exchange's frames, keyed as
+    /// Room in memory for one LFS chunk exchange, keyed as
     /// [`Self::admit_git`] is. Take it before the exchange's transfer
     /// permit, so an exchange waiting for room holds no permit an upload
     /// could use.
@@ -197,6 +212,22 @@ impl Transfers {
         self.lfs_frames
             .admit(principal.unwrap_or_default().to_owned())
             .await
+    }
+
+    /// The pool an upload's worker takes its install room from, once its
+    /// body is spooled. Uploads and chunk exchanges take their rooms from
+    /// different halves, so an upload holding its transfer permit while it
+    /// waits never waits on an exchange that waits for a transfer permit.
+    pub(super) fn lfs_installs(&self) -> Arc<Admission<String>> {
+        Arc::clone(&self.lfs_installs)
+    }
+
+    /// Holds one upload's install room, as an install in progress would.
+    #[cfg(test)]
+    pub(crate) fn hold_install_room(&self) -> Permit {
+        self.lfs_installs
+            .admit_blocking(String::new())
+            .expect("install room")
     }
 
     /// Reserves `bytes` of the LFS quota for one upload, judged against what

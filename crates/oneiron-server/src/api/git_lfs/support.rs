@@ -106,8 +106,8 @@ pub(super) fn lfs_waited_out() -> Response {
 /// A request body read whole, at most `limit` bytes. A request that waits
 /// for a transfer permit reads its body only at its turn, so one in line
 /// holds none of it; the listener ends a body that pauses past its idle
-/// limit. The buffer grows by doubling but never past `limit`, so what a
-/// frame row counts for it holds.
+/// limit. The buffer grows by doubling but never past `limit`, so what the
+/// memory row counts for it holds.
 pub(super) async fn read_whole(body: Body, limit: usize) -> Result<Vec<u8>, ApiError> {
     let mut pieces = body.into_data_stream();
     let mut whole = Vec::new();

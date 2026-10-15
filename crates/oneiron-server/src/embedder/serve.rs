@@ -73,7 +73,7 @@ use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod budget;
-use budget::{BodyBudget, BodyBytes, answer_bytes};
+use budget::{BodyBudget, BodyBytes, Fixed, answer_bytes, encoding_bytes};
 
 /// Inputs one request may carry, as OpenAI caps them.
 const MAX_INPUTS: usize = 2_048;
@@ -668,6 +668,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             );
         }
     };
+    let inputs = embedded.rows.len();
     let data = embedded
         .rows
         .into_iter()
@@ -683,20 +684,27 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             },
         })
         .collect();
-    let answer = serde_json::to_vec(&EmbeddingsResponse {
-        object: "list",
-        data,
-        model: request.model,
-        usage: Usage {
-            prompt_tokens: embedded.tokens,
-            total_tokens: embedded.tokens,
+    let mut answer = Fixed(Vec::with_capacity(encoding_bytes(
+        inputs,
+        served.embedder.dimensions(),
+    )));
+    let encoded = serde_json::to_writer(
+        &mut answer,
+        &EmbeddingsResponse {
+            object: "list",
+            data,
+            model: request.model,
+            usage: Usage {
+                prompt_tokens: embedded.tokens,
+                total_tokens: embedded.tokens,
+            },
+            model_id: served.embedder.model_id().to_owned(),
+            transform: served.embedder.transform().to_owned(),
+            profile: served.embedder.profile().clone(),
+            provenance: served.embedder.provenance(),
         },
-        model_id: served.embedder.model_id().to_owned(),
-        transform: served.embedder.transform().to_owned(),
-        profile: served.embedder.profile().clone(),
-        provenance: served.embedder.provenance(),
-    });
-    let Ok(answer) = answer else {
+    );
+    let (Ok(()), Fixed(answer)) = (encoded, answer) else {
         return refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
             "server_error",

@@ -1,7 +1,7 @@
 //! Async HTTP bodies bridged to blocking vault IO with bounded backpressure.
 
 use super::support::lfs_engine_error;
-use crate::admission::Permit;
+use crate::admission::{Admission, Permit};
 use crate::api::transfer::{self, BodyReader, Reservation};
 use crate::error::ApiError;
 use crate::machine::{DiskClaim, DiskFloor};
@@ -59,19 +59,32 @@ pub(super) struct UploadTerms {
     pub(super) page: u64,
     /// Its room in the LFS quota, grown at its end to what it came to.
     pub(super) reservation: Reservation,
+    /// Where it takes its room in memory once its body is spooled, and the
+    /// principal whose turn that is.
+    pub(super) installs: Arc<Admission<String>>,
+    pub(super) principal: String,
     pub(super) questions: Arc<LimitQuestions>,
     pub(super) now: u64,
     pub(super) idle: Duration,
 }
 
-/// Streams `body` into the vault. `None` when the upload reached the disk
-/// floor and was ended there, nothing stored.
+/// How an upload ended.
+pub(super) enum Uploaded {
+    Stored(LfsPutOutcome),
+    /// It reached the disk floor and was ended there, nothing stored.
+    Floored,
+    /// Its body was spooled, but it waited past its deadline for room in
+    /// memory to be installed; nothing stored.
+    WaitedOut,
+}
+
+/// Streams `body` into the vault.
 pub(super) async fn upload(
     vault: Arc<Vault>,
     terms: UploadTerms,
     body: Body,
     hold: UploadHold,
-) -> Result<Option<LfsPutOutcome>, ApiError> {
+) -> Result<Uploaded, ApiError> {
     let UploadTerms {
         oid,
         declared,
@@ -79,12 +92,15 @@ pub(super) async fn upload(
         floor,
         page,
         reservation,
+        installs,
+        principal,
         questions,
         now,
         idle,
     } = terms;
     let (sender, receiver) = mpsc::channel(2);
     let floored = Arc::new(AtomicBool::new(false));
+    let waited = Arc::new(AtomicBool::new(false));
     let reader = FloorReader {
         body: BodyReader::new(receiver),
         vault: Arc::clone(&vault),
@@ -94,6 +110,10 @@ pub(super) async fn upload(
         reservation,
         declared,
         floored: Arc::clone(&floored),
+        installs,
+        principal,
+        installing: None,
+        waited: Arc::clone(&waited),
         size_row,
         questions,
         read: 0,
@@ -127,16 +147,22 @@ pub(super) async fn upload(
         None => worker.await,
     };
     if floored.load(Ordering::SeqCst) {
-        return Ok(None);
+        return Ok(Uploaded::Floored);
     }
-    finished(joined).map(Some)
+    if waited.load(Ordering::SeqCst) {
+        return Ok(Uploaded::WaitedOut);
+    }
+    finished(joined).map(Uploaded::Stored)
 }
 
 /// The request body, as the engine reads it, judged against the disk floor
 /// as it goes and against the room its stored copy needs at its end. Each
 /// look moves the upload's claim to what it has still to write, so no other
 /// upload counts that room as free. Past the size row it carries on and asks
-/// once; at its end its quota reservation grows to what it came to.
+/// once; at its end its quota reservation grows to what it came to, and it
+/// takes its room in memory for the install the engine starts once the body
+/// ends. The engine holds the reader until the object is stored, so the room
+/// is held that long.
 struct FloorReader {
     body: BodyReader,
     vault: Arc<Vault>,
@@ -146,6 +172,11 @@ struct FloorReader {
     reservation: Reservation,
     declared: Option<u64>,
     floored: Arc<AtomicBool>,
+    installs: Arc<Admission<String>>,
+    principal: String,
+    /// The install's room, once the body has ended.
+    installing: Option<Permit>,
+    waited: Arc<AtomicBool>,
     size_row: u64,
     questions: Arc<LimitQuestions>,
     read: u64,
@@ -197,6 +228,16 @@ impl Read for FloorReader {
                 self.floored.store(true, Ordering::SeqCst);
                 return Err(io::Error::other("the vault's disk reached its reserve"));
             }
+        }
+        // The body is whole: what remains is the install, which no client
+        // holds up, so the wait for its room is a wait on the server's own
+        // work.
+        if count == 0 && self.installing.is_none() {
+            let Ok(room) = self.installs.admit_blocking(self.principal.clone()) else {
+                self.waited.store(true, Ordering::SeqCst);
+                return Err(io::Error::other("the upload waited past its deadline"));
+            };
+            self.installing = Some(room);
         }
         Ok(count)
     }

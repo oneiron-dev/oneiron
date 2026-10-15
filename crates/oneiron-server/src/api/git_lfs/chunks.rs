@@ -28,7 +28,7 @@ pub(super) async fn exchange(
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
     // It reads its request and builds its reply whole, so it takes room for
-    // both in the frame row first; then it is an LFS transfer like any
+    // both in the LFS memory row first; then it is an LFS transfer like any
     // other. Its worker holds both until the reply is built, whether or not
     // its caller is still there, and hands them on to the reply. It waits on
     // its headers and reads its body at its turn, so a request in line holds
@@ -83,7 +83,7 @@ pub(super) async fn exchange(
         .into_response())
 }
 
-/// The reply, handed out a piece at a time by a task that holds the frame
+/// The reply, handed out a piece at a time by a task that holds the memory
 /// room and the transfer permit until the last piece is taken, or until the
 /// client has taken none for `idle`. Only the pieces already handed out
 /// outlive it.
