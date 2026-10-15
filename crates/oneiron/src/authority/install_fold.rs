@@ -47,6 +47,9 @@ pub(super) fn fold_as_install(
         hosted: local.hosted,
         machine_standing: standing,
         pre_handoff_entries: local.pre_handoff_entries,
+        memory_floor_bytes: super::log_budget::fold_memory_floor(
+            local.observations.map(|observations| &observations.policy),
+        ),
     };
     // Staleness is this install's own projection, which the structural fold
     // never sees, and so is a roster left with no settled root. A machine

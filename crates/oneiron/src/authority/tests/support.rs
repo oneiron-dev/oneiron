@@ -337,6 +337,7 @@ impl LocalFoldContext {
             hosted: false,
             machine_standing: &crate::authority::world_privacy::every_admitted_machine,
             pre_handoff_entries: None,
+            memory_floor_bytes: DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
         }
     }
 }

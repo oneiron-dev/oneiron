@@ -121,10 +121,7 @@ pub use handoff_equivocation::AuthorityHandoffEquivocation;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
-pub use log_budget::{
-    AuthorityLogCheck, MAX_AUTHORITY_FOLD_ENTRIES, MAX_AUTHORITY_FOLD_HANDOFFS,
-    MAX_AUTHORITY_ROWS_PER_SIGNER,
-};
+pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine,
     machine_connection_transcript, machine_proof_header_value,

@@ -46,6 +46,8 @@ pub(super) struct FoldContext<'a> {
     /// Only verified pre-handoff ancestry can use retired device-key ops.
     /// None is the legacy-only reference fold, never the posture-aware vault door.
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// The bytes this fold may project to hold at its peak.
+    pub(super) memory_floor_bytes: u64,
 }
 
 impl FoldContext<'_> {
@@ -267,9 +269,6 @@ pub(super) fn fold_authority_log_inner(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
-    if let Some(refused) = super::log_budget::refuse_over_budget(entries) {
-        return refused;
-    }
     if local.retire_device_ops {
         // An unrelated retired sibling must not vote in a handoff probe:
         // its tier floor could otherwise disqualify a valid rotation before
@@ -479,9 +478,10 @@ pub(super) fn fold_authority_log_once(
         by_hash.remove(&hash);
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    let entry_ancestors = match entry_ancestor_index(&by_hash) {
-        Ok(index) => index,
-        Err(signer) => return super::log_budget::over_budget_fold(signer),
+    let Some((entry_ancestors, counted_ancestor_pairs)) =
+        entry_ancestor_index(&by_hash, context.memory_floor_bytes)
+    else {
+        return super::log_budget::memory_floor_fold(context.memory_floor_bytes);
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
@@ -564,6 +564,7 @@ pub(super) fn fold_authority_log_once(
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
             install: InstallBound::default(),
+            counted_ancestor_pairs,
             issues,
         };
     }
@@ -674,6 +675,7 @@ pub(super) fn fold_authority_log_once(
         install: merged
             .as_ref()
             .map_or_else(InstallBound::default, super::install_fold::held_back),
+        counted_ancestor_pairs,
         issues,
     }
 }
