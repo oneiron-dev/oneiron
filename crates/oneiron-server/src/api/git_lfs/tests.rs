@@ -1358,3 +1358,22 @@ fn slow_uploads_never_hold_the_threads_the_rest_of_the_server_needs() {
         }
     });
 }
+
+/// Review r4 (Sol, P2): a stored copy claimed a quarter more than its bytes,
+/// which is nothing for a small object, though every object writes its
+/// spool's last block, a page for its last short chunk, a manifest and its
+/// rows whatever its size; many small uploads could take that room past
+/// their claims.
+#[tokio::test]
+async fn a_small_upload_claims_what_any_object_takes_on_the_disk() {
+    let (_dir, server) = test_server(secret_config());
+    server
+        .transfers
+        .disk
+        .show_free(server.config.limits.disk_reserve_bytes + 4 * 1024);
+    assert_eq!(
+        put(&server, &writer_token(), b"sixteen bytes!!!").await,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "4 KiB past the reserve is no room for an object's own pages and rows"
+    );
+}
