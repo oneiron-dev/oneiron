@@ -123,6 +123,49 @@ fn authenticated_owner_writes_policy_and_foreign_proof_cannot() -> Result<()> {
     Ok(())
 }
 
+/// H397: an owner proof is bound to the vault that authenticated it. A proof
+/// from another vault writes nothing here, even when this vault holds a live
+/// PERSON with the same id.
+#[test]
+fn a_foreign_owner_proof_cannot_write_policy_over_a_shared_person_id() -> Result<()> {
+    let (_dir, vault) = open();
+    let (_other_dir, other) = open();
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
+    other.put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
+    let foreign = other.authenticate_owner(
+        actor,
+        &actor.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let mut policy = v3();
+    policy.wake_grain_turns = 7;
+    assert_eq!(
+        vault
+            .set_dreamer_wake_policy(&foreign, policy)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::ConsentOwnerNotAuthenticated
+    );
+    assert!(
+        vault
+            .set_wake_grain(&foreign, crate::dreamer_wake::WakeGrain::new(5)?)
+            .is_err()
+    );
+    assert_eq!(vault.dreamer_wake_policy()?.wake_grain_turns, 1);
+
+    let own = vault.authenticate_owner(
+        actor,
+        &actor.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.set_dreamer_wake_policy(&own, policy)?;
+    assert_eq!(vault.dreamer_wake_policy()?.wake_grain_turns, 7);
+    Ok(())
+}
+
 struct NoPartitionExecutor;
 impl crate::dreamer_wake::DreamerAttemptExecutor for NoPartitionExecutor {
     async fn execute(

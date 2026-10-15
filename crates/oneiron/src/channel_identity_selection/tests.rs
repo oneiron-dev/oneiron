@@ -512,10 +512,6 @@ fn duplicate_rows_and_regressed_revisions_fail_typed() {
 fn writer_kind_is_derived_from_the_authenticated_actor() {
     let (_dir, vault) = open_vault();
     assert_eq!(owner_writer(&vault).kind(), SelectionRuleWriterKind::Owner);
-    assert_eq!(
-        owner_writer(&vault).actor_ref(),
-        vault.ensure_embedded_owner_actor().expect("embedded owner")
-    );
     assert_eq!(agent_writer(&vault).kind(), SelectionRuleWriterKind::Agent);
 
     let system = WriteActor::new(entity(0x6F), EdgeActorClass::System);

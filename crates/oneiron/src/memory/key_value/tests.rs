@@ -854,7 +854,9 @@ fn shared_keyed_writes_recheck_current_role_and_both_claim_positions() {
     use std::collections::BTreeSet;
 
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0xC1);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let member = put_person(&vault, 0xC2);
     let viewer = put_person(&vault, 0xC3);
     let authenticated = vault

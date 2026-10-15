@@ -504,6 +504,13 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     );
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a fresh one.
+    let owner = reopened.authenticate_owner(
+        owner.actor(),
+        owner.principal_ref(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
     assert_eq!(
         reopened.mint_project_from_card(&card, &tap, &owner)?,
         receipt
