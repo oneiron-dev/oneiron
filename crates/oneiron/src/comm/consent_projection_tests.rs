@@ -13,6 +13,20 @@ fn open_production_vault(dir: &std::path::Path) -> Result<Vault> {
     Vault::open(dir, config)
 }
 
+/// The `opt_out` entries the party's public contact view carries.
+fn contact_view_opt_outs(vault: &Vault, party: &str) -> CommResult<usize> {
+    let bytes = materialize_contact_record(vault, party)?;
+    let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
+    else {
+        return Err(CommError::InvalidRecord);
+    };
+    Ok(entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("opt_out"))
+        .and_then(|(_, value)| value.as_array())
+        .map_or(0, Vec::len))
+}
+
 /// Source events still waiting for the projector.
 fn pending_comm_events(vault: &Vault) -> CommResult<usize> {
     let rtxn = vault.store.env.read_txn()?;
@@ -227,10 +241,10 @@ fn a_refused_event_does_not_hold_back_a_later_stop() -> CommResult<()> {
 }
 
 /// H228: every join/leave re-read each snapshotted same-slot pending event, so
-/// n thread events on one slot cost n(n-1) row reads before a STOP queued
-/// behind them could project. The pass stays linear in its events.
+/// n thread events on one slot cost n(n-1) peer-candidate reads before a STOP
+/// queued behind them could project. Those reads stay linear in the events.
 #[test]
-fn same_slot_thread_events_stay_linear_before_a_stop() -> CommResult<()> {
+fn same_slot_peer_candidate_reads_stay_linear_before_a_stop() -> CommResult<()> {
     const EVENTS: u64 = 48;
     let (_dir, vault) = open_vault();
     for at in 0..EVENTS {
@@ -314,6 +328,11 @@ fn stop_on_a_merged_twin_still_holds_the_survivors_sends() -> CommResult<()> {
         &vault,
         "twin@example.com"
     )?);
+    assert_eq!(
+        contact_view_opt_outs(&vault, "twin@example.com")?,
+        1,
+        "the party's public contact view reads the shell's STOP through"
+    );
     Ok(())
 }
 
