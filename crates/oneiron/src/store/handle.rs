@@ -43,7 +43,7 @@ pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
     ActiveWriteTxnGuard
 }
 
-pub(super) fn active_write_txn_depth() -> usize {
+pub(crate) fn active_write_txn_depth() -> usize {
     ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
 }
 
