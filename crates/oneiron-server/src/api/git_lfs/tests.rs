@@ -1641,6 +1641,61 @@ async fn a_spooled_upload_that_waits_past_its_deadline_to_install_stores_nothing
     drop(held);
 }
 
+/// Review r11 (Sol R11-2, P1): a verify took its room while its object was
+/// absent (no manifest to count), then, its body held back until an upload
+/// landed the object, read the whole new manifest outside any room. A verify
+/// sized on an absent object now reads no manifest at all: it answers that
+/// the object is not stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_verify_sized_while_its_object_was_absent_reads_no_manifest_that_lands_later() {
+    let (_dir, server) = test_server(secret_config());
+    let token = writer_token();
+    let bytes = varied_bytes(1_000_000);
+    let oid = LfsOid::digest(&bytes).to_hex();
+    let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+    }));
+    let verify = {
+        let server = Arc::clone(&server);
+        let request = request(
+            "POST",
+            &format!("{}/verify", object_uri(&oid)),
+            Some(&token),
+            body,
+        );
+        tokio::spawn(async move { route(&server, request).await })
+    };
+    let reads = server.transfers.lfs_reads();
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while reads.held_bytes() == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the verify takes its room"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(put(&server, &token, &bytes).await, StatusCode::OK);
+    send.send(serde_json::to_vec(&json!({"oid": oid, "size": bytes.len()})).expect("body"))
+        .expect("the verify waits for its body");
+    let (status, _, body) = tokio::time::timeout(PATIENCE, verify)
+        .await
+        .expect("the verify answers")
+        .expect("verify task");
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(false)),
+        "it read no manifest it held no room for"
+    );
+    let (status, _, body) = route(&server, verify_object(&bytes, &token)).await;
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(true)),
+        "a verify sized on the stored object reads it"
+    );
+}
+
 /// A chunk exchange of `body`, declaring its length as a client's does.
 fn sized_exchange(token: &str, body: Vec<u8>) -> Request<Body> {
     let mut exchange = request(
