@@ -50,7 +50,7 @@ fn a_frozen_member_of_a_component_keeps_its_saved_checks() -> Result<()> {
     let (root, root_row, holder) = root_leader(&vault)?;
     let (p, c, lead) = (EntityId::now(), EntityId::now(), EntityId::now());
     let p0 = spawn_signed(&vault, root, p, holder, lead, root_row.slice.clone(), 2)?;
-    let c0 = spawn_signed(&vault, root, c, holder, lead, root_row.slice.clone(), 3)?;
+    let c0 = spawn_signed(&vault, root, c, holder, lead, root_row.slice, 3)?;
     let c1 = signed_over(&vault, c, &c0, holder, |row| {
         row.parents = vec![p.to_hex()];
         row.depth_remaining = 3;
@@ -175,7 +175,7 @@ fn a_dissolved_cycle_takes_its_question_with_it() -> Result<()> {
     let (root, root_row, holder) = root_leader(&vault)?;
     let (a, b) = (EntityId::now(), EntityId::now());
     let a0 = spawn_signed(&vault, root, a, holder, holder, root_row.slice.clone(), 2)?;
-    let b0 = spawn_signed(&vault, root, b, holder, holder, root_row.slice.clone(), 3)?;
+    let b0 = spawn_signed(&vault, root, b, holder, holder, root_row.slice, 3)?;
     let a1 = signed_over(&vault, a, &a0, holder, |row| {
         row.parents = vec![b.to_hex()];
         row.depth_remaining = 0;
@@ -245,7 +245,7 @@ fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
         reason: reason::CYCLE_BOUND.into(),
     };
     assert_eq!(dispositions, vec![(None, bound); n]);
-    let mut members = scaffold.ids.clone();
+    let mut members = scaffold.ids;
     members.sort();
     assert_eq!(questions.len(), 1);
     assert_eq!(questions[0].members, members);
@@ -276,7 +276,7 @@ fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
     }
     let slice = crate::llm::Scope {
         facet: Some(work),
-        ..root_row.slice.clone()
+        ..root_row.slice
     };
     let facet_of = |row: &ProjectRecord| -> Result<Option<ScopeAxis<ScopeId>>> {
         let txn = vault.store.env.read_txn()?;
@@ -291,6 +291,10 @@ fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
     replay_project(&vault, a, &a0, 4)?;
     assert_eq!(facet_of(&a1)?, at_home);
     // A and B name each other past a bound of one world: dark, no facet.
+    let slice = crate::llm::Scope {
+        facet: Some(home),
+        ..slice
+    };
     let b0 = spawn_signed(&vault, root, b, holder, holder, slice, 5)?;
     let a2 = signed_over(&vault, a, &a1, holder, |row| {
         row.parents = vec![b.to_hex()];

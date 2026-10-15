@@ -142,7 +142,8 @@ pub(crate) struct ProjectReader<'a, 't> {
     facts: RefCell<BTreeMap<EntityId, Option<Rc<Facts>>>>,
     components: RefCell<BTreeMap<EntityId, Rc<Vec<EntityId>>>>,
     decided: RefCell<BTreeMap<EntityId, Option<Rc<Decided>>>>,
-    /// Each signed state's slip and signature check, by project and hash.
+    /// Each signed state's and envelope's slip and signature check, by
+    /// project and hash.
     verified: RefCell<
         BTreeMap<(EntityId, ProjectRevisionHash), std::result::Result<Holder, ProjectVerdict>>,
     >,
@@ -578,6 +579,25 @@ impl<'a, 't> ProjectReader<'a, 't> {
         #[cfg(test)]
         REVISIONS_VERIFIED.with(|count| count.set(count.get() + 1));
         let verified = self.verify(id, authority, proof)?;
+        self.verified
+            .borrow_mut()
+            .insert((id, hash), verified.clone());
+        Ok(verified)
+    }
+
+    /// `check` of one held resolution or seal envelope, once per reader: a
+    /// component's read and its members' folds share it.
+    pub(super) fn verify_held_envelope(
+        &self,
+        id: EntityId,
+        hash: ProjectRevisionHash,
+        check: impl FnOnce() -> Result<std::result::Result<Holder, ProjectVerdict>>,
+    ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
+        let known = self.verified.borrow().get(&(id, hash)).cloned();
+        if let Some(known) = known {
+            return Ok(known);
+        }
+        let verified = check()?;
         self.verified
             .borrow_mut()
             .insert((id, hash), verified.clone());

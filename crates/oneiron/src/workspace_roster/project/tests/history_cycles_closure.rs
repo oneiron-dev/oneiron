@@ -70,7 +70,7 @@ fn a_frozen_members_re_check_reaches_past_its_seal() -> Result<()> {
     let (root, root_row, holder) = root_leader(&vault)?;
     let (p, c, lead) = (EntityId::now(), EntityId::now(), EntityId::now());
     let p0 = spawn_signed(&vault, root, p, holder, lead, root_row.slice.clone(), 2)?;
-    let c0 = spawn_signed(&vault, root, c, holder, lead, root_row.slice.clone(), 3)?;
+    let c0 = spawn_signed(&vault, root, c, holder, lead, root_row.slice, 3)?;
     let c1 = signed_over(&vault, c, &c0, holder, |row| {
         row.parents = vec![p.to_hex()];
         row.depth_remaining = 3;
@@ -127,15 +127,7 @@ fn a_seal_superseding_one_on_a_sibling_branch_installs_in_a_component() -> Resul
     let (root, root_row, holder) = root_leader(&vault)?;
     let (p, c, lead) = (EntityId::now(), EntityId::now(), EntityId::now());
     let p0 = spawn_signed(&vault, root, p, holder, lead, root_row.slice.clone(), 2)?;
-    let c0 = spawn_signed(
-        &vault,
-        p,
-        c,
-        lead,
-        EntityId::now(),
-        root_row.slice.clone(),
-        3,
-    )?;
+    let c0 = spawn_signed(&vault, p, c, lead, EntityId::now(), root_row.slice, 3)?;
     let mut authority = c0.authority_at(ProjectProofVersion::V3);
     authority.parents = vec![root.to_hex()];
     authority.depth_remaining = 3;
@@ -218,10 +210,13 @@ fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
     let (a, b) = (EntityId::now(), EntityId::now());
     let (holder, b0) = {
         let vault = open(&dir)?;
-        set_bound(&vault, 1)?;
         let (root, root_row, holder) = root_leader(&vault)?;
-        let b0 = spawn_signed(&vault, root, b, holder, holder, root_row.slice.clone(), 2)?;
-        let mut unsigned = ProjectRecord::new(a, Some(b), root, holder)?;
+        // An owner-door row needs no signed birth before the vault is rooted.
+        let mut unsigned = ProjectRecord::new(a, Some(root), root, holder)?;
+        vault.put_project(a, &unsigned, 1)?;
+        set_bound(&vault, 1)?;
+        let b0 = spawn_signed(&vault, root, b, holder, holder, root_row.slice, 2)?;
+        unsigned.parents = vec![b.to_hex()];
         unsigned.depth_remaining = 5;
         vault.put_project(a, &unsigned, 3)?;
         (holder, b0)

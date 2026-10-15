@@ -20,8 +20,8 @@ const MAX_FOLD_DEPTH: usize = 4 * MAX_PROJECT_ANCHORS;
 
 #[cfg(test)]
 thread_local! {
-    /// How many resolution envelopes this thread verified: a frozen re-check
-    /// verifies only the ones its saved view rests on.
+    /// How many resolution envelopes this thread verified, once per reader:
+    /// a frozen re-check verifies only the ones its saved view rests on.
     pub(super) static ENVELOPES_VERIFIED: Cell<u64> = const { Cell::new(0) };
     /// How many verdicts this thread's folds asked for, memoized or not: the
     /// visit count of the parent-cycle linear-cost check.
@@ -225,7 +225,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 ..
             } => self.signed(hash, authority, proof, *parent),
             ProjectRevision::Resolution { resolution, .. } => self.resolution(hash, resolution),
-            ProjectRevision::Seal { seal, .. } => self.seal(seal),
+            ProjectRevision::Seal { seal, .. } => self.seal(hash, seal),
         }
     }
 
@@ -398,16 +398,18 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         else {
             return Ok(ProjectVerdict::Quarantined(reason::NOT_A_STATE));
         };
-        #[cfg(test)]
-        ENVELOPES_VERIFIED.with(|count| count.set(count.get() + 1));
-        let holder = match self.reader.verify_envelope(
-            self.id,
-            &resolution.slip_wire,
-            &resolution.challenge(self.id)?,
-            &resolution.holder_signature,
-            resolution.signed_at,
-            &next_authority.slice,
-        )? {
+        let holder = match self.reader.verify_held_envelope(self.id, hash, || {
+            #[cfg(test)]
+            ENVELOPES_VERIFIED.with(|count| count.set(count.get() + 1));
+            self.reader.verify_envelope(
+                self.id,
+                &resolution.slip_wire,
+                &resolution.challenge(self.id)?,
+                &resolution.holder_signature,
+                resolution.signed_at,
+                &next_authority.slice,
+            )
+        })? {
             Ok(holder) => holder,
             Err(verdict) => return Ok(verdict),
         };
@@ -452,7 +454,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         Ok(ProjectVerdict::Visible)
     }
 
-    fn seal(&self, seal: &ProjectSeal) -> Result<ProjectVerdict> {
+    fn seal(&self, hash: ProjectRevisionHash, seal: &ProjectSeal) -> Result<ProjectVerdict> {
         let Some(next) = self.row(&seal.next) else {
             return Ok(ProjectVerdict::Pending(reason::NOT_HELD));
         };
@@ -465,14 +467,16 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         if proof.slip_wire != seal.slip_wire {
             return Ok(ProjectVerdict::Quarantined(reason::SEAL_SLIP));
         }
-        let holder = match self.reader.verify_envelope(
-            self.id,
-            &seal.slip_wire,
-            &seal.challenge(self.id)?,
-            &seal.holder_signature,
-            seal.signed_at,
-            &authority.slice,
-        )? {
+        let holder = match self.reader.verify_held_envelope(self.id, hash, || {
+            self.reader.verify_envelope(
+                self.id,
+                &seal.slip_wire,
+                &seal.challenge(self.id)?,
+                &seal.holder_signature,
+                seal.signed_at,
+                &authority.slice,
+            )
+        })? {
             Ok(holder) => holder,
             Err(verdict) => return Ok(verdict),
         };
