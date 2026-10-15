@@ -9,7 +9,7 @@ use crate::ports::EntityStoreRead;
 
 use super::definition::{SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord};
 use super::filter::{FilterAst, MatcherSpec, filter_dependencies};
-use super::lifecycle::{next_version, validate_definition};
+use super::lifecycle::{next_version, owned_record_in_txn, validate_definition};
 use super::storage::{
     PACK_MIGRATION_MAPS, REPAIRS, RepairReceipt, load_record_in_txn, migration_map_key,
     saved_query_type_byte, source_migration_map_key, store_record_in_txn,
@@ -169,13 +169,20 @@ pub fn put_pack_migration_map(
 /// built from the stored record, and a version that has moved since planning
 /// loses rather than overwriting the owner's concurrent update.
 ///
+/// Repair is an owner verb, like update and archive: the query is read through
+/// the principal's ownership, so another principal's query is absent. The
+/// version check only orders the owner's own writes. The drift is narrowed to
+/// the predicates the stored query reads, as the install door narrows it.
+///
 /// # Errors
 ///
-/// [`Error::EntityNotFound`] when the query is absent, [`Error::ConcurrentWrite`]
-/// when the plan is stale, [`Error::InvalidConfig`] when the query is archived;
-/// storage errors propagate.
+/// [`Error::EntityNotFound`] when the query is absent or owned by another
+/// principal, [`Error::ConcurrentWrite`] when the plan is stale,
+/// [`Error::InvalidConfig`] when the query is archived or the drift touches no
+/// predicate it reads; storage errors propagate.
 pub fn repair_pack_drift(
     vault: &Vault,
+    authenticated_principal: EntityId,
     query_ref: EntityId,
     definition: &SavedQueryDefinition,
     drift: &PackDrift,
@@ -184,8 +191,7 @@ pub fn repair_pack_drift(
     let map = load_migration_map(vault, drift)?.unwrap_or_default();
     let kind = saved_query_type_byte(vault)?;
     vault.with_write_txn_grouped(|wtxn| {
-        let record =
-            load_record_in_txn(vault, wtxn, query_ref, kind)?.ok_or(Error::EntityNotFound)?;
+        let record = owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
         if record.definition.definition_version != definition.definition_version {
             return Err(Error::ConcurrentWrite(
                 "saved query definition version is not current",
@@ -196,7 +202,23 @@ pub fn repair_pack_drift(
                 "saved query is archived; pack drift repair does not reopen it",
             ));
         }
-        run_ladder_in_txn(vault, wtxn, record, kind, drift, &map, Resume::Yes, now)
+        let read = filter_dependencies(&record.definition.filter, &record.definition.matcher)
+            .claim_predicates;
+        let drift = PackDrift {
+            affected_predicates: drift
+                .affected_predicates
+                .iter()
+                .filter(|predicate| read.contains(*predicate))
+                .cloned()
+                .collect(),
+            ..drift.clone()
+        };
+        if drift.affected_predicates.is_empty() {
+            return Err(invalid(
+                "pack drift touches no predicate this saved query reads",
+            ));
+        }
+        run_ladder_in_txn(vault, wtxn, record, kind, &drift, &map, Resume::Yes, now)
     })
 }
 
