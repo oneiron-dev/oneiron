@@ -43,7 +43,7 @@ pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
     ActiveWriteTxnGuard
 }
 
-pub(super) fn active_write_txn_depth() -> usize {
+pub(crate) fn active_write_txn_depth() -> usize {
     ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
 }
 
@@ -254,6 +254,9 @@ pub struct StoreCore {
     /// Host-provided software signers are scoped to this vault handle and never
     /// persisted, inferred from transport credentials, or shared across vaults.
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
+    /// Scan checks raised inside a transaction their scan did not open, kept
+    /// at the next point no write is held ([`crate::scan_check`]).
+    pub(crate) pending_scan_checks: crate::scan_check::PendingScanChecks,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.

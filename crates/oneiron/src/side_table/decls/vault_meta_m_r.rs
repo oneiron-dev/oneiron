@@ -86,8 +86,12 @@ side_tables! {
     /// Epoch-bound publication permit stamp (u64be epoch), authorizing one publication under the
     /// current authority epoch. Key: id16.
     ORIGIN_AUTHORITY_PERMIT: VaultMeta b"origin:authority_permit:v1:" Raw;
+    /// Marker (empty) that every Published row written before Published rows kept their CAS row
+    /// has one. Key: ().
+    ORIGIN_CAS_BACKFILL: VaultMeta b"origin:cas_backfill:v1" Raw;
     /// Compare-and-swap ownership claim binding one (repo, ref, old_oid, new_oid) triple to its
-    /// owning publication id (value = id16). Key: id16 "\x00" string "\x00" string "\x00" string.
+    /// owning publication id (value = id16): in flight while Prepared, consumed for good once
+    /// Published. Key: id16 "\x00" string "\x00" string "\x00" string.
     ORIGIN_CAS_INTENT: VaultMeta b"origin:cas_intent:v1:" Raw;
     /// Tamper-detection proof hash (32 bytes) pinning one repo.change claim's exact byte content at
     /// publication time. Key: id16.
@@ -138,6 +142,12 @@ side_tables! {
     /// Crash-durable per-push intent journal recording every proposed ref move before any effect
     /// lands, keyed by repo identity then operation id. Key: string + id16.
     ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named;
+    /// The OF-520 check one engine scan raised for one scope, once (`crate::scan_check`; the
+    /// origin's scans came first). Key: u8 (scan) + the scope's bytes (a repository's id16, ...),
+    /// or the u8 alone for a vault-wide scan.
+    ORIGIN_SCAN_CHECK: VaultMeta b"origin:scan_check:v1:" Named;
+    /// Device-local threshold row (u64) of one engine scan. Key: u8 (scan).
+    ORIGIN_SCAN_POLICY: VaultMeta b"origin:scan_policy:v1:" Raw;
     /// The publication currently advertised for one repository's ref name (value = id16). Key: id16
     /// "\x00" string.
     ORIGIN_VISIBLE_REF: VaultMeta b"origin:visible_ref:v1:" Raw;
