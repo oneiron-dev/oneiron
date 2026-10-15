@@ -1,4 +1,5 @@
 mod authority;
+mod room_facet;
 mod support;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
@@ -1805,7 +1806,7 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     crate::sync::window::reverse_rematerialize(&source, &doc, &key)?;
     let room_id = EntityId::from_hex(&child.home_room)?;
     for live in [true, false] {
-        let peer_dir = tempfile::tempdir()?;
+        let peer_dir = crate::test_support::restore_tempdir();
         let (peer, _) = Vault::restore_checkpoint(
             &image,
             &peer_dir.path().join("peer"),
