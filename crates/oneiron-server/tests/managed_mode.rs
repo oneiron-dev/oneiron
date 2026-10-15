@@ -18,6 +18,9 @@
 //!   drives a real dup'd, bound unix listener through axum and then checks the
 //!   socket's inode: an engine that unlinked and rebound would pass an
 //!   `exists()` check and still have stranded every queued connection.
+//!   `an_inherited_tcp_listener_is_refused_before_any_accept` is its negative:
+//!   the descriptor's family is read back, and the supervisor's own copy
+//!   shows the queued connection was never taken.
 //!   `aliased_descriptors_are_refused_before_any_of_them_is_adopted` is the
 //!   other half of the same ownership claim, on the inputs rather than the
 //!   path: every adoption path here assumes it alone owns its descriptor.
@@ -617,6 +620,36 @@ async fn a_dupd_inherited_listener_serves_http_and_its_path_survives() {
         inode_before,
         "the child must never rebind an inherited socket path"
     );
+}
+
+/// Ticket 6 (C2 review r1 F1): the inherited descriptor's family is read
+/// from the socket, not taken from the variant's name. Adopted as a unix
+/// listener, a TCP listener's accept turns some network peers into
+/// connections on the managed socket, which carries the supervisor's
+/// authority. The supervisor keeps its own copy of the listener here, so a
+/// connection queued before the refusal is still in its backlog afterwards:
+/// the engine never accepted it.
+#[tokio::test]
+async fn an_inherited_tcp_listener_is_refused_before_any_accept() {
+    let supervisor_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let queued = std::net::TcpStream::connect(supervisor_listener.local_addr().unwrap()).unwrap();
+    let inherited = supervisor_listener.try_clone().unwrap().into_raw_fd();
+
+    let error = ServeListener::InheritedFd(inherited)
+        .bind()
+        .await
+        .expect_err("a TCP listener is not the managed unix socket");
+    assert!(
+        matches!(&error, ManagedError::ListenFdNotUnix { fd, .. } if *fd == inherited),
+        "unexpected: {error}"
+    );
+    assert!(error.to_string().contains(HYPNOS_LISTEN_FD), "{error}");
+
+    supervisor_listener.set_nonblocking(true).unwrap();
+    let (accepted, _) = supervisor_listener
+        .accept()
+        .expect("the queued connection was never accepted by the engine");
+    assert_eq!(accepted.peer_addr().unwrap(), queued.local_addr().unwrap());
 }
 
 #[tokio::test]
@@ -1398,6 +1431,45 @@ fn managed_failure_signal_environment_is_refused_before_configuration() {
                 "isolated managed configuration assertion failed"
             );
         }
+    }
+}
+
+/// `--trusted-proxies` is refused in managed mode, and so is its environment
+/// layer: a set `ONEIRON_TRUSTED_PROXIES`, even empty, is an explicit request
+/// managed serve would otherwise ignore (#1445 review, CodeRabbit).
+#[test]
+fn managed_trusted_proxies_environment_is_refused_before_configuration() {
+    const CHILD_CASE: &str = "W7_TEST_MANAGED_PROXIES_ENV";
+    const PROXIES: &str = "ONEIRON_TRUSTED_PROXIES";
+    if std::env::var_os(CHILD_CASE).is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
+            .expect_err("an explicit environment layer is not argv");
+        assert!(
+            matches!(error, ManagedError::ConflictingEnvironment { env, .. } if env == PROXIES)
+        );
+        return;
+    }
+    // Isolate environment changes in children, not in the parallel test process.
+    for value in ["127.0.0.1", ""] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "managed_trusted_proxies_environment_is_refused_before_configuration",
+            ])
+            .env_remove("ONEIRON_PRIVACY_POSTURE")
+            .env_remove("ONEIRON_HOSTED_KMS_KEY_REF")
+            .env_remove("ONEIRON_CONFIG")
+            .env_remove("ONEIRON_FAILURE_SIGNAL_EXPORT")
+            .env_remove("ONEIRON_FAILURE_SIGNAL_TRAINING")
+            .env(CHILD_CASE, "1")
+            .env(PROXIES, value)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated managed configuration assertion failed"
+        );
     }
 }
 
