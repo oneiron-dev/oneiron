@@ -159,7 +159,11 @@ pub(crate) fn withhold_dreamer_read(vault: &Vault) -> crate::Result<()> {
 pub(crate) fn declare_predicates_normal(vault: &Vault, prefixes: &[&str]) -> crate::Result<()> {
     use rmpv::Value;
     let id = crate::gate::default_policy_manifest_id()?;
-    let body = vault.get(&id)?.ok_or(Error::EntityNotFound)?;
+    // A legacy test vault stores no manifest and reads the shipped one.
+    let body = match vault.get(&id)? {
+        Some(body) => body,
+        None => crate::gate::default_policy_manifest()?,
+    };
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut body.as_slice()).expect("default policy map")
     else {

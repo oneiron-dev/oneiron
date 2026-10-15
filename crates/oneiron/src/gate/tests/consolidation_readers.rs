@@ -353,6 +353,13 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::GraphSignal => {
+                // The Dreamer reads its branch under the shipped policy's
+                // Dreamer read row.
+                put_policy_manifest_bytes(
+                    &vault,
+                    crate::gate::default_policy_manifest_id()?,
+                    &crate::gate::default_policy_manifest()?,
+                )?;
                 // The Dreamer opens the branch, as a consolidation pass does.
                 let conversation = test_id(0x49);
                 vault.put_entity(
@@ -369,6 +376,13 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::ExplicitPrior => {
+                // The Dreamer reads its branch under the shipped policy's
+                // Dreamer read row.
+                put_policy_manifest_bytes(
+                    &vault,
+                    crate::gate::default_policy_manifest_id()?,
+                    &crate::gate::default_policy_manifest()?,
+                )?;
                 let conversation = test_id(0x49);
                 vault.put_entity(
                     &conversation,

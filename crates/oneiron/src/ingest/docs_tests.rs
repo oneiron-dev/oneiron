@@ -160,7 +160,11 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
 fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
     use rmpv::Value;
     let id = crate::gate::default_policy_manifest_id()?;
-    let bytes = vault.get(&id)?.ok_or(crate::Error::EntityNotFound)?;
+    // A legacy test vault stores no manifest and reads the shipped one.
+    let bytes = match vault.get(&id)? {
+        Some(bytes) => bytes,
+        None => crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?,
+    };
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice())
         .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?
     else {
@@ -826,8 +830,14 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
     use std::collections::BTreeSet;
 
     let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
-    trust_imported_claims(&vault)?;
     let first_project = first_doc.project_id;
+    // Both corpora exist before the fixture policy is stored.
+    let mut second_doc = first_doc;
+    second_doc.corpus_id = "second-corpus".into();
+    second_doc.project_id = EntityId::from_bytes([0xD7; 16])?;
+    ensure_docs_corpus(&vault, owner.actor(), &second_doc)?;
+    let second_import = approved_docs_import(&vault, &owner, &second_doc, ceiling, 3)?;
+    trust_imported_claims(&vault)?;
     let first_asset = EntityId::from_hex(&first_import.asset_refs[0])?;
     let first = vault.deep_ingest_docs_asset(
         &owner,
@@ -842,11 +852,6 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
 
-    let mut second_doc = first_doc;
-    second_doc.corpus_id = "second-corpus".into();
-    second_doc.project_id = EntityId::from_bytes([0xD7; 16])?;
-    ensure_docs_corpus(&vault, owner.actor(), &second_doc)?;
-    let second_import = approved_docs_import(&vault, &owner, &second_doc, ceiling, 3)?;
     let second_asset = EntityId::from_hex(&second_import.asset_refs[0])?;
     let second = vault.deep_ingest_docs_asset(
         &owner,

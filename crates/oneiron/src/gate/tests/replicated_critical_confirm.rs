@@ -281,7 +281,23 @@ fn an_overwritten_local_confirm_is_never_read_as_settled() -> Result<()> {
 #[test]
 fn a_replicated_comm_claim_waits_unless_it_only_restricts() -> Result<()> {
     use crate::comm::CommClaimValue;
-    let (_tmp_b, vault_b) = device_b_with_critical_policy()?;
+    let (_tmp_b, vault_b) = temp_vault();
+    let comm_critical = Value::Map(vec![
+        (Value::from("prefix"), Value::from("comm.")),
+        (
+            Value::from("axes"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("critical")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+    ]);
+    let mut policy = encode_policy_manifest(vec![
+        source_trust_entry(ClaimSource::Observed, 3),
+        (Value::from("rules"), Value::Array(vec![comm_critical])),
+    ]);
+    trust_human_candidate_actor(&mut policy);
+    put_policy_manifest_bytes(&vault_b, test_id(0xee), &policy)?;
     let party = test_id(0x92);
     put_raw_entity_row(&vault_b, &party, ENTITY_TYPE_PERSON, b"party")?;
     for (claim, value, restrictive) in [

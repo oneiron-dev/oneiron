@@ -821,6 +821,10 @@ fn critical_confirm_alias_orphan_mismatch_and_ordinary_replacement_are_removed()
         .expect("ordinary consent remains");
     assert_eq!(remaining.claim_id, ordinary.claim_id);
     assert_eq!(remaining.decision_id, ordinary.decision_id);
-    assert_eq!(remaining.reason_codes, ordinary.reason_codes);
+    // The ordinary review replaced an unsettled critical confirm, so it
+    // carries that hold.
+    let mut carried = ordinary.reason_codes.clone();
+    carried.push(crate::gate::GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED.to_owned());
+    assert_eq!(remaining.reason_codes, carried);
     Ok(())
 }
