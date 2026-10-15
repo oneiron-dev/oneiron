@@ -1,3 +1,6 @@
+use super::test_hooks::arm_restore_failure;
+#[cfg(target_os = "linux")]
+use super::test_hooks::arm_restore_panic;
 use super::*;
 use crate::{EntityId, temporal::TimeRange};
 
@@ -1774,4 +1777,255 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
             assert!(!destination.exists(), "refused before the destination");
         }
     }
+}
+
+/// A refused restore keeps nothing it made (#1457's C8 inventory). Failed at
+/// its first open, in its image write, at its second open or in its receipt
+/// check, a restore kept in place and one served beside its source each leave
+/// no directory at the destination, and a retry at the same path restores.
+#[test]
+fn a_refused_restore_leaves_nothing_at_its_destination() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let (claim, _) = claim_with_receipt(&vault);
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let source = vault.side_restore_source().unwrap();
+    for beside in [false, true] {
+        for step in [
+            RestoreStep::FirstOpen,
+            RestoreStep::ImageWrite,
+            RestoreStep::SecondOpen,
+            RestoreStep::ReceiptCheck,
+        ] {
+            let destination = root.path().join(format!("copy-{beside}-{step:?}"));
+            let restore = || {
+                if beside {
+                    Vault::restore_checkpoint_beside(
+                        &image,
+                        &destination,
+                        VaultConfig::device(),
+                        &source,
+                        120,
+                    )
+                } else {
+                    Vault::restore_checkpoint(
+                        &image,
+                        &destination,
+                        VaultConfig::device(),
+                        RestoreReason::Restore,
+                        120,
+                    )
+                }
+            };
+            arm_restore_failure(step);
+            let refused = restore();
+            assert!(refused.is_err(), "{step:?}: {:?}", refused.map(|_| ()));
+            assert!(
+                std::fs::symlink_metadata(&destination).is_err(),
+                "beside {beside}, {step:?}: the refused restore left its copy"
+            );
+            let (copy, _) = restore().unwrap_or_else(|error| {
+                panic!("beside {beside}, {step:?}: a retry at the same path: {error}")
+            });
+            assert!(copy.get(&claim).unwrap().is_some(), "{step:?}");
+        }
+    }
+}
+
+/// Control: a refused restore removes only the directory it made. One moved
+/// in under the destination's name after the make is left as it is, with no
+/// lock created in it, and so is the directory made, now under another name.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let destination = root.path().join("copy");
+    let (moved_in, aside) = (root.path().join("moved-in"), root.path().join("aside"));
+    std::fs::create_dir(&moved_in).unwrap();
+    std::fs::write(moved_in.join("note"), "placeholder\n").unwrap();
+    crate::store::arm_after_restore_destination_made({
+        let (destination, moved_in, aside) = (destination.clone(), moved_in, aside.clone());
+        move || {
+            std::fs::rename(&destination, aside).unwrap();
+            std::fs::rename(moved_in, &destination).unwrap();
+        }
+    });
+    let refused = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    );
+    assert!(refused.is_err(), "{:?}", refused.map(|_| ()));
+    assert_eq!(
+        std::fs::read_to_string(destination.join("note")).unwrap(),
+        "placeholder\n"
+    );
+    // Nothing is locked or written in it either (review r2, Astra F2).
+    assert!(
+        std::fs::symlink_metadata(destination.join(crate::store::VAULT_WRITER_LOCK_FILE)).is_err()
+    );
+    assert!(aside.is_dir());
+}
+
+/// Review r1 (Sol F1): a refused restore leaves a copy another owner opened
+/// meanwhile. An owner that takes the copy's writer lease after the make
+/// keeps its directory and its row, though the restore's own open is refused.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_leaves_a_copy_another_owner_holds() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let destination = root.path().join("copy");
+    let owner = std::rc::Rc::new(std::cell::RefCell::new(None));
+    crate::store::arm_after_restore_destination_made({
+        let (destination, owner) = (destination.clone(), owner.clone());
+        move || {
+            let held = Vault::open_owned(&destination, VaultConfig::device()).unwrap();
+            let (row, _) = claim_with_receipt(&held);
+            *owner.borrow_mut() = Some((held, row));
+        }
+    });
+    let refused = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    );
+    assert!(
+        matches!(refused, Err(Error::ConcurrentWrite(_))),
+        "{:?}",
+        refused.map(|_| ())
+    );
+    let (held, row) = owner.borrow_mut().take().expect("the other owner opened");
+    assert!(held.get(&row).unwrap().is_some());
+    drop(held);
+    let reopened = Vault::open_owned(&destination, VaultConfig::device()).unwrap();
+    assert!(
+        reopened.get(&row).unwrap().is_some(),
+        "the other owner's copy survives the refused restore"
+    );
+}
+
+/// Review r2 (Sol F1): a refused restore's removal keeps the copy's writer
+/// lock linked until everything else in the copy is gone. An owner that opens
+/// the copy meanwhile meets the restore's own lease and is refused, never a
+/// fresh lock beside data still being removed.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_unlinks_the_writer_lock_last() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let destination = root.path().join("copy");
+    let removed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    crate::store::arm_after_root_entry_removed({
+        let (destination, removed) = (destination.clone(), removed.clone());
+        move |name| {
+            let name = name.to_string_lossy().into_owned();
+            if name != crate::store::VAULT_WRITER_LOCK_FILE {
+                let opened = Vault::open_owned(&destination, VaultConfig::device());
+                assert!(
+                    matches!(opened, Err(Error::ConcurrentWrite(_))),
+                    "after {name}: {:?}",
+                    opened.map(|_| ())
+                );
+            }
+            removed.borrow_mut().push(name);
+        }
+    });
+    arm_restore_failure(RestoreStep::SecondOpen);
+    let refused = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    );
+    assert!(refused.is_err(), "{:?}", refused.map(|_| ()));
+    let removed = removed.borrow();
+    assert!(removed.iter().any(|name| name == "data.mdb"), "{removed:?}");
+    assert_eq!(
+        removed.last().map(String::as_str),
+        Some(crate::store::VAULT_WRITER_LOCK_FILE),
+        "{removed:?}"
+    );
+    assert!(std::fs::symlink_metadata(&destination).is_err());
+}
+
+/// Review r3 (Sol F4): a restore against the current vault that panics in
+/// its final checks unwinds as one refused there does. The copy closes
+/// before the directory made for it is removed, for a copy kept beside the
+/// current vault and for one that will replace it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_restore_that_panics_in_its_final_checks_closes_its_copy_first() {
+    let root = crate::test_support::restore_tempdir();
+    let base = root.path().canonicalize().unwrap();
+    let current = Vault::open(base.join("vault"), VaultConfig::device()).unwrap();
+    let image = base.join("image");
+    current.snapshot_checkpoint(&image, 100).expect("image");
+    for replacing in [false, true] {
+        let destination = base.join(format!("copy-{replacing}"));
+        let open = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        crate::store::arm_after_root_entry_removed({
+            let (destination, open) = (destination.clone(), open.clone());
+            move |_| open.borrow_mut().push(store_files_open(&destination))
+        });
+        arm_restore_panic();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if replacing {
+                Vault::restore_checkpoint_replacing(
+                    &image,
+                    &destination,
+                    VaultConfig::device(),
+                    &current,
+                    120,
+                )
+            } else {
+                Vault::restore_checkpoint_keeping_authority(
+                    &image,
+                    &destination,
+                    VaultConfig::device(),
+                    &current,
+                    120,
+                )
+            }
+        }));
+        assert!(unwound.is_err(), "replacing {replacing}: no panic");
+        assert_eq!(
+            open.borrow().first(),
+            Some(&false),
+            "replacing {replacing}: the copy was still open as its directory went"
+        );
+        assert!(
+            std::fs::symlink_metadata(&destination).is_err(),
+            "replacing {replacing}"
+        );
+    }
+}
+
+/// Whether this process holds the LMDB files at the root of `dir` open,
+/// unlinked or not.
+#[cfg(target_os = "linux")]
+fn store_files_open(dir: &Path) -> bool {
+    let files = ["data.mdb", "lock.mdb"].map(|name| dir.join(name).to_string_lossy().into_owned());
+    std::fs::read_dir("/proc/self/fd").is_ok_and(|descriptors| {
+        descriptors
+            .filter_map(std::result::Result::ok)
+            .filter_map(|descriptor| std::fs::read_link(descriptor.path()).ok())
+            .any(|target| {
+                let target = target.to_string_lossy();
+                files.iter().any(|file| target.starts_with(file.as_str()))
+            })
+    })
 }

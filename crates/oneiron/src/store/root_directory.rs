@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, openat, statat, unlinkat};
 
+use super::writer_lease::VAULT_WRITER_LOCK_FILE;
 use crate::{Error, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -228,9 +229,9 @@ pub fn shared_vault_root(root: &Path) -> Result<Option<SharedPath>> {
 }
 
 /// Makes the directory `path` names, owner-only whatever the umask, through
-/// a descriptor of the directory holding it, and returns the identity of the
-/// one made, read through that same descriptor.
-pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
+/// a descriptor of the directory holding it, and returns the one made,
+/// opened through that same descriptor.
+pub(super) fn make_directory(path: &Path) -> Result<File> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(Error::InvalidConfig(
             "a directory to make needs a parent and a name".to_owned(),
@@ -244,7 +245,7 @@ pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
     rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
     let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
         .map_err(std::io::Error::from)?;
-    Ok(file_identity(&File::from(made).metadata()?))
+    Ok(File::from(made))
 }
 
 /// `parent`, or the working directory when a relative path has none.
@@ -265,6 +266,10 @@ pub(super) fn parent_or_here(parent: &Path) -> &Path {
 /// directory holding it, so no name moved meanwhile leads the removal out of
 /// the tree. Only the emptied directory itself goes by name, checked again
 /// first.
+///
+/// A vault's writer lock goes last: while it is linked, an owner that opens
+/// the vault meets the lock whoever removes it holds, never a fresh one
+/// beside data still being removed (C8 residual, review r2).
 pub fn remove_held_directory(path: &Path, held: &File) -> Result<()> {
     let identity = file_identity(&held.metadata()?);
     let still_named = || -> Result<()> {
@@ -277,15 +282,31 @@ pub fn remove_held_directory(path: &Path, held: &File) -> Result<()> {
         }
     };
     still_named()?;
-    empty_directory(held.as_fd())?;
+    empty_directory(held.as_fd(), true)?;
     still_named()?;
     std::fs::remove_dir(path)?;
     Ok(())
 }
 
+#[cfg(test)]
+type RootEntryCallback = Box<dyn FnMut(&std::ffi::CStr)>;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_ROOT_ENTRY_REMOVED: std::cell::RefCell<Option<RootEntryCallback>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` with each entry's name as this thread removes it from the
+/// root of a held directory, until the removal ends.
+#[cfg(test)]
+pub(crate) fn arm_after_root_entry_removed(callback: impl FnMut(&std::ffi::CStr) + 'static) {
+    AFTER_ROOT_ENTRY_REMOVED.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 /// Removes every entry of `dir`, depth first. A link is removed, never
 /// followed.
-fn empty_directory(dir: BorrowedFd<'_>) -> std::io::Result<()> {
+fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Result<()> {
     let mut entries = Vec::new();
     for entry in Dir::read_from(dir)? {
         let entry = entry?;
@@ -293,6 +314,10 @@ fn empty_directory(dir: BorrowedFd<'_>) -> std::io::Result<()> {
         if name != c"." && name != c".." {
             entries.push((name.to_owned(), entry.file_type()));
         }
+    }
+    if root {
+        // The writer lock last, after everything it guards.
+        entries.sort_by_key(|(name, _)| name.as_bytes() == VAULT_WRITER_LOCK_FILE.as_bytes());
     }
     for (name, kind) in entries {
         let kind = match kind {
@@ -308,11 +333,23 @@ fn empty_directory(dir: BorrowedFd<'_>) -> std::io::Result<()> {
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )?;
-            empty_directory(child.as_fd())?;
+            empty_directory(child.as_fd(), false)?;
             unlinkat(dir, name.as_c_str(), AtFlags::REMOVEDIR)?;
         } else {
             unlinkat(dir, name.as_c_str(), AtFlags::empty())?;
         }
+        #[cfg(test)]
+        if root {
+            AFTER_ROOT_ENTRY_REMOVED.with(|slot| {
+                if let Some(callback) = slot.borrow_mut().as_mut() {
+                    callback(name.as_c_str());
+                }
+            });
+        }
+    }
+    #[cfg(test)]
+    if root {
+        AFTER_ROOT_ENTRY_REMOVED.with(|slot| slot.borrow_mut().take());
     }
     Ok(())
 }
