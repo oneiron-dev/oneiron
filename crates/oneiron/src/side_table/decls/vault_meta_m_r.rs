@@ -138,6 +138,9 @@ side_tables! {
     /// Crash-durable per-push intent journal recording every proposed ref move before any effect
     /// lands, keyed by repo identity then operation id. Key: string + id16.
     ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named;
+    /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
+    /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
+    ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
     /// The publication currently advertised for one repository's ref name (value = id16). Key: id16
     /// "\x00" string.
     ORIGIN_VISIBLE_REF: VaultMeta b"origin:visible_ref:v1:" Raw;

@@ -273,6 +273,95 @@ fn receive_pack_partial_effect_superseded_before_recovery_is_not_reapplied() {
     );
 }
 
+/// Journal bytes one recovery of a push of `refs` declined creations writes,
+/// intent included.
+fn declined_push_journal_bytes(refs: usize) -> u64 {
+    let (_vault_dir, vault) = temp_vault();
+    let (_repo_dir, root, oid) = seeded_repo();
+    let updates = (0..refs)
+        .map(|index| ref_update(&format!("refs/heads/declined-{index:05}"), None, Some(&oid)))
+        .collect();
+    let written = || super::intent::JOURNAL_BYTES_WRITTEN.with(std::cell::Cell::get);
+    let before = written();
+    fixture_intent(&vault, &root, updates);
+    vault
+        .reconcile_receive_pack_operations(&root)
+        .expect("census");
+    let rows = vault.receive_pack_intents(&root).expect("journal");
+    assert!(
+        rows[0]
+            .1
+            .refs
+            .iter()
+            .all(|entry| entry.status == ReceivePackRefStatus::NotApplied)
+    );
+    written() - before
+}
+
+/// A push's intent is written once and its progress batch by batch, so the
+/// journal bytes a push writes grow linearly in its refs: four times the refs
+/// write four times the bytes, not sixteen.
+#[test]
+fn receive_pack_journal_bytes_grow_linearly_in_the_refs_a_push_names() {
+    let small = declined_push_journal_bytes(2_500);
+    let large = declined_push_journal_bytes(10_000);
+    assert!(
+        large * 10 <= small * 4 * 11,
+        "2,500 refs wrote {small} bytes, 10,000 wrote {large}"
+    );
+}
+
+/// Recovery resumes from a push's saved progress: a batch saved as observed
+/// before a crash is read back as observed, so a ref another writer moved
+/// since is superseded rather than declined, and every other ref publishes.
+#[test]
+fn receive_pack_recovery_resumes_from_progress_saved_mid_push() {
+    let (_vault_dir, vault) = temp_vault();
+    let (_repo_dir, root, first) = seeded_repo();
+    let later = commit_file(&root, "later.txt", "later\n");
+    let refs = ORIGIN_REF_UPDATE_BATCH + 2;
+    let names: Vec<String> = (0..refs)
+        .map(|index| format!("refs/heads/resumed-{index:03}"))
+        .collect();
+    fixture_intent(
+        &vault,
+        &root,
+        names
+            .iter()
+            .map(|name| ref_update(name, None, Some(&first)))
+            .collect(),
+    );
+    for name in &names {
+        git(&root, &["update-ref", name, first.as_str()]);
+    }
+    // The crash came after the first batch's observations were saved and
+    // before any of its refs published.
+    let (key, mut intent) = vault
+        .receive_pack_intents(&root)
+        .expect("journal")
+        .remove(0);
+    for entry in &mut intent.refs[..ORIGIN_REF_UPDATE_BATCH] {
+        entry.observed = true;
+    }
+    vault
+        .save_receive_pack_progress(&key, &intent, 0)
+        .expect("first batch progress");
+    git(&root, &["update-ref", &names[0], later.as_str()]);
+    vault
+        .reconcile_receive_pack_operations(&root)
+        .expect("recover");
+    let rows = vault.receive_pack_intents(&root).expect("journal");
+    let statuses: Vec<_> = rows[0].1.refs.iter().map(|entry| entry.status).collect();
+    assert_eq!(statuses[0], ReceivePackRefStatus::Superseded);
+    assert!(
+        statuses[1..]
+            .iter()
+            .all(|status| *status == ReceivePackRefStatus::Published),
+        "{statuses:?}"
+    );
+    assert_eq!(git(&root, &["rev-parse", &names[0]]), later.as_str());
+}
+
 #[test]
 fn receive_pack_no_hook_advertisement_recovers_a_pre_outcome_crash() {
     let (vault_dir, vault) = temp_vault();

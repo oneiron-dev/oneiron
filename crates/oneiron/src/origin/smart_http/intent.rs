@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
     SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_INTENT);
 
+#[derive(Clone)]
 pub(super) struct ReceivePackIntentKey {
     repo_identity_hex: String,
     operation_id: EntityId,
@@ -50,6 +51,51 @@ impl SideKey for ReceivePackIntentKey {
             operation_id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
         })
     }
+}
+
+/// A push's per-ref progress, one row per batch of [`ORIGIN_REF_UPDATE_BATCH`]
+/// refs of its intent. The intent's ref list is written once; settling a
+/// batch rewrites that batch's row alone, so a push of n refs writes O(n)
+/// journal bytes. A batch with no row has made no progress since the intent.
+const PROGRESS: SideTable<ReceivePackProgressKey, ReceivePackBatchProgress, Named> =
+    SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_PROGRESS);
+
+struct ReceivePackProgressKey {
+    intent: ReceivePackIntentKey,
+    batch: u64,
+}
+
+impl SideKey for ReceivePackProgressKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.intent.encode_into(out);
+        self.batch.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (intent, batch) = bytes.split_at(bytes.len().checked_sub(8)?);
+        Some(Self {
+            intent: ReceivePackIntentKey::decode_key(intent)?,
+            batch: u64::decode_key(batch)?,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReceivePackBatchProgress {
+    refs: Vec<(bool, ReceivePackRefStatus)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Journal bytes this thread's intent and progress writes encoded.
+    pub(super) static JOURNAL_BYTES_WRITTEN: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_journal_bytes(encoded: Result<Vec<u8>>) {
+    let len = encoded.map_or(0, |bytes| bytes.len() as u64);
+    JOURNAL_BYTES_WRITTEN.with(|written| written.set(written.get() + len));
 }
 
 /// Per-ref completion, independent of the backend's transport success.
@@ -190,6 +236,8 @@ impl Vault {
             operation_id: stamp.operation_id,
         };
         INTENTS.encode_value(&intent)?;
+        #[cfg(test)]
+        count_journal_bytes(INTENTS.encode_value(&intent));
         self.with_write_txn_grouped(|wtxn| {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
@@ -204,8 +252,37 @@ impl Vault {
         key: &ReceivePackIntentKey,
         intent: &ReceivePackIntent,
     ) -> Result<()> {
+        #[cfg(test)]
+        count_journal_bytes(INTENTS.encode_value(intent));
         self.with_write_txn_grouped(|wtxn| {
             INTENTS.put(&self.store, wtxn, key, intent)?;
+            Ok(())
+        })
+    }
+
+    /// Saves the progress of the intent's `batch`-th batch of refs.
+    pub(super) fn save_receive_pack_progress(
+        &self,
+        key: &ReceivePackIntentKey,
+        intent: &ReceivePackIntent,
+        batch: usize,
+    ) -> Result<()> {
+        let start = batch * ORIGIN_REF_UPDATE_BATCH;
+        let end = (start + ORIGIN_REF_UPDATE_BATCH).min(intent.refs.len());
+        let progress = ReceivePackBatchProgress {
+            refs: intent.refs[start..end]
+                .iter()
+                .map(|entry| (entry.observed, entry.status))
+                .collect(),
+        };
+        let progress_key = ReceivePackProgressKey {
+            intent: key.clone(),
+            batch: batch as u64,
+        };
+        #[cfg(test)]
+        count_journal_bytes(PROGRESS.encode_value(&progress));
+        self.with_write_txn_grouped(|wtxn| {
+            PROGRESS.put(&self.store, wtxn, &progress_key, &progress)?;
             Ok(())
         })
     }
@@ -252,6 +329,25 @@ impl Vault {
                 return Err(Error::IndexOverflow("receive-pack intents"));
             }
             rows.push(row?);
+        }
+        for (key, intent) in &mut rows {
+            let mut prefix = Vec::new();
+            key.encode_into(&mut prefix);
+            for row in PROGRESS.iter_from(&self.store, &rtxn, &prefix)? {
+                let (progress_key, progress) = row?;
+                let start = usize::try_from(progress_key.batch)
+                    .ok()
+                    .and_then(|batch| batch.checked_mul(ORIGIN_REF_UPDATE_BATCH))
+                    .ok_or(Error::CorruptedIndex("receive-pack progress batch"))?;
+                for (offset, (observed, status)) in progress.refs.into_iter().enumerate() {
+                    let entry = intent
+                        .refs
+                        .get_mut(start + offset)
+                        .ok_or(Error::CorruptedIndex("receive-pack progress ref"))?;
+                    entry.observed = observed;
+                    entry.status = status;
+                }
+            }
         }
         Ok(rows)
     }
@@ -310,19 +406,20 @@ impl Vault {
         let mut replay_outcome = None;
         let mut landing: Option<ReceivePackLanding> = None;
         let (request_bytes, response_bytes) = intent.transport_bytes.unwrap_or((0, 0));
-        let pending: Vec<usize> = (0..intent.refs.len())
-            .filter(|&index| intent.refs[index].status == ReceivePackRefStatus::Pending)
-            .collect();
-        // A push may name any number of refs. They are settled in batches:
-        // each batch's observations are saved once, before any of its refs is
-        // published, and its publications once after, so the intent row is
-        // rewritten twice per batch rather than twice per ref. A crash inside
-        // a batch leaves its published refs observed and pending, and the
-        // next pass replays them under their same outcome ids.
-        for batch in pending.chunks(ORIGIN_REF_UPDATE_BATCH) {
+        // A push may name any number of refs. They are settled a batch at a
+        // time: a batch's observations are saved once, before any of its
+        // refs is published, and its publications once after, each to the
+        // batch's own progress row. A crash inside a batch leaves its
+        // published refs observed and pending, and the next pass replays them
+        // under their same outcome ids.
+        let refs = intent.refs.len();
+        for (batch, start) in (0..refs).step_by(ORIGIN_REF_UPDATE_BATCH).enumerate() {
             let mut observed_any = false;
-            let mut realized = Vec::with_capacity(batch.len());
-            for &index in batch {
+            let mut realized = Vec::new();
+            for index in start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs) {
+                if intent.refs[index].status != ReceivePackRefStatus::Pending {
+                    continue;
+                }
                 let update = intent.refs[index].update()?;
                 // A failed proof is uncertainty, not permission to replay a ref.
                 match realized_updates(self, root, std::slice::from_ref(&update)) {
@@ -343,7 +440,7 @@ impl Vault {
                 }
             }
             if observed_any {
-                self.save_receive_pack_intent(key, intent)?;
+                self.save_receive_pack_progress(key, intent, batch)?;
             }
             let mut published_any = false;
             for (index, update) in realized {
@@ -401,7 +498,7 @@ impl Vault {
                 // and recover the other refs independently.
             }
             if published_any {
-                self.save_receive_pack_intent(key, intent)?;
+                self.save_receive_pack_progress(key, intent, batch)?;
             }
         }
         Ok((replay_outcome, landing))

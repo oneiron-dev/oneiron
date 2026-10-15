@@ -480,6 +480,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OFF_RECORD_COPY_RECEIPT",
         "ORIGIN_LFS_GC_QUEUE",
         "ORIGIN_LFS_UPLOAD_JOURNAL",
+        "ORIGIN_RECEIVE_PACK_PROGRESS",
         "OUTBOUND_AUTHORIZED_RECOVERY_LEASE",
         "OUTBOUND_DEDUPE_INTENT",
         "OUTBOUND_DEDUPE_RESERVATION",
