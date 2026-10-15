@@ -262,6 +262,16 @@ pub enum AgentDispatchOutcome {
     WorkflowExisting(Box<super::WorkflowDispatchStatus>),
 }
 
+/// The lease a killing attempt holds: what its claim returned. A spawner
+/// kills only while it is the runtime executing its attempt, so it names the
+/// lease it runs under, not just the attempt id every queue read shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KillerLease {
+    pub attempt: AttemptId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+}
+
 /// An unauthorized kill request parked for an authority decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KillProposal {

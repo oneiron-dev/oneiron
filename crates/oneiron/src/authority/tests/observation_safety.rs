@@ -261,11 +261,22 @@ fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
                 put_replay(&vault, entry, 1);
             }
             put_replay(&vault, &old, 1);
-            let outsider = ed_key(182);
-            put_replay(
-                &vault,
-                &slip_withdrawal(vault_id, &old, &outsider, 20, 14),
-                1,
+            // A key no row enrolled never reaches the log (H72).
+            let outsider = slip_withdrawal(vault_id, &old, &ed_key(182), 20, 14);
+            let refused = vault
+                .batch()
+                .put_replicated(
+                    &authority_log_entity_id(&outsider).unwrap(),
+                    ENTITY_TYPE_AUTHORITY_LOG,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &encode_authority_log_entry_body(&outsider).unwrap(),
+                )
+                .commit()
+                .unwrap_err();
+            assert_eq!(
+                refused.kind(),
+                crate::error::ErrorKind::AuthorityLogSignerPending
             );
         }
         let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();

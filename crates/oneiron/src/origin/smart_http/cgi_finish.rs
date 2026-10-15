@@ -189,9 +189,7 @@ pub(super) fn finish_serve(
         .as_ref()
         .ok_or_else(|| receive_pack_provenance_refused("admission is absent"))?;
     let (key, mut intent) = vault
-        .receive_pack_intents(repo_dir)?
-        .into_iter()
-        .find(|(_, intent)| intent.operation_id == stamp.operation_id.to_hex())
+        .receive_pack_intent(repo_dir, stamp.operation_id)?
         .ok_or_else(|| receive_pack_provenance_refused("pre-effect intent is absent"))?;
     // Never replace the counters of an already-observed operation. Commit the
     // measured totals before the observer so every recovery uses the same bytes.

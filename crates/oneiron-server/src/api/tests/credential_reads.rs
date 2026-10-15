@@ -1066,3 +1066,126 @@ async fn legacy_discovery_counts_only_what_the_credential_reads() {
     room.grant(seeded_test_entity_id(0x2401_0032));
     assert_eq!(messages(agent).await, owner);
 }
+
+/// F16 H145: a room's roster resolves for a caller that reads the room or
+/// sits in it. Anyone else naming the room gets what a missing room gets,
+/// and no member's id.
+#[tokio::test]
+async fn a_room_its_reader_cannot_read_is_a_missing_room() {
+    let room = room();
+    let outsider = seeded_test_entity_id(0x2401_0010);
+    let pack = |conversation: oneiron::EntityId| {
+        route_json(
+            room.server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &outsider.to_hex(),
+                Some(&json!({ "conversation_id": conversation.to_hex(), "query": "credkey" })),
+            ),
+        )
+    };
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        outsider,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (missing_status, missing) = pack(seeded_test_entity_id(0x2401_0011)).await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
+    let (status, body) = pack(room.room).await;
+    assert_eq!(
+        (status, &body["error"]["code"], &body["error"]["details"]),
+        (
+            missing_status,
+            &missing["error"]["code"],
+            &missing["error"]["details"]
+        ),
+        "{body}"
+    );
+    for member in [room.owner, room.agent] {
+        assert!(!body.to_string().contains(&member.to_hex()), "{body}");
+    }
+    super::context_board_history::restrict_principal_read_types(
+        &room.server,
+        outsider,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+        ],
+    );
+    let (status, body) = pack(room.room).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a reader that reads the room resolves it: {body}"
+    );
+}
+
+/// F16 round 3 (Sol F3) and round 4 (Sol F2 = Astra F2): membership stands
+/// in for a member's grant on its room, never for the credential it
+/// presents. A member whose credential names other records, or reads TURN
+/// rows alone, reads its room as a missing one, and no member's id; on its
+/// whole credential it reads the room.
+#[tokio::test]
+async fn a_members_bounded_credential_reads_its_room_as_missing() {
+    let room = room();
+    let pack = |recipe: String, conversation: oneiron::EntityId| {
+        route_json(
+            room.server.clone(),
+            core_request_with_authz(
+                "POST",
+                "/v1/core/context-pack",
+                test_bearer(&recipe),
+                Some(&json!({ "conversation_id": conversation.to_hex(), "query": "credkey" })),
+            ),
+        )
+    };
+    let bounded = room.agent_recipe(Some(&[room.unscoped]));
+    let (missing_status, missing) = pack(bounded.clone(), seeded_test_entity_id(0x2401_0012)).await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
+    let (status, body) = pack(bounded, room.room).await;
+    assert_eq!(
+        (status, &body["error"]["code"], &body["error"]["details"]),
+        (
+            missing_status,
+            &missing["error"]["code"],
+            &missing["error"]["details"]
+        ),
+        "{body}"
+    );
+    assert!(!body.to_string().contains(&room.owner.to_hex()), "{body}");
+    let banded = format!(
+        "{};bands={}",
+        room.agent_recipe(None),
+        oneiron::registry::ENTITY_TYPE_TURN
+    );
+    let (status, body) = pack(banded, room.room).await;
+    assert_eq!(
+        (status, &body["error"]["code"], &body["error"]["details"]),
+        (
+            missing_status,
+            &missing["error"]["code"],
+            &missing["error"]["details"]
+        ),
+        "{body}"
+    );
+    // FACET-READ: the pack door refuses a member's credential limited to a
+    // facet before it resolves any room, so its room and a missing one
+    // answer alike.
+    let faceted = format!(
+        "{};facets={}",
+        room.agent_recipe(None),
+        seeded_test_entity_id(0x2401_0013).to_hex()
+    );
+    let mut answers = Vec::new();
+    for conversation in [room.room, seeded_test_entity_id(0x2401_0012)] {
+        let (status, mut body) = pack(faceted.clone(), conversation).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        body["error"].as_object_mut().unwrap().remove("requestId");
+        answers.push(body);
+    }
+    assert_eq!(answers[0], answers[1]);
+    let (status, body) = pack(room.agent_recipe(None), room.room).await;
+    assert_eq!(status, StatusCode::OK, "a member reads its room: {body}");
+}
