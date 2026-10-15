@@ -25,7 +25,8 @@ fn install_signing(vault: &Vault) -> ed25519_dalek::SigningKey {
         .unwrap()
 }
 
-fn put_replicated(vault: &Vault, entry: &AuthorityLogEntry) -> crate::error::Result<()> {
+/// `entry` stored through the replicated door, as a sync pass stores it.
+pub(super) fn put_replicated(vault: &Vault, entry: &AuthorityLogEntry) -> crate::error::Result<()> {
     vault
         .batch()
         .put_replicated(

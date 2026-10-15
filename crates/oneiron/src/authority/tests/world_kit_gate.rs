@@ -234,12 +234,11 @@ fn with_no_root_stored_the_kit_is_never_a_lockout() {
         vault.restore_world_keys(owner, here, &one, None),
         KitRecord::None
     ));
-    assert!(
-        vault
-            .pin_owner_root(owner, here, RecoveryRootId([7; 32]))
-            .is_err()
-    );
-    // Both refusals came before any write: this genuinely fresh install
+    let unstored = RecoveryRootId([7; 32]);
+    let report = vault.pin_owner_root(owner, here, unstored).unwrap();
+    assert_eq!(report.awaiting, Some(unstored));
+    // The refusal came before any write, and a fingerprint the log does not
+    // hold yet is only awaited, in the pin row: this genuinely fresh install
     // minted no machine identity, so no keystore slot either, since a slot
     // is named by the identity.
     assert!(vault.local_machine().unwrap().is_none());

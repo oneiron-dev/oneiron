@@ -21,7 +21,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::log_budget::{Grant, StructureBuilder, admits_device, is_consent_device};
+use super::log_structure::{Grant, LocalRoots, StructureBuilder, admits_device, is_consent_device};
 use super::*;
 
 type Row = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
@@ -88,17 +88,19 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
 }
 
 /// `rows` in the order an import stages them over `stored`, the rows the
-/// store holds, whose hashes are `resident`. A row no key comes to vouch for
-/// goes last, in the order given; its door holds it.
+/// store holds, whose hashes are `resident`, with `local`'s anchors this
+/// install's own. A row no key comes to vouch for goes last, in the order
+/// given; its door holds it.
 pub(super) fn import_order<'a>(
     stored: impl Iterator<Item = &'a AuthorityLogEntry>,
     resident: &BTreeSet<AuthorityEntryHash>,
+    local: LocalRoots,
     rows: Vec<Row>,
 ) -> Vec<Row> {
     let stored: Vec<&'a AuthorityLogEntry> = stored.collect();
     let order = {
         let entries: Vec<_> = rows.iter().map(|(hash, _, entry)| (*hash, entry)).collect();
-        let mut builder = StructureBuilder::default();
+        let mut builder = StructureBuilder::under(local);
         for entry in stored {
             builder.push(entry);
         }

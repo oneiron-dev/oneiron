@@ -21,7 +21,8 @@ use crate::authority::{
     AuthorityEntryHash, AuthorityFold, EditOrigin, FoldedMachine,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineEnrolmentRequest,
     OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands, invalid_authority,
-    owner_root_records_in_txn, write_pinned_root_in_txn,
+    owner_root_records_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
+    write_pinned_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, KitRecord, Result, SecretError};
@@ -202,19 +203,6 @@ impl Vault {
         Ok((root, publish))
     }
 
-    /// The stored, valid record of `root`, refused when the log has none.
-    fn stored_root_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
-        root: RecoveryRootId,
-    ) -> Result<OwnerRootRecord> {
-        owner_root_records_in_txn(&self.store, txn, fold)?
-            .remove(&root)
-            .map(|(_, record)| record)
-            .ok_or_else(|| refused("the root is not in this vault's log yet"))
-    }
-
     /// This install's own enrolment request, its machine identity minted
     /// first when it has none, and its secret: all before any door's
     /// transaction.
@@ -232,6 +220,38 @@ impl Vault {
             ));
         }
         Ok((secret, request))
+    }
+
+    /// The pin, written before a seed door stores its root's record and
+    /// marks, so the store gate takes them as this install's own anchor's
+    /// however many strangers' rows wait (Astra #1422e F1, r23).
+    /// [`Self::move_pin_in_txn`] still runs after them.
+    fn pin_first_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        before: Option<PinnedRoot>,
+        pin: PinnedRoot,
+        earlier: Option<crate::authority::MachineAdmitter>,
+    ) -> Result<()> {
+        if before == Some(pin) {
+            return Ok(());
+        }
+        write_pinned_root_in_txn(&self.store, txn, pin, earlier)
+    }
+
+    /// Leaves `awaiting` as the root a pin door awaits, after a door that
+    /// pinned `root`: a wait for another root stays.
+    fn end_wait_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        root: RecoveryRootId,
+        awaiting: Option<RecoveryRootId>,
+    ) -> Result<()> {
+        let row = read_pin_row_in_txn(&self.store, txn)?;
+        if awaiting.is_none() && row.awaiting != Some(root) {
+            return Ok(());
+        }
+        write_awaited_root_in_txn(&self.store, txn, awaiting)
     }
 
     /// The pin, written only when it moves. Whose seals count follows the
@@ -292,6 +312,7 @@ impl Vault {
                 restore: false,
             };
             let start = self.repin_start_in_txn(txn, &door)?;
+            self.pin_first_in_txn(txn, old.pinned_root, pin, start.earlier_admitter)?;
             marks.push(request.clone());
             self.put_anchor_entry_in_txn(txn, prepared.entry().clone())?;
             let mut appended = Vec::new();
@@ -299,6 +320,7 @@ impl Vault {
                 appended.push(self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), mark)?);
             }
             self.move_pin_in_txn(txn, old.pinned_root, pin, start.earlier_admitter)?;
+            self.end_wait_in_txn(txn, root.id, None)?;
             let mid = self.authority_view_readonly_in_txn(txn)?;
             let stands = marks
                 .iter()
@@ -411,11 +433,13 @@ impl Vault {
                 restore: false,
             };
             let start = self.repin_start_in_txn(txn, &door)?;
+            self.pin_first_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
             if publish {
                 self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, owner.actor()))?;
             }
             let mark = self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), request)?;
             self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
+            self.end_wait_in_txn(txn, root.id, None)?;
             let mid = self.authority_view_readonly_in_txn(txn)?;
             if !anchor_mark_stands(&mid, root.anchor_key, mark, request)
                 || mid.pinned_root != Some(pin)
@@ -471,6 +495,7 @@ impl Vault {
                 restore: true,
             };
             let start = self.repin_start_in_txn(txn, &door)?;
+            self.pin_first_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
             if publish {
                 self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, owner.actor()))?;
             }
@@ -491,6 +516,7 @@ impl Vault {
                 Some(self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), &request)?)
             };
             self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
+            self.end_wait_in_txn(txn, root.id, None)?;
             let mid = self.authority_view_readonly_in_txn(txn)?;
             let stands =
                 mark.is_none_or(|mark| anchor_mark_stands(&mid, root.anchor_key, mark, &request));
@@ -515,10 +541,15 @@ impl Vault {
     }
 
     /// Pins `root` on this install from a fingerprint the owner carried out
-    /// of band, the full 32-byte id that binds the vault and both keys. A
-    /// root not in this vault's log yet is refused: call it after the first
-    /// sync. In the same transaction it re-wraps the keys this machine may
-    /// still read under the new pin and reports the rest; the pin commits.
+    /// of band, the full 32-byte id that binds the vault and both keys. In
+    /// the same transaction it re-wraps the keys this machine may still read
+    /// under the new pin and reports the rest; the pin commits. A root not in
+    /// this vault's log yet, held behind strangers' rows say, is awaited
+    /// instead: the pin stays, nothing is wrapped, and the store gate takes
+    /// that root's own row and its anchor's marks on the next drain. So is a
+    /// root this machine is not mine under yet, its marks still held. Either
+    /// way the report names it, `owner_root_view` says when it has arrived,
+    /// and pinning again then finishes (Astra #1422e F1; the Engine, r23).
     pub fn pin_owner_root(
         &self,
         owner: &AuthenticatedOwner,
@@ -526,15 +557,27 @@ impl Vault {
         root: RecoveryRootId,
     ) -> Result<RepinReport> {
         this_machine_only(origin)?;
-        self.precheck_root_door(owner, |txn, fold| {
-            self.stored_root_in_txn(txn, fold, root).map(drop)
+        let stored = self.precheck_root_door(owner, |txn, fold| {
+            Ok(owner_root_records_in_txn(&self.store, txn, fold)?.contains_key(&root))
         })?;
+        if !stored {
+            self.with_write_txn(|txn| {
+                owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+                write_awaited_root_in_txn(&self.store, txn, Some(root))
+            })?;
+            return Ok(RepinReport {
+                awaiting: Some(root),
+                ..RepinReport::default()
+            });
+        }
         let (secret, _) = self.own_request()?;
         self.with_write_txn(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            let record = self.stored_root_in_txn(txn, &fold, root)?;
+            let (_, record) = owner_root_records_in_txn(&self.store, txn, &fold)?
+                .remove(&root)
+                .ok_or_else(|| refused("the root is not in this vault's log yet"))?;
+            let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
             let pin = PinnedRoot {
                 id: root,
                 anchor_key: record.anchor_key,
@@ -548,7 +591,14 @@ impl Vault {
             };
             let start = self.repin_start_in_txn(txn, &door)?;
             self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-            Ok(self.repin_finish_in_txn(txn, &door, start)?.report)
+            let mut report = self.repin_finish_in_txn(txn, &door, start)?.report;
+            let after = self.authority_view_readonly_in_txn(txn)?;
+            report.awaiting = after
+                .trusted_machine(secret.machine)
+                .is_none()
+                .then_some(root);
+            self.end_wait_in_txn(txn, root, report.awaiting)?;
+            Ok(report)
         })
     }
 }

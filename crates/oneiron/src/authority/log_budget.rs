@@ -12,14 +12,20 @@
 //! owner's log gains thousands a year. Any other key stores up to the
 //! `authority_log_signer_bound` policy row; past it, its rows wait, never
 //! refused, a typed check asks the owner, and raising the row lands them on
-//! the next drain. A key's first revocation of a device or binding the fold
-//! holds live always lands. A fold handed more than its own bounds fails
-//! closed: it holds no root and reads as a conflicted one, which every
-//! authority gate refuses.
+//! the next drain. An owner anchor this install does not pin is a stranger,
+//! since a root needs nothing but a fresh key: every stranger's row shares
+//! that one row (world privacy P6b, r23). A key's first revocation of a
+//! device or binding the fold holds live always lands. A fold handed more
+//! than its own bounds fails closed: it holds no root and reads as a
+//! conflicted one, which every authority gate refuses.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use super::log_structure::{
+    AuthorityStructure, LocalRoots, authority_structure, authority_structure_under,
+    self_signed_root, signed_by,
+};
 use super::*;
 use crate::store::Store;
 
@@ -146,295 +152,6 @@ fn is_handoff(entry: &AuthorityLogEntry) -> bool {
     matches!(entry.op, AuthorityOp::ReRoot { .. })
 }
 
-pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
-    match op {
-        AuthorityOp::EnrollDevice { device }
-        | AuthorityOp::RotateKey {
-            new_device: device, ..
-        }
-        | AuthorityOp::ReRoot { new_device: device } => Some(device),
-        _ => None,
-    }
-}
-
-/// The log's consent structure, read from its signed rows alone, so the
-/// fold's bounds and the store doors judge a row the same way.
-#[derive(Debug, Default)]
-pub(crate) struct AuthorityStructure {
-    /// The verified genesis rows. A log with more than one, even from one
-    /// key, has no admitters: the fold reads each as its own vault root.
-    roots: Vec<AuthorityLogEntry>,
-    /// The keys whose signature vouches for a row: the genesis key, and
-    /// each owner or admin key named by a signed re-root, rotation or
-    /// enrollment that an admitter signed or cosigned, the fold's own
-    /// consent rule.
-    admitters: BTreeSet<AuthorityKey>,
-    /// The slip issuers: the admitters that hold the owner role.
-    pub(super) issuers: BTreeSet<AuthorityKey>,
-    /// Each machine and the install keys a slip issuer's or an owner
-    /// anchor's revisions of it named. Such a key signs that machine's world
-    /// edits and key records.
-    machine_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
-    /// The owner anchors a root record named, each signed by its own anchor
-    /// alone (world privacy P6b). An anchor signs only what the fold's anchor
-    /// rules let it: its own root records and its machine marks. It never
-    /// becomes an admitter or a slip issuer.
-    anchors: BTreeSet<[u8; 32]>,
-}
-
-/// A root record its own anchor signed, alone and verifiably: it names its
-/// anchor, as a genesis names its root.
-fn self_signed_root(entry: &AuthorityLogEntry) -> Option<[u8; 32]> {
-    let AuthorityOp::OwnerRoot(record) = &entry.op else {
-        return None;
-    };
-    (*entry.signer_key() == AuthorityKey::Ed25519(record.anchor_key)
-        && entry.cosigns.is_empty()
-        && verify_entry_signatures(entry).is_ok())
-    .then_some(record.anchor_key)
-}
-
-fn signed_by(entry: &AuthorityLogEntry, keys: &BTreeSet<AuthorityKey>) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .any(|signature| keys.contains(&signature.public_key))
-}
-
-pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
-    device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0
-}
-
-/// Every key the fold holds as a live owner is a slip issuer. Nothing
-/// leaves the set, so a revocation the fold refuses never drops the
-/// issuer, and slip rows a door stored uncounted never come to count
-/// against the fold's bounds. An owner key leaves the host-rooted roster
-/// only by a handoff, and a key a handoff retired signs nothing new at the
-/// replicated door. A machine, agent or peer key, a stranger, and every
-/// signer of a log without exactly one genesis row count as any other
-/// signer.
-pub(super) fn authority_structure<'a>(
-    entries: impl Iterator<Item = &'a AuthorityLogEntry>,
-) -> AuthorityStructure {
-    let mut builder: StructureBuilder<'a> = StructureBuilder::default();
-    for entry in entries {
-        builder.push(entry);
-    }
-    builder.settle();
-    builder.structure
-}
-
-/// [`authority_structure`] grown a row at a time, as an import stages its
-/// rows: the same structure for the same rows, in any order. A row that
-/// waits for a grant is filed under each key that could give it, so a
-/// settle visits only the rows its new grants wake.
-#[derive(Debug, Default)]
-pub(super) struct StructureBuilder<'a> {
-    pub(super) structure: AuthorityStructure,
-    root_roles: u16,
-    /// Admissions and machine revisions pushed since the last settle.
-    fresh: Vec<&'a AuthorityLogEntry>,
-    /// Owner and admin admissions no admitter has signed yet, under each
-    /// key that signed them.
-    admissions: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
-    /// Machine revisions whose primary signer is no slip issuer yet, under
-    /// that signer.
-    profiles: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
-    /// The grants [`Self::settle`] made since the caller last took them.
-    pub(super) grown: Vec<Grant>,
-}
-
-/// What [`StructureBuilder::settle`] granted a key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Grant {
-    Admitter(AuthorityKey),
-    Issuer(AuthorityKey),
-    InstallKey(crate::EntityId, AuthorityKey),
-    Anchor(AuthorityKey),
-}
-
-impl<'a> StructureBuilder<'a> {
-    /// Adds `entry` unsettled.
-    pub(super) fn push(&mut self, entry: &'a AuthorityLogEntry) {
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                if device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && !self.structure.roots.contains(entry)
-                    && verify_entry_signatures(entry).is_ok()
-                {
-                    self.structure.roots.push(entry.clone());
-                    self.root_roles |= device.roles;
-                }
-            }
-            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_) => self.fresh.push(entry),
-            op => {
-                if admits_device(op).is_some_and(is_consent_device) {
-                    self.fresh.push(entry);
-                }
-            }
-        }
-    }
-
-    /// Admits what the rows pushed so far admit. A log with more than one
-    /// root admits nothing.
-    pub(super) fn settle(&mut self) {
-        let Some(root) = self
-            .structure
-            .roots
-            .first()
-            .filter(|_| self.structure.roots.len() == 1)
-            .map(|genesis| genesis.signer_key().clone())
-        else {
-            self.structure.admitters.clear();
-            self.structure.issuers.clear();
-            self.structure.machine_keys.clear();
-            self.structure.anchors.clear();
-            return;
-        };
-        let (mut admitted, mut issued, mut anchored) = (Vec::new(), Vec::new(), Vec::new());
-        if self.root_roles & ROLE_OWNER != 0 && self.structure.issuers.insert(root.clone()) {
-            issued.push(root.clone());
-        }
-        if self.structure.admitters.insert(root.clone()) {
-            admitted.push(root);
-        }
-        for entry in std::mem::take(&mut self.fresh) {
-            if matches!(entry.op, AuthorityOp::OwnerRoot(_)) {
-                if let Some(anchor) = self_signed_root(entry)
-                    && self.structure.anchors.insert(anchor)
-                {
-                    anchored.push(AuthorityKey::Ed25519(anchor));
-                }
-            } else if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
-                self.file_profile(entry);
-            } else if signed_by(entry, &self.structure.admitters) {
-                self.admit(entry, &mut admitted, &mut issued);
-            } else {
-                for signature in std::iter::once(&entry.signer).chain(&entry.cosigns) {
-                    self.admissions
-                        .entry(signature.public_key.clone())
-                        .or_default()
-                        .push(entry);
-                }
-            }
-        }
-        loop {
-            if let Some(key) = admitted.pop() {
-                for entry in self.admissions.remove(&key).unwrap_or_default() {
-                    self.admit(entry, &mut admitted, &mut issued);
-                }
-                self.grown.push(Grant::Admitter(key));
-            } else if let Some(key) = issued.pop() {
-                for entry in self.profiles.remove(&key).unwrap_or_default() {
-                    self.file_profile(entry);
-                }
-                self.grown.push(Grant::Issuer(key));
-            } else if let Some(key) = anchored.pop() {
-                for entry in self.profiles.remove(&key).unwrap_or_default() {
-                    self.file_profile(entry);
-                }
-                self.grown.push(Grant::Anchor(key));
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Admits the key an admission an admitter signed names.
-    fn admit(
-        &mut self,
-        entry: &AuthorityLogEntry,
-        admitted: &mut Vec<AuthorityKey>,
-        issued: &mut Vec<AuthorityKey>,
-    ) {
-        let Some(device) = admits_device(&entry.op) else {
-            return;
-        };
-        if verify_entry_signatures(entry).is_err() {
-            return;
-        }
-        if device.roles & ROLE_OWNER != 0 && self.structure.issuers.insert(device.key.clone()) {
-            issued.push(device.key.clone());
-        }
-        if self.structure.admitters.insert(device.key.clone()) {
-            admitted.push(device.key.clone());
-        }
-    }
-
-    /// Takes a machine revision's install key when a slip issuer or an
-    /// owner anchor signed it, or files it under its signer.
-    fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
-        let signer = entry.signer_key();
-        if !self.structure.issuers.contains(signer) && !self.structure.is_anchor(signer) {
-            self.profiles.entry(signer.clone()).or_default().push(entry);
-            return;
-        }
-        if let AuthorityOp::MachineProfile(profile) = &entry.op
-            && verify_entry_signatures(entry).is_ok()
-        {
-            let key = AuthorityKey::Ed25519(profile.machine_key);
-            if self
-                .structure
-                .machine_keys
-                .insert((profile.machine, key.clone()))
-            {
-                self.grown.push(Grant::InstallKey(profile.machine, key));
-            }
-        }
-    }
-}
-
-impl AuthorityStructure {
-    /// Whether a key that may vouch for `entry` signed or cosigned it: an
-    /// admitter, or, for a world edit or a world key record, the install key
-    /// of the machine it names, as its primary signer. A root record vouches
-    /// for itself when its own anchor signed it alone, and an anchor signs
-    /// machine marks alone; as the fold's anchor rules have it, an anchor
-    /// vouches for nothing else. A genesis vouches for itself only in a log
-    /// that holds none, or as the one it holds: any other, even from the
-    /// root key with a new nonce, would fork the root. The caller verifies
-    /// the signatures.
-    pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
-        let install_key = |machine: crate::EntityId| {
-            self.machine_keys
-                .contains(&(machine, entry.signer_key().clone()))
-        };
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && self.roots.iter().all(|root| root == entry)
-            }
-            AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
-            AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
-            AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
-            AuthorityOp::MachineProfile(_)
-                if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
-            {
-                true
-            }
-            _ => signed_by(entry, &self.admitters),
-        }
-    }
-
-    /// An owner anchor a stored root record named.
-    fn is_anchor(&self, key: &AuthorityKey) -> bool {
-        matches!(key, AuthorityKey::Ed25519(anchor) if self.anchors.contains(anchor))
-    }
-
-    /// Whether `key` signs rows the fold may come to admit: an admitter, an
-    /// install key or an owner anchor, though the local fold may not hold it
-    /// yet.
-    fn stands(&self, key: &AuthorityKey) -> bool {
-        self.admitters.contains(key)
-            || self.is_anchor(key)
-            || self
-                .machine_keys
-                .iter()
-                .any(|(_, machine_key)| machine_key == key)
-    }
-}
-
 /// The slip issuers of `entries`: see [`authority_structure`].
 #[cfg(test)]
 pub(super) fn slip_issuers(entries: &[AuthorityLogEntry]) -> BTreeSet<AuthorityKey> {
@@ -489,6 +206,9 @@ pub(crate) struct AuthorityDoorView {
     counted: usize,
     /// The stored handoffs a slip issuer signed.
     issuer_handoffs: usize,
+    /// The stored rows that vouch only as a stranger's: anchors this
+    /// install does not take as its own ([`AuthorityStructure::is_stranger`]).
+    strangers: usize,
 }
 
 #[cfg(test)]
@@ -525,11 +245,12 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
         for (_, body) in authority_log_rows_in_txn(store, txn)? {
             entries.push(decode_authority_log_entry_body(&body)?);
         }
-        let structure = authority_structure(entries.iter());
+        let structure = authority_structure_under(&entries, LocalRoots::read_in_txn(store, txn)?);
         let mut rows = BTreeMap::<AuthorityKey, usize>::new();
         let mut revocations = BTreeSet::new();
-        let (mut counted, mut issuer_handoffs) = (0, 0);
+        let (mut counted, mut issuer_handoffs, mut strangers) = (0, 0, 0);
         for entry in &entries {
+            strangers += usize::from(structure.vouches_for(entry) && structure.is_stranger(entry));
             *rows.entry(entry.signer_key().clone()).or_default() += 1;
             if let Some(revoked) = Revoked::of(&entry.op) {
                 revocations.insert((entry.signer_key().clone(), revoked));
@@ -544,6 +265,7 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
             revocations,
             counted,
             issuer_handoffs,
+            strangers,
         })
     })
 }
@@ -612,8 +334,9 @@ impl Revoked {
 pub(crate) enum AuthorityDoor {
     Lands,
     /// The row waits: its signer, which no slip issuer vouched for here, is
-    /// at its bound, or it is a handoff no slip issuer signed, which the
-    /// fold never applies. A replica retries it on every drain.
+    /// at its bound, or it is a stranger's row past the bound all strangers'
+    /// rows share, or it is a handoff no slip issuer signed, which the fold
+    /// never applies. A replica retries it on every drain.
     AtBound,
     /// No key that may vouch for the row signed it. The fold applies no row
     /// without an owner's or admin's consent, and no world edit but its
@@ -630,7 +353,10 @@ pub(crate) enum AuthorityDoor {
 /// revocation of a device or actor binding the fold holds live; the rest
 /// wait (rule 5: never refused). So such a key stores at most its bound and
 /// one row per live thing it revokes, even when the fold refuses them all.
-/// The door reads the stored log's structure as the fold's bounds do.
+/// A stranger's row, which an anchor this install does not take as its own
+/// vouches for, lands only while every such stored row together is under
+/// that row, so fresh anchors never add a bound each. The door reads the
+/// stored log's structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -647,6 +373,17 @@ pub(crate) fn authority_door(
     let view = door_view(store, txn)?;
     if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
         return Ok(AuthorityDoor::Unowned);
+    }
+    // A self-signed root needs nothing but a fresh key, so an anchor this
+    // install does not take as its own is a stranger: its rows, and its
+    // machines', share one bound instead of one each (Astra #1422e F1; the
+    // Engine, r23). Its own anchors' rows never meet it.
+    if view.structure.is_stranger(entry) {
+        return Ok(if view.strangers < signer_bound(store, txn)? {
+            AuthorityDoor::Lands
+        } else {
+            AuthorityDoor::AtBound
+        });
     }
     let issuers = &view.structure.issuers;
     let signer = entry.signer_key();
@@ -679,12 +416,13 @@ pub(crate) fn authority_door(
 /// stored log: evidence for the owner, never a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityLogCheck {
-    /// [`Self::SIGNER_BOUND`] or [`Self::FOLD_HEADROOM`].
+    /// [`Self::SIGNER_BOUND`], [`Self::UNPINNED_ROOTS`] or
+    /// [`Self::FOLD_HEADROOM`].
     pub kind: &'static str,
     /// The signer at its bound, for a signer-bound check.
     pub signer: Option<String>,
-    /// The signer's stored rows, or the log's counted rows or slip-issuer
-    /// handoffs.
+    /// The signer's stored rows, the strangers' rows, or the log's counted
+    /// rows or slip-issuer handoffs.
     pub count: u64,
     /// The policy row `count` reached.
     pub threshold: u64,
@@ -695,6 +433,12 @@ impl AuthorityLogCheck {
     /// `authority_log_signer_bound` row: its further rows wait until the
     /// owner raises the row, and then land on the next drain.
     pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
+    /// The rows of anchors this install does not pin reached the
+    /// `authority_log_signer_bound` row they share: their root records, their
+    /// marks, and their machines' world rows. Further ones wait until this
+    /// install pins their root or the owner raises the row, and then land on
+    /// the next drain.
+    pub const UNPINNED_ROOTS: &'static str = "authority_log_unpinned_roots";
     /// The log's counted rows, or its slip issuers' handoffs, reached their
     /// `authority_log_fold_headroom` policy row: by default half of what one
     /// fold holds (a one-chain log's 4,096 counted rows under the
@@ -705,8 +449,8 @@ impl AuthorityLogCheck {
 
 impl crate::Vault {
     /// The open checks on the stored authority log: each key no slip issuer
-    /// vouches for that reached its bound, and the log's headroom once it
-    /// reaches its policy rows.
+    /// vouches for that reached its bound, the strangers' shared bound, and
+    /// the log's headroom once it reaches its policy rows.
     pub fn authority_log_checks(&self) -> crate::error::Result<Vec<AuthorityLogCheck>> {
         let txn = self.store.env.read_txn()?;
         let view = door_view(&self.store, &txn)?;
@@ -722,6 +466,14 @@ impl crate::Vault {
                 threshold: bound as u64,
             })
             .collect();
+        if view.strangers >= bound {
+            checks.push(AuthorityLogCheck {
+                kind: AuthorityLogCheck::UNPINNED_ROOTS,
+                signer: None,
+                count: view.strangers as u64,
+                threshold: bound as u64,
+            });
+        }
         let (rows_at, handoffs_at) = headroom(&self.store, &txn)?;
         for (count, at) in [(view.counted, rows_at), (view.issuer_handoffs, handoffs_at)] {
             if count >= at {

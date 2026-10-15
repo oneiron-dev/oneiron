@@ -3,8 +3,9 @@
 //!
 //! The fold keeps only each valid root's anchor and id. A root's full record
 //! is read from its stored entry, in one snapshot with the fold that judged it
-//! valid. Roots are never capped: a host can always add bulk, so the view
-//! pages and counts, and no root ever drops out of admission.
+//! valid. The fold never caps roots: a host can always add bulk, up to the
+//! bound the store gate gives every anchor this install does not pin (r23),
+//! so the view pages and counts, and no root ever drops out of admission.
 
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
@@ -27,6 +28,20 @@ pub struct OwnerRootView {
     pub foreign_total: u64,
     /// Foreign roots that admit no machine.
     pub inert_foreign: u64,
+    /// The owner item a pin door left: the root it awaits, once it can
+    /// finish.
+    pub awaiting: Option<AwaitedRoot>,
+}
+
+/// A root `pin_owner_root` awaits (Astra #1422e F1; the Engine, r23): one
+/// the owner pinned by its fingerprint before this install stored it, or
+/// the pin, while this machine is not mine under it yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AwaitedRoot {
+    pub root: RecoveryRootId,
+    /// The root's row is stored now, and under the pin this machine is mine:
+    /// pinning it again finishes.
+    pub arrived: bool,
 }
 
 impl Vault {
@@ -60,11 +75,24 @@ impl Vault {
                 }
             }
         }
+        let awaiting = match super::pinned_root::read_pin_row_in_txn(&self.store, &txn)?.awaiting {
+            Some(root) if pinned == Some(root) => {
+                let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
+                let arrived = me.is_some_and(|me| fold.trusted_machine(me).is_some());
+                Some(AwaitedRoot { root, arrived })
+            }
+            Some(root) => Some(AwaitedRoot {
+                root,
+                arrived: fold.root_anchors().values().any(|ids| ids.contains(&root)),
+            }),
+            None => None,
+        };
         let mut view = OwnerRootView {
             pinned,
             foreign: BTreeMap::new(),
             foreign_total: 0,
             inert_foreign: 0,
+            awaiting,
         };
         let roots = fold
             .root_anchors()

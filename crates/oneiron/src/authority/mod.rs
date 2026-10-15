@@ -52,6 +52,7 @@ mod import_order;
 mod ingest_observation;
 mod install_fold;
 mod log_budget;
+mod log_structure;
 mod machine_claims;
 mod machine_enroll;
 mod machine_identity;
@@ -147,7 +148,7 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
-pub use owner_roots::OwnerRootView;
+pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use slip::*;
 pub use slip_pairing::{
@@ -173,7 +174,10 @@ pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
-pub(crate) use pinned_root::{read_pin_and_earlier_in_txn, write_pinned_root_in_txn};
+pub(crate) use pinned_root::{
+    read_pin_and_earlier_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
+    write_pinned_root_in_txn,
+};
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;

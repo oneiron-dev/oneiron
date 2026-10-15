@@ -92,6 +92,11 @@ pub struct RepinReport {
     pub rewrapped: Vec<WorldKeyId>,
     pub withheld: Vec<(WorldKeyId, Withheld)>,
     pub narrowed: Vec<NarrowedWorld>,
+    /// The root `pin_owner_root` left a second step for: it is not stored
+    /// here yet, so the pin stayed, or this machine is not mine under it yet,
+    /// its marks still held. `owner_root_view` reports when it has arrived;
+    /// pinning again then finishes (Astra #1422e F1, r23).
+    pub awaiting: Option<RecoveryRootId>,
 }
 
 /// The door the sequence runs for.
