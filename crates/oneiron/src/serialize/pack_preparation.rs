@@ -297,7 +297,8 @@ fn prepare_entities(
                     if !should_include_projected_field(entity.entity_type, &key, value) {
                         continue;
                     }
-                    let safe_value = super::credential_nulling::null_credentials(&key, value);
+                    let safe_value =
+                        super::credential_nulling::null_context_credentials(&key, value);
                     let value = normalize_value(
                         &key,
                         &safe_value,
@@ -338,9 +339,11 @@ fn prepare_entities(
                 value_depth_limit,
             );
             // Read whole once its fields are final: fields that read as a
-            // secret together leave none of them, keys included.
+            // secret together leave none of them, keys included. They were
+            // read in their stored encoding where they were hydrated, so this
+            // read takes their text.
             if kept
-                && crate::batch::secret_scan::release_reads_whole_json(&Value::Object(
+                && crate::batch::secret_scan::release_reads_json_text(&Value::Object(
                     prepared.fields.iter().cloned().collect(),
                 ))
             {
