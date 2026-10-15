@@ -515,7 +515,7 @@ fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
     vault.reauthor_legacy_policy_manifest(&owner, legacy, trusted, 2)?;
     let body = source_trust_claim(ClaimSource::ToolOutput);
     crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     vault.quarantine_manifest_contribution(&owner, trusted)?;

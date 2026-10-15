@@ -2074,7 +2074,7 @@ fn a_restore_never_switches_back_on_an_agent_switched_off_since() -> Result<()> 
         TimeRange { start: 10, end: 10 },
         11,
     )?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let restore = |destination: &std::path::Path| {

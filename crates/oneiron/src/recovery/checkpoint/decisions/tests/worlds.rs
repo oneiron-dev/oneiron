@@ -127,7 +127,7 @@ struct Restored {
 
 /// Backs `vault` up, makes `since` on it, and restores the backup beside it.
 fn restore_after(vault: &Vault, since: impl FnOnce(&Vault) -> Result<()>) -> Result<Restored> {
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     since(vault)?;

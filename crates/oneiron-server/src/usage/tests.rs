@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::Arc;
 fn ledger() -> (tempfile::TempDir, UsageLedger) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = oneiron::test_support::restore_tempdir();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     (dir, UsageLedger::new(vault))
 }

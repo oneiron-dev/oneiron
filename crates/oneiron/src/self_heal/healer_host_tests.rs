@@ -218,7 +218,7 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
             .unwrap();
         assert_eq!(receipt.actor, actor.entity_ref().to_hex());
     }
-    let backup_dir = tempfile::tempdir().unwrap();
+    let backup_dir = crate::test_support::restore_tempdir();
     let checkpoint = backup_dir.path().join("checkpoint");
     v.snapshot_checkpoint(&checkpoint, 100).unwrap();
     let (restored, _) = Vault::restore_checkpoint(

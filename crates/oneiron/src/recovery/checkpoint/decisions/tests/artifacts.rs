@@ -228,7 +228,7 @@ fn a_restore_does_not_lift_a_taint_attached_since_the_backup() -> Result<()> {
     let (output, deleted) = (entity(0xC3), entity(0xC4));
     let built = cached_build(&vault, uploader, output, "out/a")?;
     cached_build(&vault, uploader, deleted, "out/b")?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let restore = |name: &str| {
@@ -306,7 +306,7 @@ fn a_restore_does_not_publish_a_held_site_through_another_owner() -> Result<()> 
     reclass(&vault, tainted, CodeArtifactClass::Codebase, 11)?;
     let selected = vault.resolve_artifact_snapshot_by_fork(SITE, &fork)?;
     assert_eq!(selected.map(|found| found.code_artifact_id), Some(clean));
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
 

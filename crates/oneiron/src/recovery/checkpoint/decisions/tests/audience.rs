@@ -103,7 +103,7 @@ fn a_restore_over_records_deleted_since_the_backup_goes_ahead() -> Result<()> {
     for id in [kept, shell, purged] {
         put_scoped_fact(&vault, id, sora, relationship)?;
     }
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     assert!(vault.delete_entity(&shell)?);

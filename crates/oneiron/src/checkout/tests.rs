@@ -1050,7 +1050,7 @@ fn raise_authority_instant(vault: &Vault, secs: u64) -> u64 {
 fn a_restore_never_revives_a_checkout_ticket_shortened_since() {
     let (_d, v) = vault();
     let live = Arc::new(v);
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     let start = {
         let txn = live.store.env.read_txn().unwrap();

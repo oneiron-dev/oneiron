@@ -251,6 +251,33 @@ pub(crate) struct Rehearsal {
     /// Doctor fields that did not decode in the restored copy; empty when sound.
     pub(crate) unreadable_fields: Vec<String>,
     pub(crate) verified: bool,
+    /// Set when another user could change a directory on the live vault's
+    /// path, read off the disk for this rehearsal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shared_path: Option<SharedPathWarning>,
+}
+
+/// A directory on the live vault's path that another user could change,
+/// found when a rehearsal or an activation read the vault off the disk. It
+/// still ran: the vault opens and writes there as it is.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SharedPathWarning {
+    pub(crate) directory: PathBuf,
+    /// What another user could do there, and the `chmod` that stops it.
+    pub(crate) fix: String,
+}
+
+#[cfg(unix)]
+fn shared_path_warning(source: &SideRestoreSource) -> Option<SharedPathWarning> {
+    source.shared_path().map(|shared| SharedPathWarning {
+        directory: shared.directory.clone(),
+        fix: shared.to_string(),
+    })
+}
+
+#[cfg(not(unix))]
+fn shared_path_warning(_: &SideRestoreSource) -> Option<SharedPathWarning> {
+    None
 }
 
 /// Restores `backup` into a scratch directory, opens it, checks it and
@@ -264,14 +291,33 @@ pub(crate) fn rehearse(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    let scratch = Owned::create(match keep_at {
+    rehearse_in(&std::env::temp_dir(), backup, config, keep_at, source)
+}
+
+/// [`rehearse`], with a scratch directory it does not keep made under `temp`.
+pub(crate) fn rehearse_in(
+    temp: &Path,
+    backup: &Path,
+    config: oneiron::VaultConfig,
+    keep_at: Option<&Path>,
+    source: &SideRestoreSource,
+) -> anyhow::Result<Rehearsal> {
+    let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
-        None => std::env::temp_dir().join(format!(
+        None => temp.join(format!(
             "oneiron-rehearse-{}-{}",
             file_stamp(now_unix_ms()),
             oneiron::EntityId::now().to_hex()
         )),
-    })?;
+    };
+    // Checked before the scratch directory is made in it.
+    #[cfg(unix)]
+    oneiron::store::refuse_shared_path(
+        std::path::absolute(&scratch)?
+            .parent()
+            .unwrap_or(Path::new("/")),
+    )?;
+    let scratch = Owned::create(scratch)?;
     let outcome = rehearse_into(backup, config, &scratch.vault(), source);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
@@ -279,6 +325,7 @@ pub(crate) fn rehearse(
     }
     let mut rehearsal = outcome?;
     rehearsal.kept = keep_at.is_some();
+    rehearsal.shared_path = shared_path_warning(source);
     Ok(rehearsal)
 }
 
@@ -311,6 +358,7 @@ fn rehearse_into(
         pending_embeddings: report.pending_embeddings,
         verified: unreadable_fields.is_empty(),
         unreadable_fields,
+        shared_path: None,
     })
 }
 
@@ -319,6 +367,10 @@ fn rehearse_into(
 /// beside it stay inside, and removing it removes only what this call made.
 struct Owned {
     dir: PathBuf,
+    /// The directory itself, held open from its creation: removal goes
+    /// through it, so a directory moved in under its name is never removed.
+    #[cfg(unix)]
+    held: std::fs::File,
 }
 
 impl Owned {
@@ -332,16 +384,69 @@ impl Owned {
         builder
             .create(&dir)
             .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
-        Ok(Self { dir })
+        Self::hold(dir)
+    }
+
+    /// Opens the directory `create` just made. The open goes through its name
+    /// again, so a directory moved in under that name meanwhile is held only
+    /// if it could be the one made here: empty, this process's and owner-only.
+    /// That is a fitness test, not proof this call made it, but removal then
+    /// reaches nothing this call did not put there. Any other directory, or
+    /// one that does not open, is refused and left as it is.
+    fn hold(dir: PathBuf) -> anyhow::Result<Self> {
+        #[cfg(unix)]
+        let held = {
+            use rustix::fs::{Mode, OFlags};
+            let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            let held = rustix::fs::open(&dir, flags, Mode::empty())
+                .map(std::fs::File::from)
+                .map_err(|error| {
+                    anyhow::anyhow!("open {}: {error}; it is left as it is", dir.display())
+                })?;
+            anyhow::ensure!(
+                fresh_private_directory(&held)?,
+                "{} is not the directory this call made; it is left as it is",
+                dir.display()
+            );
+            held
+        };
+        Ok(Self {
+            dir,
+            #[cfg(unix)]
+            held,
+        })
     }
 
     fn vault(&self) -> PathBuf {
         self.dir.join("vault")
     }
 
+    /// Removes the directory with everything in it, only while its name still
+    /// holds it; otherwise both are left where they are.
     fn remove(self) {
+        #[cfg(unix)]
+        let _ = oneiron::store::remove_held_directory(&self.dir, &self.held);
+        #[cfg(not(unix))]
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// Whether `held` could be a directory this process just made: its own,
+/// owner-only and empty.
+#[cfg(unix)]
+fn fresh_private_directory(held: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = held.metadata()?;
+    if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0 {
+        return Ok(false);
+    }
+    for entry in rustix::fs::Dir::read_from(held)? {
+        let entry = entry?;
+        if entry.file_name() != c"." && entry.file_name() != c".." {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Live entity counts by registered kind, zero kinds omitted.
@@ -410,6 +515,10 @@ fn restore_over_syncing(
         "vault {} does not exist; nothing to restore over",
         configured.display()
     );
+    // Before anything is made or opened: no other user may move an entry on
+    // the way to the vault, or in it, or the names below could change.
+    #[cfg(unix)]
+    oneiron::store::refuse_shared_vault_root(&configured)?;
     // The directory itself, not a symlink to it: the exchange below must move
     // the very directory the vault opens from, which the archive marks name.
     let vault_path = &configured.canonicalize()?;
@@ -493,7 +602,8 @@ fn restore_over_syncing(
         }
         staging.remove();
         anyhow::bail!(
-            "cannot swap the restored copy into {} ({error}); nothing was changed",
+            "cannot swap the restored copy into {} ({error}); nothing was moved, and the vault \
+             there stays live only at that path",
             vault_path.display()
         );
     }
@@ -541,6 +651,9 @@ pub(crate) struct Activated {
     pub(crate) vault: PathBuf,
     /// The vault that replaced it, whose custody it forked.
     pub(crate) replaced_by: PathBuf,
+    /// Set when another user could change a directory on that vault's path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shared_path: Option<SharedPathWarning>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -560,6 +673,7 @@ pub(crate) fn activate(
     Ok(Activated {
         vault: previous.to_path_buf(),
         replaced_by: vault_path.to_path_buf(),
+        shared_path: shared_path_warning(&source),
     })
 }
 

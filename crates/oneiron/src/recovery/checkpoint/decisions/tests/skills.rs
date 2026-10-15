@@ -321,7 +321,7 @@ fn a_restore_never_reselects_a_script_pack_replaced_since() -> Result<()> {
     let (_dir, vault, publisher, hub) = pack_vault()?;
     let script = fetch(&vault, hub, &publisher, script_source()?)?;
     let data = fetch(&vault, hub, &publisher, data_source()?)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let restore = |image: &std::path::Path, destination: &std::path::Path| {
         Vault::restore_checkpoint_keeping_authority(
             image,

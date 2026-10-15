@@ -212,7 +212,7 @@ fn a_replica_marks_the_vectors_it_computes_and_a_replay_keeps_them() {
 /// with the vectors.
 #[test]
 fn a_restore_marks_only_the_vectors_it_embeds_again() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_support::restore_tempdir();
     let config = crate::test_util::embedding_test_config();
     let source = Arc::new(Vault::open(dir.path().join("source"), config.clone()).unwrap());
     let id = entity_id(0xD1);
@@ -259,7 +259,7 @@ fn a_restore_marks_only_the_vectors_it_embeds_again() {
 /// the restored vault never got its vectors back).
 #[test]
 fn a_restore_under_no_model_is_embedded_once_a_worker_attaches() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_support::restore_tempdir();
     let config = crate::test_util::embedding_test_config();
     let source = Arc::new(Vault::open(dir.path().join("source"), config.clone()).unwrap());
     let id = entity_id(0xD2);

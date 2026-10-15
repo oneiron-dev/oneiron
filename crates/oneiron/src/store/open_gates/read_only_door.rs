@@ -99,7 +99,7 @@ fn read_existing_rows(
     Ok(VaultMetaRows { root, rows: rows? })
 }
 
-fn not_an_existing_root(root: &Path, after_environment_open: bool) -> Error {
+pub(in crate::store) fn not_an_existing_root(root: &Path, after_environment_open: bool) -> Error {
     vault_root_preflight_error(
         root,
         VaultRootProblem::NotAnExistingVaultRoot {

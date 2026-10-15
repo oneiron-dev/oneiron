@@ -1088,7 +1088,7 @@ fn a_restore_never_drops_a_cancellation_made_since() {
         .expect("task")
         .task_ref
         .expect("task ref");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
     let restore = |destination: &std::path::Path| {
@@ -1135,7 +1135,7 @@ fn a_restore_never_reverses_a_task_reassignment_made_since() {
         .expect("task")
         .task_ref
         .expect("task ref");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
 
@@ -1186,7 +1186,7 @@ fn a_restore_never_rebinds_a_task_whose_body_was_replaced_since() {
         .expect("task")
         .task_ref
         .expect("task ref");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
 

@@ -562,7 +562,7 @@ fn a_strangers_merge_is_no_lifecycle_receipt_or_census_shell() {
 /// image does not block it.
 #[test]
 fn a_restore_keeping_authority_keeps_own_merges_in_force() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
@@ -587,7 +587,7 @@ fn a_restore_keeping_authority_keeps_own_merges_in_force() {
 /// never trusts them.
 #[test]
 fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
@@ -644,7 +644,7 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
         deliver_merge(&host.vault, &laptop, loser, survivor);
         assert_eq!(shell_edge(&host.vault, loser, survivor), then == yours);
         record_standing(&host);
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let image = root.path().join("image");
         host.vault.snapshot_checkpoint(&image, 100).unwrap();
         host.vault

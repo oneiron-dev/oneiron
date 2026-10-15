@@ -1294,7 +1294,7 @@ fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
     let candidate = human_skill("1.0.0");
     vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
     let active = activate(&vault, &id, &candidate)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let mut quarantined = active;
@@ -1334,7 +1334,7 @@ fn a_restore_never_returns_a_withdrawn_approval_or_a_lifted_governance_tier() ->
     let mut active = activate(&vault, &id, &candidate)?;
     active.approval_status = ClaimApprovalStatus::Approved;
     vault.update_skill_record(&id, &active, TimeRange { start: 21, end: 21 }, 22)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
         let error = Vault::restore_checkpoint_keeping_authority(

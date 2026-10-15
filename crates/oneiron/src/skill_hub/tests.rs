@@ -2067,7 +2067,7 @@ fn a_restore_goes_ahead_past_a_clean_rescan_and_refuses_a_risk_found_since() -> 
         t(5),
         6,
     )?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let restore = |destination: &std::path::Path| {

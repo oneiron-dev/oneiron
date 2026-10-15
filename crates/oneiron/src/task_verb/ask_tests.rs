@@ -3089,7 +3089,7 @@ fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
         .tasks_create(&TaskCreateSpec::new(spec(&class)?, None, None, Some(1_000)))?
         .task_ref
         .expect("task ref");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     fixture.vault.snapshot_checkpoint(&image, 100)?;
 

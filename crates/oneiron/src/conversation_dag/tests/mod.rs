@@ -862,6 +862,7 @@ fn a_restore_rebuilds_thread_meta_from_the_threads_not_the_copied_cache() {
         SideTable::new(&side_table::CONVERSATION_DAG_THREAD_META);
 
     let (dir, vault, conversation, actor) = fixture();
+    let copies = crate::test_support::restore_tempdir();
     let root = vault
         .append_dag_record(&input(conversation, None, true, actor))
         .unwrap()
@@ -888,7 +889,7 @@ fn a_restore_rebuilds_thread_meta_from_the_threads_not_the_copied_cache() {
 
     let image = dir.path().join("thread-meta.checkpoint");
     vault.snapshot_checkpoint(&image, 100).unwrap();
-    let destination = dir.path().join("restored");
+    let destination = copies.path().join("restored");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
         &destination,

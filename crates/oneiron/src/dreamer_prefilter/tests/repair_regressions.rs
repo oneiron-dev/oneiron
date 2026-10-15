@@ -265,6 +265,7 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     use crate::recovery::checkpoint::RestoreReason;
 
     let (dir, vault) = open_vault();
+    let copies = crate::test_support::restore_tempdir();
     let conversation = seed_conversation(&vault, 0x56);
     for second in 10..12 {
         seed_turn(&vault, &conversation, "user", "ok", second);
@@ -282,7 +283,7 @@ fn checkpoint_preserves_prefilter_receipts_and_rescan_membership() {
     vault.snapshot_checkpoint(&image, 110).expect("checkpoint");
     let (restored, _) = Vault::restore_checkpoint(
         &image,
-        &dir.path().join("restored"),
+        &copies.path().join("restored"),
         VaultConfig::device(),
         RestoreReason::Restore,
         120,

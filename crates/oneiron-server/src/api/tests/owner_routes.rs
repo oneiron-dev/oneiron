@@ -336,8 +336,8 @@ fn owner_host_server() -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>
 fn owner_host_server_with(
     embedder: Option<crate::embedder::EmbedderSlot>,
 ) -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
-    let dir = tempfile::tempdir().unwrap();
-    let backups = tempfile::tempdir().unwrap();
+    let dir = oneiron::test_support::restore_tempdir();
+    let backups = oneiron::test_support::restore_tempdir();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let host = OwnerHost {
         vault_path: dir.path().to_path_buf(),
@@ -345,6 +345,8 @@ fn owner_host_server_with(
         backups: crate::owner::backup::BackupPlan::new(dir.path(), backups.path().to_path_buf(), 2),
         every: None,
         backup_lock: std::sync::Mutex::new(()),
+        // Rehearsals go under the temp directory `restore_tempdir` chose.
+        rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
     };
     let config = SyncServerConfig {
         auth_secret: Some("secret".to_owned()),

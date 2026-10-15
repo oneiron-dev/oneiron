@@ -7878,6 +7878,7 @@ dependencies = [
  "rmpv",
  "rrule",
  "rten",
+ "rustix",
  "schemars 0.8.22",
  "serde",
  "serde_json",
