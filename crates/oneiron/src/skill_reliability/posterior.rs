@@ -6,6 +6,7 @@ use crate::error::Result;
 use crate::posterior::{Posterior, beta_mean, beta_std_dev};
 
 use super::codec::{invalid, map_f32};
+use super::ledger::AttributedOutcome;
 
 /// Exploration weight of the selection bonus.
 ///
@@ -67,6 +68,16 @@ impl SkillReliabilityPosterior {
     pub fn apply(&mut self, win: bool) {
         self.update(win)
             .expect("a skill outcome update is infallible");
+    }
+
+    /// Folds one attributed outcome in with its weight, as the projection
+    /// does: a win adds one to α, a loss its weight to β.
+    pub(crate) fn apply_attributed(&mut self, outcome: AttributedOutcome) {
+        if outcome.win {
+            self.apply(true);
+        } else {
+            self.beta += outcome.loss;
+        }
     }
 
     /// Total pseudo-observations: prior weight plus attributed outcomes.

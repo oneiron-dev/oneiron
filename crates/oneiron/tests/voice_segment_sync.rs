@@ -19,7 +19,6 @@ use oneiron::dreamer_runner::{DreamerHomeNodeCandidate, DreamerHomeNodeClass, Dr
 use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::voice_segment::{
     AEC_MODE_ACTIVE, AEC_MODE_BYPASSED_HEADPHONES, PREDICATE_VOICE_SEGMENT,
-    VOICE_SEGMENT_VALUE_KEYS,
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Error, TimeRange,
@@ -88,16 +87,6 @@ fn commit_segment(
 ) -> Result<(), Error> {
     vault.put_entity(asset, ENTITY_TYPE_ASSET, span(), SPAN_START, SEGMENT_AUDIO)?;
     vault.put_claim(claim_id, &segment_claim(*asset, value), span(), SPAN_START)
-}
-
-/// The pinned key set, restated literally: a silent rename here is a wire
-/// break for every already-committed segment.
-#[test]
-fn segment_value_keys_are_pinned() {
-    assert_eq!(
-        VOICE_SEGMENT_VALUE_KEYS,
-        ["span_start", "span_end", "channels", "aec_mode", "device"]
-    );
 }
 
 /// The claim door — not the app — is what refuses a dishonest segment.

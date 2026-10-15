@@ -1,12 +1,13 @@
 //! The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries.
 
 use super::admit::{AdmitSignal, ChannelAccumulator};
+use super::turn_fold;
 use crate::bm25::Bm25Config;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::channels::{
-    scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
+    fusion_fetch_limit, scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
 };
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
@@ -15,6 +16,7 @@ use crate::pipeline::filters::{
 };
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
+    ScoredEntity, TurnFold,
 };
 use crate::query_expansion::{HydeExpansion, retry_channel_limit};
 use crate::retrieval_quality::RetrievalDiagnostics;
@@ -58,10 +60,15 @@ impl PipelineBuilder<'_> {
             let text_query = hyde_expansion.as_ref().map_or(query.as_str(), |expansion| {
                 expansion.grounded_query.as_str()
             });
+            // A posting a device-local world keeps is no posting of this
+            // run: it neither fails the gate nor matches the scope.
             let exact_posting_fails_claim_gate = {
                 let mut exact_posting_fails_claim_gate = |id: &EntityId| {
+                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)? {
+                        return Ok(false);
+                    }
                     claim_status_gate_allows(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         id,
                         metadata_cache,
@@ -70,7 +77,7 @@ impl PipelineBuilder<'_> {
                     .map(|allowed| !allowed)
                 };
                 crate::bm25::final_token_exact_posting_matches(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &self.vault.analyzer,
                     bm25_config,
@@ -82,8 +89,14 @@ impl PipelineBuilder<'_> {
                 true
             } else {
                 let mut classify_prefix_posting = |id: &EntityId| {
+                    if claim_gate_widening_probe.keeps_device_local(&self.read, rtxn, id)? {
+                        return Ok(crate::bm25::PrefixExpansionPostingDecision {
+                            matches_scope: false,
+                            rejected_by_gate: false,
+                        });
+                    }
                     let rejected_by_gate = !claim_status_gate_allows(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         id,
                         metadata_cache,
@@ -91,7 +104,7 @@ impl PipelineBuilder<'_> {
                     )?;
                     let matches_scope = !rejected_by_gate
                         && pipeline_candidate_matches_filters_and_gate(
-                            &self.vault.store,
+                            &self.read,
                             rtxn,
                             id,
                             filter_config,
@@ -104,7 +117,7 @@ impl PipelineBuilder<'_> {
                     })
                 };
                 crate::bm25::final_token_prefix_expansion_has_scoped_and_rejected_postings(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &self.vault.analyzer,
                     bm25_config,
@@ -118,114 +131,47 @@ impl PipelineBuilder<'_> {
         Ok(claim_gate_text_widening_active)
     }
 
-    /// Runs the text channel and its HyDE-retry extra queries, admitting
-    /// each into `acc`. Returns the index the primary text list took in the
-    /// ranked lists, `None` when no text search is configured.
+    /// Runs the text channel, the next of `stages_left` deadline stages, and
+    /// its HyDE-retry extra queries, admitting each into `acc`. Returns the
+    /// index the primary text list took in the ranked lists, `None` when no
+    /// text search is configured or the deadline cut it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the stage count rides beside the channel's existing inputs"
+    )]
     pub(super) fn run_text_channel(
         &self,
         rtxn: &RoTxn<'_>,
-        inputs: TextChannelInputs<'_>,
+        stages_left: usize,
+        mut inputs: TextChannelInputs<'_>,
         acc: &mut ChannelAccumulator,
         diagnostics: &mut RetrievalDiagnostics,
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<Option<usize>> {
         let mut text_channel_index = None;
-        if let Some((query, limit)) = &self.text_search
-            && !self.deadline_reached()
+        let prefix_probe_claim_gate = std::mem::take(&mut inputs.claim_gate_widening_probe);
+        let text_search = self
+            .text_search
+            .as_ref()
+            .map(|(query, limit)| (query.as_str(), fusion_fetch_limit(*limit)));
+        if let Some((query, limit)) = &text_search
+            && let Some(text_results) =
+                self.run_stage(RetrievalSignal::Text, stages_left, || {
+                    self.text_stage(
+                        rtxn,
+                        (query, *limit),
+                        &inputs,
+                        prefix_probe_claim_gate,
+                        (metadata_cache, claim_gate),
+                    )
+                })?
         {
-            let scoped_text_limit = scoped_text_channel_limit(
-                &self.vault.store,
-                rtxn,
-                if inputs.overrides.widen_channel_limits {
-                    retry_channel_limit(*limit)
-                } else {
-                    *limit
-                },
-                inputs.text_scope_widening_active,
-            )?;
-            let text_channel_limit = if inputs.recency.is_some() {
-                scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
-            } else {
-                scoped_text_limit
-            };
-            let mut prefix_probe_claim_gate = inputs.claim_gate_widening_probe;
-            let mut exact_posting_matches_scope = |id: &EntityId| {
-                pipeline_candidate_matches_filters_and_gate(
-                    &self.vault.store,
-                    rtxn,
-                    id,
-                    inputs.filter_config,
-                    metadata_cache,
-                    &mut prefix_probe_claim_gate,
-                )
-            };
-            let text_query = inputs
-                .hyde_expansion
-                .as_ref()
-                .map_or(query.as_str(), |expansion| {
-                    expansion.grounded_query.as_str()
-                });
-            let candidate_limit = if self.candidate_filter.is_some() {
-                *limit
-            } else {
-                text_channel_limit
-            };
-            let mut text_results = if self.memory_category {
-                self.search_text_candidates(
-                    rtxn,
-                    inputs.bm25_config,
-                    text_query,
-                    candidate_limit,
-                    crate::bm25::Bm25SearchOptions {
-                        recency: None,
-                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                        private_note_ids: inputs.private_note_ids,
-                    },
-                )?
-            } else {
-                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
-                    self.vault,
-                    rtxn,
-                    crate::ports::TextQuery {
-                        query: text_query,
-                        limit: candidate_limit,
-                        rank: inputs.bm25_config,
-                        filter_all: self.candidate_filter.is_some(),
-                        matches_scope: &mut exact_posting_matches_scope,
-                        private_note_ids: inputs.private_note_ids,
-                    },
-                )?
-            };
             diagnostics.succeeded.push(RetrievalSignal::Text);
-            if self.candidate_filter.is_none()
-                && text_channel_limit > *limit
-                && inputs.text_scope_widening_active
-            {
-                let scoped_result_limit = if inputs.recency.is_some() {
-                    limit.saturating_mul(PER_SCAN_CAP_FACTOR)
-                } else {
-                    *limit
-                };
-                truncate_widened_channel_results_to_scope(
-                    &mut text_results,
-                    &self.vault.store,
-                    rtxn,
-                    scoped_result_limit,
-                    inputs.filter_config,
-                    metadata_cache,
-                    &mut prefix_probe_claim_gate,
-                )?;
-            }
-            import_claim_gate_decisions_for_scores(
-                claim_gate,
-                &mut prefix_probe_claim_gate,
-                &text_results,
-            );
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,
                 text_results,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 inputs.filter_config,
                 metadata_cache,
@@ -235,7 +181,7 @@ impl PipelineBuilder<'_> {
                     break;
                 }
                 let retry_scoped_text_limit = scoped_text_channel_limit(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     retry_channel_limit(*limit),
                     inputs.text_scope_widening_active,
@@ -245,14 +191,11 @@ impl PipelineBuilder<'_> {
                 } else {
                     retry_scoped_text_limit
                 };
-                let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache {
-                    include_stale: inputs.authority_filter.include_stale,
-                    private_note_ids: claim_gate.private_note_ids.clone(),
-                    ..ClaimStatusGateCache::default()
-                };
+                let mut retry_prefix_probe_claim_gate =
+                    claim_gate.fresh(inputs.authority_filter.include_stale);
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         id,
                         inputs.filter_config,
@@ -278,8 +221,8 @@ impl PipelineBuilder<'_> {
                         },
                     )?
                 } else {
-                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
-                        self.vault,
+                    self.vault.text_scoped_in_txn(
+                        &self.read,
                         rtxn,
                         crate::ports::TextQuery {
                             query,
@@ -297,9 +240,8 @@ impl PipelineBuilder<'_> {
                     } else {
                         *limit
                     };
-                    truncate_widened_channel_results_to_scope(
+                    self.truncate_widened_text_results(
                         &mut results,
-                        &self.vault.store,
                         rtxn,
                         scoped_result_limit,
                         inputs.filter_config,
@@ -318,7 +260,7 @@ impl PipelineBuilder<'_> {
                         trace: RetrievalSignal::HydeRetry,
                     },
                     results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     inputs.filter_config,
                     metadata_cache,
@@ -327,6 +269,184 @@ impl PipelineBuilder<'_> {
         }
         Ok(text_channel_index)
     }
+    /// The text stage itself: the scoped BM25 read, read on while folded
+    /// turns are short, then cut to the run's own scope. Every candidate its
+    /// scope gate reads is a deadline checkpoint.
+    fn text_stage(
+        &self,
+        rtxn: &RoTxn<'_>,
+        (query, limit): (&str, usize),
+        inputs: &TextChannelInputs<'_>,
+        mut prefix_probe_claim_gate: ClaimStatusGateCache,
+        (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
+    ) -> Result<Vec<ScoredEntity>> {
+        let scoped_text_limit = scoped_text_channel_limit(
+            &self.read,
+            rtxn,
+            if inputs.overrides.widen_channel_limits {
+                retry_channel_limit(limit)
+            } else {
+                limit
+            },
+            inputs.text_scope_widening_active,
+        )?;
+        let text_channel_limit = if inputs.recency.is_some() {
+            scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+        } else {
+            scoped_text_limit
+        };
+        // The bound below admits turns as the fold does, in caches of its
+        // own: the scan closure holds the run's.
+        let mut fold_claim_gate =
+            prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
+        let mut exact_posting_matches_scope = |id: &EntityId| {
+            pipeline_candidate_matches_filters_and_gate(
+                &self.read,
+                rtxn,
+                id,
+                inputs.filter_config,
+                metadata_cache,
+                &mut prefix_probe_claim_gate,
+            )
+        };
+        let text_query = inputs
+            .hyde_expansion
+            .as_ref()
+            .map_or(query, |expansion| expansion.grounded_query.as_str());
+        let candidate_limit = if self.candidate_filter.is_some() {
+            limit
+        } else {
+            text_channel_limit
+        };
+        // A run that folds each MESSAGE into its TURN returns turns, so the
+        // bound counts turns: several messages of one turn would otherwise
+        // fill it and keep later conversations out. Such a run reads on,
+        // up to `PER_SCAN_CAP_FACTOR` times the bound, until its rows hold
+        // that many turns or the matches run out.
+        let fold_cap = candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR);
+        let mut fold_metadata = EntityMetadataCache::default();
+        let mut fetch_limit = candidate_limit;
+        let mut text_results = loop {
+            let mut rows = if self.memory_category {
+                self.search_text_candidates(
+                    rtxn,
+                    inputs.bm25_config,
+                    text_query,
+                    fetch_limit,
+                    crate::bm25::Bm25SearchOptions {
+                        recency: None,
+                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                        private_note_ids: inputs.private_note_ids,
+                    },
+                )?
+            } else {
+                self.vault.text_scoped_in_txn(
+                    &self.read,
+                    rtxn,
+                    crate::ports::TextQuery {
+                        query: text_query,
+                        limit: fetch_limit,
+                        rank: inputs.bm25_config,
+                        filter_all: self.candidate_filter.is_some(),
+                        matches_scope: &mut exact_posting_matches_scope,
+                        private_note_ids: inputs.private_note_ids,
+                    },
+                )?
+            };
+            let exhausted = rows.len() < fetch_limit;
+            if self.turn_fold == TurnFold::Off || (exhausted && fetch_limit == candidate_limit) {
+                break rows;
+            }
+            if let Some(held) = turn_fold::rows_holding_distinct_turns(
+                &rows,
+                candidate_limit,
+                self.turn_fold,
+                &self.read,
+                rtxn,
+                inputs.filter_config,
+                &mut fold_metadata,
+                &mut fold_claim_gate,
+            )? {
+                rows.truncate(held);
+                break rows;
+            }
+            if exhausted || fetch_limit >= fold_cap || self.deadline_reached() {
+                break rows;
+            }
+            fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
+        };
+        if self.candidate_filter.is_none()
+            && text_channel_limit > limit
+            && inputs.text_scope_widening_active
+        {
+            let scoped_result_limit = if inputs.recency.is_some() {
+                limit.saturating_mul(PER_SCAN_CAP_FACTOR)
+            } else {
+                limit
+            };
+            self.truncate_widened_text_results(
+                &mut text_results,
+                rtxn,
+                scoped_result_limit,
+                inputs.filter_config,
+                metadata_cache,
+                &mut prefix_probe_claim_gate,
+            )?;
+        }
+        import_claim_gate_decisions_for_scores(
+            claim_gate,
+            &mut prefix_probe_claim_gate,
+            &text_results,
+        );
+        Ok(text_results)
+    }
+    /// Keeps the rows of a widened text read that the run's own scope
+    /// admits, up to `requested` results. A run that folds each MESSAGE into
+    /// its TURN counts results as the fold leaves them, as the unwidened
+    /// bound does ([`turn_fold::rows_holding_distinct_turns`]): several
+    /// messages of one turn are one result, so they cannot crowd the next
+    /// turn out. Like the unwidened read, it looks no further than
+    /// `PER_SCAN_CAP_FACTOR` times the bound.
+    fn truncate_widened_text_results(
+        &self,
+        rows: &mut Vec<ScoredEntity>,
+        rtxn: &RoTxn<'_>,
+        requested: usize,
+        filter_config: PipelineFilterConfig<'_>,
+        metadata_cache: &mut EntityMetadataCache,
+        claim_gate: &mut ClaimStatusGateCache,
+    ) -> Result<()> {
+        let kept = if self.turn_fold == TurnFold::Off {
+            requested
+        } else {
+            requested.saturating_mul(PER_SCAN_CAP_FACTOR)
+        };
+        truncate_widened_channel_results_to_scope(
+            rows,
+            &self.read,
+            rtxn,
+            kept,
+            filter_config,
+            metadata_cache,
+            claim_gate,
+        )?;
+        if self.turn_fold != TurnFold::Off
+            && let Some(held) = turn_fold::rows_holding_distinct_turns(
+                rows,
+                requested,
+                self.turn_fold,
+                &self.read,
+                rtxn,
+                filter_config,
+                metadata_cache,
+                claim_gate,
+            )?
+        {
+            rows.truncate(held);
+        }
+        Ok(())
+    }
+
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
@@ -339,11 +459,7 @@ impl PipelineBuilder<'_> {
         F: FnMut(&EntityId) -> Result<bool>,
     {
         let in_category = |id: &EntityId| {
-            super::super::super::capabilities::CapabilityLane::Memory.admits(
-                &self.vault.store,
-                rtxn,
-                id,
-            )
+            super::super::super::capabilities::CapabilityLane::Memory.admits(&self.read, rtxn, id)
         };
         let mut matches_scope = |id: &EntityId| {
             if self.memory_category && !in_category(id)? {
@@ -358,7 +474,7 @@ impl PipelineBuilder<'_> {
         };
         if self.candidate_filter.is_some() {
             crate::bm25::search_text_filtered_with_recency(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &self.vault.analyzer,
                 config,
@@ -370,14 +486,11 @@ impl PipelineBuilder<'_> {
             // Category admission consumes no claim body. D19 decisions made by
             // prefix/widening probes remain reusable by fusion and projection.
             let mut category = |id: &EntityId| {
-                super::super::super::capabilities::CapabilityLane::Memory.admits(
-                    &self.vault.store,
-                    rtxn,
-                    id,
-                )
+                super::super::super::capabilities::CapabilityLane::Memory
+                    .admits(&self.read, rtxn, id)
             };
             crate::bm25::search_text_category_with_recency(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &self.vault.analyzer,
                 config,
@@ -390,7 +503,7 @@ impl PipelineBuilder<'_> {
             )
         } else {
             crate::bm25::search_text_scoped_with_recency(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &self.vault.analyzer,
                 config,

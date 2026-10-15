@@ -123,6 +123,13 @@ pub enum AuthorityOp {
         /// Inclusive revocation watermark.
         epoch: u64,
     },
+    /// One revision of a physical machine's standing: the owner's answer at
+    /// the pairing ceremony, signed by an owner roster key.
+    MachineProfile(MachineProfile),
+    /// One owner edit of a world's settings, signed by the install key of a
+    /// machine the owner marked "yours". A side-branch entry: no entry but a
+    /// later edit of the same world takes it as a parent.
+    WorldPrivacy(WorldPrivacyEdit),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -428,6 +435,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             authority_key.validate()
         }
+        AuthorityOp::MachineProfile(profile) => profile.validate(),
+        AuthorityOp::WorldPrivacy(edit) => edit.settings.validate(),
     }
 }
 

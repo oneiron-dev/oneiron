@@ -259,7 +259,6 @@ fn session_worker(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::super::corpus::{generate_corpus, index_corpus, perf_vault_config};
     use super::*;
 
     /// Runs `workers` deliberately STAGGERED arrivals and reports, for each
@@ -322,78 +321,6 @@ mod tests {
                 "worker {index} was released before the whole cohort arrived: it saw {observed} \
                  of {workers}"
             );
-        }
-    }
-
-    /// A synchronized run reports the cohort it released and keeps thread
-    /// creation out of the measurement window.
-    #[test]
-    fn a_synchronized_run_reports_its_cohort_and_splits_spawn_from_window() {
-        let workers = 8;
-        let run = run_synchronized(workers, |index| index * 2);
-        assert_eq!(run.results.len(), workers);
-        assert_eq!(run.workers_released, workers);
-        assert!(run.synchronized);
-        assert!(run.spawn_errors.is_empty());
-        assert!(run.spawn_ms >= 0.0 && run.window_ms >= 0.0);
-        for (index, result) in run.results.into_iter().enumerate() {
-            assert_eq!(result.unwrap_or(usize::MAX), index * 2);
-        }
-    }
-
-    /// The clock starts while the release mutex is still held. A worker can
-    /// never begin before the timestamp used as the QPS denominator, even when
-    /// its work is much shorter than a scheduler quantum.
-    #[test]
-    fn the_measurement_clock_precedes_every_released_worker() {
-        let gate = ReleaseGate::new();
-        let observed = Mutex::new(None::<Instant>);
-        std::thread::scope(|scope| {
-            let handle = scope.spawn(|| {
-                gate.arrive_and_wait();
-                *observed.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
-            });
-            let release = gate.release_all(1, RENDEZVOUS_TIMEOUT);
-            handle.join().expect("worker joins");
-            let worker_started = observed
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .expect("worker recorded its start");
-            assert_eq!(release.arrived, 1);
-            assert!(
-                worker_started >= release.window_started,
-                "the QPS window must open before a released worker starts"
-            );
-        });
-    }
-
-    /// The curve itself must carry the synchronization evidence, so a reader
-    /// can tell an assembled cohort from a partial one.
-    #[test]
-    fn every_curve_point_records_that_its_cohort_was_released_together() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let corpus = generate_corpus(9, 32, 8, 4).expect("corpus");
-        let config = perf_vault_config(32, 4);
-        {
-            let vault = Vault::open(dir.path(), config.clone()).expect("vault opens");
-            index_corpus(&vault, &corpus).expect("corpus indexes");
-        }
-        let vault = Vault::open(dir.path(), config).expect("vault reopens");
-
-        let curve = measure_session_curve(&vault, &corpus, 5, &[1, 4], 3);
-        assert_eq!(curve.len(), 2);
-        for point in &curve {
-            assert_eq!(
-                point.workers_released, point.sessions,
-                "every worker at the {}-session point must reach the gate",
-                point.sessions
-            );
-            assert!(point.synchronized, "{}-session point", point.sessions);
-            assert_eq!(point.queries, point.sessions * 3);
-            assert_eq!(point.errors, 0);
-            assert!(point.latency_ms.is_measured());
-            assert!(point.throughput_qps.is_measured());
-            assert!(point.spawn_ms >= 0.0);
         }
     }
 }

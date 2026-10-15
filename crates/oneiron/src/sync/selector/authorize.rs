@@ -23,10 +23,11 @@ use crate::sync::loro_support::{
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    apply_pending_window_updates, load_window_from_state, reverse_rematerialize,
+    apply_pending_window_updates, load_window_from_state, reverse_rematerialize_with,
 };
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
+use super::epoch_egress::unbacked_epochs;
 use super::scope::{
     band_filter, coreference_export_context, entity_selector_decision, facet_filter,
     facet_scope_by_source,
@@ -61,6 +62,26 @@ pub(super) fn authorize_sync_selector_at(
     authorize_selector_export(vault, grant_scope, selector, now_secs).map(|_| ())
 }
 
+/// The stored FederationGrant row `id` names, read with its liveness in one
+/// transaction. A deleted grant is no grant, even while an unapplied delete
+/// leaves its body stored. The transaction closes before the caller folds
+/// authority on its own.
+fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .get_raw_in(&txn, id)?
+        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
+    if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
+        return Err(selector_err(SelectorError::GrantWrongType));
+    }
+    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, id)?.is_live() {
+        return Err(selector_err(SelectorError::GrantNotFound));
+    }
+    Ok(raw)
+}
+
 /// [`authorize_sync_selector`], plus the resolved position the export path
 /// must then filter under.
 pub(super) fn authorize_selector_export(
@@ -69,14 +90,7 @@ pub(super) fn authorize_selector_export(
     selector: &SyncSelector,
     now_secs: u64,
 ) -> Result<Position> {
-    let raw = vault
-        .get_raw(&selector.grant_id)?
-        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
-    if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(selector_err(SelectorError::GrantWrongType));
-    }
+    let raw = live_federation_grant(vault, &selector.grant_id)?;
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
@@ -179,11 +193,7 @@ pub(super) fn effective_scope_for_grant(
         .map(Ceiling::new)
 }
 
-pub(super) fn strip_guest_share_metadata(
-    vault: &Vault,
-    source: &LoroDoc,
-    key: &WindowKey,
-) -> Result<LoroDoc> {
+pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
     let out = create_window_doc("guest-share", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -233,7 +243,8 @@ pub(super) fn strip_guest_share_metadata(
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    crate::sync::note::copy_selected(vault, source, &out)?;
+    // Its NOTEs already passed the selection that made `source`.
+    crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
 }
@@ -256,6 +267,7 @@ fn authorized_base_edge_endpoints(
     kept: &BTreeSet<EntityId>,
     selector: &SyncSelector,
     position: &Position,
+    withhold_device_only: bool,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -293,8 +305,15 @@ fn authorized_base_edge_endpoints(
                 }
                 Err(error) => return Err(error),
             };
-            reverse_rematerialize(vault, &base, &base_key)?;
-            let selected = filter_window_doc(vault, &base, &base_key, selector, position)?;
+            reverse_rematerialize_with(vault, &base, &base_key, withhold_device_only)?;
+            let selected = filter_window_doc(
+                vault,
+                &base,
+                &base_key,
+                selector,
+                position,
+                withhold_device_only,
+            )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
         if selected_by_month[base_key.as_str()]
@@ -308,12 +327,84 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
+/// The rows a machine CLAIM's authenticated history needs beside it in an
+/// export, read from stored truth: its birth event, each transition event and
+/// every handoff of its chain. `None` when that history does not resolve
+/// whole (a missing or malformed row, a cycle in the chain).
+fn machine_history_controls(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let (Ok(rows), Ok(packet)) = (
+        crate::claim::history_projection::machine_history_rows(&vault.store, rtxn, id),
+        crate::claim::history_projection::trusted_machine_handoff(&vault.store, rtxn, id),
+    ) else {
+        return Ok(None);
+    };
+    let mut required = vec![rows.birth.event_id()?];
+    for event in &rows.events {
+        required.push(crate::claim::transition::machine_claim_transition_event_id(
+            event,
+        )?);
+    }
+    let mut next = Some(packet);
+    let mut seen = BTreeSet::new();
+    while let Some(handoff) = next {
+        let hash = handoff
+            .content_hash()
+            .map_err(|_| crate::Error::InvalidClaimBody("machine handoff hash"))?;
+        if !seen.insert(hash) {
+            return Ok(None);
+        }
+        required.push(EntityId::from_bytes(
+            hash[..16]
+                .try_into()
+                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff id"))?,
+        )?);
+        let Some(parent) = handoff.previous_handoff_hash else {
+            break;
+        };
+        let parent_id = EntityId::from_bytes(
+            parent[..16]
+                .try_into()
+                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff parent id"))?,
+        )?;
+        let Some(raw) = vault.store.entities.get(rtxn, parent_id.as_bytes())? else {
+            return Ok(None);
+        };
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
+        {
+            return Ok(None);
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            return Ok(None);
+        };
+        let rmpv::Value::Binary(bytes) = body.value else {
+            return Ok(None);
+        };
+        let Ok(parent_packet) = crate::claim::ClaimHistoryHandoff::decode(&bytes) else {
+            return Ok(None);
+        };
+        if parent_packet.content_hash().ok() != Some(parent) {
+            return Ok(None);
+        }
+        next = Some(parent_packet);
+    }
+    Ok(Some(required))
+}
+
+/// `withhold_device_only` applies this device's device-only flags. Every
+/// export door sets it; promotion authority asks only what the grant covers.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
     selector: &SyncSelector,
     position: &Position,
+    withhold_device_only: bool,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -322,13 +413,11 @@ pub(super) fn filter_window_doc(
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
     crate::sync::note::refresh(vault, &refreshed, key)?;
     let source = &refreshed;
-    let grant_raw = vault
-        .get_raw(&selector.grant_id)?
-        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
-    let grant_header = EntityMetadataHeader::parse(&grant_raw)
-        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
-    if grant_header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(selector_err(SelectorError::GrantWrongType));
+    let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
+    if withhold_device_only && crate::sync::window::window_is_device_only(vault, key)? {
+        let out = create_window_doc("selector", key);
+        out.commit();
+        return Ok(out);
     }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
     // One read snapshot for the whole export: withheld claims, facet scope, coreference
@@ -337,12 +426,21 @@ pub(super) fn filter_window_doc(
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
-    let (_, claims_withheld) = withheld_claim_carriers(
+    let (_, mut claims_withheld) = withheld_claim_carriers(
         vault,
         &rtxn,
         &source.get_map("entities"),
         &source.get_map("edges"),
     )?;
+    // A device-only world's rows stay here even when packed while portable.
+    if withhold_device_only {
+        claims_withheld.extend(crate::sync::window::device_only_ids(
+            vault,
+            &rtxn,
+            &source.get_map("entities"),
+            &source.get_map("edges"),
+        )?);
+    }
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
@@ -389,6 +487,12 @@ pub(super) fn filter_window_doc(
             custody_withheld.insert(id);
         }
     }
+    // A delete a peer withdrew stays withheld, as at window egress.
+    custody_withheld.extend(
+        crate::sync::window::withdrawn_delete_carriers(vault, &rtxn, source)?
+            .into_iter()
+            .map(|(_, id)| id),
+    );
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -446,9 +550,18 @@ pub(super) fn filter_window_doc(
         {
             return;
         }
+        match super::scope::settled_position_selected(&id, blob, &scope, scope_position) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
         let Some(decision) = entity_selector_decision(
             vault,
             (&id, blob),
+            &scope,
             selector,
             &facet_scope,
             scope_position,
@@ -503,17 +616,6 @@ pub(super) fn filter_window_doc(
         });
     }
 
-    let out_entities = out.get_map("entities");
-    map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
-        let Some(blob) = maybe_blob else { return };
-        let Ok(id) = EntityId::from_hex(raw_key) else {
-            return;
-        };
-        if id.to_hex() != raw_key || !kept.contains(&id) || tombstoned.contains(&id) {
-            return;
-        }
-        let _ = map_insert_bytes(&out_entities, raw_key, blob);
-    });
     // A fresh peer may hold a valid selected target but only part of its
     // scoped birth/event/handoff closure in the source CRDT. Never emit the
     // target alone: the receiving replica would mistake missing history for
@@ -537,74 +639,10 @@ pub(super) fn filter_window_doc(
         if !crate::authority::machine_claim_needs_history(&vault.store, &rtxn, &body)? {
             continue;
         }
-        let (Ok(rows), Ok(packet)) = (
-            crate::claim::history_projection::machine_history_rows(&vault.store, &rtxn, id),
-            crate::claim::history_projection::trusted_machine_handoff(&vault.store, &rtxn, id),
-        ) else {
+        let Some(required) = machine_history_controls(vault, &rtxn, id)? else {
             incomplete.insert(id);
             continue;
         };
-        let mut required = vec![rows.birth.event_id()?];
-        for event in &rows.events {
-            required.push(crate::claim::transition::machine_claim_transition_event_id(
-                event,
-            )?);
-        }
-        let mut next = Some(packet);
-        let mut seen = BTreeSet::new();
-        while let Some(handoff) = next {
-            let hash = handoff
-                .content_hash()
-                .map_err(|_| crate::Error::InvalidClaimBody("machine handoff hash"))?;
-            if !seen.insert(hash) {
-                incomplete.insert(id);
-                break;
-            }
-            required.push(EntityId::from_bytes(
-                hash[..16]
-                    .try_into()
-                    .map_err(|_| crate::Error::InvalidClaimBody("machine handoff id"))?,
-            )?);
-            next = if let Some(parent) = handoff.previous_handoff_hash {
-                let parent_id =
-                    EntityId::from_bytes(parent[..16].try_into().map_err(|_| {
-                        crate::Error::InvalidClaimBody("machine handoff parent id")
-                    })?)?;
-                let Some(raw) = vault.store.entities.get(&rtxn, parent_id.as_bytes())? else {
-                    incomplete.insert(id);
-                    break;
-                };
-                let Some(header) = EntityMetadataHeader::parse(&raw) else {
-                    incomplete.insert(id);
-                    break;
-                };
-                if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-                    incomplete.insert(id);
-                    break;
-                }
-                let Ok(body) =
-                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-                else {
-                    incomplete.insert(id);
-                    break;
-                };
-                let Some(rmpv::Value::Binary(bytes)) = Some(body.value) else {
-                    incomplete.insert(id);
-                    break;
-                };
-                let Ok(parent_packet) = crate::claim::ClaimHistoryHandoff::decode(&bytes) else {
-                    incomplete.insert(id);
-                    break;
-                };
-                if parent_packet.content_hash().ok() != Some(parent) {
-                    incomplete.insert(id);
-                    break;
-                }
-                Some(parent_packet)
-            } else {
-                None
-            };
-        }
         if required.iter().any(|control| {
             !kept.contains(control)
                 || !crate::sync::loro_support::map_contains_binary(
@@ -615,13 +653,59 @@ pub(super) fn filter_window_doc(
             incomplete.insert(id);
         }
     }
-    for id in &incomplete {
-        crate::sync::loro_support::map_delete(&out_entities, &id.to_hex())?;
-    }
+    // A NOTE this export drops is judged in its snapshot too (Sol round 17
+    // on #1384), so nothing is withheld after the epoch pass. A device-only
+    // flag is policy, not authority: promotion authority keeps a NOTE the
+    // flag holds here, as it keeps every other row (this corrects #1402's
+    // authority-mode NOTE drop).
+    let flagged = if withhold_device_only {
+        crate::settings::device_local_worlds_at(
+            vault,
+            &rtxn,
+            crate::claim::CallerLocality::OffDevice,
+        )?
+    } else {
+        BTreeSet::new()
+    };
+    let notes_dropped = crate::sync::note::dropped_in(vault, &rtxn, &flagged, source, &kept)?;
+    // An epoch summary leaves only beside every record it was written from:
+    // the pass reads what this export ships, in its snapshot, so it runs
+    // after every other withholding and before anything is written.
+    let mut shipped = kept
+        .iter()
+        .filter(|id| {
+            !tombstoned.contains(id) && !incomplete.contains(id) && !notes_dropped.contains(id)
+        })
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let withheld = unbacked_epochs(vault, &rtxn, source, &shipped)?;
     drop(rtxn);
+    #[cfg(any(test, feature = "test-hooks"))]
+    crate::sync::window::test_hooks::run_device_only_flag_race(vault)?;
+    kept.retain(|id| !withheld.contains(id));
+    shipped.retain(|id| !withheld.contains(id));
+
+    let out_entities = out.get_map("entities");
+    map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
+        let Some(blob) = maybe_blob else { return };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() != raw_key || !shipped.contains(&id) {
+            return;
+        }
+        let _ = map_insert_bytes(&out_entities, raw_key, blob);
+    });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position)?
+        authorized_base_edge_endpoints(
+            vault,
+            &source_edges,
+            &kept,
+            selector,
+            position,
+            withhold_device_only,
+        )?
     } else {
         BTreeSet::new()
     };
@@ -661,7 +745,7 @@ pub(super) fn filter_window_doc(
         }
     });
 
-    crate::sync::note::copy_selected(vault, source, &out)?;
+    crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)
 }

@@ -5,6 +5,7 @@ mod effort;
 mod terminal;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -16,17 +17,23 @@ use crate::query_expansion::{GroundingContext, HydeExpander, HydeOptions};
 use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::vault::NoMatchFloors;
 
 use super::support::normalize_range;
 use super::types::{
     ActiveWorldSelection, DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, FacetMode, RelMode,
-    ScoredEntity, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
+    ScoredEntity, TemporalSearchConfig, TurnFold, WorldAuthoritySet, WorldScope,
 };
 
 #[derive(Clone)]
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     pub(super) vault: &'a Vault,
+    /// The content every channel, filter and hydration step reads: the
+    /// vault's canonical accessors, or a room's overlay ∪ base when the run
+    /// is bound to one ([`Self::reading`]). Policy, gates and blend weights
+    /// stay on `vault.store`.
+    pub(super) read: crate::store::StoreRead<'a>,
     pub(super) vector_search: Option<(Vec<f32>, usize)>,
     pub(super) text_search: Option<(String, usize)>,
     pub(super) rank_profile: Option<crate::config::Bm25RankProfile>,
@@ -48,6 +55,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
+    /// Whether the run reads for a caller off this device; see
+    /// [`Self::caller_off_device`].
+    pub(super) off_device: bool,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -70,9 +80,13 @@ pub struct PipelineBuilder<'a> {
     pub(super) corpus_scope: CorpusScope,
     pub(super) made_by: crate::provenance::made_by::MadeByPredicate,
     pub(super) context_pack_budget: Option<ContextPackRetrievalBudget>,
+    /// A context pack discovers skills and agents beside its memory results.
+    /// Off for a caller that reads only the memory results.
+    pub(super) capability_lanes: bool,
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
     pub(super) temporal_now: Option<u64>,
+    pub(super) turn_fold: TurnFold,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
@@ -84,6 +98,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
     pub(super) skip_vector_rescore: bool,
+    /// The no-match floors the run judges, hashes and records by, read once
+    /// when it starts ([`Self::no_match_floors`]).
+    pub(super) no_match_floors: Option<Arc<NoMatchFloors>>,
     /// Additive session routing (ONE-1728 K10). `None` on every canonical
     /// entry, which is therefore behaviorally unchanged; a retrieval issued
     /// inside a room passes the room's registration door so the retrieval-run
@@ -97,6 +114,7 @@ impl<'a> PipelineBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             vault,
+            read: vault.store.read(),
             vector_search: None,
             text_search: None,
             rank_profile: None,
@@ -116,6 +134,7 @@ impl<'a> PipelineBuilder<'a> {
             criticality: None,
             authority_filter: None,
             scoped_note_reader: None,
+            off_device: false,
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -130,9 +149,11 @@ impl<'a> PipelineBuilder<'a> {
             corpus_scope: CorpusScope::All,
             made_by: crate::provenance::made_by::MadeByPredicate::All,
             context_pack_budget: None,
+            capability_lanes: true,
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
             temporal_now: None,
+            turn_fold: TurnFold::Off,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             retrieval_state: None,
@@ -144,8 +165,18 @@ impl<'a> PipelineBuilder<'a> {
             hyde: None,
             access_factor_overrides: None,
             skip_vector_rescore: false,
+            no_match_floors: None,
             session: None,
         }
+    }
+
+    /// The no-match floors this run judges by and records: the vault's
+    /// floors as the run read them when it started, so floors a host sets
+    /// mid-run judge the next run, not part of this one.
+    pub(super) fn no_match_floors(&self) -> Arc<NoMatchFloors> {
+        self.no_match_floors
+            .clone()
+            .unwrap_or_else(|| Arc::new(self.vault.no_match_floors()))
     }
 
     /// Selects the exact executor model@revision for skill reliability ranking.
@@ -196,6 +227,14 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Reads this run's content through `read`: a room's view, so the run
+    /// sees its overlay ∪ base (ARCH-0052 §2). The read target must be the
+    /// same vault's; telemetry routing stays with [`Self::in_session`].
+    pub(crate) fn reading(mut self, read: crate::store::StoreRead<'a>) -> Self {
+        self.read = read;
+        self
+    }
+
     /// Installs only gate-resolved authority. Public callers use scoped search.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.authority_filter = Some(filter);
@@ -204,20 +243,51 @@ impl<'a> PipelineBuilder<'a> {
 
     /// A scoped read provides the authenticated actor, not a candidate list.
     pub(crate) fn scoped_note_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
+        self.off_device |= key.off_device();
         self.scoped_note_reader = Some(key);
         self
+    }
+
+    /// Reads for a caller off this device: no candidate a device-local world
+    /// keeps enters the run (DEC-0005). It only narrows.
+    pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
+        self.off_device |= off_device;
+        self
+    }
+
+    /// The device-local worlds this run reads nothing of, read in `txn`:
+    /// every flagged one for a caller off this device, none for one on it.
+    pub(super) fn device_local_worlds(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
+        self.off_device
+            .then(|| {
+                crate::settings::device_local_worlds_at(
+                    self.vault,
+                    txn,
+                    crate::claim::CallerLocality::OffDevice,
+                )
+            })
+            .transpose()
     }
 
     pub(crate) fn result_limit(&self) -> usize {
         self.result_limit
     }
 
+    /// The content this run reads ([`Self::reading`]).
+    pub(crate) fn store_read(&self) -> crate::store::StoreRead<'a> {
+        self.read
+    }
+
     /// Attaches a host-injected top-N reranker for this run (RET-010,
     /// 1186-D2). Presence IS the feature flag: no reranker attached means
     /// rerank is off and the pipeline behaves exactly as before. The block
-    /// size is `options.top_n`; the pipeline never overfetches on rerank's
-    /// behalf — the reranker only sees more than `result_limit` candidates
-    /// when the caller's per-channel limits exceed `result_limit`.
+    /// is the fused list's top `options.top_n`; the pipeline fetches nothing
+    /// more on rerank's behalf. Each channel fetches its fusion list length
+    /// (`FUSION_LIST_LENGTH`, 80), or the caller's limit when
+    /// larger, so the block can hold more candidates than `result_limit`.
     pub fn rerank(mut self, reranker: &'a dyn Reranker, options: RerankOptions) -> Self {
         self.rerank = Some((reranker, options));
         self
@@ -296,6 +366,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Auto,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -320,6 +391,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -344,6 +416,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -370,6 +443,7 @@ impl<'a> PipelineBuilder<'a> {
             anchor_mode: TemporalAnchorMode::Both,
             adaptive: self.temporal_adaptive_default,
             limit,
+            widened: None,
             query_occurred_range: None,
             effort_anchor: false,
         });
@@ -401,6 +475,15 @@ impl<'a> PipelineBuilder<'a> {
     /// frozen Unix timestamp.
     pub fn with_temporal_now(mut self, now: u64) -> Self {
         self.temporal_now = Some(now);
+        self
+    }
+
+    /// Returns each MESSAGE hit as the TURN it is part of, one row per turn,
+    /// and reports the messages each turn took in. ARCH-0004 makes the turn
+    /// the unit recall returns; a lexical hit on its message is a hit on it.
+    /// [`TurnFold::TurnsOnly`] also drops a message no admitted turn took in.
+    pub(crate) fn fold_messages_into_turns(mut self, fold: TurnFold) -> Self {
+        self.turn_fold = fold;
         self
     }
 

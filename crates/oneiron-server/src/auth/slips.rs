@@ -49,14 +49,15 @@ impl CoreAuth {
         vault: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
+        let signature = proof.signature()?;
+        let nonce = proof.nonce.as_bytes();
         let verified = vault
-            .verify_slip(
-                &slip,
-                proof.timestamp,
-                proof.nonce.as_bytes(),
-                &proof.signature()?,
-            )
-            .map_err(|_| ApiError::unauthorized())?;
+            .verify_slip(&slip, proof.timestamp, nonce, &signature)
+            .map_err(|()| {
+                vault
+                    .proof_clock_refusal(&slip, proof.timestamp, nonce, &signature)
+                    .unwrap_or_else(ApiError::unauthorized)
+            })?;
         // These transports can call auth more than once per request; they must
         // not perform one-shot effects. The atomic consuming door owns those.
         if verified.claims().single_use {
@@ -148,6 +149,7 @@ impl CoreAuth {
             // Local host proofs have no caveats. Their logged mint id is stable.
             instrument: Some(claims.slip_id),
             verified_slip: Some(verified),
+            locality: CallerLocality::OffDevice,
         })
     }
     /// An adapter without record-Scope enforcement cannot accept a narrowed
@@ -165,22 +167,50 @@ impl CoreAuth {
         }
         Ok(())
     }
+    /// A write whose records are born at `worlds` and `facets` carries those
+    /// two axes of the credential's record bounds and no other. The proof may
+    /// narrow worlds and facets to cover them; any other narrowing, and any
+    /// record or channel caveat, fails closed as in
+    /// [`Self::require_unrestricted_record_scope`].
+    pub(crate) fn require_record_scope_carried(
+        &self,
+        worlds: oneiron::federation::ScopeAxis<oneiron::federation::ScopeId>,
+        facets: oneiron::federation::ScopeAxis<oneiron::federation::ScopeId>,
+    ) -> Result<(), ApiError> {
+        if let Some(proof) = self.verified_slip() {
+            let mut required = oneiron::federation::Scope::top();
+            required.verbs = proof.scope().verbs.clone();
+            required.worlds = worlds;
+            required.facets = facets;
+            if !proof.claims().records.is_empty()
+                || !proof.claims().channels.is_empty()
+                || !required.is_narrowing_of(proof.scope())
+            {
+                return Err(ApiError::forbidden_scope("record-scope"));
+            }
+        }
+        Ok(())
+    }
     /// May this credential read `id`? A verified slip reads through the
-    /// actor-scoped lane its own proof builds, so its policy floor applies on
-    /// every route. A credential with no verified slip is the owner's server
-    /// secret and reads every entity.
+    /// actor-scoped lane its own proof builds (the engine's one credential
+    /// key), so its policy floor and relationship grants apply on every
+    /// route. A credential with no verified slip is the owner's server secret
+    /// and reads every entity, but for one a device-local world keeps from a
+    /// caller off this device (DEC-0005).
     pub(crate) fn can_read_entity(
         &self,
         vault: &oneiron::Vault,
         id: &oneiron::EntityId,
     ) -> oneiron::Result<bool> {
         let Some(proof) = self.verified_slip() else {
-            return Ok(true);
+            return Ok(self.locality == CallerLocality::OnDevice || !vault.device_local_keeps(id)?);
         };
-        let Some(key) = oneiron::claim::ScopedReadActorKey::from_verified_slip(proof) else {
+        let Some(key) = vault.credential_read_key(proof)? else {
             return Ok(false);
         };
-        vault.scoped_read(key).is_entity_readable(id)
+        vault
+            .scoped_read(key.at(self.locality))
+            .is_entity_readable(id)
     }
     pub(crate) fn credential_is_live_in_write_txn(
         &self,

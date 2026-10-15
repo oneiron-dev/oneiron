@@ -138,7 +138,7 @@ impl Vault {
         if row.period_secs == 0 {
             return Err(invalid());
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
             CADENCE.put(&self.store, txn, &(), row)?;
             Ok(())
@@ -154,7 +154,7 @@ impl Vault {
         row: &ProactivityPresentation,
     ) -> Result<()> {
         row.validate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
             PRESENTATION.put(&self.store, txn, &(), row)?;
             Ok(())
@@ -184,7 +184,7 @@ impl Vault {
         claim_ref: EntityId,
         expected_revision: [u8; 32],
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
             if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
                 return Err(invalid());
@@ -277,7 +277,7 @@ impl Vault {
         urgent: Option<&UrgentDigestWake>,
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(owner) = owner {
                 super::validate_owner_in_txn(self, txn, owner)?;
             }
@@ -403,7 +403,7 @@ impl Vault {
     /// due attempts in the host supervisor.
     #[cfg(feature = "test-support")]
     pub fn corrupt_proactivity_state_for_test(&self) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             STATE.put_undecodable(&self.store, txn, &(), b"invalid digest state")?;
             Ok(())
         })
@@ -413,7 +413,7 @@ impl Vault {
     /// already been selected. The row remains corrupt until explicitly edited.
     #[cfg(feature = "test-support")]
     pub fn corrupt_proactivity_presentation_for_test(&self) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             PRESENTATION.put_undecodable(&self.store, txn, &(), b"invalid presentation")?;
             Ok(())
         })

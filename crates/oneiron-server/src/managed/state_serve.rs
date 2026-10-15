@@ -340,7 +340,7 @@ impl ManagedState {
         match self.server.expire_leases_once().await {
             Ok(report) => !report.skipped,
             Err(error) => {
-                tracing::error!(%error, "lease table drain failed during prepare_reap");
+                tracing::error!(kind = ?error.kind(), "lease table drain failed during prepare_reap");
                 false
             }
         }
@@ -578,6 +578,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
 
     spawn_sigterm_shutdown(shutdown.clone())?;
+    // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
+    // the reap freeze like a served write: a frozen vault signs nothing, and a
+    // reap never reads quiescent over a set in flight. The first set comes
+    // before ctl is served, so no reap can freeze the vault ahead of it.
+    let oversight = sync_server
+        .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, {
+            let state = Arc::clone(&state);
+            move || state.admit_http_mutation().ok()
+        })
+        .await?;
+
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -590,11 +601,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
 
-    if let Err(error) = state.ledger().push_if_changed(&sync_server).await {
-        tracing::warn!(%error, "initial wake ledger push failed");
+    if let Err(_error) = state.ledger().push_if_changed(&sync_server).await {
+        tracing::warn!(
+            reason = "wake_ledger_export_failed",
+            "initial wake ledger push failed"
+        );
     }
 
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let background = sync_server.spawn_serve_background();
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -608,8 +622,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
-    lifecycle_handle.abort();
-    let _ = lifecycle_handle.await;
+    background.stop().await;
+    // Frozen, so nothing new is admitted; an admitted write ends before exit.
+    oversight.stop().await;
 
     if let Some(path) = http_owned_path {
         // Only ever the path this process created. An inherited socket's inode
@@ -650,7 +665,10 @@ pub async fn final_ledger_push(state: &ManagedState, server: &SyncServer) {
                 "final wake ledger push complete"
             );
         }
-        Err(error) => tracing::warn!(%error, "final wake ledger export failed"),
+        Err(_) => tracing::warn!(
+            reason = "wake_ledger_export_failed",
+            "final wake ledger export failed"
+        ),
     }
 }
 

@@ -220,6 +220,17 @@ impl ClaimMaterialization {
         )
     }
 
+    /// The writer's envelope for a stored claim, rebuilt from its private
+    /// authored digest; `None` when the claim carries none.
+    pub(crate) fn authored_envelope(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<Option<WriteEnvelope>> {
+        lifecycle_envelope(&vault.store, txn, id, body)
+    }
+
     /// Re-gate an exact parked replacement as Auto under its attested author.
     /// The caller checks the deferred content/frontier binding and performs
     /// closure in this same transaction. No arbitrary Put may use this path.
@@ -598,6 +609,12 @@ fn lifecycle_envelope(
     if encode_claim_body(body)? != encode_claim_body(&authored)? {
         return Err(binding_error());
     }
+    envelope_from_evidence(&authored, body).map(Some)
+}
+
+/// Reconstructs the writer's envelope from the authenticated `authored`
+/// row's evidence axes, with `body`'s current approval and session tag.
+fn envelope_from_evidence(authored: &ClaimBody, body: &ClaimBody) -> Result<WriteEnvelope> {
     let Value::Map(entries) = authored.evidence.as_ref().ok_or(binding_error())? else {
         return Err(binding_error());
     };
@@ -646,7 +663,7 @@ fn lifecycle_envelope(
     if let Some(tag) = &body.session_tag {
         envelope = envelope.with_session_tag(tag);
     }
-    Ok(Some(envelope))
+    Ok(envelope)
 }
 
 /// The locally attested writer of this exact row. Evidence copied through a
@@ -734,7 +751,9 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
 }
 
 mod demotion;
+mod succession;
 use demotion::demotion_body;
+pub(crate) use succession::SuccessionWriter;
 
 #[cfg(test)]
 mod tests;

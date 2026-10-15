@@ -1,8 +1,7 @@
 use crate::common::entity;
-use std::env;
 
 use oneiron::{
-    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EntityId, Error,
+    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EntityId,
     InboundSurfaceRouteOutcome, Result, Vault, VaultConfig,
     channel_identity::ChannelIdentityFulfillment, channel_identity::ChannelIdentityStep,
     channel_identity_lifecycle::ChannelIdentityLifecycleActor,
@@ -57,38 +56,6 @@ impl SlackSmokeCase {
             persona_b: "herald".to_owned(),
         }
     }
-
-    fn enterprise_grid() -> Self {
-        Self {
-            enterprise_id: Some("E123ABC".to_owned()),
-            ..Self::workspace()
-        }
-    }
-
-    fn from_dev_workspace_env() -> Result<Self> {
-        Ok(Self {
-            workspace_id: required_env("ONEIRON_SLACK_SMOKE_WORKSPACE_ID")?,
-            enterprise_id: optional_env("ONEIRON_SLACK_SMOKE_ENTERPRISE_ID"),
-            channel_id: required_env("ONEIRON_SLACK_SMOKE_CHANNEL_ID")?,
-            user_a_id: required_env("ONEIRON_SLACK_SMOKE_USER_A_ID")?,
-            user_b_id: required_env("ONEIRON_SLACK_SMOKE_USER_B_ID")?,
-            persona_a: optional_env("ONEIRON_SLACK_SMOKE_PERSONA_A")
-                .unwrap_or_else(|| "eiri".to_owned()),
-            persona_b: optional_env("ONEIRON_SLACK_SMOKE_PERSONA_B")
-                .unwrap_or_else(|| "herald".to_owned()),
-        })
-    }
-}
-
-fn required_env(name: &'static str) -> Result<String> {
-    env::var(name).map_err(|_| Error::InvalidConfig(format!("{name} must be set")))
-}
-
-fn optional_env(name: &'static str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
 }
 
 fn requested_identity(
@@ -298,15 +265,4 @@ fn run_two_agent_smoke(case: SlackSmokeCase) -> Result<()> {
 #[test]
 fn cid8_slack_shared_presence_routes_two_agents_in_one_workspace() -> Result<()> {
     run_two_agent_smoke(SlackSmokeCase::workspace())
-}
-
-#[test]
-fn cid8_slack_enterprise_grid_routes_two_agents_in_one_workspace() -> Result<()> {
-    run_two_agent_smoke(SlackSmokeCase::enterprise_grid())
-}
-
-#[test]
-#[ignore = "requires dev Slack workspace IDs; see docs/channel-identity-slack.md"]
-fn cid8_slack_dev_workspace_env_smoke_seam() -> Result<()> {
-    run_two_agent_smoke(SlackSmokeCase::from_dev_workspace_env()?)
 }

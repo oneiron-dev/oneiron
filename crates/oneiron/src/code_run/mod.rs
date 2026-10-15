@@ -18,6 +18,7 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod replay;
+mod run_verbs;
 mod storage;
 mod support;
 mod types;
@@ -33,7 +34,7 @@ pub use self::codec::{
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
-pub(crate) use self::dispatcher::check_write_gate_against_vault;
+pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
 pub use self::dispatcher::{GatedActorWrite, HostSelfDispatcher, SELF_MEMORY_SEARCH_MAX_RESULTS};
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
@@ -43,16 +44,17 @@ pub use self::replay::{
     CodeRunReplayRecord, CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
 };
 pub use self::storage::CodeRunModelHealCount;
-pub(crate) use self::storage::{ExecutorOutputSpan, ExecutorStorage};
+pub(crate) use self::storage::{
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
+    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
+};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
-pub(crate) use self::storage::{
-    canonical_speech_conversation_id_for_run, executor_speech_message_id,
-};
+pub(crate) use self::storage::executor_speech_message_id;
 pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
@@ -62,6 +64,14 @@ pub use self::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
 };
+pub use run_verbs::{
+    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
+    MemoryTimeRange,
+};
+pub use types::{
+    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
+    AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+};
 
 // The flat code_run.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so
@@ -70,8 +80,7 @@ pub use self::types::{
 use self::dispatcher::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 #[cfg(test)]
 use self::payload::{
-    decode_self_dispatch_outcome, durable_wait_reason_from_str, durable_wait_reason_str,
-    self_call_request_value, self_dispatch_outcome_value, self_effect_from_str,
+    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
 };
 #[cfg(test)]
 use crate::{

@@ -12,8 +12,17 @@
 //! [`managed`] adds a second, opt-in way to run that same path: as a
 //! supervised child process behind `--managed-by-hypnos`. Without the switch
 //! nothing in this crate behaves differently.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+    )
+)]
 
 pub mod actions;
+mod admission;
+pub mod ai_host;
 mod api;
 mod auth;
 mod broadcast;
@@ -21,16 +30,21 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod control_keys;
+mod device_local;
 mod embedder;
 pub mod error;
 pub mod feedback_delivery;
 mod handler;
+mod http_listener;
 mod idempotency;
 mod linear_host;
 mod livequery;
+pub mod logging;
 pub mod managed;
 pub mod mcp;
+pub mod models;
 mod oauth_relay;
+mod oneironer;
 mod owner;
 pub mod projection;
 mod protocol;
@@ -61,11 +75,19 @@ use crate::server::SyncServer;
 pub use crate::projection::View;
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
+///
+/// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. WebSocket
+/// read RPCs run synchronously and leave the worker with `block_in_place`,
+/// which a `LocalSet` forbids; on a current-thread runtime they hold the only
+/// executor thread while they read.
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     Router::new()
         .merge(handler::ws_routes(server.clone()))
         .merge(api::api_routes(server))
 }
 
+#[cfg(test)]
+#[path = "../tests/support/fake_llm.rs"]
+mod fake_llm;
 #[cfg(test)]
 mod test_credentials;

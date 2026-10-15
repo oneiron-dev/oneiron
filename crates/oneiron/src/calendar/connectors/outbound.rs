@@ -16,8 +16,8 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use crate::calendar::passport::{
-    encode_passport_value, index_passport_uid, live_passport_for, live_passports_for_event,
-    supersede_calendar_passport,
+    carries_admitted_uid, encode_passport_value, index_passport_uid, live_passport_for,
+    live_passports_for_event, supersede_calendar_passport,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::entity_id::EntityId;
@@ -520,7 +520,12 @@ fn finish_remote_applied_write(
             }
         }
     }
-    index_passport_uid(vault, &row.uid, &event_ref)?;
+    // The index moves only for a UID this connector mints or an admitted
+    // passport carries. The first outbound invite falls back to it, so a UID
+    // taken from a pending passport never re-points it.
+    if row.uid == local_uid(&event_ref) || carries_admitted_uid(vault, &event_ref, &row.uid)? {
+        index_passport_uid(vault, &row.uid, &event_ref)?;
+    }
 
     // The outbox closes before the next poll can run, so the echo the poll sees
     // is already known to be ours.
@@ -655,7 +660,7 @@ fn write_outbox_row(
     row: &CalendarWriteOutboxRow,
 ) -> Result<(), CalendarConnectorError> {
     let stored = StoredOutboxRow::from_row(row);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         OUTBOX.put(&vault.store, wtxn, &OutboxKey(row.outbox_id), &stored)?;
         Ok::<_, crate::Error>(())
     })?;
@@ -700,7 +705,7 @@ pub(super) fn write_remote_object(
         last_seen_at: row.last_seen_at,
     };
     let digest = remote_object_digest(&row.system, &row.calendar_ref, &row.uid);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         REMOTE_OBJECT.put(&vault.store, wtxn, &RemoteObjectKey(digest), &stored)?;
         Ok::<_, crate::Error>(())
     })?;

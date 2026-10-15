@@ -111,18 +111,36 @@ pub(super) fn bind_mcp_request(server: &SyncServer, request: Request<Body>) -> R
     crate::test_credentials::bind_slip_request(server, &slip, &key, request)
 }
 
+/// The host root the server is configured with, which signs the authority
+/// entries the room fixtures write.
+fn host_secret(server: &SyncServer) -> &[u8] {
+    server
+        .config
+        .auth_secret
+        .as_deref()
+        .expect("room fixtures need a configured host root")
+        .as_bytes()
+}
+
 /// Fixture: a logged, host-signed human binding plus a holder-bound top slip.
 /// A bare host secret has no authenticated PERSON identity to exclude.
 pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
+    bind_room_actor(server, owner, "human");
+}
+
+/// Fixture: binds `actor` at `class` under the host key `bind_room_owner`
+/// uses; `agent` makes it one of the vault's own agents. The host key holds
+/// one live binding, so `actor` is the vault's only bound actor.
+pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, class: &str) {
     use oneiron::authority::{
         AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
         HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
     };
     use std::collections::BTreeSet;
 
-    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = HostSlipIssuer::from_secret(host_secret(server)).unwrap();
     let host_key = issuer.public_key();
-    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", b"secret");
+    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", host_secret(server));
     let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
     assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
     let fold = server.vault.authority_fold().unwrap();
@@ -152,8 +170,8 @@ pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
         parent_hashes: heads.into_iter().collect(),
         op: AuthorityOp::BindActor {
             authority_key: host_key.clone(),
-            actor_ref: owner,
-            actor_class: "human".into(),
+            actor_ref: actor,
+            actor_class: class.into(),
             epoch: 1,
         },
         signer: AuthoritySignature {
@@ -181,8 +199,8 @@ pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
         .unwrap();
     assert!(actor_binding_is_active(
         &server.vault.authority_fold().unwrap(),
-        &owner,
-        "human"
+        &actor,
+        class
     ));
 }
 
@@ -196,7 +214,7 @@ pub(super) fn create_owned_project(
 ) {
     let signing = SigningKey::from_bytes(&blake3::derive_key(
         "oneiron/host-authority-signing/v2",
-        b"secret",
+        host_secret(server),
     ));
     server
         .vault

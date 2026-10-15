@@ -6,11 +6,14 @@
 //! cumulative byte cap and stable cursor order.
 
 mod claim_grep;
+mod claim_ids;
 mod coreutils;
 mod coreutils_text;
+mod device_scan;
 mod model;
 mod paging;
 mod readdir;
+mod walk;
 
 pub use self::readdir::GraphFsFileRead;
 
@@ -24,14 +27,12 @@ pub use self::model::{
 };
 
 #[cfg(test)]
+mod device_local_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
-use self::paging::*;
-#[cfg(test)]
 use crate::claim::ScopedRead;
-#[cfg(test)]
-use crate::code_sandbox::SandboxImportClass;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

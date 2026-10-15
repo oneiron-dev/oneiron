@@ -368,12 +368,25 @@ pub struct SlotMask {
 pub trait SlotOracle: Send + Sync {
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError>;
 
+    /// [`Self::solve`] for moving an existing booking, whose own place must
+    /// not count against its move, as a confirm's own hold never blocks that
+    /// confirm. An oracle that counts no bookings just solves.
+    fn solve_moving(
+        &self,
+        req: &SolveRequest,
+        _moving: crate::EntityId,
+    ) -> Result<SolveResult, BookingError> {
+        self.solve(req)
+    }
+
+    /// Re-solves for the existing booking `moving`, kept on `hosts`.
     fn solve_bound(
         &self,
         req: &SolveRequest,
         hosts: &[String],
+        moving: crate::EntityId,
     ) -> Result<SolveResult, BookingError> {
-        let mut result = self.solve(req)?;
+        let mut result = self.solve_moving(req, moving)?;
         result
             .host_bindings
             .retain(|binding| binding.host_refs == hosts);
@@ -699,54 +712,4 @@ fn constraint_response_schema() -> JsonValue {
             }
         }
     })
-}
-
-// -------------------------------------------------------------------------
-// Fixture oracle
-//
-// Plain `#[cfg(test)]`, deliberately NOT behind the `test-hooks` or
-// `test-support` features. This fixture is the mechanism that lets ONE-1816
-// land before ONE-1823's real solver exists.
-// -------------------------------------------------------------------------
-
-#[cfg(test)]
-pub(crate) mod fixture {
-    use std::sync::Mutex;
-
-    use super::{BookingError, RankedSlot, SlotOracle, SolveRequest, SolveResult};
-
-    /// Returns configured slots and records every request it was asked. It
-    /// cannot accept or retain free text: [`SolveRequest`] has no such field.
-    /// The recorder is a `Mutex` because [`SlotOracle`] is shareable.
-    pub(in crate::booking) struct FixtureSlotOracle {
-        result: SolveResult,
-        seen: Mutex<Vec<SolveRequest>>,
-    }
-
-    impl FixtureSlotOracle {
-        pub(in crate::booking) fn with_slots(slots: Vec<RankedSlot>, flex_used: bool) -> Self {
-            Self {
-                result: SolveResult {
-                    slots,
-                    flex_used,
-                    host_bindings: Vec::new(),
-                },
-                seen: Mutex::new(Vec::new()),
-            }
-        }
-
-        pub(crate) fn seen(&self) -> Vec<SolveRequest> {
-            self.seen.lock().expect("recorded solve requests").clone()
-        }
-    }
-
-    impl SlotOracle for FixtureSlotOracle {
-        fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
-            self.seen
-                .lock()
-                .expect("recorded solve requests")
-                .push(req.clone());
-            Ok(self.result.clone())
-        }
-    }
 }

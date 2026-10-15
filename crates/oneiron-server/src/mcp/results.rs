@@ -105,7 +105,7 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "remove fields the named verb does not accept",
         ],
         "mcp_actor_mismatch" => &[
-            "send the actor metadata bound to this credential",
+            "omit actor: the call runs as the credential's own actor",
             "call setup_oneiron to read the effective scope back",
         ],
         "mcp_auth_required"
@@ -123,6 +123,14 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "ask the vault owner to widen or re-issue the grant",
         ],
         "board_render_failed" => &["retry setup_oneiron with a smaller board_budget_tok"],
+        "budget_spent" => &[
+            "recall at medium, which makes no model call",
+            "ask the vault owner to raise the line the call spends on",
+        ],
+        "model_unavailable" => &[
+            "recall at medium, which needs no reranker",
+            "ask the vault owner to check the model route in [models]",
+        ],
         "verb_dispatch_failed" => {
             &["re-read the board with board.refresh and retry against the current epoch"]
         }
@@ -146,6 +154,10 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
         "code_run_busy" => &[
             "this run is still active; no second worker was started",
             "retry later with the SAME run_ref and task",
+        ],
+        "code_run_saturated" => &[
+            "this server is already running as many code runs as it admits; no run was started",
+            "retry later, once a run of yours or another caller's has finished",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
             "retry with the SAME run_ref to re-enter the durable run",

@@ -79,7 +79,7 @@ impl Vault {
     ) -> Result<ScopeOutcomeStats> {
         scope.validate()?;
         let at = self.store.clock.now_recorded_at();
-        let counters = self.with_write_txn(|wtxn| {
+        let counters = self.with_write_txn_grouped(|wtxn| {
             record_outcome_for_scope_in_txn(self, wtxn, scope, outcome, at, OutcomeWitness::Door)
         })?;
         let rtxn = self.store.env.read_txn()?;
@@ -182,7 +182,9 @@ impl Vault {
         scope: &RampScope,
     ) -> Result<ConsentReceipt> {
         let at = self.store.clock.now_recorded_at();
-        self.with_write_txn(|wtxn| accept_graduation_offer_in_txn(self, wtxn, owner, scope, at))
+        self.with_write_txn_grouped(|wtxn| {
+            accept_graduation_offer_in_txn(self, wtxn, owner, scope, at)
+        })
     }
 
     /// Demotes a scope back to the propose lane: revokes its standing grant if
@@ -202,7 +204,7 @@ impl Vault {
     pub fn demote_scope_to_propose(&self, scope: &RampScope, reason: DemotionReason) -> Result<()> {
         scope.validate()?;
         let at = self.store.clock.now_recorded_at();
-        self.with_write_txn(|wtxn| append_demotion_in_txn(self, wtxn, scope, reason, at))
+        self.with_write_txn_grouped(|wtxn| append_demotion_in_txn(self, wtxn, scope, reason, at))
     }
 
     /// Overrides one scope's graduation streak floor (ED-05's seam; the
@@ -214,7 +216,7 @@ impl Vault {
     /// plus storage failures.
     pub fn set_ramp_streak_floor(&self, scope: &RampScope, floor: u32) -> Result<()> {
         scope.validate()?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             RAMP_FLOOR.put(&self.store, wtxn, &scope.key(), &StreakFloor(floor))?;
             Ok(())
         })
@@ -256,7 +258,7 @@ impl Vault {
     ///
     /// Storage failures, and [`Error::CorruptedIndex`] on an unreadable row.
     pub fn rebuild_ramp_stats_from_receipts(&self) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let events = self.ramp_fold_events_in_txn(&*wtxn)?;
             RAMP_STATS.delete_from(&self.store, wtxn, &[])?;
 

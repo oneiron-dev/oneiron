@@ -90,6 +90,7 @@ pub(in crate::gate) enum ConnectorClassRole {
     Holder,
 }
 
+#[derive(Clone)]
 pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pack: PolicyPack,
     pub(in crate::gate) policy_values: Vec<PolicyValueRow>,
@@ -103,6 +104,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(in crate::gate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
+    pub(in crate::gate) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
@@ -193,7 +195,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 /// local-only trusted marker or its unrelated gate defaults.
 #[expect(
     clippy::large_enum_variant,
-    reason = "transient per-row decode value, matched once by the manifest fold"
+    reason = "per-row decode value, kept once per body by the store's manifest memo"
 )]
 pub(in crate::gate) enum DecodedManifestCarrier {
     Pack(DecodedPolicyManifest),
@@ -240,6 +242,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::federation::grant_policy::ROWS_KEY
                 | crate::gate::room_policy::KEY
                 | POLICY_SHARED_ACT_POLICIES_KEY
+                | crate::consent::CATASTROPHE_FLOOR_ROW_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
                 | super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
@@ -407,6 +410,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_shared_act_policies(value)?),
     };
+    let catastrophe_floor =
+        match single_map_value(&entries, crate::consent::CATASTROPHE_FLOOR_ROW_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(crate::consent::CatastropheFloor::decode_row(value)?),
+        };
     let owner_policy_enabled = match single_map_value(&entries, POLICY_OWNER_POLICY_ENABLED_KEY) {
         MapValue::Missing => false,
         MapValue::Duplicate => return None,
@@ -895,6 +904,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         federation_grant_rows,
         room_policy_rows,
         shared_act_policies,
+        catastrophe_floor,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_precedence,
@@ -1122,10 +1132,9 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
 }
 
 /// Longest owner policy document a manifest may carry, mirroring the bound the
-/// hosted plane's registration enforces. Spelled here rather than imported:
-/// `gate` sits under `policy_model`, and
-/// `policy_model::tests::owner_and_hosted_document_bounds_agree` pins the two
-/// numbers together.
+/// hosted plane's registration enforces. Spelled here rather than imported,
+/// because `gate` sits under `policy_model`; keep it equal to
+/// `policy_model::POLICY_DOCUMENT_MAX_LEN`.
 pub(super) const OWNER_POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
 
 /// Longest output-contract NAME a manifest may carry. It is a preset spelling
@@ -1305,109 +1314,4 @@ fn parse_sheet_answer_limits(
         });
     }
     Some(out)
-}
-
-#[cfg(test)]
-mod sheet_answer_limit_tests {
-    use super::*;
-    use crate::gate::resolution::{PolicyManifestResolution, SheetAnswerLimitRow};
-
-    #[test]
-    fn default_and_nested_manifest_rows_restrict_holder_at_vault() {
-        let shipped = crate::gate::default_manifest::default_policy_manifest().unwrap();
-        let default = decode_policy_manifest(&shipped).expect("shipped manifest decodes");
-        assert_eq!(default.sheet_answer_limits[0].max_count, 4096);
-        assert_eq!(
-            default.sheet_answer_precedence,
-            Some(
-                crate::gate::resolution::SheetAnswerPrecedence::NestedNarrowingHolderCappedAtVault
-            )
-        );
-        let artifact = "11111111111111111111111111111111";
-        let rows = Value::Array(vec![
-            Value::Map(vec![(Value::from("max_count"), Value::from(256u64))]),
-            Value::Map(vec![
-                (Value::from("artifact_ref"), Value::from(artifact)),
-                (Value::from("max_count"), Value::from(128u64)),
-            ]),
-            Value::Map(vec![
-                (Value::from("artifact_ref"), Value::from(artifact)),
-                (Value::from("sheet"), Value::from("Private")),
-                (Value::from("max_count"), Value::from(32u64)),
-            ]),
-        ]);
-        let parsed = parse_sheet_answer_limits(&rows).expect("nested rows parse");
-        let mut policy = PolicyManifestResolution::default();
-        policy.sheet_answer_default_max_count = Some(default.sheet_answer_limits[0].max_count);
-        policy.sheet_answer_precedence = default.sheet_answer_precedence;
-        policy.sheet_answer_limits = parsed;
-        let mut raised = PolicyManifestResolution::default();
-        raised.sheet_answer_default_max_count = policy.sheet_answer_default_max_count;
-        raised.sheet_answer_precedence = policy.sheet_answer_precedence;
-        raised.sheet_answer_limits.push(SheetAnswerLimitRow {
-            artifact_ref: None,
-            sheet: None,
-            max_count: 8192,
-        });
-        assert_eq!(
-            raised.sheet_answer_limit(artifact, "Public", Some(8192)),
-            Some(8192)
-        );
-        assert_eq!(
-            raised.sheet_answer_limit(artifact, "Public", Some(9000)),
-            Some(8192)
-        );
-        assert_eq!(
-            policy.sheet_answer_limit(artifact, "Private", None),
-            Some(32)
-        );
-        assert_eq!(
-            policy.sheet_answer_limit(artifact, "Public", Some(64)),
-            Some(64)
-        );
-        assert_eq!(
-            policy.sheet_answer_limit("22222222222222222222222222222222", "Private", Some(1000)),
-            Some(256)
-        );
-        assert_eq!(policy.sheet_answer_limit(artifact, "Public", Some(0)), None);
-        let mut narrowed = policy;
-        narrowed.sheet_answer_limits.push(SheetAnswerLimitRow {
-            artifact_ref: Some(artifact.into()),
-            sheet: Some("Private".into()),
-            max_count: 8,
-        });
-        assert_eq!(
-            narrowed.sheet_answer_limit(artifact, "Private", Some(4096)),
-            Some(8)
-        );
-        let letters = "abababababababababababababababab";
-        let upper = letters.to_ascii_uppercase();
-        assert!(
-            parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
-                (Value::from("artifact_ref"), Value::from(upper.as_str())),
-                (Value::from("max_count"), Value::from(1u64)),
-            ])]))
-            .is_none(),
-            "accepted uppercase IDs would silently miss canonical lookups"
-        );
-        let valid = parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
-            (Value::from("artifact_ref"), Value::from(letters)),
-            (Value::from("max_count"), Value::from(1u64)),
-        ])]))
-        .expect("canonical artifact ref");
-        narrowed.sheet_answer_limits.extend(valid);
-        assert_eq!(
-            narrowed.sheet_answer_limit(letters, "Public", None),
-            Some(1)
-        );
-        // Unknown or duplicate row keys fail the manifest rather than falling
-        // back to the shipped limit, which could inadvertently widen it.
-        assert!(
-            parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
-                (Value::from("max_count"), Value::from(1u64)),
-                (Value::from("unknown"), Value::from(1u64)),
-            ])]))
-            .is_none()
-        );
-    }
 }

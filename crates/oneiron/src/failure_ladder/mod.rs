@@ -51,7 +51,7 @@ pub(crate) use self::transitions::{dispatched_target_ref, verified_blocked_repor
 mod tests;
 
 #[cfg(test)]
-use self::{blocked_reports::*, lineage::*};
+use self::blocked_reports::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -59,7 +59,7 @@ use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, HealerSlotOutc
 #[cfg(test)]
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, RetryAttempt, RetryOutcome};
 #[cfg(test)]
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]

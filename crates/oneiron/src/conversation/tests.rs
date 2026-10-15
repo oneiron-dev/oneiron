@@ -832,6 +832,7 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
 
 mod audience_boundaries;
 mod deletion;
+mod restore;
 
 #[test]
 fn room_members_reject_non_person_and_agent_def_atomically() {

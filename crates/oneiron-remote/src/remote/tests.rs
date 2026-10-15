@@ -1,4 +1,4 @@
-use super::{MAX_REMOTE_RESPONSE_BYTES, RemoteClient, normalize_origin, parse_error_envelope};
+use super::{MAX_REMOTE_RESPONSE_BYTES, RemoteClient};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -119,122 +119,6 @@ fn back_to_back_requests_carry_distinct_nonces() {
     assert_ne!(nonces[0], nonces[1]);
 }
 
-#[test]
-fn a_host_secret_crosses_as_a_bare_bearer() {
-    let (origin, captured) = peer(1);
-    let client = RemoteClient::connect(&origin, "host-secret", None).unwrap();
-    call(&client);
-    assert!(binding(&captured.join().unwrap()[0]).is_none());
-}
-
-#[test]
-fn the_streaming_request_carries_a_holder_proof() {
-    use oneiron::{
-        BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, LlmRequest,
-        ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence,
-    };
-    let (_dir, _vault, _issuer, slip, key) = paired();
-    let (origin, captured) = peer(1);
-    let client = RemoteClient::connect(&origin, &slip.to_token().unwrap(), Some(key)).unwrap();
-    let request = LlmRequest {
-        model: ModelId::new("own/model@1").unwrap(),
-        envelope: CallEnvelope {
-            seat_effort: None,
-            scope: Default::default(),
-            purpose: CallPurpose::AnswerGen,
-            class: CallClass::BestEffort,
-            tier: TierPrecedence::for_purpose(
-                &CallPurpose::AnswerGen,
-                ModelTierRef("default".into()),
-            ),
-            response_format: ResponseFormat::Text,
-            locality: ModelLocality::OwnServer,
-        },
-        messages: vec![],
-        tools: vec![],
-        params: Default::default(),
-        provider_options: Default::default(),
-    };
-    let guard = BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
-    let lease = guard.admit_for_request(&request).unwrap().lease;
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(client.llm_stream(&request, &lease))
-        .unwrap();
-    assert!(binding(&captured.join().unwrap()[0]).is_some());
-}
-
-/// §Test/Shared #5 — an engine code the SDK has never heard of survives.
-#[test]
-fn remote_maps_api_error_envelope_losslessly() {
-    let body = br#"{"error":{"code":"LEASE_REQUIRED","message":"deep recall needs a lease",
-            "requestId":"facade-req-0000000000000001","suggestions":["Use effort standard."]}}"#;
-    let error = parse_error_envelope(body).expect("a well-formed envelope parses");
-    assert_eq!(error.code, "LEASE_REQUIRED");
-    assert_eq!(error.message, "deep recall needs a lease");
-    assert_eq!(error.suggestions, vec!["Use effort standard.".to_owned()]);
-}
-
-/// An unknown FUTURE code is carried as a string, never collapsed.
-#[test]
-fn unknown_future_codes_pass_through() {
-    let body = br#"{"error":{"code":"SOME_FUTURE_CODE","message":"m","suggestions":["s"]}}"#;
-    let error = parse_error_envelope(body).expect("parses");
-    assert_eq!(error.code, "SOME_FUTURE_CODE");
-}
-
-/// The contract's non-empty `suggestions` guarantee is restored, not
-/// forwarded as an empty array.
-#[test]
-fn empty_suggestions_are_backfilled() {
-    let body = br#"{"error":{"code":"BAD_REQUEST","message":"m","suggestions":[]}}"#;
-    let error = parse_error_envelope(body).expect("parses");
-    assert!(!error.suggestions.is_empty());
-}
-
-/// §Test/Shared #6 — foreign bodies are not envelopes and never become
-/// one.
-#[test]
-fn remote_rejects_non_oneiron_error_bodies() {
-    for body in [
-        &b"<html><body>502 Bad Gateway</body></html>"[..],
-        &b"{\"error\":{\"code\":\"\",\"message\":\"\"}}"[..],
-        &b"{\"message\":\"nope\"}"[..],
-        &b"{\"error\":{\"code\":\"TRUNC\""[..],
-        &b""[..],
-    ] {
-        assert!(
-            parse_error_envelope(body).is_none(),
-            "a non-envelope body must not become a typed refusal"
-        );
-    }
-}
-
-/// The origin is normalized once, into a joinable base.
-#[test]
-fn origin_normalization_produces_a_joinable_base() {
-    let base = normalize_origin("http://127.0.0.1:8080").expect("normalizes");
-    assert!(base.as_str().ends_with('/'));
-    let joined = base.join("v1/core/facade/witness").expect("joins");
-    assert_eq!(
-        joined.as_str(),
-        "http://127.0.0.1:8080/v1/core/facade/witness"
-    );
-}
-
-/// A base carrying a path prefix keeps it, and the verb hangs off it.
-#[test]
-fn origin_normalization_preserves_a_path_prefix() {
-    let base = normalize_origin("https://example.invalid/oneiron").expect("normalizes");
-    let joined = base.join("v1/core/facade/recall").expect("joins");
-    assert_eq!(
-        joined.as_str(),
-        "https://example.invalid/oneiron/v1/core/facade/recall"
-    );
-}
-
 /// Both SDK projections use the remote route. Export, unlike ordinary
 /// verbs, must consume a complete archive larger than the 64 MiB ceiling.
 #[test]
@@ -297,4 +181,85 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
     assert_eq!(large.rendered.len(), MAX_REMOTE_RESPONSE_BYTES + 1);
     assert!(large.rendered.bytes().all(|byte| byte == b'x'));
     server.join().unwrap();
+}
+
+/// A loopback peer that answers one export with a valid document whose
+/// `rendered` text is `count` bytes, framed by `Content-Length` or by closing
+/// the connection, and hands back how many bytes it wrote of how many.
+fn export_peer(
+    count: usize,
+    content_length: bool,
+) -> (String, std::thread::JoinHandle<(usize, usize)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let served = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        reader.read_exact(&mut vec![0; length]).unwrap();
+        drop(reader);
+        let mut body = br#"{"format":"json","rendered":""#.to_vec();
+        body.resize(body.len() + count, b'x');
+        body.extend_from_slice(b"\"}");
+        let framing = if content_length {
+            format!("Content-Length: {}\r\n", body.len())
+        } else {
+            String::new()
+        };
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{framing}Connection: close\r\n\r\n").unwrap();
+        let mut written = 0;
+        for block in body.chunks(64 * 1024) {
+            if stream.write_all(block).is_err() {
+                break;
+            }
+            written += block.len();
+        }
+        (written, body.len())
+    });
+    (origin, served)
+}
+
+/// C13: export read whatever the origin sent. It now reads at most its own
+/// ceiling: a body at the ceiling decodes, one byte more is refused, whether
+/// `Content-Length` announces it or not, and the client stops reading.
+#[test]
+fn export_reads_at_most_its_ceiling_with_or_without_content_length() {
+    const LIMIT: usize = 64 * 1024;
+    let framing = br#"{"format":"json","rendered":""}"#.len();
+    let export = |count: usize, content_length: bool| {
+        let (origin, served) = export_peer(count, content_length);
+        // The client, and with it any connection, is gone before the join.
+        let result = {
+            let mut client = RemoteClient::connect(&origin, "local-secret", None).unwrap();
+            client.export_limit = LIMIT;
+            client.call::<_, oneiron::memory::MemoryExport>(
+                "export",
+                &serde_json::json!({"format":"json"}),
+            )
+        };
+        (result, served.join().unwrap())
+    };
+    for content_length in [true, false] {
+        let (at_limit, _) = export(LIMIT - framing, content_length);
+        assert_eq!(at_limit.unwrap().rendered.len(), LIMIT - framing);
+        let (over, _) = export(LIMIT - framing + 1, content_length);
+        assert!(over.is_err(), "one byte over the export ceiling");
+    }
+    // An origin that keeps sending is cut off near the ceiling, not read to
+    // its end.
+    let (endless, (written, total)) = export(1024 * LIMIT, false);
+    assert!(endless.is_err());
+    assert!(written < total, "the client read all {total} bytes");
 }

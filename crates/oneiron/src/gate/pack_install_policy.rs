@@ -215,7 +215,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         f: impl FnOnce(&mut PackInstallPolicy) -> Result<()>,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let id = super::default_manifest::default_policy_manifest_id()?;
             let raw = self

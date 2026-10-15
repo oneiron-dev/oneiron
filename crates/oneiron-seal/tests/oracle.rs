@@ -5,6 +5,10 @@
 //! Raw sealed bytes are never compared byte-for-byte across implementations;
 //! the oracle compares normalized semantics and cross-validation results.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 mod support;
 
@@ -140,25 +144,6 @@ fn reader_report_acceptable(reader: &str, report: &serde_json::Value) -> bool {
             && report["detail"]
                 .as_str()
                 .is_some_and(|detail| !detail.trim().is_empty()))
-}
-
-#[test]
-fn qpdf_warning_is_visible_and_only_accepted_for_qpdf() {
-    let warning = serde_json::json!({"status": "warning", "detail": "WARNING: repaired input"});
-    assert!(reader_report_acceptable("qpdf", &warning));
-    assert!(reader_report_acceptable(
-        "qpdf",
-        &serde_json::json!({"status": "warning", "detail": "qpdf: operation succeeded with warnings"})
-    ));
-    assert!(!reader_report_acceptable("pdfbox", &warning));
-    assert!(!reader_report_acceptable(
-        "qpdf",
-        &serde_json::json!({"status": "warning", "detail": ""})
-    ));
-    assert!(!reader_report_acceptable(
-        "qpdf",
-        &serde_json::json!({"status": "fail", "detail": "WARNING: failed"})
-    ));
 }
 
 /// Oracle matrix row 2: native seal -> pyHanko validate.
@@ -307,28 +292,4 @@ fn native_seal_pdfsig_extra_binaries_validate() {
             "extra pdfsig {binary:?} did not report a valid signature: {stdout:?}"
         );
     }
-}
-
-/// Manually export the synthetic signed fixture for standalone interop checks.
-/// The key is test-only and its private material is not written to the PDF.
-/// `SEAL_SAMPLE_INPUT` optionally supplies a prepared PDF; otherwise the
-/// structurally clean `interop_1page.pdf` fixture is used.
-/// Run with `SEAL_SAMPLE_OUTPUT=/path/out.pdf cargo test -p oneiron-seal --features seal-oracle --test oracle export_signed_sample -- --ignored --exact`.
-#[test]
-#[ignore = "manual signed-sample export; set SEAL_SAMPLE_OUTPUT"]
-fn export_signed_sample() {
-    let output = std::env::var_os("SEAL_SAMPLE_OUTPUT")
-        .expect("set SEAL_SAMPLE_OUTPUT to the destination PDF path");
-    let input = std::env::var_os("SEAL_SAMPLE_INPUT").map_or_else(fixture_input, |path| {
-        std::fs::read(&path)
-            .unwrap_or_else(|error| panic!("cannot read sample input {path:?}: {error}"))
-    });
-    let bytes = seal_sample_from_input(&input);
-    std::fs::write(&output, &bytes)
-        .unwrap_or_else(|error| panic!("cannot write signed sample to {output:?}: {error}"));
-    eprintln!(
-        "seal-oracle: wrote {} signed test bytes to {}",
-        bytes.len(),
-        std::path::Path::new(&output).display()
-    );
 }

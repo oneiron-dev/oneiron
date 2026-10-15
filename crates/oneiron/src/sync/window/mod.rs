@@ -22,6 +22,7 @@ use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation
 use loro::{LoroDoc, Subscription};
 
 mod admission;
+mod device_only;
 mod egress;
 mod forward;
 mod reverse;
@@ -36,10 +37,15 @@ pub(in crate::sync) use self::admission::validate_window_update_with_staged_worl
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
+pub use self::device_only::{UpdateVerdict, export_withheld, raw_update_verdict};
+pub(in crate::sync) use self::device_only::{
+    device_only_ids, window_is_device_only, window_withheld,
+};
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
 pub(in crate::sync) use self::egress::{
     export_promoted_window_updates_since, export_scrubbed_window_snapshot,
+    withdrawn_delete_carriers,
 };
 pub use self::egress::{
     export_window_updates_since, history_free_window_required, replay_pending_mirrors,
@@ -49,6 +55,8 @@ pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
+pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
+pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_delta};
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
@@ -183,7 +191,7 @@ impl LoadedWindow {
         let history_free = history_free_window_required(vault, &self.key)?;
         let vv = doc_version_vector(&self.doc);
 
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
             if history_free {
                 HISTORY_FREE_WINDOW.put(
@@ -414,6 +422,8 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tombstone_index_tests;
 
 // The flat window.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and

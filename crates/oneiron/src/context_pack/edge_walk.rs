@@ -6,7 +6,7 @@
 use crate::ports::EdgeStoreRead;
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use heed::RoTxn;
 
@@ -14,10 +14,10 @@ use crate::disclosure::DisclosureContext;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::validation::disclosure_admits_target;
-use super::world_partition::claim_world_by_id;
+use super::world_partition::record_world_by_id;
 
 #[cfg(not(test))]
 pub(super) const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
@@ -36,7 +36,7 @@ pub(super) struct EdgeWalkResult {
 }
 
 pub(super) fn load_entity_edges(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
@@ -75,7 +75,7 @@ pub(super) fn load_entity_edges(
 /// per ARCH-0034) returns `Error::CorruptedIndex("edge record")` — never a
 /// silent skip (ONE-1101 / pinned decision D9).
 pub(super) fn scan_edges_for_entity(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<EdgeInfo>> {
@@ -109,6 +109,9 @@ pub(super) struct EdgeWalkOptions<'a> {
     /// `None` because naming a dead world is a request to read it, and the
     /// caller marks what comes back instead of hiding it.
     pub(super) stale_worlds: Option<&'a BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
+    /// The device-local worlds, for a pack read off this device: a row one
+    /// keeps is never admitted as a neighbor nor traversed through (DEC-0005).
+    pub(super) device_local: Option<&'a BTreeSet<EntityId>>,
     /// The same resolved type floor and explicit kind names as primary retrieval.
     pub(super) type_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) named_types: Option<&'a [u8]>,
@@ -116,7 +119,7 @@ pub(super) struct EdgeWalkOptions<'a> {
 
 /// Expands the seed set along its edges under `options`.
 pub(super) fn walk_edges(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     seed_ids: &[EntityId],
     options: EdgeWalkOptions<'_>,
@@ -127,6 +130,7 @@ pub(super) fn walk_edges(
         exclude,
         clamp,
         stale_worlds,
+        device_local,
         type_filter,
         named_types,
     } = options;
@@ -197,8 +201,18 @@ pub(super) fn walk_edges(
                 // traversed through, so it cannot spend the edge budget it was
                 // excluded from either.
                 if let Some(stale) = stale_worlds
-                    && claim_world_by_id(store, rtxn, &edge.target)?
+                    && record_world_by_id(store, rtxn, &edge.target)?
                         .is_some_and(|world| stale.contains_key(&world))
+                {
+                    continue;
+                }
+                if let Some(flagged) = device_local
+                    && crate::settings::device_local_keeps_among(
+                        store,
+                        rtxn,
+                        flagged,
+                        &edge.target,
+                    )?
                 {
                     continue;
                 }

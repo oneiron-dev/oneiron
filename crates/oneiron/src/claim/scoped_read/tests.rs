@@ -261,7 +261,9 @@ fn a_manifest_without_a_read_grant_admits_only_what_a_verified_slip_scope_admits
         .read(&reads, None)?;
     assert!(scoped.value[0].is_none());
     assert_eq!(text(&scoped.value[1])?, "in the world");
-    assert_eq!(scoped.receipt.suppressed_count, 1);
+    // The base row lies wholly outside the credential's worlds: it is
+    // withheld with no count (DEC-0005: no name, no count).
+    assert_eq!(scoped.receipt.suppressed_count, 0);
 
     // The unattenuated root scope admits both positions.
     let root_read = vault
@@ -297,7 +299,6 @@ fn diagnostic_event_reads_keep_their_receipt() -> Result<()> {
             checkpoint_ref: None,
         },
         evidence_refs: vec![],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };

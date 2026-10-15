@@ -6,8 +6,11 @@
 //! `#[non_exhaustive]` permits exhaustive matches only inside the defining crate.
 
 pub use oneiron_contracts::temporal::{
-    TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TimeRange,
-    parse_temporal_expression, temporal_expression_from_query,
+    OpenPhrase, QueryTemporalHints, TEMPORAL_MAX_REFERENCE_SECS, TemporalExpression,
+    TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus,
+    TemporalPhraseSpan, TemporalPhraseStep, TemporalUnit, TimeRange, WeekdayRelation,
+    parse_temporal_expression, temporal_hints_from_query, temporal_phrase_spans,
+    temporal_phrase_steps,
 };
 
 /// Temporal anchor intent for bitemporal scoring.

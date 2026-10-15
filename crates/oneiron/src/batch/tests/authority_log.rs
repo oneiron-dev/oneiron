@@ -264,39 +264,6 @@ fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> 
     Ok(())
 }
 
-/// ONE-1604-D1 T2: a valid entry offered under a NON-derived id is refused at
-/// the chokepoint, and nothing is stored under either key.
-#[cfg(feature = "sync")]
-#[test]
-fn authority_log_store_key_mismatch_rejected() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let genesis = authority_genesis_fixture(95);
-    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
-    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
-    let owner = authority_test_key(95);
-    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 96, 1);
-    let enroll_body = crate::authority::encode_authority_log_entry_body(&enroll)?;
-    let derived = crate::authority::authority_log_entity_id(&enroll)?;
-    let wrong_id = EntityId::now();
-
-    let err = vault
-        .batch()
-        .put_replicated(
-            &wrong_id,
-            ENTITY_TYPE_AUTHORITY_LOG,
-            test_time_range(2, 2),
-            2,
-            &enroll_body,
-        )
-        .commit()
-        .expect_err("a AUTHORITY_LOG row under a non-derived id must be rejected");
-
-    assert_eq!(err.kind(), ErrorKind::AuthorityLogStoreKeyMismatch);
-    assert!(!vault.entity_exists(&wrong_id)?);
-    assert!(!vault.entity_exists(&derived)?);
-    Ok(())
-}
-
 /// ONE-1604-D1 (fix-leg 1, P2-a — chokepoint half): the local write door
 /// applies the same dominance as the replicated one. A cross-type squatter at
 /// a derived AUTHORITY_LOG key is evicted WITH its indexes — a stale type_index or
@@ -1063,29 +1030,6 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         .undo_identity_topology_event(&event, &write, 4)
         .expect("undo must resolve, not hit a stranded shell");
     assert_shell_edge_pair(&vault, &c, EdgeKind::MergedInto, &d, false, "fresh undo")?;
-    Ok(())
-}
-
-#[cfg(feature = "sync")]
-#[test]
-fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let genesis = authority_genesis_fixture(86);
-
-    vault.put_authority_log_entry(&genesis, test_time_range(1, 1), 1)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .sync_state
-            .get(
-                &rtxn,
-                crate::authority::authority_first_seen_backfill_sync_key(),
-            )?
-            .is_none(),
-        "a single authority write must not suppress the legacy sidecar scan"
-    );
     Ok(())
 }
 

@@ -5,7 +5,7 @@ use crate::{
     error::{Error, Result},
     store::ManifestDbs,
 };
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 const REVERSE: &[u8] = b"ports:dependency_reverse:v1:";
 pub(super) fn reverse_prefix(id: &EntityId) -> Vec<u8> {
     [REVERSE, id.as_bytes()].concat()
@@ -56,12 +56,77 @@ pub(super) fn complete(
             return Ok(false);
         }
     }
+    // Every export door judges an epoch summary by the sources its
+    // `DerivedFrom` edges name, and a deletion withdraws it through its
+    // dependency rows. It is fresh again only once the two agree: the edges
+    // name exactly the sources it was regenerated from. A dependency row
+    // alone certifies nothing a door reads, and an edge to an undeclared
+    // source would lose the row that withdraws it on that source's erase; an
+    // obsolete edge goes through the batch door first, which withdraws.
+    if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        && crate::compaction::stored_epoch_in(store, txn, dependent, &row.body)?.may_be()
+    {
+        let named = super::EdgeStoreRead::port_edges(
+            store,
+            txn,
+            dependent,
+            super::EdgeDirection::Out,
+            Some(crate::edge::EdgeKind::DerivedFrom),
+            None,
+        )?
+        .map(|edge| edge.map(|edge| edge.target))
+        .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let declared = sources
+            .iter()
+            .map(|source| source.document)
+            .collect::<std::collections::BTreeSet<_>>();
+        if named != declared {
+            return Ok(false);
+        }
+    }
     // Replace only this dependent's reverse-indexed rows. Never scan all sources.
+    for (key, source) in reverse_rows(store, txn, dependent)? {
+        store.vault_meta().delete(txn, &key)?;
+        let forward = [
+            super::integrity::source_prefix(source).as_slice(),
+            dependent.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta().delete(txn, &forward)?;
+    }
+    for source in sources {
+        super::integrity::record_dependency_in_txn(store, txn, *source, dependent)?;
+    }
+    // What an epoch summary was withdrawn for stays: its old words still sit
+    // in window history and in snapshots already packed, which a door judges
+    // by this row (Sol round 20). It retires with the body.
+    store
+        .vault_meta()
+        .delete(txn, &super::integrity::stale_key(dependent))?;
+    Ok(true)
+}
+/// The sources `dependent` is registered as derived from.
+pub(crate) fn dependency_sources_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(reverse_rows(store, txn, dependent)?
+        .into_iter()
+        .map(|(_, source)| source.document)
+        .collect())
+}
+
+fn reverse_rows(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+) -> Result<Vec<(Vec<u8>, SourceSpan)>> {
     let prefix = reverse_prefix(dependent);
-    let mut old = Vec::new();
+    let mut rows = Vec::new();
     for row in store.vault_meta().prefix_iter(txn, &prefix)? {
-        if old.len() >= 100_000 {
-            return Err(Error::IndexOverflow("regeneration old sources"));
+        if rows.len() >= 100_000 {
+            return Err(Error::IndexOverflow("reverse dependency rows"));
         }
         let (key, _) = row?;
         if key.len() != prefix.len() + 24 {
@@ -77,25 +142,11 @@ pub(super) fn complete(
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("reverse dependency frontier"))?,
         );
-        old.push((key.to_vec(), SourceSpan { document, frontier }));
+        rows.push((key.to_vec(), SourceSpan { document, frontier }));
     }
-    for (key, source) in old {
-        store.vault_meta().delete(txn, &key)?;
-        let forward = [
-            super::integrity::source_prefix(source).as_slice(),
-            dependent.as_bytes(),
-        ]
-        .concat();
-        store.vault_meta().delete(txn, &forward)?;
-    }
-    for source in sources {
-        super::integrity::record_dependency_in_txn(store, txn, *source, dependent)?;
-    }
-    store
-        .vault_meta()
-        .delete(txn, &super::integrity::stale_key(dependent))?;
-    Ok(true)
+    Ok(rows)
 }
+
 impl<T: ManifestDbs> super::DependencyIndex for T {
     fn port_dependency_put(
         &self,

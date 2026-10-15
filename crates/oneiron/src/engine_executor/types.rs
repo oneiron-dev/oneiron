@@ -16,6 +16,9 @@ pub const ENGINE_EXECUTOR_HARD_STEP_LIMIT: u32 = 50;
 
 pub const ENGINE_EXECUTOR_PURPOSE_NAME: &str = "engine_native_executor";
 
+/// The call purpose of a run's compaction pass (agent-runtime-v1 §d7).
+pub const ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME: &str = "engine_native_executor_compaction";
+
 pub const ENGINE_EXECUTOR_FALLBACK_NAME: &str = "engine_native_js_executor_v1";
 
 /// Reserved guest response key carrying the budget legibility envelope
@@ -32,6 +35,32 @@ pub enum EngineExecutorError {
     Llm(#[from] LlmError),
     #[error("executor request canonicalization failed: {0}")]
     CanonicalRequest(#[from] serde_json::Error),
+    /// The run's host door refused a call the executor makes for the run,
+    /// with the door's stable code.
+    #[error("the run's host door refused its call: {code}")]
+    HostRefused { code: String },
+}
+
+impl EngineExecutorError {
+    /// The variant, for a log line, which never carries the error's text: an
+    /// engine error's can quote what the vault holds, a model error's a reply
+    /// or a provider's error body, a canonicalization error's the request.
+    pub(crate) fn variant(&self) -> &'static str {
+        match self {
+            Self::Engine(_) => "engine",
+            Self::Llm(_) => "llm",
+            Self::CanonicalRequest(_) => "canonical_request",
+            Self::HostRefused { .. } => "host_refused",
+        }
+    }
+
+    /// An engine error's kind, for the same log line.
+    pub(crate) fn engine_kind(&self) -> Option<crate::ErrorKind> {
+        match self {
+            Self::Engine(error) => Some(error.kind()),
+            _ => None,
+        }
+    }
 }
 
 /// Soft-yield and hard-stop limits for the durable REPL.
@@ -259,8 +288,16 @@ impl JsCodeModeStepOutcome {
 pub enum EngineExecutorStatus {
     Complete,
     Waiting(SelfDurableWait),
-    Yielded { next_step_seq: u64 },
+    Yielded {
+        next_step_seq: u64,
+    },
     HardStepLimitReached,
+    /// The window reached its budget with no accepted swap (agent-runtime-v1
+    /// §d7). Not terminal: the same run continues once a swap lands.
+    WindowFull {
+        next_step_seq: u64,
+        reason: super::compaction::WindowFullReason,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -269,4 +306,6 @@ pub struct EngineExecutorOutcome {
     pub steps_run: u32,
     pub replay_record: CodeRunReplayRecord,
     pub seat_receipt: Option<crate::llm::seat::SeatChoiceReceipt>,
+    /// The run's compaction after this call, when the host keeps a seat.
+    pub compaction: Option<super::compaction::CompactionReport>,
 }

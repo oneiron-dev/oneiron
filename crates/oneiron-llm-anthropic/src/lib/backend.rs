@@ -22,7 +22,7 @@ pub struct AnthropicMessagesConfig {
 
 impl AnthropicMessagesConfig {
     pub fn from_registry(vault: &oneiron::Vault) -> oneiron::Result<Self> {
-        Ok(Self::with_models(vault.model_catalog_entries(
+        Ok(Self::from_catalog(vault.model_catalog_entries(
             oneiron::llm::registry::ModelWireFormat::AnthropicMessages,
         )?))
     }
@@ -39,8 +39,10 @@ impl AnthropicMessagesConfig {
         }
     }
 
+    /// Builds the adapter config from host-supplied catalog rows: a host that
+    /// keeps its model list in its own configuration needs no registry rows.
     #[must_use]
-    fn with_models(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
+    pub fn from_catalog(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
         Self {
             endpoint_path: "/v1/messages".to_owned(),
             anthropic_version: "2023-06-01".to_owned(),
@@ -90,6 +92,17 @@ impl<T> AnthropicMessagesBackend<T> {
     #[must_use]
     pub fn transport(&self) -> &T {
         &self.transport
+    }
+}
+
+/// One request to the configured Messages endpoint per call, when the host's
+/// transport sends once; retries stay with the host, above a run's gate.
+impl<T> oneiron::llm::SingleRouteBackend for AnthropicMessagesBackend<T>
+where
+    T: AnthropicMessagesTransport + oneiron::llm::SingleSend,
+{
+    fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
+        build_anthropic_messages_request(&self.config, request, stream).map(drop)
     }
 }
 

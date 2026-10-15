@@ -143,10 +143,11 @@ impl ResidenceRpc {
             .into_client_request()
             .map_err(|_| refused())?;
         // The upgrade proves the device's transport slip, as the sync
-        // socket does; the bind below then attenuates it to the actor.
+        // socket does, signed on the wall clock as it is; the bind below
+        // then attenuates it to the actor.
         if let Some(credential) = &config.transport_credential {
             credential
-                .sign_upgrade(vault.now_recorded_at(), &mut request)
+                .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
                 .map_err(|_| refused())?;
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
@@ -371,7 +372,7 @@ impl SyncClient {
         // entry. Neither reaches the observed Loro window or LMDB entity
         // tables until the canonical window is promoted before a write.
         self.vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 if self
                     .vault
                     .store
@@ -473,7 +474,7 @@ impl SyncClient {
         // Publish the writable marker only AFTER the canonical doc is
         // durable. Cached thin bodies in this window can no longer shadow it.
         self.vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 let stale: Vec<_> = self
                     .vault
                     .store

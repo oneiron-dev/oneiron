@@ -207,7 +207,7 @@ impl TerminalRejectionBatch {
             return Ok(());
         }
         let quarantined_at = vault.store.clock.now_recorded_at();
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             for row in &self.rows {
                 record_in_txn(
                     vault,

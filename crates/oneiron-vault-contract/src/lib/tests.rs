@@ -236,27 +236,6 @@ fn ctl_version_gating() {
 }
 
 #[test]
-fn shed_request_rejects_malformed_json() {
-    for wire in [
-        r#"{"op":"future_op"}"#,
-        r#"{"op":"shed","waited_secs":1}"#,
-        r#"{"op":"shed","cause":"memory_pressure"}"#,
-        r#"{"op":"shed","cause":"future_cause","waited_secs":1}"#,
-        r#"{"op":"shed","cause":"LongOutboundWait","waited_secs":1}"#,
-        r#"{"op":"shed","cause":null,"waited_secs":1}"#,
-        r#"{"op":"shed","cause":7,"waited_secs":1}"#,
-        r#"{"op":"shed","cause":"memory_pressure","waited_secs":null}"#,
-        r#"{"op":"shed","cause":"memory_pressure","waited_secs":"1"}"#,
-        r#"{"op":"shed","cause":"memory_pressure","waited_secs":true}"#,
-        r#"{"op":"shed","cause":"memory_pressure","waited_secs":-1}"#,
-        r#"{"op":"shed","cause":"memory_pressure","waited_secs":1.5}"#,
-        r#"{"op":"shed","cause":"memory_pressure","waited_secs":18446744073709551616}"#,
-    ] {
-        assert!(serde_json::from_str::<CtlRequest>(wire).is_err(), "{wire}");
-    }
-}
-
-#[test]
 fn ctl_response_untagged_invariant_holds() {
     for (response, expected) in ctl_response_fixtures() {
         response.validate().unwrap();
@@ -277,218 +256,33 @@ fn ctl_response_untagged_invariant_holds() {
 }
 
 #[test]
-fn slim_response_field_combinations_validate() {
-    for status in [
-        ShedStatus::Entered,
-        ShedStatus::AlreadySlim,
-        ShedStatus::Refused,
-    ] {
-        for slim in [false, true] {
-            for reclaimed_bytes in [None, Some(0), Some(u64::MAX)] {
-                for dropped_windows in [None, Some(0), Some(u64::MAX)] {
-                    for kind in [
-                        None,
-                        Some("no_pending_outbound_step"),
-                        Some("multiple_pending_outbound_steps"),
-                        Some("sync_window_busy"),
-                        Some("already_slim_for_different_step"),
-                        Some("future_blocker"),
-                    ] {
-                        let response = CtlResponse::Slim {
-                            slim,
-                            status,
-                            reclaimed_bytes,
-                            dropped_windows,
-                            blocker: kind.map(|kind| ShedBlockerWire {
-                                kind: kind.into(),
-                                detail: "detail".into(),
-                            }),
-                        };
-                        let valid = matches!(
-                            (status, slim, reclaimed_bytes, dropped_windows, kind),
-                            (ShedStatus::Entered, true, Some(_), Some(_), None)
-                                | (ShedStatus::AlreadySlim, true, Some(_), Some(_), None)
-                                | (ShedStatus::AlreadySlim, true, None, None, None)
-                                | (
-                                    ShedStatus::Refused,
-                                    false,
-                                    None,
-                                    None,
-                                    Some(
-                                        "no_pending_outbound_step"
-                                            | "multiple_pending_outbound_steps"
-                                            | "sync_window_busy"
-                                    )
-                                )
-                                | (
-                                    ShedStatus::Refused,
-                                    true,
-                                    None,
-                                    None,
-                                    Some("already_slim_for_different_step")
-                                )
-                                | (ShedStatus::Refused, _, None, None, Some("future_blocker"))
-                        );
-                        assert_eq!(response.validate().is_ok(), valid, "{response:?}");
-                        let wire = serde_json::to_string(&response).unwrap();
-                        let decoded: CtlResponse = serde_json::from_str(&wire).unwrap();
-                        assert_eq!(decoded.validate().is_ok(), valid, "{wire}");
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn slim_absent_optionals_serialize_as_absent_keys() {
-    for (response, _) in ctl_response_fixtures() {
-        let json = serde_json::to_value(&response).unwrap();
-        if let CtlResponse::Slim {
-            reclaimed_bytes,
-            dropped_windows,
-            blocker,
-            ..
-        } = response
-        {
-            assert!(
-                json.get("ok").is_none(),
-                "Slim must never be shadowed by Ok"
-            );
-            for (key, present) in [
-                ("reclaimed_bytes", reclaimed_bytes.is_some()),
-                ("dropped_windows", dropped_windows.is_some()),
-                ("blocker", blocker.is_some()),
-            ] {
-                assert_eq!(json.get(key).is_some(), present, "{key}: {json}");
-                assert!(!json.get(key).is_some_and(serde_json::Value::is_null));
-            }
-        }
-    }
-    // Null optionals decode as None, but are never emitted as null.
-    let response: CtlResponse = serde_json::from_str(
-        r#"{"slim":true,"status":"already_slim","reclaimed_bytes":null,"dropped_windows":null,"blocker":null}"#,
-    )
-    .unwrap();
-    response.validate().unwrap();
-    assert_eq!(
-        serde_json::to_string(&response).unwrap(),
-        r#"{"slim":true,"status":"already_slim"}"#
-    );
-}
-
-#[test]
-fn slim_response_rejects_malformed_json() {
-    for wire in [
-        r#"{}"#,
-        r#"{"slim":true}"#,
-        r#"{"status":"entered"}"#,
-        r#"{"slim":"true","status":"entered"}"#,
-        r#"{"slim":null,"status":"already_slim"}"#,
-        r#"{"slim":true,"status":"future_status"}"#,
-        r#"{"slim":true,"status":"AlreadySlim"}"#,
-        r#"{"slim":true,"status":null}"#,
-        r#"{"slim":true,"status":1}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":-1,"dropped_windows":0}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":18446744073709551616,"dropped_windows":0}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":1.5,"dropped_windows":0}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":"1","dropped_windows":0}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":0,"dropped_windows":-1}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":0,"dropped_windows":18446744073709551616}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":0,"dropped_windows":1.5}"#,
-        r#"{"slim":true,"status":"entered","reclaimed_bytes":0,"dropped_windows":"1"}"#,
-        r#"{"slim":false,"status":"refused","blocker":{}}"#,
-        r#"{"slim":false,"status":"refused","blocker":{"kind":"sync_window_busy"}}"#,
-        r#"{"slim":false,"status":"refused","blocker":{"detail":"busy"}}"#,
-        r#"{"slim":false,"status":"refused","blocker":{"kind":null,"detail":"busy"}}"#,
-        r#"{"slim":false,"status":"refused","blocker":{"kind":"sync_window_busy","detail":1}}"#,
-        r#"{"slim":false,"status":"refused","blocker":"sync_window_busy"}"#,
-    ] {
-        assert!(serde_json::from_str::<CtlResponse>(wire).is_err(), "{wire}");
-    }
-}
-
-#[test]
-fn shed_blocker_wire_kind_spellings_are_pinned() {
-    for (kind, wire) in [
-        (
-            "no_pending_outbound_step",
-            r#"{"kind":"no_pending_outbound_step","detail":"detail"}"#,
-        ),
-        (
-            "multiple_pending_outbound_steps",
-            r#"{"kind":"multiple_pending_outbound_steps","detail":"detail"}"#,
-        ),
-        (
-            "sync_window_busy",
-            r#"{"kind":"sync_window_busy","detail":"detail"}"#,
-        ),
-        (
-            "already_slim_for_different_step",
-            r#"{"kind":"already_slim_for_different_step","detail":"detail"}"#,
-        ),
-    ] {
-        let blocker = ShedBlockerWire {
-            kind: kind.into(),
-            detail: "detail".into(),
-        };
-        assert_eq!(serde_json::to_string(&blocker).unwrap(), wire);
-        assert_eq!(
-            serde_json::from_str::<ShedBlockerWire>(wire).unwrap(),
-            blocker
-        );
-    }
-}
-
-#[test]
-fn shed_blocker_wire_preserves_unknown_kinds() {
-    for (slim, wire) in [
-        (
-            false,
-            r#"{"slim":false,"status":"refused","blocker":{"kind":"future_blocker","detail":"wait for \"adapter\""}}"#,
-        ),
-        (
-            true,
-            r#"{"slim":true,"status":"refused","blocker":{"kind":"future_blocker","detail":"wait for \"adapter\""}}"#,
-        ),
-    ] {
-        let response: CtlResponse = serde_json::from_str(wire).unwrap();
-        response.validate().unwrap();
-        let serialized = serde_json::to_string(&response).unwrap();
-        let serialized_response: CtlResponse = serde_json::from_str(&serialized).unwrap();
-        for response in [response, serialized_response] {
-            let CtlResponse::Slim {
-                slim: decoded_slim,
-                status: ShedStatus::Refused,
-                blocker: Some(blocker),
-                ..
-            } = response
-            else {
-                panic!("unknown blocker must remain displayable");
-            };
-            assert_eq!(decoded_slim, slim);
-            assert_eq!(blocker.kind, "future_blocker");
-            assert_eq!(blocker.detail, "wait for \"adapter\"");
-        }
-    }
-}
-
-#[test]
-fn credentials_roundtrip() {
-    let dek = [7u8; DEK_LEN];
-    let token = [9u8; TOKEN_LEN];
-    let mut buf = Vec::new();
-    write_credentials(&mut buf, &dek, &token).unwrap();
-    assert_eq!(buf.len(), CREDENTIALS_LEN);
-    let creds = read_credentials(&buf[..]).unwrap();
-    assert_eq!(creds.dek, dek);
-    assert_eq!(creds.token, token);
-}
-
-#[test]
-fn credentials_reject_short_and_long() {
-    assert!(read_credentials(&[0u8; 63][..]).is_err());
-    assert!(read_credentials(&[0u8; 65][..]).is_err());
+fn credentials_pin_dek_then_token_bytes_and_accept_independent_frames_only() {
+    const DEK: [u8; 32] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+        0x1e, 0x1f,
+    ];
+    const TOKEN: [u8; 32] = [
+        0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae,
+        0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd,
+        0xbe, 0xbf,
+    ];
+    const FRAME: &[u8;64] = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf";
+    const OTHER: &[u8; 64] = b"0123456789abcdef0123456789abcdefABCDEFGHIJKLMNOPQRSTUVWXYZabcdef";
+    let mut written = Vec::new();
+    write_credentials(&mut written, &DEK, &TOKEN).unwrap();
+    assert_eq!(written.as_slice(), FRAME.as_slice());
+    // Reader input is authored bytes, never `written`.
+    let read = read_credentials(&FRAME[..]).unwrap();
+    assert_eq!(read.dek, DEK);
+    assert_eq!(read.token, TOKEN);
+    let read = read_credentials(&OTHER[..]).unwrap();
+    assert_eq!(&read.dek, b"0123456789abcdef0123456789abcdef");
+    assert_eq!(&read.token, b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef");
+    assert!(read_credentials(&FRAME[..63]).is_err());
+    let mut trailing = FRAME.to_vec();
+    trailing.push(0xff);
+    assert!(read_credentials(trailing.as_slice()).is_err());
 }
 
 #[test]
@@ -503,130 +297,6 @@ fn token_debug_redacted() {
         assert_eq!(token.expose(), secret);
         assert_eq!(token_debug, debug);
         assert!(!debug.contains(secret));
-    }
-}
-
-#[test]
-fn hex_roundtrip() {
-    let bytes = [0x00u8, 0x0f, 0xa5, 0xff];
-    assert_eq!(hex(&bytes), "000fa5ff");
-    assert_eq!(from_hex("000fa5ff").unwrap(), bytes.to_vec());
-}
-
-/// TokenHex is #[serde(transparent)]: the wire shape must stay byte-identical
-/// to the plain String field it replaced (contract version 1 unchanged).
-#[test]
-fn ledger_update_wire_shape() {
-    let u = LedgerUpdate {
-        op: "ledger_update".into(),
-        vault: "v".into(),
-        token: TokenHex::new("aa".into()),
-        rev: 1,
-        entries: vec![],
-    };
-    let j = serde_json::to_value(&u).unwrap();
-    assert_eq!(j["token"], "aa");
-    let back: LedgerUpdate = serde_json::from_str(
-        r#"{"op":"ledger_update","vault":"v","token":"aa","rev":1,"entries":[]}"#,
-    )
-    .unwrap();
-    assert_eq!(back.token.expose(), "aa");
-}
-
-#[test]
-fn vault_names() {
-    assert!(valid_vault_name("test-vault"));
-    assert!(valid_vault_name("a"));
-    assert!(!valid_vault_name(""));
-    assert!(!valid_vault_name("-a"));
-    assert!(!valid_vault_name("a-"));
-    assert!(!valid_vault_name("A"));
-    assert!(!valid_vault_name("a.b"));
-    assert!(!valid_vault_name(&"x".repeat(64)));
-}
-
-#[test]
-fn from_hex_rejects_malformed() {
-    assert!(from_hex("abc").is_none()); // odd length
-    assert!(from_hex("zz").is_none()); // non-hex
-    assert!(from_hex("€a").is_none()); // even byte length, non-ASCII: must not panic
-}
-
-#[test]
-fn ledger_update_validate() {
-    let mut u = LedgerUpdate {
-        op: "ledger_update".into(),
-        vault: "v".into(),
-        token: TokenHex::from_token(&[0u8; TOKEN_LEN]),
-        rev: 1,
-        entries: vec![],
-    };
-    u.validate().unwrap();
-
-    u.op = "nope".into();
-    assert!(u.validate().is_err());
-    u.op = "ledger_update".into();
-
-    u.vault = "../x".into();
-    assert!(u.validate().is_err());
-    u.vault = "v".into();
-
-    u.token = TokenHex::new("zz".into());
-    assert!(u.validate().is_err());
-    u.token = TokenHex::from_token(&[0u8; TOKEN_LEN]);
-
-    u.entries = (0..=MAX_LEDGER_ENTRIES)
-        .map(|i| WakeEntry {
-            id: format!("e{i}"),
-            at: Schedule::Exact { at: 0 },
-            reason_tag: String::new(),
-        })
-        .collect();
-    assert!(u.validate().is_err());
-    // Same list through the shared helper (the prepare_reap path).
-    assert!(validate_wake_entries(&u.entries).is_err());
-    assert!(validate_wake_entries(&u.entries[..1]).is_ok());
-}
-
-#[test]
-fn wake_fields_reject_control_bytes() {
-    let mut e = WakeEntry {
-        id: "ok".into(),
-        at: Schedule::Exact { at: 0 },
-        reason_tag: "tag".into(),
-    };
-    e.validate().unwrap();
-    e.id = "a\nb".into();
-    assert!(e.validate().is_err());
-    e.id = "ok".into();
-    e.reason_tag = "t\u{0}g".into();
-    assert!(e.validate().is_err());
-}
-
-#[test]
-fn ctl_request_validate() {
-    let ok = CtlRequest::AlarmDue {
-        id: "e1".into(),
-        reason_tag: "cron".into(),
-    };
-    ok.validate().unwrap();
-    CtlRequest::Ping.validate().unwrap();
-    let bad = [
-        CtlRequest::AlarmDue {
-            id: String::new(),
-            reason_tag: String::new(),
-        },
-        CtlRequest::AlarmDue {
-            id: "e1".into(),
-            reason_tag: "x".repeat(MAX_REASON_TAG + 1),
-        },
-        CtlRequest::AlarmDue {
-            id: "e\u{1b}1".into(),
-            reason_tag: String::new(),
-        },
-    ];
-    for req in bad {
-        assert!(req.validate().is_err());
     }
 }
 

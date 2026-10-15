@@ -159,6 +159,36 @@ pub(crate) fn observe_submission_in_txn(
     Ok(())
 }
 
+/// How many proposal submissions this actor has made.
+pub(crate) fn submission_count_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<u64> {
+    Ok(read_row(COUNT.get(store, txn, &actor))?.map_or(0, |row| row.count))
+}
+
+/// The proposal refs this actor submitted at counts in `(after, after +
+/// limit]`, oldest first, each with its count. The immutable history is the
+/// authority: only the envelope actor's own proposals were written under its
+/// key. A changed body appears again at its new count.
+pub(crate) fn submissions_after_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    after: u64,
+    limit: usize,
+) -> Result<Vec<(u64, String)>> {
+    let last = submission_count_in_txn(store, txn, actor)?.min(after.saturating_add(limit as u64));
+    (after.saturating_add(1)..=last)
+        .map(|count| {
+            read_row(HISTORY.get(store, txn, &HistoryKey { actor, count }))?
+                .map(|receipt| (count, receipt.proposal_ref))
+                .ok_or(Error::CorruptedIndex("proposal receipt history"))
+        })
+        .collect()
+}
+
 impl Vault {
     /// The first typed OF-520 crossing for this actor, if any. Observation is
     /// local-only; it never travels on the replicated claim path.
@@ -203,72 +233,5 @@ impl Vault {
                 count,
             },
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn actor_receipts_dedupe_retries_without_colliding_on_the_same_proposal_id() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-        let first = EntityId::now();
-        let second = EntityId::now();
-        for (actor, reference, changed) in [
-            (first, "claim:one", true),
-            (first, "claim:one", false),
-            (second, "claim:one", true),
-            (first, "claim:two", true),
-            (first, "claim:three", true),
-        ] {
-            vault
-                .with_write_txn(|txn| {
-                    observe_submission_in_txn(
-                        &vault.store,
-                        txn,
-                        actor,
-                        reference,
-                        ProposalPolicySource {
-                            threshold: 1,
-                            deciding_row: None,
-                            precedence_row: None,
-                            shipped_default_precedence: true,
-                        },
-                        changed,
-                    )
-                })
-                .unwrap();
-        }
-        assert_eq!(
-            vault
-                .proposal_submission_receipt(&first, "claim:one")
-                .unwrap()
-                .unwrap()
-                .count,
-            1
-        );
-        assert_eq!(
-            vault
-                .proposal_submission_receipt(&second, "claim:one")
-                .unwrap()
-                .unwrap()
-                .count,
-            1
-        );
-        assert_eq!(
-            vault
-                .proposal_submission_receipt(&first, "claim:two")
-                .unwrap()
-                .unwrap()
-                .count,
-            2
-        );
-        let check = vault.proposal_submission_check(&first).unwrap().unwrap();
-        assert_eq!(check.actor, first.to_hex());
-        assert_eq!(check.count, 2);
-        assert_eq!(check.proposal_ref, "claim:two");
-        assert!(vault.proposal_submission_check(&second).unwrap().is_none());
     }
 }

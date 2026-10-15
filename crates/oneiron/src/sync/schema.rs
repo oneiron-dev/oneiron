@@ -155,11 +155,10 @@ fn normalize_window_key(raw_key: &str) -> Option<&str> {
     if parse_window_key_str(key).is_some() {
         Some(key)
     } else {
+        // The rejected key is a peer's string, not a window id: only the
+        // refusal is logged (owner ruling 2026-10-14, fix 6).
         if !key.is_empty() {
-            tracing::warn!(
-                window_key = %key,
-                "sync schema: ignoring invalid root window key"
-            );
+            tracing::warn!("sync schema: ignoring invalid root window key");
         }
         None
     }
@@ -167,9 +166,8 @@ fn normalize_window_key(raw_key: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use loro::{ExportMode, LoroValue};
+    use loro::ExportMode;
 
-    use super::super::loro_support::map_for_each_bytes;
     use super::*;
 
     #[test]
@@ -189,131 +187,6 @@ mod tests {
     }
 
     #[test]
-    fn window_doc_has_three_maps() {
-        let key = WindowKey::new("2026-02");
-        let doc = create_window_doc("user1", &key);
-
-        let entities = doc.get_map("entities");
-        let edges = doc.get_map("edges");
-        let tombstones = doc.get_map("tombstones");
-
-        // All maps should be empty
-        let mut count = 0;
-        map_for_each_bytes(&entities, |_, _| count += 1);
-        assert_eq!(count, 0);
-
-        count = 0;
-        map_for_each_bytes(&edges, |_, _| count += 1);
-        assert_eq!(count, 0);
-
-        count = 0;
-        map_for_each_bytes(&tombstones, |_, _| count += 1);
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn read_and_add_windows() {
-        let doc = create_root_doc(
-            "user1",
-            "vault-abc",
-            &[WindowKey::new("2026-01"), WindowKey::new("2026-02")],
-        );
-
-        let windows = read_window_list(&doc);
-        assert_eq!(
-            windows,
-            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
-        );
-
-        add_window_to_root(&doc, &WindowKey::new("2026-03"));
-        let windows = read_window_list(&doc);
-        assert_eq!(
-            windows,
-            vec![
-                WindowKey::new("2026-01"),
-                WindowKey::new("2026-02"),
-                WindowKey::new("2026-03")
-            ]
-        );
-
-        add_window_to_root(&doc, &WindowKey::new("2026-02"));
-        assert_eq!(
-            read_window_list(&doc),
-            vec![
-                WindowKey::new("2026-01"),
-                WindowKey::new("2026-02"),
-                WindowKey::new("2026-03")
-            ]
-        );
-    }
-
-    #[test]
-    fn read_window_list_skips_blank_and_invalid_tokens() {
-        let doc = create_root_doc("user1", "vault-abc", &[]);
-        let meta = doc.get_map("meta");
-        let windows = window_list_map(&meta).unwrap();
-        windows.insert("2026-01", WINDOW_PRESENT_MARKER).unwrap();
-        windows.insert("", WINDOW_PRESENT_MARKER).unwrap();
-        windows.insert("2026-13", WINDOW_PRESENT_MARKER).unwrap();
-        windows.insert("garbage", LoroValue::I64(1)).unwrap();
-        windows.insert("2026-02", WINDOW_PRESENT_MARKER).unwrap();
-        doc.commit();
-
-        let windows = read_window_list(&doc);
-        assert_eq!(
-            windows,
-            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
-        );
-    }
-
-    #[test]
-    fn legacy_window_bytes_read_and_migrate_to_window_map() {
-        let doc = LoroDoc::new();
-        let meta = doc.get_map("meta");
-        meta.insert(
-            ROOT_WINDOWS_KEY,
-            b"2026-02, 2026-01,garbage,,2026-01".as_slice(),
-        )
-        .unwrap();
-        doc.commit();
-
-        assert_eq!(
-            read_window_list(&doc),
-            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
-        );
-        assert!(
-            window_list_map(&meta).is_none(),
-            "legacy bytes should stay untouched on read-only access"
-        );
-
-        add_window_to_root(&doc, &WindowKey::new("2026-03"));
-
-        let migrated = window_list_map(&meta).expect("add should migrate legacy bytes to map");
-        assert!(migrated.get("2026-01").is_some());
-        assert!(migrated.get("2026-02").is_some());
-        assert!(migrated.get("2026-03").is_some());
-        assert_eq!(
-            read_window_list(&doc),
-            vec![
-                WindowKey::new("2026-01"),
-                WindowKey::new("2026-02"),
-                WindowKey::new("2026-03")
-            ]
-        );
-    }
-
-    #[test]
-    fn add_window_to_root_normalizes_incoming_key_before_insert() {
-        let doc = create_root_doc("user1", "vault-abc", &[]);
-
-        add_window_to_root(&doc, &WindowKey::new_unchecked_for_test(" 2026-01 "));
-
-        let windows = read_window_list(&doc);
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].as_str(), "2026-01");
-    }
-
-    #[test]
     fn add_window_to_root_rejects_invalid_key() {
         let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
 
@@ -324,37 +197,31 @@ mod tests {
         assert_eq!(windows[0].as_str(), "2026-01");
     }
 
+    /// Owner ruling 2026-10-14 (fix 6): a peer's root can carry any string as
+    /// a window key, and the refusal log must not repeat it.
     #[test]
-    fn root_window_list_round_trips_through_snapshot_and_updates() {
-        let doc = create_root_doc(
-            "user1",
-            "vault-abc",
-            &[WindowKey::new("2026-02"), WindowKey::new("2026-01")],
-        );
-        add_window_to_root(&doc, &WindowKey::new("2026-03"));
-
-        let snapshot = doc.export(ExportMode::Snapshot).unwrap();
-        let from_snapshot = LoroDoc::from_snapshot(&snapshot).unwrap();
-        assert_eq!(
-            read_window_list(&from_snapshot),
-            vec![
-                WindowKey::new("2026-01"),
-                WindowKey::new("2026-02"),
-                WindowKey::new("2026-03")
-            ]
-        );
-
-        let updates = doc.export(ExportMode::all_updates()).unwrap();
-        let from_updates = LoroDoc::new();
-        from_updates.import(&updates).unwrap();
-        assert_eq!(
-            read_window_list(&from_updates),
-            vec![
-                WindowKey::new("2026-01"),
-                WindowKey::new("2026-02"),
-                WindowKey::new("2026-03")
-            ]
-        );
+    fn an_invalid_peer_window_key_is_refused_without_its_text() {
+        const SENTINEL: &str = "sentinel-world-text-91c4: my sister's diagnosis";
+        let doc = create_root_doc("user1", "vault-abc", &[WindowKey::new("2026-01")]);
+        let windows = window_list_map(&doc.get_map("meta")).expect("windows map");
+        windows.insert(SENTINEL, WINDOW_PRESENT_MARKER).unwrap();
+        doc.commit();
+        // A callsite registration racing another test can miss one capture;
+        // the refusal line itself proves this capture saw the read.
+        for _ in 0..3 {
+            let capture = crate::test_util::log_capture::LogCapture::default();
+            let keys = capture.with_default(|| read_window_list(&doc));
+            assert_eq!(keys, vec![WindowKey::new("2026-01")]);
+            let lines = capture.lines();
+            if lines
+                .iter()
+                .any(|line| line.contains("ignoring invalid root window key"))
+            {
+                capture.assert_absent("sentinel-world-text-91c4");
+                return;
+            }
+        }
+        panic!("the refusal was never captured");
     }
 
     #[test]

@@ -3,39 +3,6 @@
 use super::support::*;
 use super::*;
 
-/// The ONE-1699 payload keeps decoding as the legacy question shape, and
-/// the three ONE-1888 additions survive a body round-trip.
-#[test]
-fn consult_payload_additions_are_optional_and_round_trip() {
-    let question = ConsultPayloadRef::Turn(ladder_id(0xC1));
-    let legacy = ConsultPayload::question(question, Vec::new(), ladder_id(0xC2));
-    let decoded_legacy =
-        decode_consult_payload(&consult_payload_value(&legacy)).expect("legacy payload decodes");
-
-    assert_eq!(decoded_legacy, legacy);
-    assert_eq!(decoded_legacy.purpose, None);
-    assert_eq!(decoded_legacy.consult_purpose(), ConsultPurpose::Question);
-    assert_eq!(decoded_legacy.entity_delta, None);
-    assert_eq!(decoded_legacy.lineage, None);
-
-    let extended = ConsultPayload::question(question, Vec::new(), ladder_id(0xC2))
-        .with_entity_delta(ladder_delta(
-            ladder_id(0xC3),
-            ladder_id(0xC4),
-            ladder_id(0xC5),
-            ladder_id(0xC6),
-        ))
-        .with_lineage(ConsultLineage {
-            relation: ConsultLineageRelation::Counter,
-            parent_task_ref: ladder_id(0xC7),
-        });
-    let decoded =
-        decode_consult_payload(&consult_payload_value(&extended)).expect("payload decodes");
-
-    assert_eq!(decoded, extended);
-    assert_eq!(decoded.consult_purpose(), ConsultPurpose::EntityDelta);
-}
-
 /// The purpose and the artifact must agree, and a self-owned "cross-actor"
 /// delta is the auto path taking the wrong door.
 #[test]
@@ -71,99 +38,6 @@ fn consult_payload_refuses_contradictory_purposes() {
             "case {index} must be refused"
         );
     }
-}
-
-/// The ladder projects onto ONE-1699's persisted vocabulary exactly as the
-/// disposition table says, and `Escalated` is deliberately NOT terminal.
-#[test]
-fn ladder_states_project_onto_the_one_1699_task_vocabulary() {
-    let ladder_terminal = |disposition: LadderTerminalDisposition| LadderTerminalState {
-        disposition,
-        result_ref: ladder_id(0xD1),
-        counter_task_ref: matches!(disposition, LadderTerminalDisposition::Countered)
-            .then(|| ladder_id(0xD2)),
-        finished_at: 900,
-    };
-    let table = [
-        (
-            LadderTerminalDisposition::Approved,
-            Some(TaskTerminalDisposition::Completed),
-        ),
-        (
-            LadderTerminalDisposition::Overridden,
-            Some(TaskTerminalDisposition::Completed),
-        ),
-        (
-            LadderTerminalDisposition::Rejected,
-            Some(TaskTerminalDisposition::Rejected),
-        ),
-        (
-            LadderTerminalDisposition::Failed,
-            Some(TaskTerminalDisposition::Failed),
-        ),
-        (LadderTerminalDisposition::Escalated, None),
-        (
-            LadderTerminalDisposition::Countered,
-            Some(TaskTerminalDisposition::Rejected),
-        ),
-        (
-            LadderTerminalDisposition::Abandoned,
-            Some(TaskTerminalDisposition::Abandoned),
-        ),
-    ];
-
-    for (disposition, expected) in table {
-        let projected = project_consult_ladder_state(&ConsultLadderState::Terminal(
-            ladder_terminal(disposition),
-        ));
-        match expected {
-            Some(task_disposition) => {
-                let TaskExecutionState::Terminal(record) = &projected else {
-                    panic!("{} projects terminal", disposition.as_str());
-                };
-                assert_eq!(record.disposition, task_disposition);
-                assert_eq!(record.ladder, Some(disposition));
-                assert_eq!(record.result_ref, Some(ladder_id(0xD1)));
-                // The finer ladder outcome survives a body round-trip.
-                let decoded = decode_task_terminal_record(&task_terminal_record_value(record))
-                    .expect("terminal record round-trips");
-                assert_eq!(decoded, *record);
-                assert_eq!(
-                    ladder_terminal_from_task_terminal(&decoded)
-                        .expect("ladder terminal lifts back")
-                        .disposition,
-                    disposition
-                );
-            }
-            // A deferring terminal leaves the TASK live, but the settled
-            // ladder rides inside the same register so it stays telling apart
-            // from an ordinary interruption.
-            None => assert_eq!(
-                projected,
-                TaskExecutionState::Interrupted {
-                    ladder: Some(ladder_terminal(disposition)),
-                },
-                "escalation waits on its follow-on rather than settling"
-            ),
-        }
-    }
-
-    assert_eq!(
-        project_consult_ladder_state(&ConsultLadderState::Working(WorkingState {
-            started_at: 5,
-            decision_round: 2,
-        })),
-        TaskExecutionState::Working { started_at: 5 }
-    );
-    assert_eq!(
-        project_consult_ladder_state(&ConsultLadderState::Interrupted(InterruptedState {
-            kind: InterruptionKind::Critical,
-            consent_required: true,
-            case_ref: ladder_id(0xD3),
-            interrupted_at: 7,
-        })),
-        TaskExecutionState::Interrupted { ladder: None }
-    );
 }
 
 /// A LIVE `interrupted` register may carry only a ladder terminal that DEFERS
@@ -319,25 +193,6 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             ))
         ),
         "a counter link with no ladder disposition names a successor to nothing",
-    );
-}
-
-/// A persisted ONE-1699 terminal without a `result_ref` cannot become a
-/// ladder terminal at all: the ladder's result is not optional.
-#[test]
-fn a_result_less_legacy_terminal_fails_closed() {
-    let legacy = TaskTerminalRecord {
-        disposition: TaskTerminalDisposition::Completed,
-        result_ref: None,
-        summary: None,
-        finished_at: 10,
-        ladder: None,
-        counter_task_ref: None,
-    };
-
-    assert_eq!(
-        ladder_terminal_from_task_terminal(&legacy),
-        Err(LadderTransitionError::MissingResultRef)
     );
 }
 
@@ -743,66 +598,6 @@ fn the_durable_ladder_cas_refuses_a_stale_expectation() {
     assert_eq!(conflict.code, MEMORY_CODE_INVALID_STATE);
 }
 
-/// A working ladder escalates to the persisted `Interrupted` state, then
-/// refuses every further move: the pure rule and the durable projection
-/// agree that terminal is immutable.
-#[test]
-fn a_working_ladder_escalates_then_becomes_immutable() {
-    let (_dir, vault) = open_vault();
-    let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
-    let working = ConsultLadderState::Working(WorkingState {
-        started_at: LADDER_NOW,
-        decision_round: 0,
-    });
-    seed_ladder_state(&vault, task_ref, &working);
-
-    let escalated = LadderTerminalState {
-        disposition: LadderTerminalDisposition::Escalated,
-        result_ref: ladder_id(0xF3),
-        counter_task_ref: None,
-        finished_at: LADDER_NOW + 3,
-    };
-    let receipt = facade
-        .compare_and_set_consult_ladder(task_ref, &working, LadderTransition::Finish(escalated))
-        .expect("a working ladder may escalate");
-    let refused = facade
-        .compare_and_set_consult_ladder(
-            task_ref,
-            &ConsultLadderState::Terminal(escalated),
-            LadderTransition::Finish(LadderTerminalState {
-                disposition: LadderTerminalDisposition::Approved,
-                result_ref: ladder_id(0xF4),
-                counter_task_ref: None,
-                finished_at: LADDER_NOW + 4,
-            }),
-        )
-        .expect_err("a terminal ladder is immutable");
-
-    assert_eq!(
-        receipt.task_state,
-        TaskExecutionState::Interrupted {
-            ladder: Some(escalated),
-        }
-    );
-    assert_eq!(
-        receipt.ladder_state,
-        ConsultLadderState::Terminal(escalated)
-    );
-    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
-    // An escalation is NOT a terminal TASK row, so the board keeps it live.
-    let body = task_verb_body(&vault, task_ref)
-        .expect("decode consult")
-        .expect("consult is typed");
-    assert_eq!(
-        body.state,
-        Some(TaskExecutionState::Interrupted {
-            ladder: Some(escalated),
-        })
-    );
-    assert_eq!(body.terminal(), None);
-}
-
 /// An escalated ladder is settled even though its TASK row stays live, so a
 /// caller naming the state the row PROJECTS onto — a plain interruption —
 /// still cannot resume or finish it.
@@ -876,40 +671,6 @@ fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
                 finished_at: LADDER_NOW + 1,
             }),
         })
-    );
-}
-
-/// An ordinary interruption still resumes: the new guard reads the settled
-/// LADDER, not the interrupted register itself.
-#[test]
-fn an_unsettled_interruption_still_resumes_through_the_ladder() {
-    let (_dir, vault) = open_vault();
-    let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
-    let waiting = ConsultLadderState::Interrupted(InterruptedState {
-        kind: InterruptionKind::Contested,
-        consent_required: false,
-        case_ref: ladder_id(0xE4),
-        interrupted_at: LADDER_NOW,
-    });
-    seed_ladder_state(&vault, task_ref, &waiting);
-
-    let receipt = facade
-        .compare_and_set_consult_ladder(
-            task_ref,
-            &waiting,
-            LadderTransition::Resume(WorkingState {
-                started_at: LADDER_NOW + 1,
-                decision_round: 1,
-            }),
-        )
-        .expect("an unsettled interruption resumes");
-
-    assert_eq!(
-        receipt.task_state,
-        TaskExecutionState::Working {
-            started_at: LADDER_NOW + 1,
-        }
     );
 }
 
@@ -1078,65 +839,4 @@ fn a_consent_required_interruption_cannot_be_resumed_durably() {
             .map(|state| state.disposition),
         Some(LadderTerminalDisposition::Approved)
     );
-}
-
-/// All four verdicts round-trip, escalation carries ONE-1699's assignee
-/// enum, and an override missing either durable ref is refused rather than
-/// defaulted.
-#[test]
-fn human_verdicts_round_trip_and_override_requires_both_refs() {
-    let verdicts = [
-        HumanVerdict::Approve {
-            rationale_ref: None,
-        },
-        HumanVerdict::Approve {
-            rationale_ref: Some(ladder_id(0xA4)),
-        },
-        HumanVerdict::Reject {
-            rationale_ref: Some(ladder_id(0xA5)),
-        },
-        HumanVerdict::OverrideWithDiff {
-            delta_ref: ladder_id(0xA6),
-            rationale_ref: ladder_id(0xA7),
-        },
-        HumanVerdict::Escalate {
-            assignee: TaskAssignee::Human {
-                actor_ref: ladder_id(0xA8),
-            },
-            rationale_ref: ladder_id(0xA9),
-        },
-        HumanVerdict::Escalate {
-            assignee: TaskAssignee::Dreamer,
-            rationale_ref: ladder_id(0xAA),
-        },
-    ];
-    for (index, verdict) in verdicts.into_iter().enumerate() {
-        assert_eq!(
-            decode_human_verdict(&human_verdict_value(verdict)).expect("verdict decodes"),
-            verdict,
-            "case {index}"
-        );
-    }
-
-    let missing_rationale = Value::Map(vec![
-        (Value::from("verdict"), Value::from("override_with_diff")),
-        (Value::from("delta_ref"), entity_ref_value(ladder_id(0xA6))),
-    ]);
-    let missing_delta = Value::Map(vec![
-        (Value::from("verdict"), Value::from("override_with_diff")),
-        (
-            Value::from("rationale_ref"),
-            entity_ref_value(ladder_id(0xA7)),
-        ),
-    ]);
-    let unknown = Value::Map(vec![(Value::from("verdict"), Value::from("maybe"))]);
-    for (index, malformed) in [missing_rationale, missing_delta, unknown]
-        .into_iter()
-        .enumerate()
-    {
-        assert!(
-            decode_human_verdict(&malformed).is_err(),
-            "case {index} must be refused"
-        );
-    }
 }

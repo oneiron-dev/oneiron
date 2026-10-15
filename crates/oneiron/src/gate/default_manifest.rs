@@ -530,6 +530,14 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
+                // ARCH-0003 §Criticality: the classes canon declares critical.
+                // A correction on one waits for the owner; a predicate no rule
+                // names defaults critical for legibility only.
+                critical_class_rule("health.", false),
+                critical_class_rule("safety.", false),
+                critical_class_rule("legal.", false),
+                critical_class_rule("boundary.", false),
+                critical_class_rule("decision.settled", true),
             ]),
         ),
         (
@@ -960,7 +968,60 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             ])]),
         ),
     ];
-    encode_with_native_mail_policy(entries)
+    // DEC-0006 invariant 7: the catastrophe floor ships as a versioned row.
+    let mut entries = entries;
+    entries.push(crate::consent::CatastropheFloor::pinned().manifest_entry());
+    // ARCH-0026: the Dreamer is warm by default, so its three actor-keyed
+    // rows ship here (see `dreamer_grant`); the owner may narrow or remove them.
+    super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)
+}
+
+/// The shipped manifest with `rows` joined to its one scoped-grant table,
+/// beside the Dreamer's read row: the decoder refuses a second table.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn default_policy_manifest_with_scoped_grants(rows: Vec<Value>) -> Result<Vec<u8>> {
+    use super::constants::POLICY_SCOPED_GRANTS_KEY;
+    let shipped = default_policy_manifest()?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut shipped.as_slice())
+        .map_err(|_| Error::InvariantViolation("decode default policy manifest"))?
+    else {
+        return Err(Error::InvariantViolation(
+            "default policy manifest is not a map",
+        ));
+    };
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(POLICY_SCOPED_GRANTS_KEY))
+    {
+        Some((_, Value::Array(table))) => table.extend(rows),
+        Some(_) => {
+            return Err(Error::InvariantViolation(
+                "default scoped grants are not a list",
+            ));
+        }
+        None => entries.push((Value::from(POLICY_SCOPED_GRANTS_KEY), Value::Array(rows))),
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| Error::InvariantViolation("default policy manifest encoding"))?;
+    Ok(data)
+}
+
+/// A seeded rule declaring `prefix`'s class critical (an exact predicate when
+/// `exact`). Its sensitivity stays the pack default's.
+fn critical_class_rule(prefix: &str, exact: bool) -> Value {
+    let mut rule = vec![(Value::from(RULE_PREFIX_KEY), Value::from(prefix))];
+    if exact {
+        rule.push((Value::from(RULE_EXACT_KEY), Value::Boolean(true)));
+    }
+    rule.push((
+        Value::from(RULE_AXES_KEY),
+        Value::Map(vec![
+            (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
+            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+        ]),
+    ));
+    Value::Map(rule)
 }
 
 /// The shipped native-mail dial is one vault row; hosts narrow it with their

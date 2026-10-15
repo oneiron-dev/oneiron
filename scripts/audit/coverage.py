@@ -66,15 +66,10 @@ def collect(output, toolchain=None, unstable_doctests=False, tmp_dir=None):
             ["--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features", "--doctests"],
         ]
         if sys.platform == "darwin":
-            # Same seven UnsupportedPlatform cases as ci.yml; never omit the crate.
+            # The UnsupportedPlatform cases; never omit the crate.
             unsupported = [
-                "eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault",
-                "eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config",
                 "eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index",
                 "eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune",
-                "eval_tune_honors_the_max_runs_bound",
-                "eval_tune_opens_a_non_device_vault_through_the_explicit_config",
-                "eval_tune_persists_and_prints_the_bounded_weight_table_entry",
             ]
             lanes[0] += ["-E", "not (" + " | ".join("test(=eval::tests::" + name + ")" for name in unsupported) + ")"]
         # Each lane starts with clean instrumentation data, never clean build artifacts.

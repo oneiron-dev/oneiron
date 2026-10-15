@@ -1,8 +1,9 @@
 //! Scoped-call admission and actor resolution.
 
+use super::board_setup::mcp_scope_admits_row;
 use super::{
-    McpCallContext, McpGatewayError, McpToolCallParams, mcp_api_error, mcp_engine_error,
-    mcp_scoped_read, mcp_tool_validation_error,
+    McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
+    mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
 };
 use crate::api::parse_entity_id_param;
 use crate::mcp::McpResolvedActor;
@@ -25,12 +26,13 @@ use std::sync::Arc;
 ///    scope of its own.
 ///
 /// The fourth is the ONE-1704 B3 close: this admission no longer answers `Ok`
-/// for every non-verb call. `execute_code` builds an actor-wide gated write and
-/// `tasks.create` writes through the actor-wide memory facade, so neither can
-/// be narrowed downstream; under a world- OR facet-narrowed credential both are
-/// refused here, fail-closed, with the two axes enforced independently. There is
-/// no scoped-positive service for narrowed credentials in this release, and a
-/// refusal is the truthful shape of that.
+/// for every non-verb call. `execute_code` builds an actor-wide gated write, so
+/// it cannot be narrowed downstream; under a world- OR facet-narrowed
+/// credential it is refused here, fail-closed, with the two axes enforced
+/// independently, and so is every verb row marked `unrestricted`. The one
+/// scoped-positive write is `tasks.create`: the TASK it mints is born in the
+/// connector's own world and facet (ARCH-0067 §5), so its writer reads it and
+/// a credential narrowed elsewhere does not.
 ///
 /// A caller echo can only ever narrow. Nothing a caller sends creates
 /// authority, and a refusal here happens before dispatch, not after.
@@ -40,14 +42,7 @@ pub(crate) fn mcp_admit_scoped_call(
     actor: &McpCallContext,
 ) -> Result<(), McpGatewayError> {
     let tool_name = mcp_called_tool_name(args);
-    if !actor.admits_tool(tool_name) {
-        return Err(McpGatewayError::new(
-            -32020,
-            "mcp_verb_not_bound",
-            format!("{tool_name} is not bound to this connector credential"),
-        )
-        .with_field("name"));
-    }
+    mcp_admit_bound_tool(actor, tool_name)?;
     let verb = match args {
         // Setup reads a board that is ALREADY narrowed to this credential's
         // ceiling row by row (`mcp_scoped_tasks_section`), so it is the one
@@ -59,30 +54,83 @@ pub(crate) fn mcp_admit_scoped_call(
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
         }
         McpValidatedToolArgs::Verb(verb) => verb,
-        // The retired plain-verb adapters carry no scope projection either, so
-        // a narrowed credential is refused on them by the same rule. After M1
-        // no wire name resolves onto them at all.
-        _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
-    if verb.tool.memory_method().is_some() {
+    mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
+}
+
+/// Whether this credential may start a code run here: a bound code host,
+/// and everything an `execute_code` call meets before its program is read.
+/// `/mcp` lists `execute_code` to every credential alike, so the listing
+/// cannot say this; `initialize` does, and the stdio bridge picks its
+/// endpoint by it.
+pub(crate) fn mcp_execute_code_admitted(server: &Arc<SyncServer>, actor: &McpCallContext) -> bool {
+    let tool = crate::mcp::MCP_EXECUTE_CODE_TOOL;
+    server.code_execution_host().is_some()
+        && mcp_admit_bound_tool(actor, tool).is_ok()
+        && mcp_admit_unscoped_execution(actor, tool, "name").is_ok()
+        && super::actor_dispatch::mcp_execute_code_gate(server, actor).is_ok()
+}
+
+/// One generated verb call, whichever door it arrived at: a `tools/call` or a
+/// code-mode `self.memory.<verb>`. Both meet exactly this admission.
+pub(crate) fn mcp_admit_scoped_verb(
+    server: &Arc<SyncServer>,
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_bound_tool(actor, tool.name)?;
+    mcp_admit_verb_scope(server, tool, arguments, actor)
+}
+
+/// One verb-table row a code run serves itself (`self.memory.search`,
+/// `put_claim`, …). No tool carries it, so the bound-verb ceiling names it by
+/// its row name. Its world/facet axis is the run's: `execute_code` admits no
+/// narrowed credential.
+pub(crate) fn mcp_admit_run_verb(
+    actor: &McpCallContext,
+    verb: oneiron::task_verb::sdk::RunVerb,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_bound_tool(actor, verb.as_str())
+}
+
+fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
+    if actor.admits_tool(tool_name) {
+        return Ok(());
+    }
+    Err(McpGatewayError::new(
+        -32020,
+        "mcp_verb_not_bound",
+        format!("{tool_name} is not bound to this connector credential"),
+    )
+    .with_field("name"))
+}
+
+fn mcp_admit_verb_scope(
+    server: &Arc<SyncServer>,
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    if tool.memory_method().is_some() {
         // Actor-scoped reads do NOT by themselves carry a connector's narrower
         // ceiling. Never confuse the principal's grants with this credential.
-        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.request")?;
     }
-    if verb.payload.arguments.self_target == Some(true) {
+    if arguments.self_target == Some(true) {
         // `describe(self)` renders the host-installed run brief whole: it has
         // no world/facet projection, so a narrowed connector cannot read it.
-        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.self")?;
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.self")?;
     }
-    if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
+    if let Some(scopes) = arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }
-    if let Some(task_ref) = verb.payload.arguments.task_ref.as_deref() {
+    if let Some(task_ref) = arguments.task_ref.as_deref() {
         let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
         mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
     }
-    if verb.tool.requires_unscoped() {
-        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.spec")?;
+    if tool.requires_unscoped() {
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.spec")?;
     }
     Ok(())
 }
@@ -122,8 +170,6 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
         McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
-        // Unreachable from the wire after M1: no unlisted name resolves.
-        _ => "",
     }
 }
 
@@ -194,24 +240,31 @@ pub(super) fn mcp_credential_reads(
 /// only rows that actually carry the `FacetOf` edge to that facet.
 ///
 /// ONE-1704 B5: the world axis is now symmetric with that facet axis, and it
-/// applies to EVERY addressed row rather than to CLAIMs alone. Only a CLAIM
-/// carries a `world` key, so a task/entity row that carries none cannot be
-/// PROVEN in this credential's world and is refused; a CLAIM is covered exactly
-/// when its own `world` key is this credential's world. No world projection is
-/// invented for non-claim rows here — a projection is engine scope, and until
-/// one exists the fail-closed answer is the only true one. Prerelease law: the
-/// admission is narrowed outright, with no compatibility carve-out for the rows
-/// the old CLAIM-only check let through.
+/// applies to EVERY addressed row rather than to CLAIMs alone. A CLAIM is
+/// covered exactly when its own `world` key is this credential's world. A TASK
+/// carries neither a `world` key nor a `FacetOf` edge, so it is projected
+/// through the engine's record-scope stamp instead (`mcp_task_in_scope`):
+/// the board's TASK rows, a call addressing a TASK and the STREAM events about
+/// one all take that one projection (ARCH-0067 §5). Any other row that carries
+/// no `world` key cannot be PROVEN in this credential's world and is refused.
+/// Prerelease law: the admission is narrowed outright, with no compatibility
+/// carve-out for the rows the old CLAIM-only check let through.
 pub(super) fn mcp_scope_covers_entity(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
 ) -> Result<bool, McpGatewayError> {
+    if !scope.is_narrow() {
+        return Ok(true);
+    }
+    let entity_type = scoped_read
+        .vault()
+        .get_entity_type(id)
+        .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
+    if entity_type == Some(oneiron::registry::ENTITY_TYPE_TASK) {
+        return mcp_task_in_scope(scoped_read.vault(), scope, id);
+    }
     if let Some(world_ref) = scope.world_ref {
-        let entity_type = scoped_read
-            .vault()
-            .get_entity_type(id)
-            .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
         if entity_type != Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
             return Ok(false);
         }
@@ -244,6 +297,130 @@ pub(super) fn mcp_scope_covers_entity(
     Ok(true)
 }
 
+/// A TASK is inside a narrowed ceiling when the world and facet the engine
+/// stamped it with at birth are inside it. A TASK is born in its writer's
+/// world and facet: a narrowed connector's inside that connector's ceiling, a
+/// vault-wide writer's in base reality under the TASK's own substrate facet.
+/// So a credential narrowed to base reality reads the vault-wide writers'
+/// TASKs, and one narrowed to another world or to a facet reads those written
+/// inside it. A TASK with no stamp (an opaque replicated row) is outside every
+/// narrowed ceiling.
+fn mcp_task_in_scope(
+    vault: &oneiron::Vault,
+    scope: &crate::mcp::McpConnectorScope,
+    id: &oneiron::EntityId,
+) -> Result<bool, McpGatewayError> {
+    use oneiron::federation::{ScopeAxis, ScopeId};
+    let Some(position) = vault
+        .record_scope(id)
+        .map_err(|error| mcp_engine_error("mcp scope record read failed", error))?
+    else {
+        return Ok(false);
+    };
+    let inside = |stamped: &ScopeAxis<ScopeId>, ceiling: Option<oneiron::EntityId>| {
+        ceiling.is_none_or(|ceiling| {
+            !stamped.is_bottom()
+                && stamped.is_narrowing_of(&ScopeAxis::Some([ScopeId(ceiling)].into()))
+        })
+    };
+    Ok(inside(&position.worlds, scope.world_ref) && inside(&position.facets, scope.facet_ref))
+}
+
+/// Narrows the TASKS rows to the credential's registered world/facet and its
+/// verified slip, then renders what is left.
+///
+/// The narrowing runs BEFORE the render cap, so the window and its overflow
+/// footer count only rows this credential may see. The returned count is the
+/// scope omission: rows proven inside the credential's world and facet that
+/// another of its bounds withholds. A row in a world or facet the credential
+/// cannot read, or one that cannot prove where it sits, adds to no count
+/// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`.
+pub(super) fn mcp_scoped_tasks_section(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+    rows: oneiron::context_board::TasksSectionRows,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
+    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
+    let mut omitted = 0_usize;
+    let mut admits = |row_id: &str| -> Result<bool, McpGatewayError> {
+        if mcp_scope_admits_row(&server.vault, actor, &scoped_read, row_id)? {
+            served.extend(oneiron::EntityId::from_hex(row_id).ok());
+            return Ok(true);
+        }
+        if mcp_row_position_inside(&server.vault, actor, &scoped_read, row_id)? {
+            omitted += 1;
+        }
+        Ok(false)
+    };
+    let mut intents = Vec::with_capacity(rows.intents.len());
+    for intent in rows.intents {
+        if admits(&intent.id)? {
+            intents.push(intent);
+        }
+    }
+    let mut bare_jobs = Vec::with_capacity(rows.bare_jobs.len());
+    for job in rows.bare_jobs {
+        if admits(&job.id)? {
+            bare_jobs.push(job);
+        }
+    }
+    let section = oneiron::context_board::TasksSectionRows {
+        intents,
+        bare_jobs,
+        source_exhausted: rows.source_exhausted,
+    }
+    .render();
+    Ok((section, omitted))
+}
+
+/// Whether the TASK this board id names sits, by its birth stamp, inside both
+/// the registered world/facet ceiling and the verified slip's worlds and
+/// facets: only such a withheld row may be counted. A credential that
+/// narrows neither excludes no TASK. Any other row cannot prove it, so it is
+/// not counted.
+fn mcp_row_position_inside(
+    vault: &oneiron::Vault,
+    actor: &McpResolvedActor,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    row_id: &str,
+) -> Result<bool, McpGatewayError> {
+    let Ok(id) = oneiron::EntityId::from_hex(row_id) else {
+        return Ok(false);
+    };
+    let kind = vault
+        .get_entity_type(&id)
+        .map_err(|error| mcp_engine_error("mcp board row type read failed", error))?;
+    if kind != Some(oneiron::registry::ENTITY_TYPE_TASK)
+        || !mcp_scope_covers_entity(scoped_read, &actor.scope, &id)?
+    {
+        return Ok(false);
+    }
+    let granted = actor
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.verified_slip())
+        .map(oneiron::authority::VerifiedSlip::scope);
+    let whole = |axis: &oneiron::federation::ScopeAxis<_>| {
+        matches!(axis, oneiron::federation::ScopeAxis::All)
+    };
+    if !actor.scope.is_narrow()
+        && granted.is_none_or(|granted| whole(&granted.worlds) && whole(&granted.facets))
+    {
+        return Ok(true);
+    }
+    let Some(position) = vault
+        .record_scope(&id)
+        .map_err(|error| mcp_engine_error("mcp board row scope read failed", error))?
+    else {
+        return Ok(false);
+    };
+    Ok(granted.is_none_or(|granted| {
+        position.worlds.is_narrowing_of(&granted.worlds)
+            && position.facets.is_narrowing_of(&granted.facets)
+    }))
+}
+
 /// Resolves one `tools/call` name against THIS endpoint's registration.
 ///
 /// The registered surface is the WHOLE callable surface (ONE-1704 M1). There is
@@ -256,6 +433,7 @@ pub(super) fn mcp_validated_call_args(
     mode: McpSurfaceMode,
     params: McpToolCallParams,
     raw_arguments: Option<&str>,
+    actor: &McpResolvedActor,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
@@ -278,7 +456,10 @@ pub(super) fn mcp_validated_call_args(
         || crate::mcp::McpToolArguments::from(params.arguments),
         crate::mcp::McpToolArguments::from_raw_json,
     );
-    crate::mcp::validate_mcp_endpoint_tool_args(tool, arguments).map_err(mcp_tool_validation_error)
+    // WHO is the credential's: a call that names no actor is the caller the
+    // credential resolved to (ARCH-0028 #surface).
+    crate::mcp::validate_mcp_endpoint_tool_args_as(tool, arguments, &mcp_actor_result(actor))
+        .map_err(mcp_tool_validation_error)
 }
 
 /// Refuse an unavailable interpreter before decoding arguments or creating a run.

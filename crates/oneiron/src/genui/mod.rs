@@ -33,10 +33,7 @@ pub use self::project_proposal::{
     PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard,
     ProjectProposalPicks,
 };
-pub use self::protocol::{
-    OF336_CARD_CATALOG_VERSION, OF336_MCP_UI_MIME, OF336_PROTOCOL_VERSION, Of336ActionDescriptor,
-    Of336Component, Of336ComponentKind, Of336RenderedComponent, Of336SurfaceAdapter,
-};
+pub use self::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 pub use self::receipt_view::{
     ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution,
     resolve_commitment_receipt_link,
@@ -56,20 +53,12 @@ use crate::attempt_queue::AttemptId;
 #[cfg(test)]
 use crate::booking::DisclosureRung;
 #[cfg(test)]
-use crate::claim::ClaimLifecycleStatus;
-#[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
-use crate::failure_ladder::{FailureClass, HealerRepairRoute, failure_card_ref, failure_case_ref};
-#[cfg(test)]
-use crate::receipt::{ReceiptKind, ReceiptRecord};
+use crate::failure_ladder::FailureClass;
 #[cfg(test)]
 use crate::run_tree::RunTree;
 #[cfg(test)]
 use crate::{Error, Result};
-#[cfg(test)]
-use serde_json::Value;
-#[cfg(test)]
-use std::collections::BTreeMap;

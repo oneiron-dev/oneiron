@@ -53,8 +53,18 @@ pub use self::intent::{
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
-#[cfg(test)]
-pub(crate) use self::window_door::local_minute_of_day_at;
+pub(crate) use self::window_door::stored_delivery_window_policy_claims;
+
+/// Runs `hook` once, on this thread, when the next new outbound effect has
+/// passed every check before admission and has not yet taken the vault's
+/// writer: the window in which a concurrent write can land first.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn before_next_admission_for_test(hook: impl FnOnce() + 'static) {
+    crate::outbound_chokepoint::BEFORE_NEW_ADMISSION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
 
 // The flat outbound.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so
@@ -68,10 +78,7 @@ use self::connector_task::{
     send_receipt_exists_for_task,
 };
 #[cfg(test)]
-use self::window_door::{
-    most_restrictive_delivery_window_decision, outbound_delivery_window_is_chat_like_ambient,
-    stored_delivery_window_policy_claims,
-};
+use self::window_door::outbound_delivery_window_is_chat_like_ambient;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -88,6 +95,6 @@ use crate::error::Error;
 #[cfg(test)]
 use crate::habit::TaskRole;
 #[cfg(test)]
-use crate::receipt::{ContextReceiptFields, SendReceiptOutcome};
+use crate::receipt::SendReceiptOutcome;
 #[cfg(test)]
 use crate::temporal::TimeRange;

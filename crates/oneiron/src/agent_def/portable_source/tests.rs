@@ -1,6 +1,7 @@
 //! Actual birth capture and replay retain bytes without granting authority.
 use super::*;
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, KnowledgeFormat};
+use crate::batch::export::ExportEntity;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use rmpv::Value;
 fn definition(agent_id: &str, forked_from: Option<EntityId>) -> AgentDefinition {
@@ -289,27 +290,40 @@ fn agent_historical_source_erases_without_widening_from_a_forged_key() -> Result
 }
 
 #[test]
-fn retained_birth_hash_without_captured_bytes_is_an_explicit_archive_omission() -> Result<()> {
-    let (_dir, vault, child, asset, _) = captured_root()?;
-    let complete = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+fn hash_only_agent_archive_requires_missing_source_omission() -> Result<()> {
+    let (_source_dir, source, child, asset, _) = captured_root()?;
+    source.batch().delete(&asset).commit()?;
+    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let mut document = source.read_whole_vault_json(archive.bytes())?;
+    let reason = crate::batch::export::BundleOmissionReason::AgentBirthSourceUnavailable;
     assert!(
-        !complete
-            .manifest()
+        document
+            .manifest
             .bundle_omissions
             .iter()
-            .any(|omission| omission.entity_id == child.to_hex())
+            .any(|row| row.entity_id == child.to_hex() && row.reason == reason)
     );
-    vault.batch().delete(&asset).commit()?;
-    let incomplete = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     assert!(
-        incomplete
-            .manifest()
-            .bundle_omissions
+        document
+            .agent_packs
             .iter()
-            .any(|omission| omission.entity_id == child.to_hex()
-                && omission.reason
-                    == crate::batch::export::BundleOmissionReason::AgentBirthSourceUnavailable)
+            .any(|pack| pack.entity_id == child.to_hex() && pack.fork_hash.is_some())
     );
+    let (_accepted_dir, accepted) = open();
+    accepted.import_whole_vault_json(archive.bytes())?;
+    assert_eq!(
+        accepted.get_entity_type(&child)?,
+        Some(ENTITY_TYPE_AGENT_DEF)
+    );
+    assert!(accepted.get_entity_type(&asset)?.is_none());
+    document
+        .manifest
+        .bundle_omissions
+        .retain(|row| !(row.entity_id == child.to_hex() && row.reason == reason));
+    let malformed = serde_json::to_vec(&document).expect("archive JSON");
+    let (_refused_dir, refused) = open();
+    assert!(refused.import_whole_vault_json(&malformed).is_err());
+    assert!(refused.get_entity_type(&child)?.is_none());
     Ok(())
 }
 
@@ -529,5 +543,105 @@ fn cyclic_archive_input_references_retire_payloads_without_recursing_through_age
         assert_eq!(vault.get_entity_type(child)?, Some(ENTITY_TYPE_AGENT_DEF));
         assert!(vault.get_raw(&asset)?.is_none());
     }
+    Ok(())
+}
+
+/// A birth source captured before the second knowledge form still decodes,
+/// re-derived in the form it was captured in: stored rows read back as
+/// written.
+#[test]
+fn a_birth_source_captured_in_the_first_knowledge_form_still_decodes() -> Result<()> {
+    // A fixed id whose first-form facet the old writer kept whole.
+    let child = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    let def = definition("fixture.first-form", None);
+    let body = crate::ClaimBody::new(
+        "test.source_note",
+        crate::ClaimSubject::Entity(child),
+        Value::from("note"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    let knowledge = ExportEntity {
+        short_ref: None,
+        id: EntityId::now().to_hex(),
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred_start: 10,
+        occurred_end: 10,
+        learned_at: 10,
+        body: ExportBody::from_bytes(
+            &crate::claim::encode_claim_body(&body)?,
+            crate::registry::ENTITY_TYPE_CLAIM,
+        ),
+    };
+    let files = super::super::agent_pack_files_in(
+        KnowledgeFormat::V1,
+        &child,
+        &def,
+        &[],
+        std::slice::from_ref(&knowledge),
+    )?;
+    let selected = files
+        .iter()
+        .find(|file| file.path == "knowledge/selected.json")
+        .expect("knowledge facet");
+    assert_eq!(selected.content, serde_json::to_vec(&[&knowledge]).unwrap());
+    let tree = crate::serialize::export_source_tree(&files)?;
+    let (_, bytes) = encode_birth_source(&child, &def, &child, &def, tree.clone())?;
+    assert_eq!(
+        decode_birth_source(&bytes)?.map(|source| source.tree),
+        Some(tree)
+    );
+    Ok(())
+}
+
+/// A real defect a review found in the second knowledge form: a birth source
+/// whose knowledge tags arbitrary bytes as an id inside a claim value is
+/// refused, so no payload passes the source check as hex text.
+#[test]
+fn a_birth_source_whose_knowledge_tags_a_payload_as_an_id_is_refused() -> Result<()> {
+    let child = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    let def = definition("fixture.forged-reference", None);
+    let body = crate::ClaimBody::new(
+        "test.source_note",
+        crate::ClaimSubject::Entity(child),
+        Value::from("note"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    let knowledge = ExportEntity {
+        short_ref: None,
+        id: EntityId::now().to_hex(),
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred_start: 10,
+        occurred_end: 10,
+        learned_at: 10,
+        body: ExportBody::from_bytes(
+            &crate::claim::encode_claim_body(&body)?,
+            crate::registry::ENTITY_TYPE_CLAIM,
+        ),
+    };
+    let mut files =
+        super::super::agent_pack_files(&child, &def, &[], std::slice::from_ref(&knowledge))?;
+    let selected = files
+        .iter_mut()
+        .find(|file| file.path == "knowledge/selected.json")
+        .expect("knowledge facet");
+    let text = String::from_utf8(selected.content.clone()).expect("UTF-8 facet");
+    // `AKIA0123456789ABCDEF` as hex, tagged as an id in the claim's value.
+    let forged = text.replacen(
+        r#"{"type":"string","value":"note"}"#,
+        r#"{"type":"entity_reference","value":"414b494130313233343536373839414243444546"}"#,
+        1,
+    );
+    assert_ne!(forged, text);
+    selected.content = forged.into_bytes();
+    let tree = crate::serialize::export_source_tree(&files)?;
+    assert!(
+        tree.content_hash.is_some(),
+        "the source check reads only hex"
+    );
+    assert!(encode_birth_source(&child, &def, &child, &def, tree).is_err());
     Ok(())
 }

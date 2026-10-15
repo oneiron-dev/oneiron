@@ -1,0 +1,174 @@
+//! The engine's receipt for one organ call: facts the host computed, plus
+//! the organ's bounded notes.
+
+use oneiron_organ_protocol::{
+    AskCode, Hash32, Locator, Loss, Notes, OrganIdentity, ProtocolVersion,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::spec::CallClass;
+
+const MAX_NOTES: usize = 64;
+const MAX_NOTE_BYTES: usize = 256;
+const MAX_CODE_BYTES: usize = 64;
+
+/// What one call read, made and took. Recall and the Dreamer read it as a
+/// typed record; a landing writes it into the version's `made_by` envelope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallReceipt {
+    pub organ: OrganIdentity,
+    /// The version the session speaks: the lower minor of both sides.
+    pub protocol: ProtocolVersion,
+    pub verb: String,
+    pub schema: u32,
+    /// blake3 of the call's args, as MessagePack.
+    pub args_digest: Hash32,
+    pub inputs: Vec<ReceiptInput>,
+    /// blake3 of the base body, as MessagePack.
+    pub base_body: Option<Hash32>,
+    pub result_body: Option<Hash32>,
+    pub outputs: Vec<ReceiptOutput>,
+    /// The organ's word, bounded: 64 entries of each kind, 256 bytes each.
+    pub notes: Notes,
+    pub class: CallClass,
+    pub grant: String,
+    /// Waiting for the budget and the inputs.
+    pub queue_us: u64,
+    /// From sending the call to its verified reply.
+    pub run_us: u64,
+    /// Every ask the organ made, in order (protocol 1.1). A record written
+    /// before 1.1 reads as none.
+    #[serde(default)]
+    pub asks: Vec<AskReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptInput {
+    /// The artifact id, hex; empty for bytes the caller lent.
+    pub artifact: String,
+    pub version: u64,
+    pub content_hash: Hash32,
+    pub len: u64,
+    /// Bytes the caller held, not a vault version.
+    #[serde(default)]
+    pub lent: bool,
+}
+
+/// One ask, as the host saw it. Digests are blake3 over MessagePack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskReceipt {
+    pub id: u32,
+    pub verb: String,
+    pub value_digest: Hash32,
+    /// The refusal, if the ask got one.
+    pub refused: Option<AskCode>,
+    pub answer_digest: Option<Hash32>,
+    /// The answer's bytes, hashed by the host as it sent them.
+    pub data_hash: Option<Hash32>,
+    pub data_len: u64,
+    pub fetch: Option<FetchTarget>,
+    pub handler_us: u64,
+    /// Set when the organ got no answer because its call ended first.
+    #[serde(default)]
+    pub unanswered: Option<Unanswered>,
+    /// What the handler's key was asked to sign, in the host's own words:
+    /// set before the key runs, so it stays when the key failed after
+    /// signing or the signature was never delivered.
+    #[serde(default)]
+    pub signed: Option<SignedReceipt>,
+}
+
+/// One signature a handler's key made for an ask. The organ supplied none
+/// of these values: the host computed each one before the key signed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedReceipt {
+    pub operation_id: String,
+    /// The SHA-256 prehash the key signed.
+    pub prehash: [u8; 32],
+    /// SHA-256 of the content the prehash commits to: for a seal, the
+    /// revision's ByteRange.
+    pub content_sha256: [u8; 32],
+    /// Which of the call's prepared revisions it signed, if the call has
+    /// several.
+    pub revision: Option<u32>,
+    /// SHA-256 of the signature value; none when the key returned none,
+    /// though it may still have signed.
+    pub signature_sha256: Option<[u8; 32]>,
+}
+
+/// Why an ask got no answer: its call ended (cancelled, revoked, replied,
+/// past its caps or its organ gone) before one was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Unanswered {
+    /// Nothing was decided for it: no handler ran, no refusal was made.
+    NotRun,
+    /// Its answer or refusal was decided but not sent; a handler that
+    /// panicked leaves this too.
+    NotSent,
+}
+
+/// Where a `net.fetch` went. The full URL is kept only as a digest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchTarget {
+    /// `scheme://host:port` of the first hop.
+    pub origin: String,
+    pub url_digest: Hash32,
+    /// The final HTTP status; 0 when nothing was fetched.
+    pub status: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptOutput {
+    pub name: String,
+    pub media_type: String,
+    pub content_hash: Hash32,
+    pub len: u64,
+}
+
+pub(crate) fn bound_text(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
+
+/// Caps an organ's notes so a hostile organ cannot grow a receipt.
+pub(crate) fn bound_notes(notes: Notes) -> Notes {
+    Notes {
+        touched: notes
+            .touched
+            .into_iter()
+            .filter(|locator| encoded_len(locator) <= MAX_NOTE_BYTES)
+            .take(MAX_NOTES)
+            .collect(),
+        warnings: notes
+            .warnings
+            .iter()
+            .take(MAX_NOTES)
+            .map(|warning| bound_text(warning, MAX_NOTE_BYTES))
+            .collect(),
+        losses: notes
+            .losses
+            .iter()
+            .take(MAX_NOTES)
+            .map(|loss| Loss {
+                code: bound_text(&loss.code, MAX_CODE_BYTES),
+                detail: bound_text(&loss.detail, MAX_NOTE_BYTES),
+            })
+            .collect(),
+    }
+}
+
+fn encoded_len(locator: &Locator) -> usize {
+    rmp_serde::to_vec_named(locator).map_or(usize::MAX, |bytes| bytes.len())
+}
+
+/// blake3 of a value's MessagePack encoding.
+pub(crate) fn digest<T: Serialize>(value: &T) -> Hash32 {
+    rmp_serde::to_vec_named(value).map_or_else(|_| Hash32([0; 32]), |bytes| Hash32::of(&bytes))
+}

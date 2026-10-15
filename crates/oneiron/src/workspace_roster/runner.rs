@@ -189,7 +189,7 @@ impl Vault {
         let mut next = prior.clone();
         next.house_display_name = display_name;
         let key = workspace_ref.to_owned();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.authorize_shared_vault_write_in_txn(
                 txn,
                 vault_id,

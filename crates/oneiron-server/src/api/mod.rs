@@ -48,17 +48,7 @@ use utoipa::ToSchema;
 #[cfg(test)]
 use crate::auth::CoreAuth;
 #[cfg(test)]
-use crate::error::ApiErrorDetails;
-#[cfg(test)]
-use crate::error::ErrorCode;
-#[cfg(test)]
 use crate::projection::View;
-#[cfg(test)]
-use crate::protocol::CountMode;
-#[cfg(test)]
-use crate::protocol::PaginatedResponse;
-#[cfg(test)]
-use crate::protocol::ResponseMeta;
 #[cfg(test)]
 use crate::runtime::RuntimeMode;
 #[cfg(test)]
@@ -66,10 +56,9 @@ use crate::runtime::RuntimeProviderKind;
 #[cfg(test)]
 use crate::runtime::RuntimeRole;
 #[cfg(test)]
-use axum::extract::Query;
-#[cfg(test)]
 use axum::http::HeaderMap;
 
+mod ai;
 mod artifacts;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
@@ -87,12 +76,14 @@ mod consumer_usage;
 mod context_pack;
 mod conversation_dag;
 mod conversation_members;
+mod conversation_transcript;
 mod conversations;
 mod core;
 mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod off_record_rooms;
 mod org_admin;
 mod pairing;
 mod sessions;
@@ -107,6 +98,8 @@ mod facade;
 // `oneiron::origin::smart_http`.
 mod git_http;
 mod git_lfs;
+mod transfer;
+pub(crate) use self::transfer::Transfers;
 mod lease;
 mod llm;
 mod mcp_gateway;
@@ -160,17 +153,18 @@ use self::params::{
 };
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
-pub(crate) use self::scoped_auth::scoped_read_for_core_auth;
 use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
+pub(crate) use self::scoped_auth::{
+    credential_memory, credential_read_key, scoped_read_for_core_auth,
+};
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
 pub(crate) use self::vad::*;
 
 const API_LEVEL: &str = "v1";
-/// Capability-token prefix under which discovery advertises each MCP tool and,
-/// for tools with a closed `op` discriminator, each of its operations. The
-/// tokens are derived from `crate::mcp::McpToolName`, so the catalog and the
-/// advertisement cannot drift.
+/// Capability-token prefix under which discovery advertises each MCP tool. The
+/// tokens are derived from the registered surfaces' tool names, so `tools/list`
+/// and the advertisement cannot drift.
 pub(crate) const MCP_TOOL_CAPABILITY_PREFIX: &str = "mcp.tool.";
 // ONE-214 is read-only and adds no notification-specific storage. Keep
 // context-board hydration bounded by returning pending notifications from a
@@ -245,7 +239,18 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
-        .route("/context-board", post(context_board_hydrate))
+        // Only a hydration that records its TURN's board is a keyed mutation.
+        .route(
+            "/context-board",
+            post(context_board_hydrate).route_layer(middleware::from_fn_with_state(
+                idempotency.clone(),
+                board_turn_idempotency,
+            )),
+        )
+        .route(
+            "/context-board/turns/{turn}",
+            get(context_board_turn_history),
+        )
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
@@ -290,6 +295,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/conversations/{conversation_id}/turns",
             get(list_core_conversation_turns),
+        )
+        .route(
+            "/conversations/{conversation_id}/transcript",
+            get(conversation_transcript::get_core_conversation_transcript),
         )
         .route(
             "/conversations/{conversation_id}/scope",
@@ -378,6 +387,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/llm", self::llm::routes())
+        .nest("/v1/ai", self::ai::routes())
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
@@ -406,6 +416,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Published anonymous booking capabilities validate a live owner publication
         // and scoped tokens; they do not authorize access to private vault routes.
         .merge(self::booking::public_booking_router())
+        // ARCH-0052 D5: everyone in a room keeps their own copy of an
+        // off-record talk. Its own nest, outside the idempotency layer and
+        // the wire receipts: nothing of the stretch may outlive it. The
+        // owner's own off-record routes sit out here for the same reason.
+        .nest("/v1/core/off-record", self::off_record_rooms::routes())
+        .nest("/v1/owner", self::owner_routes::off_record_routes())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,
@@ -445,6 +461,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                     "mode": "local_free",
                     "oneironSpendMetered": false,
                     "state": "available"
+                },
+                "ai": {
+                    "dreamer": "idle",
+                    "dreamer_reason": "no_model_configured",
+                    "compaction": "off",
+                    "compaction_reason": "no_model_configured"
                 }
             })
         )
@@ -458,6 +480,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
+        ai: server.ai.status().health(),
     })
 }
 
@@ -481,9 +504,9 @@ struct HealthResponse {
     rate_limit: RateLimitStatus,
     /// Redacted aggregate runtime availability for unauthenticated health.
     runtime: RuntimeHealthStatus,
+    /// Background AI state, redacted: states and reasons, never model names.
+    ai: crate::ai_host::AiHealth,
 }
-
-// ─── Companion v1 profile access ─────────────────────────────────────────────
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────
 
@@ -506,8 +529,6 @@ fn require_entity_type(
         }
     }
 }
-
-// ─── Receipt-provenance key revocation ────────────────────────────────────────
 
 // ─── Context Pack ─────────────────────────────────────────────────────────────
 

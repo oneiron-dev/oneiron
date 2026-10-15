@@ -123,7 +123,7 @@ pub fn fire_due_commitment_wake(
     due: CommitmentWakeDue,
     now: u64,
 ) -> Result<CommitmentWakeFireOutcome> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if vault.next_wake_due_in_txn(&*wtxn)? != Some(due) {
             return Ok(CommitmentWakeFireOutcome::Skipped(
                 CommitmentWakeSkip::Raced,

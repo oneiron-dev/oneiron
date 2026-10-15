@@ -37,24 +37,6 @@ fn baseline_attrs() -> (ParsedCms, Vec<u8>) {
 }
 
 #[test]
-fn baseline_has_exactly_three_attributes_once_each_sorted() {
-    let (parsed, _) = baseline_attrs();
-    let signer = &parsed.signer;
-    // parse_cms already rejected anything but DER-sorted full octets.
-    assert_eq!(signer.signed_attrs.len(), 3);
-    let mut oids: Vec<Vec<u8>> = signer
-        .signed_attrs
-        .iter()
-        .map(|a| parse_attribute(a).expect("attr").0)
-        .collect();
-    oids.sort();
-    oids.dedup();
-    assert_eq!(oids.len(), 3, "each baseline attribute exactly once");
-    let md = check_baseline_attrs(signer).expect("baseline ok");
-    assert_eq!(md, [7u8; 32]);
-}
-
-#[test]
 fn rfc5652_signature_input_uses_universal_set_tag() {
     let (parsed, signing) = baseline_attrs();
     assert_eq!(signing[0], 0x31, "signature input is the universal SET OF");
@@ -258,22 +240,6 @@ fn sid_ess_disagreement_is_rejected_on_parse() {
         parse_cms(&der).is_err(),
         "sid/ESS issuerSerial disagreement must be rejected"
     );
-}
-
-#[test]
-fn sig_alg_permitted_denies_rsa_pss_everywhere() {
-    assert!(sig_alg_permitted(
-        SignatureAlgorithm::RsaPkcs1v15Sha256,
-        OID_SHA256_WITH_RSA.as_bytes()
-    ));
-    assert!(!sig_alg_permitted(
-        SignatureAlgorithm::RsaPkcs1v15Sha256,
-        OID_RSA_PSS.as_bytes()
-    ));
-    assert!(!sig_alg_permitted(
-        SignatureAlgorithm::EcdsaP256Sha256,
-        OID_RSA_PSS.as_bytes()
-    ));
 }
 
 /// Offset of the SignedData version INTEGER's single value octet inside

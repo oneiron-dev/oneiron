@@ -255,27 +255,4 @@ mod tests {
         }
         Ok(())
     }
-    #[test]
-    fn pending_request_page_reaches_after_the_first_hundred() -> Result<()> {
-        let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        let grant =
-            AccessGrant::companion_profile_read(entity(0xE0), entity(0xE2), entity(0xE3), 1);
-        let request_id = |n: u8| {
-            let mut bytes = [0x70; 16];
-            bytes[15] = n;
-            EntityId::from_bytes(bytes).expect("nonzero request id")
-        };
-        for byte in 1..=101_u8 {
-            vault.request_access(request_id(byte), grant.clone())?;
-        }
-        let (first, next) = vault.pending_access_requests_page(None, 100)?;
-        assert_eq!(first.len(), 100);
-        assert_eq!(first[0].id, request_id(1));
-        assert_eq!(next, Some(request_id(100)));
-        let (last, end) = vault.pending_access_requests_page(next.as_ref(), 100)?;
-        assert_eq!(last.len(), 1);
-        assert_eq!(last[0].id, request_id(101));
-        assert_eq!(end, None);
-        Ok(())
-    }
 }

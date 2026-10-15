@@ -4,7 +4,7 @@ use crate::owner::schedule::OwnerHost;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 
 /// The vault's embedded owner, holding an unattenuated human slip.
-fn owner_recipe(server: &SyncServer) -> String {
+pub(super) fn owner_recipe(server: &SyncServer) -> String {
     let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     test_bearer(&format!(
         "principal_ref={};actor_class=human",
@@ -12,7 +12,7 @@ fn owner_recipe(server: &SyncServer) -> String {
     ))
 }
 
-fn person(server: &SyncServer, body: &[u8]) -> oneiron::EntityId {
+pub(super) fn person(server: &SyncServer, body: &[u8]) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     server
         .vault()
@@ -28,7 +28,7 @@ fn person(server: &SyncServer, body: &[u8]) -> oneiron::EntityId {
 }
 
 /// Every credential that is not the live human owner's own full slip.
-fn refused_recipes(server: &SyncServer) -> Vec<String> {
+pub(super) fn refused_recipes(server: &SyncServer) -> Vec<String> {
     let owner = server
         .vault()
         .ensure_embedded_owner_actor()
@@ -51,7 +51,7 @@ fn refused_recipes(server: &SyncServer) -> Vec<String> {
     ]
 }
 
-async fn call(
+pub(super) async fn call(
     server: &Arc<SyncServer>,
     method: &str,
     path: &str,
@@ -329,6 +329,13 @@ async fn agent_run_is_approved_or_declined_whole_through_the_route() {
 
 /// `auth_test_server` with the vault path and a backup plan, as `serve` builds it.
 fn owner_host_server() -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
+    owner_host_server_with(None)
+}
+
+/// [`owner_host_server`] with an embedder slot.
+fn owner_host_server_with(
+    embedder: Option<crate::embedder::EmbedderSlot>,
+) -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
     let backups = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
@@ -345,7 +352,8 @@ fn owner_host_server() -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>
     };
     let server = SyncServer::new(vault, config)
         .unwrap()
-        .with_owner_host(host);
+        .with_owner_host(host)
+        .with_embedder(embedder);
     (dir, backups, Arc::new(server))
 }
 
@@ -383,4 +391,616 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
     assert_eq!(location["backups"]["last"]["file"], taken["backup"]["file"]);
     assert_eq!(location["secret_scan"], "on");
     assert!(location["disk_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(location["embedder"]["dense"], "not_configured");
+    assert!(location["embedder"]["loaded"].is_null());
+}
+
+/// Done-means (G1 check 5): the owner's status keeps what config asks for,
+/// what the vault pins and what loaded apart, and says why dense recall
+/// does not run. A local model whose files cannot be fetched is `refused`
+/// with that reason, and nothing claims it loaded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn owner_status_reports_a_refused_embedder_load_and_its_reason() {
+    let models = tempfile::tempdir().unwrap();
+    // As config resolves a local section that names only its files: the
+    // space is the files' model.
+    let config = crate::config::EmbedderConfig {
+        provider: crate::config::EmbedderProvider::Local,
+        dimensions: 1024,
+        model_id: format!("oneiron-dev/no-such-embedding-model@{}", "0".repeat(40)),
+        local: crate::config::LocalEmbedderConfig {
+            repo: "oneiron-dev/no-such-embedding-model".to_owned(),
+            revision: "0".repeat(40),
+            models_dir: Some(models.path().to_path_buf()),
+            ..crate::config::LocalEmbedderConfig::default()
+        },
+        ..crate::config::EmbedderConfig::default()
+    };
+    let slot = crate::embedder::EmbedderSlot::from_config(&config)
+        .unwrap()
+        .unwrap()
+        .with_model_source("http://127.0.0.1:1");
+    let (_dir, _backups, server) = owner_host_server_with(Some(slot));
+    let owner = owner_recipe(&server);
+    let (status, before) = call(&server, "GET", "/v1/owner/status", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert_eq!(before["embedder"]["dense"], "loading", "{before}");
+    let _worker = server.spawn_embedding_worker().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let report = loop {
+        let (_, report) = call(&server, "GET", "/v1/owner/status", owner.clone(), None).await;
+        if report["embedder"]["dense"] != "loading" || std::time::Instant::now() > deadline {
+            break report;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    let embedder = &report["embedder"];
+    assert_eq!(embedder["dense"], "refused", "{report}");
+    assert!(
+        !embedder["reason"].as_str().unwrap_or_default().is_empty(),
+        "{report}"
+    );
+    assert!(embedder["loaded"].is_null(), "{report}");
+    assert_eq!(embedder["configured"]["provider"], "local");
+    assert_eq!(
+        embedder["configured"]["model_id"],
+        format!("oneiron-dev/no-such-embedding-model@{}", "0".repeat(40))
+    );
+    assert_eq!(embedder["configured"]["dimensions"], 1024);
+    assert!(embedder["persisted"].is_object(), "{report}");
+}
+
+/// A request the owner door admitted, then a revocation of its slip commits
+/// while the act waits for the writer: every queued act is refused in its
+/// own transaction and lands no receipt and no change.
+#[tokio::test]
+async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
+    use crate::owner::{OwnerError, cleanup, imports, off_record, persona, runs};
+    let (_dir, server) = auth_test_server();
+    let vault = server.vault();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let recipe = format!("principal_ref={};actor_class=human", owner_id.to_hex());
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz("POST", "/v1/owner/secret-scan", test_bearer(&recipe), None),
+    );
+    let auth = CoreAuth::from_headers(request.headers(), &server.config, vault.as_ref()).unwrap();
+
+    // What the queued acts would decide: an import batch and a parked run.
+    let unbound = vault
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let subject = person(&server, b"imported subject").to_hex();
+    let batch: imports::ImportBatch = serde_json::from_value(json!({
+        "source_id": "okf",
+        "claims": [{ "subject": subject, "source_record_id": "concept-1",
+                     "predicate": "profile.name", "value": "Ada",
+                     "occurred": { "start": 1, "end": 1 }, "learned_at": 2 }]
+    }))
+    .unwrap();
+    let preview = imports::preview(vault, &unbound, batch).unwrap();
+    let run = "owner-route-run-revoked";
+    let proposal = vault
+        .park_run_proposal_for_test(
+            run,
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "one",
+        )
+        .unwrap();
+    let bundle_id = runs::review(
+        vault,
+        &unbound,
+        runs::RunName::Id(run),
+        oneiron::claim::CallerLocality::OnDevice,
+    )
+    .unwrap()
+    .bundle_id;
+
+    // Admitted at the door, then revoked before any act reaches the writer.
+    let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
+    let (slip, _) = slip_credentials::credential(&server, &recipe);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+        server.config.auth_secret.as_deref().unwrap().as_bytes(),
+    )
+    .unwrap();
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+
+    let refused = |error: oneiron::Error| {
+        assert_eq!(
+            error.kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated,
+            "{error}"
+        );
+    };
+    let refused_owner = |error: OwnerError| match error {
+        OwnerError::Engine(error) => refused(*error),
+        other => panic!("refused for another reason: {other}"),
+    };
+    refused(
+        vault
+            .set_secret_scan_mode(
+                &admitted,
+                oneiron::policy_model::SecretScanMode::Off,
+                vault.now_recorded_at(),
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(
+        vault.secret_scan_mode().unwrap(),
+        oneiron::policy_model::SecretScanMode::On
+    );
+    assert!(vault.secret_scan_change_log().unwrap().is_empty());
+
+    refused_owner(imports::approve(vault, &admitted, &preview.batch, &preview.digest).unwrap_err());
+    refused_owner(imports::decline(vault, &admitted, &preview.batch, &preview.digest).unwrap_err());
+    for claim in &preview.batch.claims {
+        let id = oneiron::EntityId::from_hex(claim.claim_id.as_deref().unwrap()).unwrap();
+        assert!(vault.get_raw(&id).unwrap().is_none(), "nothing admitted");
+    }
+    // The batch's one decision is still open for the owner's live slip.
+    imports::decline(vault, &unbound, &preview.batch, &preview.digest).unwrap();
+
+    for action in [
+        oneiron::run_tree::GateConsentBundleAction::Approve,
+        oneiron::run_tree::GateConsentBundleAction::Decline,
+    ] {
+        let run = runs::RunName::Id(run);
+        refused_owner(
+            runs::resolve(
+                vault,
+                &admitted,
+                run,
+                &bundle_id,
+                action,
+                oneiron::claim::CallerLocality::OnDevice,
+            )
+            .unwrap_err(),
+        );
+    }
+    assert_eq!(
+        vault.get_claim(&proposal).unwrap().unwrap().approval,
+        oneiron::ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        runs::pending(vault, oneiron::claim::CallerLocality::OnDevice).unwrap()[0].run_id,
+        run
+    );
+
+    // Cleanup review, persona export and off-record controls refuse the same
+    // queued proof.
+    let husk = oneiron::EntityId::now();
+    assert!(
+        vault
+            .put_extraction_minted_person(
+                &husk,
+                oneiron::ClaimSource::Generated,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"husk",
+            )
+            .unwrap()
+    );
+    let cleanup_run =
+        oneiron::vault_cleanup::run_vault_cleanup(vault, &oneiron::attempt_queue::AttemptId::now())
+            .unwrap();
+    let cleanup_proposal = cleanup_run.proposal.unwrap().to_hex();
+    refused_owner(cleanup::accept(vault, &admitted, &cleanup_proposal).unwrap_err());
+    assert!(vault.archived_entity(&husk).unwrap().is_none());
+    let card = persona::preview(vault, &subject, oneiron::claim::CallerLocality::OnDevice).unwrap();
+    let export = persona::ExportRequest {
+        subject,
+        stamp: card.stamp,
+        strike: Vec::new(),
+        unstrike: Vec::new(),
+    };
+    refused_owner(
+        persona::export(
+            vault,
+            &admitted,
+            &export,
+            oneiron::claim::CallerLocality::OnDevice,
+        )
+        .unwrap_err(),
+    );
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "revoked-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    refused_owner(off_record::enter(vault, &admitted, &room).unwrap_err());
+    assert!(vault.off_record_session("revoked-room").unwrap().is_none());
+    // A promotion that passed the door and then waited for the writer is
+    // refused in the transaction that would replay the turn.
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "promote-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    off_record::enter(vault, &unbound, &room).unwrap();
+    let turn: off_record::Witness = serde_json::from_value(json!({
+        "session_ref": "promote-room",
+        "turn": { "conversation_ref": "", "turn_ref": null, "occurred_at": 100,
+                  "messages": [{ "id": null, "author": "user", "message_type": "utterance",
+                                 "content": "keep this", "metadata": null,
+                                 "is_visible": true, "order": 0 }] },
+    }))
+    .unwrap();
+    let receipt = off_record::witness(vault, &unbound, &turn).unwrap();
+    let turn =
+        oneiron::EntityId::from_hex(receipt.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
+    let session = vault
+        .off_record_session_vault()
+        .bind("promote-room")
+        .unwrap();
+    refused(session.promote_turn_as(&admitted, &turn).unwrap_err());
+    assert!(vault.get(&turn).unwrap().is_none(), "nothing replayed");
+    assert!(vault.off_record_promote_receipt(&turn).unwrap().is_none());
+    assert_eq!(
+        vault
+            .off_record_promote_pickup_markers_for_test(&turn)
+            .unwrap(),
+        0
+    );
+    let room = vault.off_record_session("promote-room").unwrap().unwrap();
+    assert!(room.promoted_turns.is_empty());
+    // The turn is still in the room: the live proof promotes it.
+    off_record::promote(
+        vault,
+        &unbound,
+        &serde_json::from_value(json!({ "session_ref": "promote-room", "turn": turn.to_hex() }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(vault.get(&turn).unwrap().is_some());
+    assert!(vault.off_record_promote_receipt(&turn).unwrap().is_some());
+    assert!(
+        vault
+            .off_record_promote_pickup_markers_for_test(&turn)
+            .unwrap()
+            > 0
+    );
+
+    // A witness into a room on the record lands in the vault itself; one
+    // that passed the door and then waited lands nothing.
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "witness-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    off_record::enter(vault, &unbound, &room).unwrap();
+    let on_record: off_record::Flip =
+        serde_json::from_value(json!({ "session_ref": "witness-room", "mode": "on_record" }))
+            .unwrap();
+    off_record::flip(vault, &unbound, &on_record).unwrap();
+    let message = oneiron::EntityId::now();
+    let said: off_record::Witness = serde_json::from_value(json!({
+        "session_ref": "witness-room",
+        "turn": { "conversation_ref": "", "turn_ref": null, "occurred_at": 200,
+                  "messages": [{ "id": message.to_hex(), "author": "user",
+                                 "message_type": "utterance", "content": "on the record",
+                                 "metadata": null, "is_visible": true, "order": 0 }] },
+    }))
+    .unwrap();
+    let session = vault
+        .off_record_session_vault()
+        .bind("witness-room")
+        .unwrap();
+    let error = vault
+        .memory(owner_id, oneiron::edge::EdgeActorClass::Human)
+        .witness_into_session_as(&admitted, &session, &said.turn, None)
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        "{error:?}"
+    );
+    assert!(vault.get(&message).unwrap().is_none(), "nothing landed");
+    off_record::witness(vault, &unbound, &said).unwrap();
+    assert!(
+        vault.get(&message).unwrap().is_some(),
+        "the live proof lands it"
+    );
+}
+
+/// Review serves a stored proposal through the release redaction even with
+/// the ingest scan off: a body the write door refuses is withheld whole, and
+/// one it accepts keeps its safe fields. Approving the reviewed bundle id
+/// still acts on the stored, unredacted proposal. (`owner::runs::tests`
+/// covers the CLI.)
+#[tokio::test]
+async fn run_review_redacts_stored_credentials_with_the_scan_off() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    let (status, _) = call(
+        &server,
+        "POST",
+        "/v1/owner/secret-scan",
+        owner.clone(),
+        Some(&json!({ "mode": "off" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
+    let run = "owner-route-run-secrets";
+    let agent = oneiron::EntityId::now();
+    let values = [
+        rmpv::Value::from(format!("my token is {token}")),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("password"),
+                rmpv::Value::from("hunter2-hunter2"),
+            ),
+            (
+                rmpv::Value::from("label"),
+                rmpv::Value::from("refused words"),
+            ),
+        ]),
+        rmpv::Value::Binary(token.as_bytes().to_vec()),
+        rmpv::Value::Ext(7, token.as_bytes().to_vec()),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("password"), rmpv::Value::from("changeme")),
+            (rmpv::Value::from("label"), rmpv::Value::from("kept")),
+        ]),
+    ];
+    let ids: Vec<_> = values
+        .iter()
+        .map(|value| {
+            vault
+                .park_run_proposal_for_test(run, agent, oneiron::EntityId::now(), value.clone())
+                .unwrap()
+        })
+        .collect();
+    // A proposer chooses its predicate too: a valid one can end in a token.
+    let predicate_token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let predicate = format!("core.opinion.{predicate_token}");
+    let named = vault
+        .park_run_proposal_with_predicate_for_test(
+            run,
+            agent,
+            oneiron::EntityId::now(),
+            &predicate,
+            "an innocuous value",
+        )
+        .unwrap();
+    let leaks = |review: &Value| {
+        let text = review.to_string();
+        let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
+        text.contains(token)
+            || text.contains("hunter2")
+            || text.contains(&hex)
+            || text.contains(predicate_token)
+            || text.contains("changeme")
+    };
+
+    let path = format!("/v1/owner/runs/review?run_id={run}");
+    let (status, review) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(
+        review["proposals"].as_array().unwrap().len(),
+        values.len() + 1
+    );
+    assert!(!leaks(&review), "{review}");
+    assert!(
+        review.to_string().contains("kept"),
+        "an accepted body's safe fields stay: {review}"
+    );
+    assert!(
+        !review.to_string().contains("refused words"),
+        "a refused body is withheld whole: {review}"
+    );
+
+    let decide = json!({ "run_id": run, "bundle_id": review["bundle_id"] });
+    let (status, resolved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    for (id, value) in ids.iter().zip(&values) {
+        let stored = vault.get_claim(id).unwrap().unwrap();
+        assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Approved);
+        assert_eq!(&stored.value, value, "the stored proposal is unchanged");
+    }
+    let stored = vault.get_claim(&named).unwrap().unwrap();
+    assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Approved);
+    assert_eq!(
+        stored.predicate, predicate,
+        "the stored predicate is unchanged"
+    );
+}
+
+/// #1307 review: a run id is any text, another run's `run_ref` among it.
+/// The run with that id is reviewed and decided by it, the other run by its
+/// `run_ref`, and neither name selects the other run.
+#[tokio::test]
+async fn a_run_id_that_is_another_runs_ref_names_its_own_run() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    let first = vault
+        .park_run_proposal_for_test(
+            "owner-route-run-first",
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "the first run's",
+        )
+        .unwrap();
+    let (status, listing) = call(&server, "GET", "/v1/owner/runs", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    let first_ref = listing[0]["run_ref"].as_str().unwrap().to_owned();
+    let second = vault
+        .park_run_proposal_for_test(
+            &first_ref,
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "the second run's",
+        )
+        .unwrap();
+    let proposal = |review: &Value| review["proposals"][0]["claim_id"].clone();
+
+    let path = format!("/v1/owner/runs/review?run_id={first_ref}");
+    let (status, by_id) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(proposal(&by_id), second.to_hex(), "{by_id}");
+    let path = format!("/v1/owner/runs/review?run_ref={first_ref}");
+    let (status, by_ref) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{by_ref}");
+    assert_eq!(proposal(&by_ref), first.to_hex(), "{by_ref}");
+    let both = format!("/v1/owner/runs/review?run_id={first_ref}&run_ref={first_ref}");
+    let (status, _) = call(&server, "GET", &both, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let decide = json!({ "run_id": first_ref, "bundle_id": by_id["bundle_id"] });
+    let (status, resolved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    let approval = |id| vault.get_claim(&id).unwrap().unwrap().approval;
+    assert_eq!(approval(second), oneiron::ClaimApprovalStatus::Approved);
+    assert_eq!(approval(first), oneiron::ClaimApprovalStatus::Proposed);
+}
+
+/// SOL-9A-2-R2 F2: a backup the owner door admitted, then queued behind a
+/// revocation of its slip, writes nothing and prunes nothing.
+#[tokio::test]
+async fn a_backup_queued_behind_a_slip_revocation_takes_and_prunes_nothing() {
+    use crate::owner::OwnerError;
+    let (_dir, _backups, server) = owner_host_server();
+    let vault = server.vault();
+    let host = Arc::clone(server.owner_host.as_ref().unwrap());
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let recipe = format!("principal_ref={};actor_class=human", owner_id.to_hex());
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz("POST", "/v1/owner/backups", test_bearer(&recipe), None),
+    );
+    let auth = CoreAuth::from_headers(request.headers(), &server.config, vault.as_ref()).unwrap();
+    let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
+    // keep = 2: two backups, so a third would prune the first.
+    for _ in 0..2 {
+        host.take(vault, Some(&admitted)).unwrap();
+    }
+    let before = crate::owner::backup::list(&host.backups).unwrap();
+
+    let (slip, _) = slip_credentials::credential(&server, &recipe);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+        server.config.auth_secret.as_deref().unwrap().as_bytes(),
+    )
+    .unwrap();
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    match host.take(vault, Some(&admitted)) {
+        Err(OwnerError::Engine(error)) => assert_eq!(
+            error.kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated,
+            "{error}"
+        ),
+        other => panic!("the queued backup must be refused: {other:?}"),
+    }
+    assert_eq!(crate::owner::backup::list(&host.backups).unwrap(), before);
+    let partials = std::fs::read_dir(&host.backups.dir)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".partial")
+        })
+        .count();
+    assert_eq!(partials, 0, "no partial file is left behind");
+}
+
+/// ASTRA-9A-2-R2 F1: a run id is free text its proposer chose. A
+/// credential-shaped one is never served by the listing, review or receipt,
+/// and the run is still reviewed and approved through its `run_ref`.
+#[tokio::test]
+async fn a_credential_shaped_run_id_is_never_served_and_its_ref_decides_the_run() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    let (status, _) = call(
+        &server,
+        "POST",
+        "/v1/owner/secret-scan",
+        owner.clone(),
+        Some(&json!({ "mode": "off" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let run = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let proposal = vault
+        .park_run_proposal_for_test(
+            run,
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "an innocuous value",
+        )
+        .unwrap();
+
+    let (status, listing) = call(&server, "GET", "/v1/owner/runs", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert!(!listing.to_string().contains(run), "{listing}");
+    let run_ref = listing[0]["run_ref"].as_str().unwrap().to_owned();
+
+    let path = format!("/v1/owner/runs/review?run_ref={run_ref}");
+    let (status, review) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert!(!review.to_string().contains(run), "{review}");
+
+    let decide = json!({ "run_ref": run_ref, "bundle_id": review["bundle_id"] });
+    let (status, resolved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    assert!(!resolved.to_string().contains(run), "{resolved}");
+    assert_eq!(
+        vault.get_claim(&proposal).unwrap().unwrap().approval,
+        oneiron::ClaimApprovalStatus::Approved
+    );
+}
+
+#[test]
+fn server_sink_logs_a_failed_owner_action_by_kind_never_its_text() {
+    // Owner ruling 2026-10-14 (fix 6): logs never carry world text. A host
+    // failure is an `anyhow` chain whose messages can quote what the owner
+    // asked for; the server sink used to print the whole chain.
+    const SENTINEL: &str = "sentinel-row-text-3e88";
+    let sink = crate::logging::tests::CapturedSink::default();
+    sink.with_production_subscriber(|| {
+        let engine = oneiron::Error::InvalidConfig(format!("no world named {SENTINEL}"));
+        let chained = anyhow::Error::new(engine).context(format!("restore {SENTINEL}"));
+        let _ = crate::api::owner_routes::owner_error(crate::owner::OwnerError::Host(chained));
+        let _ = crate::api::owner_routes::owner_error(crate::owner::OwnerError::Host(
+            anyhow::anyhow!("backup of {SENTINEL} failed"),
+        ));
+    });
+    let written = sink.text();
+    assert!(
+        !written.contains(SENTINEL),
+        "owner action text reached the log: {written}"
+    );
+    assert!(written.contains("Some(InvalidConfig)"), "{written}");
+    assert!(written.contains("owner action failed"), "{written}");
 }

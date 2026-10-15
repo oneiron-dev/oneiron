@@ -270,6 +270,26 @@ impl TasksSection {
     }
 }
 
+/// The rows a TASKS section renders from, before its render cap. A host whose
+/// reader is narrower than the facade's actor keeps only the rows that reader
+/// may see and renders those, so the cap and the overflow footer count
+/// authorized rows alone and a withheld row moves no count (ARCH-0067 §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TasksSectionRows {
+    pub intents: Vec<TaskIntentPresence>,
+    pub bare_jobs: Vec<JobPresence>,
+    /// `false` when the TASK scan stopped at its own cap; see
+    /// [`TasksSection::render_bounded`].
+    pub source_exhausted: bool,
+}
+
+impl TasksSectionRows {
+    #[must_use]
+    pub fn render(&self) -> TasksSection {
+        TasksSection::render_bounded(&self.intents, &self.bare_jobs, self.source_exhausted)
+    }
+}
+
 /// One non-agent-dispatch JobQueue job projected for the board — a bare
 /// system job row, or a realizing job folded under its owning intent row.
 #[derive(Debug, Clone, PartialEq, Eq)]

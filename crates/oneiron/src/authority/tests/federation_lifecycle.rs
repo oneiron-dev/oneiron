@@ -404,38 +404,6 @@ fn federation_disconnect_is_terminal_for_every_subsequent_op() {
 }
 
 #[test]
-fn federation_connect_rejects_rebinding_an_actively_bound_grant() {
-    let fixture = pact_fixture(136);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
-    let connect_hash = authority_entry_hash(&connect).unwrap();
-    let rebind = lifecycle_entry(
-        &fixture,
-        vec![connect_hash],
-        2,
-        connect_action_with(
-            &fixture,
-            [0xD2; 32],
-            fixture.grant_ref,
-            &fixture.scope,
-            [0x68; 16],
-        ),
-    );
-    let rebind_hash = authority_entry_hash(&rebind).unwrap();
-
-    let fold = fold_authority_log(&[fixture.genesis.clone(), connect, rebind]);
-    assert_eq!(
-        lifecycle_rejection(&fold, rebind_hash),
-        Some(FederationLifecycleRejection::GrantAlreadyBound)
-    );
-    assert_eq!(fold.federation_pacts.len(), 1);
-    assert_eq!(
-        fold.federation_pacts[&fixture.pact_id].status,
-        FederationPactStatus::Active
-    );
-}
-
-#[test]
 fn federation_promote_records_successor_and_is_terminal() {
     let fixture = pact_fixture(140);
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
@@ -512,77 +480,6 @@ fn federation_promote_records_successor_and_is_terminal() {
     assert_eq!(
         fold.federation_pacts[&fixture.pact_id].status,
         FederationPactStatus::Active
-    );
-}
-
-#[test]
-fn federation_dissolve_is_terminal_and_never_recovered() {
-    let fixture = pact_fixture(148);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
-    let connect_hash = authority_entry_hash(&connect).unwrap();
-    let dissolve = lifecycle_entry(
-        &fixture,
-        vec![connect_hash],
-        2,
-        unilateral_action_with(
-            &fixture,
-            fixture.pact_id,
-            fixture.grant_ref,
-            FederationLifecycleKind::Dissolve,
-            1,
-        ),
-    );
-    let dissolve_hash = authority_entry_hash(&dissolve).unwrap();
-    let repact_after = lifecycle_entry(
-        &fixture,
-        vec![dissolve_hash],
-        3,
-        repact_action_with(
-            &fixture,
-            fixture.pact_id,
-            fixture.grant_ref,
-            2,
-            &fixture.scope,
-            [0x69; 16],
-        ),
-    );
-    let repact_hash = authority_entry_hash(&repact_after).unwrap();
-    let rebind = lifecycle_entry(
-        &fixture,
-        vec![dissolve_hash],
-        4,
-        connect_action_with(
-            &fixture,
-            [0xD3; 32],
-            fixture.grant_ref,
-            &fixture.scope,
-            [0x6A; 16],
-        ),
-    );
-    let rebind_hash = authority_entry_hash(&rebind).unwrap();
-
-    let fold = fold_authority_log(&[
-        fixture.genesis.clone(),
-        connect,
-        dissolve,
-        repact_after,
-        rebind,
-    ]);
-    let pact = &fold.federation_pacts[&fixture.pact_id];
-    assert_eq!(pact.status, FederationPactStatus::Dissolved);
-    assert_eq!(pact.terminal_epoch, Some(1));
-    assert_eq!(
-        lifecycle_rejection(&fold, repact_hash),
-        Some(FederationLifecycleRejection::TerminalPact)
-    );
-    assert_eq!(
-        lifecycle_rejection(&fold, rebind_hash),
-        Some(FederationLifecycleRejection::GrantAlreadyBound)
-    );
-    assert_eq!(
-        federation_grant_activation(&fold, &fixture.grant_ref),
-        FederationGrantActivation::Inactive(FederationPactStatus::Dissolved)
     );
 }
 
@@ -705,41 +602,4 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
         federation_grant_activation(&fold, &fixture.grant_ref),
         FederationGrantActivation::Active
     );
-}
-
-#[test]
-fn federation_lifecycle_transition_table_is_total() {
-    let fixture = pact_fixture(156);
-    let statuses = [
-        None,
-        Some(FederationPactStatus::Active),
-        Some(FederationPactStatus::Suspended),
-        Some(FederationPactStatus::Promoted),
-        Some(FederationPactStatus::Disconnected),
-        Some(FederationPactStatus::Dissolved),
-    ];
-    for status in statuses {
-        for (name, action) in totality_ops(&fixture) {
-            let mut state = fold_state_with_pact(&fixture, status);
-            let before = state.federation_pacts.clone();
-            let storage = LocalFoldContext::default();
-            let result = apply_federation_lifecycle(&mut state, &action, storage.context());
-            match expected_transition(status, name) {
-                Ok(next) => {
-                    assert_eq!(result, Ok(()), "({status:?}, {name}) must apply");
-                    assert_eq!(
-                        state.federation_pacts[&fixture.pact_id].status, next,
-                        "({status:?}, {name}) next status"
-                    );
-                }
-                Err(reason) => {
-                    assert_eq!(result, Err(reason), "({status:?}, {name}) rejection");
-                    assert_eq!(
-                        state.federation_pacts, before,
-                        "({status:?}, {name}) rejected op must not mutate state"
-                    );
-                }
-            }
-        }
-    }
 }

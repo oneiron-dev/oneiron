@@ -597,6 +597,10 @@
             "label": "Contract dream",
             "lastMessageSnippet": null,
             "name": "Contract dream",
+            "occurred": {
+              "end": 1782357700,
+              "start": 1782357700
+            },
             "type": 4,
             "updatedAt": 1782357735
           },
@@ -609,6 +613,10 @@
             "memberIds": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
             ],
+            "occurred": {
+              "end": 0,
+              "start": 0
+            },
             "project_id": "<root-project-id>",
             "schema_version": 1,
             "type": 4,
@@ -618,6 +626,35 @@
         "meta": {
           "countMode": "exact",
           "total": 2
+        },
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
         }
       },
       "status": 200

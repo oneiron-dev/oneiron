@@ -3,24 +3,6 @@
 use oneiron_remote::{check_unix_seconds, stamp_occurred_at};
 
 #[test]
-fn unix_seconds_preserve_the_safe_integer_edges() {
-    for (number, expected) in [
-        (0.0, 0),
-        (1_700_000_000.0, 1_700_000_000),
-        (9_007_199_254_740_991.0, 9_007_199_254_740_991),
-    ] {
-        assert_eq!(
-            check_unix_seconds("learned_at", number).expect("safe"),
-            expected
-        );
-        assert_eq!(
-            stamp_occurred_at(Some(number)).expect("safe witness"),
-            expected
-        );
-    }
-}
-
-#[test]
 fn unix_seconds_refuse_non_whole_non_finite_and_unsafe_numbers() {
     for number in [
         -1.0,

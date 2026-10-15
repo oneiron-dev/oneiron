@@ -8,20 +8,20 @@
 //! model, HNSW params); a copy that is value-identical to the shared
 //! helper is a drift hazard and must route through it.
 
+pub(crate) mod log_capture;
 pub(crate) mod row_dump;
 /// Test-only-file classification for the source-scanning fences. The
 /// integration binaries mount the same file through `tests/common`.
 pub(crate) mod source_scan;
 
 mod channel_identity;
-pub(crate) use channel_identity::self_held_identity_in_state;
+pub(crate) use channel_identity::{put_native_mail_sender, self_held_identity_in_state};
+mod dreamer_rows;
+pub(crate) use dreamer_rows::{seeded_without_dreamer_rows, without_dreamer_rows};
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError};
-use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
@@ -112,50 +112,44 @@ pub(crate) fn seed_agent_definition(vault: &Vault, id: EntityId, label: &str) ->
     id
 }
 
-/// Raw stored-entity record: the 25-byte metadata header (type byte,
-/// occurred start/end, learned_at — all big-endian u64s, per the
-/// `batch::ENTITY_*_OFFSET` layout) followed by `body`.
-pub(crate) fn entity_record(
-    entity_type: u8,
-    occurred: TimeRange,
-    learned_at: u64,
-    body: &[u8],
-) -> Vec<u8> {
-    let mut out = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
-    out.push(entity_type);
-    out.extend_from_slice(&occurred.start.to_be_bytes());
-    out.extend_from_slice(&occurred.end.to_be_bytes());
-    out.extend_from_slice(&learned_at.to_be_bytes());
-    out.extend_from_slice(body);
-    out
-}
+// One implementation each, shared with the test-support doors other crates
+// use (the seal organ's end-to-end check).
+pub(crate) use crate::test_support::{
+    entity_record, provision_engine_machines, put_policy_manifest_bytes, test_host_issuer,
+};
 
-/// Stores `data` as a policy-manifest entity at `id` via a raw store put
-/// (occurred `1..1`, learned_at `1`), bypassing the batch write path.
-/// Seeding the *default* manifest slot must pass
-/// `crate::gate::default_policy_manifest_id()` so the intent is explicit.
-/// The `graph_fs` test copy deliberately stays local: it exercises the
-/// real `apply_ops` write path instead of a raw put.
-pub(crate) fn put_policy_manifest_bytes(
-    vault: &Vault,
-    id: EntityId,
-    data: &[u8],
-) -> crate::Result<()> {
-    let payload = entity_record(
-        ENTITY_TYPE_POLICY_MANIFEST,
-        TimeRange { start: 1, end: 1 },
-        1,
-        data,
-    );
-    vault.with_write_txn(|wtxn| {
-        // This fixture represents local authoring, not replay. Preserve that
-        // origin even though it bypasses batch to isolate the tested gate.
-        crate::gate::stamp_manifest_origin(&vault.store, wtxn, &id, data, false)?;
-        vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })
+/// Removes the Dreamer's read row from the vault's default policy, as a vault
+/// seeded before ARCH-0026's warm default (or whose owner removed the row)
+/// holds it. Every other row, the Dreamer's ceiling and permit included,
+/// stays.
+pub(crate) fn withhold_dreamer_read(vault: &Vault) -> crate::Result<()> {
+    use rmpv::Value;
+    let id = crate::gate::default_policy_manifest_id()?;
+    let body = vault.get(&id)?.ok_or(Error::EntityNotFound)?;
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("default policy map")
+    else {
+        unreachable!("default policy manifest is a map");
+    };
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex();
+    for (key, table) in &mut entries {
+        if let (Some("scoped_grants"), Value::Array(rows)) = (key.as_str(), table) {
+            rows.retain(|row| {
+                !row.as_map().is_some_and(|fields| {
+                    fields.iter().any(|(name, value)| {
+                        name.as_str() == Some("actor_ref") && value.as_str() == Some(&dreamer)
+                    })
+                })
+            });
+        }
+    }
+    entries.retain(|(key, table)| {
+        key.as_str() != Some("scoped_grants")
+            || table.as_array().is_some_and(|rows| !rows.is_empty())
+    });
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode policy");
+    put_policy_manifest_bytes(vault, id, &data)
 }
 
 /// Pin a test model manifest with a passing teacher-probe receipt, the way
@@ -279,25 +273,6 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
     (dir, vault)
 }
 
-/// The unit-test host root. Each test vault is its own trust domain, so one
-/// fixed secret lets any fixture rebuild the issuer that rooted its vault.
-pub(crate) fn test_host_issuer() -> crate::authority::HostSlipIssuer {
-    crate::authority::HostSlipIssuer::from_secret(b"oneiron unit test host root")
-        .expect("host issuer")
-}
-
-/// Roots the vault under the test host and provisions the engine's MACHINE
-/// writers, as a host does at bootstrap. Returns the host issuer so a test can
-/// provision its own MACHINE actors with `provision_host_machine_identity`.
-pub(crate) fn provision_engine_machines(vault: &Vault) -> crate::authority::HostSlipIssuer {
-    let issuer = test_host_issuer();
-    vault.ensure_host_root_slip(&issuer).expect("host root");
-    vault
-        .provision_engine_machine_identities(&issuer)
-        .expect("engine machine identities");
-    issuer
-}
-
 /// Signs a MACHINE writer's candidate with the signer the host retained for
 /// the envelope's actor, as an engine writer does before its write door.
 pub(crate) fn sign_machine_candidate(
@@ -320,6 +295,54 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
     vault
         .bind_host_owner_for_test(&test_host_issuer(), owner)
         .expect("owner binding");
+}
+
+/// Roots the vault under the test host and binds `agent` as one of the
+/// vault's own agents (an active `agent` binding). The host key holds one
+/// live binding, so this is the vault's only bound actor.
+pub(crate) fn bind_test_agent(vault: &Vault, agent: EntityId) {
+    let issuer = test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .bind_host_actor_for_test(&issuer, agent, "agent")
+        .expect("agent binding");
+    assert!(
+        crate::authority::actor_binding_is_active(
+            &vault.authority_fold().expect("authority fold"),
+            &agent,
+            "agent"
+        ),
+        "the host key already binds another actor"
+    );
+}
+
+/// Gives `member` an Active contact that clears everything, so in a room
+/// the member takes the top clearance (ILDF2).
+pub(crate) fn clear_test_contact(vault: &Vault, member: EntityId) {
+    let contact = EntityId::now();
+    let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        EntityId::now(),
+        format!("{}@example.test", member.to_hex()),
+        1,
+    )
+    .expect("contact record");
+    vault
+        .create_counterparty_contact(&contact, &record)
+        .expect("contact");
+    vault
+        .put_edge(&contact, crate::EdgeKind::About, &member, 1.0)
+        .expect("contact names the member");
+    vault
+        .set_counterparty_disclosure_scope(
+            &contact,
+            &crate::disclosure::DisclosureScope::new(
+                crate::federation::Scope::top(),
+                "room member",
+                1,
+            )
+            .expect("clearance"),
+        )
+        .expect("contact clearance");
 }
 
 /// First open seeds the bootstrap skills, whose activation edits wait for
@@ -363,7 +386,9 @@ pub(crate) const SYNTHETIC_PRIVATE_KEY_BLOCK: &str = "-----BEGIN PRIVATE KEY----
 U3ludGhldGljIGZpeHR1cmUgYm9keSBmb3IgdGhlIHNlY3JldCBzY2FuIHRlc3RzLiBJdCBpcyBub3QgYSBrZXku\n\
 -----END PRIVATE KEY-----";
 
-fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
+/// Removes the shipped default policy manifest that `Vault::open` seeds, so a
+/// fixture writes under the legacy open policy from here on.
+pub(crate) fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
     let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
     vault
         .with_write_txn(|wtxn| {

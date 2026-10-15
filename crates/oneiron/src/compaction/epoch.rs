@@ -1,19 +1,20 @@
 //! Epoch-summary codec and transactional lineage mint.
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead};
 use rmpv::Value;
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SUMMARY;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
-use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage};
+use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage, WindowLog};
+use super::stored_epoch::{StoredEpoch, stored_epoch_in};
 use crate::error::OffRecordError;
 
 /// Pinned body keys for an epoch summary, in encode order.
@@ -48,13 +49,20 @@ pub const EPOCH_SUMMARY_LEVEL: u64 = 0;
 /// covered turn regardless of this cap.
 pub const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 
+/// Hard cap on the sources a host-numbered log's summary derives from.
+///
+/// For an executor run the `DerivedFrom` set IS the erasure and disclosure
+/// fence (there is no turn range to fall back on), so a window naming more
+/// sources is refused, never cut.
+pub const EPOCH_SUMMARY_MAX_SOURCES: usize = 1024;
+
 const KEY_EPOCH_V: &str = EPOCH_SUMMARY_BODY_KEYS[0];
 const KEY_EPOCH_SESSION: &str = EPOCH_SUMMARY_BODY_KEYS[1];
 const KEY_EPOCH_EPOCH: &str = EPOCH_SUMMARY_BODY_KEYS[2];
 const KEY_EPOCH_TURN_START: &str = EPOCH_SUMMARY_BODY_KEYS[3];
 const KEY_EPOCH_TURN_END: &str = EPOCH_SUMMARY_BODY_KEYS[4];
 const KEY_EPOCH_LEVEL: &str = EPOCH_SUMMARY_BODY_KEYS[5];
-const KEY_EPOCH_TEXT: &str = EPOCH_SUMMARY_BODY_KEYS[6];
+pub(super) const KEY_EPOCH_TEXT: &str = EPOCH_SUMMARY_BODY_KEYS[6];
 const KEY_EPOCH_ACTOR: &str = EPOCH_SUMMARY_BODY_KEYS[7];
 
 /// The typed epoch-summary body — the CB-A render contract.
@@ -221,6 +229,116 @@ pub fn decode_epoch_summary_body(bytes: &[u8]) -> Result<EpochSummaryBody> {
     Ok(body)
 }
 
+/// Walks every record an epoch summary's words came from: its `DerivedFrom`
+/// targets, and theirs through any nested epoch summary, each record once.
+///
+/// A summary's own birth scope is its run's position and cannot stand for
+/// what it was written from, so a reader that is not the owner takes an
+/// epoch summary only while `admit` takes each record reached here (nested
+/// summaries included). The walk refuses as soon as one is refused or a source no
+/// longer resolves, or a summary's pointer does ([`stored_epoch_in`]).
+/// `Ok(None)` when `body` is not an epoch summary.
+pub(crate) fn epoch_sources_admitted_in(
+    dbs: &impl ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+    body: &[u8],
+    mut admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+) -> Result<Option<bool>> {
+    match stored_epoch_in(dbs, rtxn, summary, body)? {
+        StoredEpoch::No => return Ok(None),
+        StoredEpoch::Unresolved => return Ok(Some(false)),
+        StoredEpoch::Yes => {}
+    }
+    let mut seen = std::collections::BTreeSet::from([*summary]);
+    let mut pending = vec![*summary];
+    while let Some(next) = pending.pop() {
+        for edge in dbs.port_edges(
+            rtxn,
+            &next,
+            EdgeDirection::Out,
+            Some(EdgeKind::DerivedFrom),
+            None,
+        )? {
+            let source = edge?.target;
+            if !seen.insert(source) {
+                continue;
+            }
+            let Some(row) = dbs.port_entity_record(rtxn, &source)? else {
+                return Ok(Some(false));
+            };
+            if !admit(&source, &row)? {
+                return Ok(Some(false));
+            }
+            if row.entity_type == ENTITY_TYPE_SUMMARY {
+                match stored_epoch_in(dbs, rtxn, &source, &row.body)? {
+                    StoredEpoch::No => {}
+                    StoredEpoch::Yes => pending.push(source),
+                    StoredEpoch::Unresolved => return Ok(Some(false)),
+                }
+            }
+        }
+    }
+    Ok(Some(true))
+}
+
+/// Where a run's epoch summary is born: the run credential's world and
+/// facet, as the run's other records are. `None` is a vault-wide run's:
+/// base reality, and the vault's default facet (ARCH-0022: with no active
+/// mask, the vault's default facet stamps a record).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct EpochPlacement {
+    pub(crate) world: Option<EntityId>,
+    pub(crate) facet: Option<EntityId>,
+}
+
+impl EpochPlacement {
+    /// Settles the minted summary's birth stamp in its mint transaction.
+    pub(crate) fn settle_in(
+        self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        summary: EntityId,
+    ) -> Result<()> {
+        let world = self.world.unwrap_or_else(crate::claim::base_world_id);
+        let facet = match self.facet {
+            Some(facet) => facet,
+            None => crate::claim::default_facet_in(store, txn)?,
+        };
+        crate::federation::record_scope::settle_epoch_birth(store, txn, summary, world, facet)
+    }
+}
+
+/// Whether row `id` may leave through an export door, as the epoch fence
+/// judges it: an epoch summary leaves only while it is not withdrawn and the
+/// door would carry every record its words came from, through nested epochs
+/// (`carries` judges one source's row; an erased or withdrawn source carries
+/// nothing). The fence never exports those sources along with it. Every
+/// other row passes.
+pub(crate) fn epoch_exportable_in(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+    mut carries: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+) -> Result<bool> {
+    if entity_type != ENTITY_TYPE_SUMMARY {
+        return Ok(true);
+    }
+    let withdrawn = |id: &EntityId| -> Result<bool> {
+        let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, rtxn, id)?;
+        Ok(state.deleted || state.stale)
+    };
+    match epoch_sources_admitted_in(store, rtxn, id, body, |source, row| {
+        Ok(!withdrawn(source)? && carries(source, row)?)
+    })? {
+        None => Ok(true),
+        Some(false) => Ok(false),
+        Some(true) => Ok(!withdrawn(id)?),
+    }
+}
+
 /// A 32-hex entity ref, validated as one rather than accepted as any string.
 fn epoch_summary_hex_ref(value: &Value) -> Result<String> {
     let text = value.as_str().ok_or(Error::InvariantViolation(
@@ -276,9 +394,15 @@ fn is_epoch_candidate_for_session(bytes: &[u8], session_ref: &EntityId) -> bool 
 
 /// One durable prior epoch of a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct PriorEpoch {
+pub(crate) struct PriorEpoch {
     epoch: u64,
     turn_end: u64,
+}
+
+impl PriorEpoch {
+    pub(crate) const fn new(epoch: u64, turn_end: u64) -> Self {
+        Self { epoch, turn_end }
+    }
 }
 
 /// The claimed range must cover every distinct turn, in message-log order.
@@ -469,17 +593,10 @@ pub(super) fn mint_epoch_summary_with(
         ));
     }
 
-    // `DerivedFrom` targets come from the REQUEST's window, deduplicated in
-    // first-seen order and hard-capped. The body's turn range stays truth.
-    let mut derived: Vec<EntityId> = Vec::new();
-    for message in &request.window {
-        if derived.len() >= EPOCH_SUMMARY_MAX_DERIVED_EDGES {
-            break;
-        }
-        if !derived.contains(&message.turn_id) {
-            derived.push(message.turn_id);
-        }
-    }
+    // `DerivedFrom` targets are the sealed request's sources: a conversation
+    // window's turns (deduplicated, hard-capped; the body's turn range stays
+    // truth), or every record a host-numbered log was read from.
+    let derived = &request.sources;
 
     // The keyframe's temporal position IS the compaction moment: the recorded
     // watermark. Wall-clock would make an otherwise byte-stable row depend on
@@ -487,9 +604,21 @@ pub(super) fn mint_epoch_summary_with(
     let at = request.watermark.learned_at;
     let summary_id = vault.store.clock.entity_id()?;
 
-    let epoch = vault.with_write_txn(|wtxn| {
-        refuse_overlay_derived_mint(&vault.store, &request.window)?;
-        let prior = prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?;
+    let epoch = vault.with_write_txn_grouped(|wtxn| {
+        refuse_overlay_derived_mint(
+            &vault.store,
+            request
+                .window
+                .iter()
+                .map(|message| message.turn_id)
+                .filter(|_| request.log == WindowLog::Conversation)
+                .chain(request.sources.iter().copied()),
+        )?;
+        let prior = match request.log {
+            WindowLog::Conversation => prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?,
+            // The host's own rows re-check this position in `extra`.
+            WindowLog::Host { prior } => prior,
+        };
         validate_epoch_boundary(prior, turn_start)?;
         let epoch = match prior {
             Some(prior) => prior.epoch.checked_add(1).ok_or(Error::InvariantViolation(
@@ -514,16 +643,45 @@ pub(super) fn mint_epoch_summary_with(
             at,
             &body,
         );
-        for target in &derived {
-            batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
+        // A source erased or withdrawn before this mint has already run its
+        // invalidation, so the summary is born withdrawn, as it would be had
+        // the erasure come after it: never indexed, never embedded. Such a
+        // source takes no new dependency row; the summary is stale for good,
+        // withdrawn for where that source's words sat.
+        let mut born_withdrawn = None::<crate::settings::CarriedWorlds>;
+        for target in derived {
+            let state =
+                crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, wtxn, target)?;
+            if state.deleted || state.stale {
+                born_withdrawn
+                    .get_or_insert_default()
+                    .absorb(&crate::settings::minted_worlds_in(
+                        &vault.store,
+                        wtxn,
+                        target,
+                    )?);
+            } else {
+                batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
+            }
         }
         batch.apply(wtxn)?;
         // Explicitly scheduled for embedding inside the mint transaction, so
         // the ratified "vector-indexed, RAPTOR-retrievable" contract is a
         // durable fact of the mint rather than a later sweep's guess.
-        vault
-            .store
-            .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        if born_withdrawn.is_none() {
+            vault
+                .store
+                .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        }
+        // The compacted turns leave their boards' retained history in the
+        // same act: reconstructing one now fails explicitly (ARCH-0067).
+        if request.log == WindowLog::Conversation {
+            crate::context_board::fold_board_turns_in_txn(
+                vault,
+                wtxn,
+                request.window.iter().map(|message| message.turn_id),
+            )?;
+        }
         extra(
             wtxn,
             &EpochMint {
@@ -534,6 +692,10 @@ pub(super) fn mint_epoch_summary_with(
                 turn_end,
             },
         )?;
+        if let Some(worlds) = &born_withdrawn {
+            crate::ports::record_withdrawn_in_txn(&vault.store, wtxn, &summary_id, worlds)?;
+            crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, wtxn, &summary_id)?;
+        }
         Ok(epoch)
     })?;
     Ok((epoch, summary_id))
@@ -559,18 +721,18 @@ pub(super) fn mint_epoch_summary_with(
 /// from live registry state INSIDE the applying transaction, which is the
 /// state the transaction applies against — the same TOCTOU-free discipline
 /// the K4 guard uses.
-fn refuse_overlay_derived_mint(store: &Store, window: &[CompactionWindowMessage]) -> Result<()> {
+fn refuse_overlay_derived_mint(
+    store: &Store,
+    covered: impl Iterator<Item = EntityId>,
+) -> Result<()> {
     if !store.off_record_sessions.has_overlay_entities()? {
         return Ok(());
     }
-    for message in window {
-        if store
-            .off_record_sessions
-            .contains_entity(&message.turn_id)?
-        {
+    for id in covered {
+        if store.off_record_sessions.contains_entity(&id)? {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordTaintedBaseWrite {
-                    entity_ref: message.turn_id.to_hex(),
+                    entity_ref: id.to_hex(),
                 },
             ));
         }

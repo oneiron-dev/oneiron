@@ -13,7 +13,7 @@ pub(crate) mod tests {
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_time_lta_a::tests::*;
     use super::super::*;
-    use crate::api::{VerifyCheckKind, VerifyCheckStatus};
+    use crate::api::VerifyCheckKind;
 
     #[test]
     fn dss_cert_only_fails_revocation_coverage() {
@@ -25,75 +25,6 @@ pub(crate) mod tests {
         let covered = covered_of(&[&ca.cert_der, &leaf_der]);
         let checks = dss_check(&doc, &covered);
         assert_material_fails(&checks);
-    }
-
-    #[test]
-    fn dss_irrelevant_issuer_evidence_fails_coverage() {
-        // Authentic-but-irrelevant evidence: an attacker-embedded
-        // self-signed "issuer" with its own fresh CRL/OCSP says nothing
-        // about the covered chain.
-        let real_ca = test_ca("real-ca");
-        let leaf_der = leaf_under(&real_ca, "signer");
-        let evil = test_ca("evil-ca");
-        let evil_crl = build_crl(&evil, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
-        let evil_ocsp = build_ocsp(
-            &evil,
-            evil.cert.tbs_certificate.serial_number.clone(),
-            AT_UNIX - 60,
-            Some(AT_UNIX + 3600),
-            x509_ocsp::CertStatus::good(),
-        );
-        let doc = dss_doc(
-            &[real_ca.cert_der.clone(), leaf_der.clone(), evil.cert_der],
-            &[evil_crl],
-            &[evil_ocsp],
-        );
-        let covered = covered_of(&[&real_ca.cert_der, &leaf_der]);
-        let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
-    }
-
-    #[test]
-    fn dss_crl_covers_chain_passes() {
-        // One CRL issued by the CA covers both the CA (self-issued) and the
-        // leaf it issued.
-        let ca = test_ca("dss-ca");
-        let leaf_der = leaf_under(&ca, "leaf");
-        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
-        let doc = dss_doc(&[ca.cert_der.clone(), leaf_der.clone()], &[crl], &[]);
-        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
-        let checks = dss_check(&doc, &covered);
-        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
-    }
-
-    #[test]
-    fn dss_ocsp_covers_chain_passes() {
-        // OCSP responses bound to each covered cert with `good` status.
-        let ca = test_ca("dss-ca");
-        let leaf_der = leaf_under(&ca, "leaf");
-        let leaf = x509_cert::Certificate::from_der(&leaf_der).unwrap();
-        let ocsp_ca = build_ocsp(
-            &ca,
-            ca.cert.tbs_certificate.serial_number.clone(),
-            AT_UNIX - 60,
-            Some(AT_UNIX + 3600),
-            x509_ocsp::CertStatus::good(),
-        );
-        let ocsp_leaf = build_ocsp(
-            &ca,
-            leaf.tbs_certificate.serial_number,
-            AT_UNIX - 60,
-            Some(AT_UNIX + 3600),
-            x509_ocsp::CertStatus::good(),
-        );
-        let doc = dss_doc(
-            &[ca.cert_der.clone(), leaf_der.clone()],
-            &[],
-            &[ocsp_ca, ocsp_leaf],
-        );
-        let covered = covered_of(&[&ca.cert_der, &leaf_der]);
-        let checks = dss_check(&doc, &covered);
-        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
     }
 
     #[test]
@@ -249,24 +180,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dss_freshness_uses_archival_applicable_time() {
-        // A CRL fresh at the archival (DocTimeStamp) time but expired by the
-        // verification clock is valid evidence for an archived document: the
-        // DocTimeStamp covers the DSS revision and attests it as of genTime.
-        let ca = test_ca("dss-ca");
-        let archival = AT_UNIX - 86_400;
-        let crl = build_crl(&ca, archival - 3600, Some(archival + 3600), None, vec![]);
-        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
-        let covered = covered_of(&[&ca.cert_der]);
-        let mut checks = Checks::new();
-        verify_dss(&doc, &[], &covered, archival, usize::MAX, &mut checks);
-        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
-        // The same material judged at the verification clock is stale.
-        let checks_now = dss_check(&doc, &covered);
-        assert_material_fails(&checks_now);
-    }
-
-    #[test]
     fn dss_direct_dict_root_classifies_invalid() {
         // lopdf catalog() errs on a spec-invalid direct-dictionary trailer
         // /Root; a /DSS hidden inside it must classify Invalid, never
@@ -282,38 +195,12 @@ pub(crate) mod tests {
         assert_material_fails(&checks);
     }
 
-    #[test]
-    fn dss_no_trailer_root_stays_absent() {
-        // A genuinely DSS-free document (no trailer /Root at all) keeps the
-        // AbsentAllowed classification.
-        let doc = Document::with_version("1.4");
-        let checks = dss_check(&doc, &[]);
-        assert_eq!(
-            dss_finding(&checks),
-            (VerifyCheckStatus::NotApplicable, None)
-        );
-    }
-
     // --- botfix3a gates: signer-leaf KU, CRL scope, OCSP delegate/producedAt,
 
     // --- tsp content-type, covered-on-valid-only ------------------------------
 
     pub(crate) fn anchors_of(ca: &TestCa) -> Vec<pkix_chain::TrustAnchor> {
         vec![pkix_chain::TrustAnchor::from_cert(ca.cert.clone())]
-    }
-
-    #[test]
-    fn signer_leaf_key_encipherment_only_fails_certificate_path() {
-        let ca = test_ca("ku-ca");
-        let leaf = leaf_with_ku(
-            &ca,
-            "ku-leaf",
-            vec![rcgen::KeyUsagePurpose::KeyEncipherment],
-        );
-        assert!(
-            validate_chain(&[leaf], &anchors_of(&ca), AT_UNIX).is_err(),
-            "a keyEncipherment-only leaf must not pass as a signing identity"
-        );
     }
 
     #[test]

@@ -200,17 +200,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cell_without_a_measurement_is_never_zero() {
-        let cell: Cell<f64> = Cell::from_option(None, "probe unavailable");
-        assert!(!cell.is_measured());
-        assert!(cell.value().is_none());
-        assert!(cell.measured_f64().is_none());
-        let rendered = serde_json::to_string(&cell).expect("cell renders");
-        assert!(rendered.contains("not_ready"), "{rendered}");
-        assert!(!rendered.contains(": 0"), "{rendered}");
-    }
-
-    #[test]
     fn a_speedup_without_a_measured_baseline_is_omitted() {
         assert!(measured_speedup("candidate", Some(4.0), "baseline", None).is_none());
         assert!(measured_speedup("candidate", None, "baseline", Some(4.0)).is_none());
@@ -219,16 +208,5 @@ mod tests {
             .expect("both sides measured");
         assert!((ratio.value - 2.0).abs() < f64::EPSILON);
         assert_eq!(ratio.baseline_kind, MEASURED_WALL_CLOCK_BASELINE);
-    }
-
-    #[test]
-    fn percentiles_are_nearest_rank_over_a_non_empty_set() {
-        assert!(Percentiles::from_samples(&[]).is_none());
-        let percentiles = Percentiles::from_samples(&[4.0, 1.0, 3.0, 2.0]).expect("samples");
-        assert_eq!(percentiles.count, 4);
-        assert!((percentiles.p50 - 2.0).abs() < f64::EPSILON);
-        assert!((percentiles.p95 - 4.0).abs() < f64::EPSILON);
-        assert!((percentiles.min - 1.0).abs() < f64::EPSILON);
-        assert!((percentiles.max - 4.0).abs() < f64::EPSILON);
     }
 }

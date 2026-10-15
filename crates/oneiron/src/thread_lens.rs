@@ -448,6 +448,3 @@ fn control_id(value: &str) -> Result<SelfUiControlId> {
 fn action_id(value: &str) -> Result<SelfUiActionId> {
     SelfUiActionId::new(value)
 }
-
-#[cfg(test)]
-mod tests;

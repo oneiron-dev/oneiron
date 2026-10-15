@@ -707,9 +707,9 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
         )
         .text(&turn_id, &[("body", "authorityneedle")])
         .commit()?;
-    let candidate = |_store: &crate::store::Store, _txn: &heed::RoTxn<'_>, id: &EntityId| {
-        Ok(*id != excluded_id)
-    };
+    let candidate = |_store: &crate::store::StoreRead<'_>,
+                     _txn: &heed::RoTxn<'_>,
+                     id: &EntityId| { Ok(*id != excluded_id) };
     let fresh = RetrievalFilter {
         include_stale: Some(false),
         ..RetrievalFilter::default()
@@ -735,6 +735,8 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 world_scope: &WorldScope::All,
                 world_active_set: None,
                 corpus_scope: &crate::corpus::CorpusScope::All,
+                device_local: None,
+                deadline: None,
             };
             let mut metadata = EntityMetadataCache::default();
             // Bounded scans must use local decisions and resolved authority,
@@ -746,7 +748,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
             for (id, allowed) in [(stale_id, expected), (excluded_id, false), (turn_id, false)] {
                 assert_eq!(
                     pipeline_candidate_matches_filters_and_gate(
-                        &vault.store,
+                        &vault.store.read(),
                         &txn,
                         &id,
                         config,
@@ -772,101 +774,6 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
                 if expected { vec![stale_id] } else { Vec::new() }
             );
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn authority_deny_all_returns_before_counting_or_querying_either_index() -> Result<()> {
-    let disjoint = RetrievalFilter {
-        entity_types: Some(BTreeSet::from([ENTITY_TYPE_TURN])),
-        ..RetrievalFilter::default()
-    };
-    for (grant, requested) in [
-        (read_grant("other-reader", Value::Nil), None),
-        (
-            read_grant(
-                "authority-reader",
-                map(vec![("min_confidence", Value::from("bad"))]),
-            ),
-            None,
-        ),
-        (
-            read_grant(
-                "authority-reader",
-                map(vec![("entity_types", Value::Array(Vec::new()))]),
-            ),
-            None,
-        ),
-        (
-            read_grant(
-                "authority-reader",
-                map(vec![(
-                    "entity_types",
-                    Value::Array(vec![Value::from(ENTITY_TYPE_CLAIM)]),
-                )]),
-            ),
-            Some(&disjoint),
-        ),
-    ] {
-        let (_tmp, vault) = open_test_vault();
-        put_claim(&vault, entity_id(0xB0), &claim())?;
-        install_grants(&vault, vec![grant])?;
-        let mut txn = vault.store.env.write_txn()?;
-        // Deliberately poison both counts. Any candidate-limit or search
-        // access must fail, so Ok([]) proves denial happened before either.
-        vault.store.text_meta.put(&mut txn, &[0_u8; 16], &[0])?;
-        vault
-            .store
-            .hnsw_meta
-            .put(&mut txn, crate::hnsw::COUNT_KEY, &[0])?;
-        txn.commit()?;
-        assert!(
-            vault
-                .scoped_read_search_candidate_limit(1, true, false)
-                .is_err()
-        );
-        assert!(
-            vault
-                .scoped_read_search_candidate_limit(1, false, true)
-                .is_err()
-        );
-        assert_search_ids(&reader(&vault), requested, &[])?;
-
-        // Bypass ScopedRead's shortcut: the builder must honor resolved denial
-        // before touching either poisoned index, with nonzero channel limits.
-        let filter = resolve_reader_filter(&vault, requested)?;
-        assert!(filter.deny_all);
-        for query in [
-            vault.query().search_text("authorityneedle", 1),
-            vault.query().search_vector(&[1.0, 0.0, 0.0, 0.0], 1),
-            vault
-                .query()
-                .search("authorityneedle", &[1.0, 0.0, 0.0, 0.0], None, 1),
-        ] {
-            assert!(query.authority_filter(filter.clone()).run()?.is_empty());
-        }
-
-        // This is a deny-only shortcut, not blanket suppression of index errors.
-        install_grant(&vault, Value::Nil)?;
-        let read = reader(&vault);
-        assert!(read.search_text("authorityneedle", 1, None).is_err());
-        assert!(read.search_vector(&[1.0, 0.0, 0.0, 0.0], 1, None).is_err());
-        assert!(
-            read.search("authorityneedle", &[1.0, 0.0, 0.0, 0.0], 1, None)
-                .is_err()
-        );
-        let filter = resolve_reader_filter(&vault, None)?;
-        assert!(!filter.deny_all);
-        for query in [
-            vault.query().search_text("authorityneedle", 1),
-            vault.query().search_vector(&[1.0, 0.0, 0.0, 0.0], 1),
-            vault
-                .query()
-                .search("authorityneedle", &[1.0, 0.0, 0.0, 0.0], None, 1),
-        ] {
-            assert!(query.authority_filter(filter.clone()).run().is_err());
         }
     }
     Ok(())

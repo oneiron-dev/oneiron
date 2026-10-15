@@ -137,7 +137,7 @@ impl crate::Vault {
         id: crate::EntityId,
         actor: crate::WriteActor,
     ) -> crate::Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.verify_owner_write_actor_in_txn(txn, &actor)?;
             let body = self
                 .get_claim_in_txn(txn, &id)?

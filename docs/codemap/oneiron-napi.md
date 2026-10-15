@@ -15,19 +15,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/expression_preference.rs` | src | s | 4 struct · 3 fn | NapiExpressionPreferenceInput, NapiExpressionPreferenceReceipt, NapiExpressionPreferenceWinner, NapiExpressionPreferences | JS bindings for the typed `companion.expression.*` doors |
 | `src/facade/boundary.rs` | src | s | 12 crate-vis | — | JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling |
 | `src/facade/bridge.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
-| `src/facade/client.rs` | src | s | 3 struct · 4 fn | NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
-| `src/facade/client/agent_verbs.rs` | src | s | 28 fn | — | — |
+| `src/facade/client.rs` | src | s | 3 struct · 5 fn | NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
+| `src/facade/client/agent_verbs.rs` | src | m | 28 fn | — | — |
 | `src/facade/convert.rs` | src | m | 16 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
-| `src/facade/dtos.rs` | src | m | 50 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +42 | All napi(object) DTO structs for the actor-scoped surface |
+| `src/facade/dtos.rs` | src | L | 52 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +44 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
-| `src/facade/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
+| `src/facade/mod.rs` | src | s | 1 re-export · 3 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
-| `src/facade/tests.rs` | test | m | — | — | Boundary regression tests for the napi facade surface |
+| `src/facade/tests.rs` | test | s | — | — | Boundary regression tests for the napi facade surface |
 | `src/facade/verbs_claims.rs` | src | s | 13 fn | — | Core claim/witness/read verbs of the actor-scoped surface |
 | `src/facade/verbs_services.rs` | src | m | 17 fn | — | Structural/blob/retrieval/outbound/calendar verbs of the actor surface |
 | `src/lib/boundary.rs` | src | s | 29 crate-vis | — | Shared caps, parse/validate helpers and napi error mapping for the legacy surface |
 | `src/lib/codebase.rs` | src | s | 4 crate-vis | — | Codebase snapshot conversion and codebase-scoped query filters |
 | `src/lib/email.rs` | src | s | 2 fn · 2 crate-vis | — | Email identity adapter conversion and inbound surface-event parsing |
-| `src/lib/mod.rs` | src | s | 3 re-export · 2 crate-vis | — | — |
+| `src/lib/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | — |
 | `src/lib/vault.rs` | src | m | 1 struct · 27 fn | NapiVault | Legacy buffer-oriented NapiVault binding and all its verbs |
 | `src/types.rs` | src | s | 7 struct · 1 crate-vis | NapiCodebaseFileEntry, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig, NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry | — |

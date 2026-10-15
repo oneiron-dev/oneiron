@@ -61,12 +61,11 @@ pub(crate) use self::meter::{
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
+pub(crate) use self::slate::read_connector_slate_in_txn;
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling
 // modules; gated so the non-test build carries no unused re-export.
-#[cfg(test)]
-pub(crate) use self::meter::connector_key_usage_row_key;
 #[cfg(test)]
 pub(crate) use self::txn::rewrite_connector_key_in_txn;
 
@@ -74,13 +73,11 @@ pub(crate) use self::txn::rewrite_connector_key_in_txn;
 // module through `use super::*`; after the directory split the seam re-imports
 // them so the sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
-use self::accounting::{SEND_ADMIT, SETTLE_EVENT};
+use self::accounting::SETTLE_EVENT;
 #[cfg(test)]
 use self::charter::charter_stamped_aggregate;
 #[cfg(test)]
-use self::meter::{
-    ConnectorKeyUsage, SECONDS_PER_DAY, calendar_window_start, effector_steering_signal,
-};
+use self::meter::{SECONDS_PER_DAY, calendar_window_start};
 #[cfg(test)]
 use self::record::validate_compiled_policy;
 #[cfg(test)]
@@ -92,8 +89,6 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::llm::{BudgetSignalDeliveryChannel, BudgetThreshold};
 #[cfg(test)]
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 

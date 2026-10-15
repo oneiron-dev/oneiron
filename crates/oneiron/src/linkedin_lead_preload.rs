@@ -181,8 +181,8 @@ pub(crate) fn resolve_linkedin_entity(
     // Revalidate even a crate-local caller's directly constructed key.
     let key = LinkedInExternalKey::new(key.kind, &key.external_id)?;
     let id = EntityId::derive(LINKEDIN_ENTITY, &[key.source_ref().as_bytes()])?;
-    let disposition =
-        vault.with_write_txn(|wtxn| source_binding::resolve_in_txn(vault, wtxn, &id, &key))?;
+    let disposition = vault
+        .with_write_txn_grouped(|wtxn| source_binding::resolve_in_txn(vault, wtxn, &id, &key))?;
     Ok((id, disposition))
 }
 

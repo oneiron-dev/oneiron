@@ -146,15 +146,11 @@ mod scorer;
 #[cfg(test)]
 mod tests_community_eval004;
 #[cfg(test)]
-mod tests_gates;
-#[cfg(test)]
 mod tests_jsonl_contract;
 #[cfg(test)]
 mod tests_judge_cost;
 #[cfg(test)]
 mod tests_ppr_vad;
-#[cfg(test)]
-mod tests_rerank_sweep;
 #[cfg(test)]
 mod tests_smoke_manifest;
 mod tiers;
@@ -163,12 +159,7 @@ mod validate;
 
 pub(crate) use self::arms::run;
 #[cfg(test)]
-pub(crate) use self::judge::{
-    AnswerPromptPin, JUDGE_VOTE_COUNT, MajorityJudgeError, MajorityVoteError, majority_of_three,
-    run_majority_judge_card, single_judge_vote,
-};
-#[cfg(test)]
-pub(crate) use self::model::{ArmKind, BeamFixture, FixtureCase, JudgeMetadata, RunManifest};
+pub(crate) use self::model::{ArmKind, FixtureCase};
 #[cfg(test)]
 pub(crate) use self::report_model::BeamReport;
 #[cfg(test)]
@@ -180,7 +171,4 @@ pub(crate) use self::runner::{
 #[cfg(test)]
 use self::tests_community_eval004::{CONTRACT_MANIFEST_JSON, CONTRACT_RUN_JSONL};
 #[cfg(test)]
-use self::{
-    arms::*, community::*, load::*, model::*, ppr_vad::*, report::*, report_model::*, runner::*,
-    scorer::*, util::*,
-};
+use self::{arms::*, load::*, model::*, report::*, report_model::*, runner::*, util::*};

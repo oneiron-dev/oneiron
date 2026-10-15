@@ -92,8 +92,8 @@ export type CommitReceipt = {
   receiptRef: string
 }
 
-/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. */
-export type Effort = "light" | "medium" | "high" | "xhigh" | "max"
+/** Retrieval effort dial. `high`, `xhigh` and `max` need a budget lease and return `LEASE_REQUIRED` without one. `call` is call mode for live calls: light effort under a hard deadline. */
+export type Effort = "light" | "medium" | "high" | "xhigh" | "max" | "call"
 
 /** Rendered pack formats; these are the engine's exact tokens. */
 export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
@@ -102,6 +102,8 @@ export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 export type RecallScope = {
   worldRef?: string
   facet?: string
+  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
+  kinds?: string[]
 }
 
 /** Options for {@link Oneiron.recall}. */
@@ -114,6 +116,10 @@ export type RecallOptions = {
   limit?: number
   /** Omitted returns a typed pack with no rendering. */
   format?: PackFormat
+  /** Unix seconds the query's time words resolve against; omitted is now. */
+  asOf?: number
+  /** A hard deadline in milliseconds, 1 to 60000: recall answers with the best results ready, marked `partial`. Omitted, recall runs to the end, except `call`, which takes the vault's call-mode deadline. */
+  deadlineMs?: number
 }
 
 /** Where one recalled item came from. */
@@ -125,7 +131,14 @@ export type MemoryProvenance = {
 
 /** One ranked memory pack item. */
 export type MemoryItem = {
+  /** The same `name:hash` a witness receipt returns. */
   shortId: string
+  /**
+   * The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it.
+   * A TURN's pins its messages' words too, and reads those words back after an edit
+   * while the messages' history holds them.
+   */
+  sourceRevisionRef?: string
   kind: string
   predicate?: string
   valueText: string
@@ -135,11 +148,30 @@ export type MemoryItem = {
   world?: string
   facet?: string
   salience?: number
+  /** For a TURN item, the messages whose words the query matched, best first. */
+  citedMessages: CitedMessage[]
+  /** For a TURN or MESSAGE item, the conversation it is in (32 hex), when the reader may read it. */
+  conversationId?: string
+}
+
+/** A MESSAGE a TURN item quotes: the words a query matched, as they were said. */
+export type CitedMessage = {
+  shortId: string
+  valueText: string
 }
 
 /** What the requested scope excluded. */
 export type ScopeHonesty = {
   outOfScopeWorlds: string[]
+}
+
+/** One time phrase read from a recall query. `used` narrowed the window; `unresolved` and `future` were skipped. */
+export type TemporalHint = {
+  phrase: string
+  status: "used" | "unresolved" | "future"
+  /** Unix seconds, inclusive. */
+  start?: number
+  end?: number
 }
 
 /** Retrieval accounting. */
@@ -149,6 +181,7 @@ export type RetrievalMeta = {
   totalCandidates: number
   claimsReturned: number
   deepPending?: boolean
+  temporalHints?: TemporalHint[]
 }
 
 /** A full-vault render in one of the five pack serialization formats. */

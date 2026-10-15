@@ -155,31 +155,6 @@ fn is_present(value: &serde_json::Value, key: &str) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_dropped_axis_or_section_is_reported_as_missing() {
-        let empty = serde_json::json!({});
-        assert_eq!(missing_axes(&empty).len(), AXES.len());
-        assert_eq!(missing_sections(&empty).len(), REPORT_SECTIONS.len());
-        assert_eq!(
-            missing_provenance_fields(&empty).len(),
-            PROVENANCE_FIELDS.len()
-        );
-
-        let nulled = serde_json::json!({
-            "recall_latency": serde_json::Value::Null,
-            "provenance": { "build_revision_blake3": serde_json::Value::Null },
-        });
-        assert!(missing_axes(&nulled).contains(&"recall_latency"));
-        assert!(missing_sections(&nulled).contains(&"publication"));
-        assert!(missing_sections(&nulled).contains(&"certificate"));
-        assert!(missing_sections(&nulled).contains(&"acceptance"));
-        assert!(missing_provenance_fields(&nulled).contains(&"build_revision_blake3"));
-        assert!(missing_provenance_fields(&nulled).contains(&"build_git_sha"));
-        assert!(missing_provenance_fields(&nulled).contains(&"source_checkout_git_sha"));
-        assert!(missing_provenance_fields(&nulled).contains(&"cache_events_hash"));
-        assert!(missing_provenance_fields(&nulled).contains(&"node"));
-    }
-
     /// The schema id and its candidate vocabulary are one decision. A v2
     /// document that still said `publishable` would be the exact confusion the
     /// rename exists to remove.

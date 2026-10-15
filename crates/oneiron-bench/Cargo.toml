@@ -59,13 +59,9 @@ name = "materializer_mutex"
 path = "benches/materializer_mutex.rs"
 harness = false
 
-# ONE-331's three load-bearing contract tests
-# (`materializer_mutex_workload_equivalence`,
-# `materializer_mutex_report_has_p50_and_p99`,
-# `materializer_shadow_std_tracks_real_observer_b`) live in the bench source,
-# which is the only file this ticket adds. Cargo never builds or runs a
-# `harness = false` bench target under `cargo test`, so the same file is also
-# wired below as a libtest target.
+# ONE-331's contract tests live in the bench source, which is the only file
+# this ticket adds. Cargo never builds or runs a `harness = false` bench target
+# under `cargo test`, so the same file is also wired below as a libtest target.
 #
 # Both targets are compiled with `cfg(test)` SET: Cargo only passes `--test` to
 # a harnessed target, and falls back to `--cfg test` for a `harness = false`

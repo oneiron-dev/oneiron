@@ -188,7 +188,7 @@ impl Vault {
     /// start) → [`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody); subject edge missing →
     /// [`Error::EdgeNotFound`].
     pub fn retract_edge_provenance(&self, claim_id: &EntityId, now: u64) -> Result<()> {
-        self.with_write_txn(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
+        self.with_write_txn_grouped(|wtxn| self.retract_edge_provenance_in_txn(wtxn, claim_id, now))
     }
 
     pub(super) fn retract_edge_provenance_in_txn(
@@ -285,7 +285,9 @@ impl Vault {
     /// [`RegistryError::MaintenanceKindNotWritable`](crate::error::RegistryError::MaintenanceKindNotWritable): this method is the ONLY public
     /// door, and it only ever writes the engine-shaped body.
     pub fn ensure_model_substrate(&self, name: &str, version: &str, now: u64) -> Result<EntityId> {
-        self.with_write_txn(|wtxn| self.ensure_model_substrate_in_txn(wtxn, name, version, now))
+        self.with_write_txn_grouped(|wtxn| {
+            self.ensure_model_substrate_in_txn(wtxn, name, version, now)
+        })
     }
 
     pub(crate) fn ensure_model_substrate_in_txn(
@@ -371,7 +373,7 @@ impl Vault {
         learned_at: u64,
         explicit_prior: Option<&EntityId>,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.write_edge_provenance_in_txn(
                 wtxn,
                 EdgeProvenanceWrite {
@@ -463,8 +465,13 @@ impl Vault {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }
         if let Some(evidence) = generated_evidence {
-            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence)?;
+            let reader = crate::WriteActor::new(record.actor_entity_ref, actor_class);
+            let (source, project) =
+                super::derived_attachment::verify(self, wtxn, subject, &evidence, reader)?;
             claim_body.source = Some(source);
+            // The row lands in the one project its source and head share,
+            // never the constructor's default (ONE-1592 P3).
+            claim_body.scope_project = project;
             claim_body.scope = Some(Value::Map(vec![
                 (
                     Value::from(crate::claim::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
@@ -551,16 +558,23 @@ impl Vault {
         )?;
 
         // Explicit-prior gates (supersede path): the named Claim must be a
-        // live edge.provenance Claim addressing the SAME EdgeRef.
+        // live edge.provenance Claim addressing the SAME EdgeRef. A stale
+        // prior's support is already withdrawn, so it is closed here too.
         let prior_id = explicit_prior
             .map(|prior_id| -> Result<EntityId> {
                 let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
                 if prior.subject != *subject {
                     return Err(Error::Claim(ClaimError::ProvenanceSubjectMismatch));
                 }
-                if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
+                let lifecycle = super::queries::cohort_lifecycle(
+                    &self.store,
+                    wtxn,
+                    prior_id,
+                    prior.wrapper.lifecycle,
+                )?;
+                if lifecycle != ClaimLifecycleStatus::Active {
                     return Err(Error::Claim(ClaimError::ProvenanceClaimAlreadyClosed {
-                        lifecycle: prior.wrapper.lifecycle.as_str(),
+                        lifecycle: lifecycle.as_str(),
                     }));
                 }
                 Ok(prior.id)

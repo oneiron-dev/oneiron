@@ -57,18 +57,16 @@ const WITNESS_OCCURRED_AT: u64 = 1;
 
 /// Placeholder TYPED refusals for every contract that pins a typed
 /// error / fail-closed behavior (ONE-1726 budget+lease, ONE-1727
-/// kill-switch+single-shot, ONE-1728 taint, ONE-1729 policy, ONE-1732
-/// ABI gate). The arming ticket maps each variant onto the real error
-/// type; VARIANT-LEVEL DISCRIMINATION must survive the mapping — these
-/// tests assert exact variants, never bare `is_err()`.
+/// kill-switch+single-shot, ONE-1729 policy). The arming ticket maps each
+/// variant onto the real error type; VARIANT-LEVEL DISCRIMINATION must
+/// survive the mapping — these tests assert exact variants, never bare
+/// `is_err()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SeamError {
     /// ONE-1727: `off_record_enabled = false` — enter fails closed.
     KillSwitchDisabled,
     /// ONE-1727: re-entering a session ref that is still live.
     SessionRefLive,
-    /// ONE-1728: base batch preflight taint-guard rejection.
-    TaintedBaseWrite,
     /// ONE-1729: guest-supplied turn_ref policy rejection.
     GuestTurnRef,
     /// ONE-1729: durable-memory-write verb policy rejection.
@@ -81,8 +79,6 @@ pub(crate) enum SeamError {
     OverlayFull,
     /// ONE-1726: generation-stamped lease refused after close.
     LeaseClosed,
-    /// ONE-1732: the STORAGE_ABI gate fails closed.
-    AbiFailClosed,
 }
 
 pub(crate) type SeamResult<T> = std::result::Result<T, SeamError>;

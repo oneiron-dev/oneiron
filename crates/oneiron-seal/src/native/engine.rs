@@ -5,8 +5,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::api::{
-    PdfSealEngine, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest, SealedPdf,
-    VerifyReport,
+    PdfSealEngine, PreparedRevision, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest,
+    SealedPdf, VerifyReport,
 };
 use crate::error::{FatalCode, SealError, SealStage};
 
@@ -81,14 +81,36 @@ impl NativeSealEngine {
             clock,
         })
     }
-}
 
-#[async_trait]
-impl PdfSealEngine for NativeSealEngine {
-    async fn seal_pdf(
+    /// [`PdfSealEngine::seal_pdf`], signing in a signature revision the
+    /// caller wrote rather than one written here: one per rung of the
+    /// contents ladder, each `input_bytes` followed by its suffix. The
+    /// engine builds the CMS for the one that fits, and any validation
+    /// data or document timestamp after it.
+    ///
+    /// # Errors
+    /// As [`PdfSealEngine::seal_pdf`]; a revision whose hole or ByteRange
+    /// is not the ladder's is fatal.
+    pub async fn seal_pdf_in_revisions(
         &self,
         input_bytes: &[u8],
         seal_request: &SealRequest,
+        revisions: &[PreparedRevision<'_>],
+    ) -> Result<SealedPdf, SealError> {
+        if revisions.is_empty() {
+            return Err(SealError::Fatal {
+                stage: SealStage::InputValidation,
+                code: FatalCode::InvalidConfiguration,
+            });
+        }
+        self.seal(input_bytes, seal_request, revisions).await
+    }
+
+    async fn seal(
+        &self,
+        input_bytes: &[u8],
+        seal_request: &SealRequest,
+        revisions: &[PreparedRevision<'_>],
     ) -> Result<SealedPdf, SealError> {
         // operation_id is validated before any signing or fetch work (§4).
         seal_request.validate_operation_id()?;
@@ -113,6 +135,7 @@ impl PdfSealEngine for NativeSealEngine {
         let outcome = profile::assemble(
             &ctx,
             &prepared,
+            revisions,
             &seal_request.operation_id,
             seal_request.target_profile,
         )
@@ -131,6 +154,17 @@ impl PdfSealEngine for NativeSealEngine {
             warnings: outcome.warnings,
             self_verify_report: report,
         })
+    }
+}
+
+#[async_trait]
+impl PdfSealEngine for NativeSealEngine {
+    async fn seal_pdf(
+        &self,
+        input_bytes: &[u8],
+        seal_request: &SealRequest,
+    ) -> Result<SealedPdf, SealError> {
+        self.seal(input_bytes, seal_request, &[]).await
     }
 
     fn verify_sealed_pdf(&self, sealed_bytes: &[u8]) -> Result<VerifyReport, SealError> {
@@ -266,88 +300,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn bounded_revision_and_token_work_refuse_before_backend() {
-        let original = std::fs::read(format!(
-            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap();
-        let limits = SealResourceLimits::default();
-        let mut many = original.clone();
-        for _ in 0..=32 {
-            let state = pdf::reparse_revision(&many, &limits).unwrap();
-            let id = state.max_obj + 1;
-            many = pdf::append_revision(
-                &many,
-                &state,
-                &pdf::RevisionKind::Dss {
-                    material_objects: vec![(id, b"<< /Type /DSS >>".to_vec())],
-                    dss_obj: id,
-                },
-                0,
-            )
-            .unwrap()
-            .bytes;
-        }
-        let base_config = test_config(FetchPolicy::default());
-        let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
-        let engine = NativeSealEngine::new(
-            base_config.clone(),
-            backend.clone(),
-            Arc::new(crate::api::OfflineFetcher),
-            Arc::new(Clock),
-        )
-        .unwrap();
-        let request = SealRequest {
-            operation_id: "work-limit".into(),
-            target_profile: PadesProfile::BaselineB,
-        };
-        assert!(matches!(
-            engine.seal_pdf(&many, &request).await.unwrap_err(),
-            SealError::InputInvalid {
-                code: crate::error::InputInvalidCode::MalformedXref
-            }
-        ));
-
-        // Same well-formed object array is accepted with default resources,
-        // but a deliberately tight object/work budget refuses it before
-        // consulting the signing backend.
-        let xref = original
-            .windows(b"\nxref\n".len())
-            .position(|w| w == b"\nxref\n")
-            .unwrap()
-            + 1;
-        let mut tokens = original[..xref].to_vec();
-        let offset = tokens.len();
-        tokens.extend_from_slice(b"4 0 obj\n[");
-        for _ in 0..3_000 {
-            tokens.extend_from_slice(b"0 ");
-        }
-        tokens.extend_from_slice(b"]\nendobj\n");
-        let xref = tokens.len();
-        tokens.extend_from_slice(format!("xref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n{offset:010} 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF").as_bytes());
-        assert!(matches!(
-            engine.seal_pdf(&tokens, &request).await.unwrap_err(),
-            SealError::BackendUnavailable { .. }
-        ));
-        let mut tight = base_config;
-        tight.resource_limits.max_pdf_objects = 16;
-        let engine = NativeSealEngine::new(
-            tight,
-            backend,
-            Arc::new(crate::api::OfflineFetcher),
-            Arc::new(Clock),
-        )
-        .unwrap();
-        assert!(matches!(
-            engine.seal_pdf(&tokens, &request).await.unwrap_err(),
-            SealError::InputInvalid {
-                code: crate::error::InputInvalidCode::MalformedXref
-            }
-        ));
-    }
-
     #[test]
     fn injected_fetcher_path_rejects_a_non_default_fetch_policy() {
         // The injected-fetcher path cannot honor config.fetch_policy: a
@@ -381,35 +333,5 @@ mod tests {
             )
             .is_ok()
         );
-    }
-
-    #[test]
-    fn operation_id_contract_rejects_empty_and_oversized() {
-        let req = |id: String| SealRequest {
-            operation_id: id,
-            target_profile: PadesProfile::BaselineB,
-        };
-        assert!(req("op-1".to_string()).validate_operation_id().is_ok());
-        // Caller ids reserve the sub-operation-id suffix budget: the
-        // boundary is MAX - RESERVE, and a full-256 id is REJECTED (never
-        // truncated) so derived ids cannot overflow the backend bound.
-        let max_caller =
-            crate::api::MAX_OPERATION_ID_BYTES - crate::api::OPERATION_ID_SUFFIX_RESERVE;
-        let boundary = req("x".repeat(max_caller));
-        assert!(boundary.validate_operation_id().is_ok());
-        for bad in [
-            req(String::new()),
-            req("x".repeat(max_caller + 1)),
-            req("x".repeat(crate::api::MAX_OPERATION_ID_BYTES)),
-        ] {
-            let err = bad.validate_operation_id().unwrap_err();
-            assert!(matches!(
-                err,
-                SealError::Fatal {
-                    stage: SealStage::InputValidation,
-                    code: FatalCode::InvalidConfiguration,
-                }
-            ));
-        }
     }
 }

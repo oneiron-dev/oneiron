@@ -7,7 +7,7 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
 use super::session::{SeamError, SeamResult, SessionVault};
-use crate::error::{OffRecordError, StoreError};
+use crate::error::OffRecordError;
 
 /// Bound independently of `code_run`'s own private table, exactly as
 /// `CODE_RUN_REPLAY_KEYS` in `session.rs`: this race fixture deletes the
@@ -149,36 +149,6 @@ pub(in crate::branch_store_oracle) fn job_rows_referencing(
     Ok(hits)
 }
 
-/// ONE-1728: submit a BASE batch containing one op referencing
-/// `overlay_id`; Err = the taint-guard rejection.
-/// `source` is a PRE-EXISTING base entity supplied by the caller, seeded
-/// before its census: the atomicity assertion is about the rejected
-/// batch's rows, and a probe that minted its own source would charge the
-/// guard for the probe's setup.
-pub(in crate::branch_store_oracle) fn base_batch_referencing_overlay_id(
-    vault: &Vault,
-    source: &EntityId,
-    overlay_id: &EntityId,
-) -> SeamResult<()> {
-    // An EDGE whose target is the room's turn: an edge endpoint
-    // materializes nothing, so it is exactly the K4-owned ref class (D5's
-    // door partition) rather than one delegated to the entity door.
-    vault
-        .batch()
-        .edge(source, crate::edge::EdgeKind::PartOf, overlay_id, 1.0)
-        .commit()
-        .map_err(map_taint_error)
-}
-
-fn map_taint_error(error: Error) -> SeamError {
-    match error {
-        Error::OffRecord(OffRecordError::OffRecordTaintedBaseWrite { .. }) => {
-            SeamError::TaintedBaseWrite
-        }
-        other => panic!("unexpected base-write error: {other}"),
-    }
-}
-
 /// The actor key every ScopedRead probe in this oracle reads under, so
 /// the base and session halves differ ONLY in their target.
 pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
@@ -188,29 +158,20 @@ pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
 
 pub(in crate::branch_store_oracle) fn authorize_scoped_reader(vault: &Vault) -> Result<()> {
     use rmpv::Value;
-    let bytes = crate::gate::default_policy_manifest()?;
-    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
-        unreachable!()
-    };
-    entries.push((
-        Value::from("scoped_grants"),
-        Value::Array(vec![Value::Map(vec![
-            (
-                Value::from("actor_ref"),
-                Value::from(scoped_read_actor_key().actor_ref()),
-            ),
-            (Value::from("effector"), Value::from("core:read")),
-            (
-                Value::from("scope"),
-                crate::federation::scope_codec::encode_scope_value(
-                    &crate::federation::scope_codec::read_preset(),
-                )?,
-            ),
-            (Value::from("receipt_required"), Value::Boolean(false)),
-        ])]),
-    ));
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).unwrap();
+    let bytes = crate::gate::default_policy_manifest_with_scoped_grants(vec![Value::Map(vec![
+        (
+            Value::from("actor_ref"),
+            Value::from(scoped_read_actor_key().actor_ref()),
+        ),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )?,
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ])])?;
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
@@ -491,8 +452,11 @@ pub(in crate::branch_store_oracle) fn binding_mismatch_directions(
 pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_flip(
     session: &SessionVault<'_>,
 ) -> SeamResult<()> {
-    let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
-        .expect("capture the run's route at run entry");
+    let storage = crate::code_run::ExecutorStorage::for_session(
+        &session.session,
+        session.actor.unwrap_or_else(EntityId::now),
+    )
+    .expect("capture the run's route at run entry");
     session
         .session
         .flip_on_record()
@@ -516,8 +480,11 @@ pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_fl
 pub(in crate::branch_store_oracle) fn search_through_a_route_captured_before_a_flip(
     session: &SessionVault<'_>,
 ) -> SeamResult<()> {
-    let storage = crate::code_run::ExecutorStorage::for_session(&session.session)
-        .expect("capture the run's route at run entry");
+    let storage = crate::code_run::ExecutorStorage::for_session(
+        &session.session,
+        session.actor.unwrap_or_else(EntityId::now),
+    )
+    .expect("capture the run's route at run entry");
     session
         .session
         .flip_on_record()
@@ -581,7 +548,10 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
 ) -> Result<Option<crate::error::ErrorKind>> {
     use crate::code_run::{CodeRunDeterminism, CodeRunReplayRecord, ExecutorStorage};
 
-    let storage = ExecutorStorage::for_session(&session.session)?;
+    let storage = ExecutorStorage::for_session(
+        &session.session,
+        session.actor.unwrap_or_else(EntityId::now),
+    )?;
     let run_id = EntityId::now();
     let record = CodeRunReplayRecord::new(
         run_id,
@@ -611,30 +581,4 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
             .err()
             .map(|error| error.kind()))
     })
-}
-
-/// ONE-1732: open a vault whose stored ABI version is `stored` with an
-/// engine whose ABI version is `engine`; Err = the fail-closed gate.
-///
-/// An EMPTY directory (or one that cannot be listed yet) is a new vault:
-/// the ABI gate stamps whatever version the opening engine carries, so
-/// opening at `stored` is exactly how a fixture acquires that stamp. A
-/// populated directory already carries its stamp, so the reopen runs at
-/// `engine` and the gate compares the two.
-pub(in crate::branch_store_oracle) fn open_with_abi_pair(
-    dir: &std::path::Path,
-    stored: u16,
-    engine: u16,
-) -> SeamResult<Vault> {
-    let creating = std::fs::read_dir(dir).map_or(true, |mut entries| entries.next().is_none());
-    let engine_abi = if creating { stored } else { engine };
-    Vault::open_with_storage_abi_version_for_test(dir, VaultConfig::default(), engine_abi).map_err(
-        |error| match error {
-            Error::Store(StoreError::StorageAbiVersionChanged { .. }) => SeamError::AbiFailClosed,
-            // Only the ABI mismatch is the fail-closed verdict this oracle
-            // measures: folding any other open failure into `AbiFailClosed`
-            // would let an unrelated gate satisfy the assertion.
-            other => panic!("unexpected vault-open error: {other}"),
-        },
-    )
 }

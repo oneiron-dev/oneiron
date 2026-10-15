@@ -14,6 +14,9 @@ use super::leases::SERVER_LEASE_VAULT_ID;
 use super::windows::SERVER_USER_ID;
 
 const LEASE_LIFECYCLE_TICK_INTERVAL: Duration = Duration::from_secs(60);
+/// Lifecycle ticks between gate-decision retention passes: hourly, and once
+/// at start so a key retirement an interrupted erase left behind finishes.
+const GATE_RETENTION_EVERY_TICKS: u64 = 60;
 
 pub(super) static NEXT_LIFECYCLE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -73,11 +76,39 @@ impl SyncServer {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(LEASE_LIFECYCLE_TICK_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut ticks = 0_u64;
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
+                if ticks.is_multiple_of(GATE_RETENTION_EVERY_TICKS) {
+                    server.maintain_gate_decision_retention_once().await;
+                }
+                ticks = ticks.wrapping_add(1);
             }
         })
+    }
+
+    /// The live caller of the engine's gate-decision retention pass: it
+    /// finishes staged key retirements and ages out rows past the owner's
+    /// horizon. With no horizon set it removes nothing.
+    async fn maintain_gate_decision_retention_once(&self) {
+        let vault = std::sync::Arc::clone(self.vault());
+        match tokio::task::spawn_blocking(move || vault.maintain_gate_decision_retention()).await {
+            Ok(Ok(0)) => {}
+            Ok(Ok(removed)) => {
+                tracing::info!(
+                    removed,
+                    "gate decision retention pass removed aged receipts"
+                );
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "gate decision retention pass failed");
+            }
+            Err(error) => tracing::warn!(
+                panicked = error.is_panic(),
+                "gate decision retention task failed"
+            ),
+        }
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {
@@ -103,7 +134,7 @@ impl SyncServer {
                 }
             }
             Err(err) => {
-                tracing::error!(error = %err, "lease expiry tick failed");
+                tracing::error!(kind = ?err.kind(), "lease expiry tick failed");
             }
         }
 
@@ -119,6 +150,13 @@ impl SyncServer {
                     );
                 }
                 for (window_key, update) in report.window_updates {
+                    if super::windows::withheld_from_peers(
+                        &self.reassert_manager,
+                        &window_key,
+                        &update,
+                    ) {
+                        continue;
+                    }
                     match crate::protocol::encode_window_sync(
                         &window_key,
                         crate::protocol::window_sub_tags::UPDATE,
@@ -140,7 +178,7 @@ impl SyncServer {
                 }
             }
             Err(err) => {
-                tracing::error!(error = %err, "ra drain tick failed");
+                tracing::error!(kind = ?err.kind(), "ra drain tick failed");
             }
         }
     }

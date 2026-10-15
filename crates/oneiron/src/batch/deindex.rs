@@ -76,8 +76,8 @@ pub(crate) fn deindex_entity(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
-    crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
+    crate::ports::keep_deleted_worlds_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;
     crate::receipt::remove_receipt_archive_custody(store, wtxn, id)?;
@@ -144,6 +144,11 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
+    // Saved tags find a message's turn through its PartOf edge, so they go
+    // before the edges do, and the sieve and projection rows of the same
+    // words with them.
+    crate::tagging::tear_in_txn(store, wtxn, id)?;
+    crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()
@@ -197,6 +202,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.extend(blob_cleanup.neighbors);
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
+    crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
     crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     let related_neighbors = delete_related_edges(store, wtxn, id)?;

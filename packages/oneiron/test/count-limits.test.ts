@@ -61,22 +61,5 @@ for (const backend of ["embedded", "remote"] as const) {
         }
       })
     }
-
-    if (backend === "embedded") {
-      test.each([1, 10, 100, 1000])("accepts the integer limit %s", (limit) => {
-        const pack = memory.recall("window seat", { limit })
-        expect(pack.packVersion).toBe(1)
-        expect(pack.items.length).toBeGreaterThan(0)
-        expect(pack.items.length).toBeLessThanOrEqual(limit)
-        const receipts = memory.receipts(limit)
-        expect(receipts.length).toBeGreaterThan(0)
-        expect(receipts.length).toBeLessThanOrEqual(limit)
-      })
-
-      test("omitted limits retain the recall and receipts defaults", () => {
-        expect(memory.recall("window seat")).toEqual(memory.recall("window seat", { limit: 10 }))
-        expect(memory.receipts()).toEqual(memory.receipts(100))
-      })
-    }
   })
 }

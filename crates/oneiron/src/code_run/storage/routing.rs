@@ -1,5 +1,6 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
 use crate::session_overlay::RouteTarget;
@@ -29,13 +30,32 @@ use crate::Error;
 /// RUN ENTRY and never re-minted (owner ruling R-20260807-02 rider 2). Route
 /// and handle live in the same value because "one route per run" has to be a
 /// type fact: a per-dispatch mint is not something this shape can express.
+///
+/// The handle is the run's own, bound to the participant the run acts as:
+/// every transaction it reads or writes the stretch in checks they are still
+/// in its room (Codex burn engine-prs-01), and every call the run makes is
+/// [`answered`](Self::answered) as they stand once it is done.
 pub(crate) struct SessionBinding<'a> {
-    pub(crate) session: &'a OffRecordSession<'a>,
+    pub(crate) session: OffRecordSession<'a>,
     pub(crate) route: SessionWriteRoute,
     pub(crate) container: EntityId,
 }
 
 impl SessionBinding<'_> {
+    /// One call of the bound run, checked against its participant before it
+    /// runs and answered only after a second check, in a snapshot taken once
+    /// it is done. A run removed from the room before or while the call ran
+    /// gets `NotInRoom` in place of whatever the call met there: nothing that
+    /// changed in the room, its saver or its rows since reaches it, even when
+    /// the call read it with no check of its own (Astra and Sol on
+    /// engine-prs-01). A write the call landed before the removal stays.
+    pub(crate) fn answered<T>(&self, call: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.session.admit_participant()?;
+        let answer = call();
+        self.session.admit_participant()?;
+        answer
+    }
+
     /// Records one host-bound executor turn through the session witness entry.
     ///
     /// The deterministic TURN and MESSAGE ids are both derived from the run
@@ -56,17 +76,24 @@ impl SessionBinding<'_> {
         turn_id: EntityId,
         actor: WriteActor,
     ) -> Result<WitnessReceipt> {
-        self.session.witness_host_executor_turn(
-            &self.container,
-            kind,
-            text,
-            occurred_at,
-            order,
-            message_id,
-            turn_id,
-            &self.route,
-            actor,
-        )
+        if self.session.participant() != Some(actor.entity_ref()) {
+            return Err(crate::Error::InvalidConfig(
+                "executor storage/dispatcher binding mismatch".to_owned(),
+            ));
+        }
+        self.answered(|| {
+            self.session.witness_host_executor_turn(
+                &self.container,
+                kind,
+                text,
+                occurred_at,
+                order,
+                message_id,
+                turn_id,
+                &self.route,
+                actor,
+            )
+        })
     }
 
     /// In-room retrieval through the run's captured route.
@@ -76,11 +103,11 @@ impl SessionBinding<'_> {
     /// flipped mid-run refuses the search instead of quietly landing base
     /// telemetry for a run whose replay record sits in an evaporating overlay.
     fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        self.session.search_text_routed(&self.route, query, limit)
+        self.answered(|| self.session.search_text_routed(&self.route, query, limit))
     }
 
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
-        self.session.side_table_get(&REPLAY_RECORDS, run_id)
+        self.answered(|| self.session.side_table_get(&REPLAY_RECORDS, run_id))
     }
 
     /// Compare-and-set against the SAME composed view it will update, in the
@@ -112,8 +139,9 @@ impl SessionBinding<'_> {
     ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        if let Some(model) = healed_model {
-            self.session
+        self.answered(|| match healed_model {
+            Some(model) => self
+                .session
                 .side_table_compare_and_put_with_counter_routed(
                     &self.route,
                     &REPLAY_RECORDS,
@@ -123,24 +151,25 @@ impl SessionBinding<'_> {
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
-                )?;
-        } else {
-            self.session.side_table_compare_and_put_routed(
+                )
+                .map(drop),
+            None => self.session.side_table_compare_and_put_routed(
                 &self.route,
                 &REPLAY_RECORDS,
                 &record.run_id,
                 record,
                 |current| replay_generation_matches(current, expected),
-            )?;
-        }
+            ),
+        })?;
         Ok(next_generation)
     }
 
     #[cfg(test)]
     fn model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
-        let (base, overlay) = self
-            .session
-            .side_table_counter_components(&MODEL_HEAL_COUNTS, &model.as_str().to_owned())?;
+        let (base, overlay) = self.answered(|| {
+            self.session
+                .side_table_counter_components(&MODEL_HEAL_COUNTS, &model.as_str().to_owned())
+        })?;
         let base = base.map_or(0, |count| count.0);
         let overlay = overlay.map_or(0, |count| count.0);
         let healed_turns = base
@@ -158,13 +187,21 @@ impl SessionBinding<'_> {
                 "raw output metadata does not match bytes",
             ));
         }
-        self.session
-            .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &raw.to_vec())
+        self.answered(|| {
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUTS,
+                &output.handle,
+                &raw.to_vec(),
+            )
+        })
     }
 
     fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let Some(raw) = self.session.side_table_get(&RAW_OUTPUTS, &output.handle)? else {
+        let Some(raw) =
+            self.answered(|| self.session.side_table_get(&RAW_OUTPUTS, &output.handle))?
+        else {
             return Ok(None);
         };
         if CodeRunRawOutput::from_bytes(output.path.clone(), &raw)? != *output {
@@ -193,10 +230,20 @@ pub(crate) enum ExecutorStorage<'a> {
 }
 
 impl<'a> ExecutorStorage<'a> {
-    /// Binds a run to a live session, capturing its route and shell ONCE.
-    pub(crate) fn for_session(session: &'a OffRecordSession<'a>) -> Result<Self> {
-        let route = session.write_route()?;
-        let container = session.routed_conversation_shell(&route)?;
+    /// Binds a run acting as `participant` to a live session, capturing its
+    /// route and shell ONCE. In a room `participant` must be on its roster.
+    pub(crate) fn for_session(
+        session: &OffRecordSession<'a>,
+        participant: EntityId,
+    ) -> Result<Self> {
+        let session = session.for_participant(participant)?;
+        // Answered as the participant stands once the route and shell are
+        // read, as every later call of the run is.
+        let captured = session
+            .write_route()
+            .and_then(|route| Ok((session.routed_conversation_shell(&route)?, route)));
+        session.admit_participant()?;
+        let (container, route) = captured?;
         Ok(Self::Session(SessionBinding {
             session,
             route,
@@ -204,10 +251,28 @@ impl<'a> ExecutorStorage<'a> {
         }))
     }
 
+    /// One call of the run: a session-bound run's is
+    /// [`SessionBinding::answered`], a canonical run's runs as it is.
+    pub(crate) fn answered<T>(&self, call: impl FnOnce() -> Result<T>) -> Result<T> {
+        match self {
+            Self::Canonical(_) => call(),
+            Self::Session(binding) => binding.answered(call),
+        }
+    }
+
     pub(crate) fn session_ref(&self) -> Option<&str> {
         match self {
             Self::Canonical(_) => None,
             Self::Session(binding) => Some(binding.session.session_ref()),
+        }
+    }
+
+    /// The participant a session-bound run acts as; `None` for a canonical
+    /// run.
+    pub(crate) fn participant(&self) -> Option<EntityId> {
+        match self {
+            Self::Canonical(_) => None,
+            Self::Session(binding) => binding.session.participant(),
         }
     }
 
@@ -247,6 +312,29 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.search_text(query, limit),
             Self::Session(binding) => binding.search_text(query, limit),
+        }
+    }
+
+    /// [`Self::search_text`] on `reader`'s lane: the hits its grants admit,
+    /// surfaceable claims only, as the memory surface's own BM25 channel
+    /// serves them.
+    pub(crate) fn search_text_as(
+        &self,
+        query: &str,
+        limit: usize,
+        reader: ScopedReadActorKey,
+    ) -> Result<Vec<ScoredEntity>> {
+        match self {
+            Self::Canonical(vault) => Ok(vault
+                .scoped_read(reader)
+                .with_claim_status(ClaimReadStatus::Surfaceable)
+                .filter_scored_entities(vault.search_text(query, limit)?)?
+                .value),
+            // A room's hits include overlay rows the vault's grants cannot
+            // name, and no host narrows a room run's reads.
+            Self::Session(_) => Err(crate::Error::InvalidConfig(
+                "a narrowed search reads the canonical vault".into(),
+            )),
         }
     }
 

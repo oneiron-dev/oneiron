@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::retrieval_quality::RetrievalDiagnostics;
 use crate::store::{RetrievalScoreComponent, RetrievalTrace, Store};
 use heed::RoTxn;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Detailed pipeline output for the context-pack path.
 ///
@@ -26,8 +26,13 @@ pub(super) struct HydeAttemptOverrides<'a> {
 
 pub(super) struct RetrievalTxnOutput {
     pub(super) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
+    /// See [`super::super::types::PipelineOutput::words_bound`].
+    pub(super) words_bound: HashSet<EntityId>,
     pub(super) diagnostics: RetrievalDiagnostics,
     pub(super) scores: Vec<ScoredEntity>,
+    /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
+    /// first (`PipelineBuilder::fold_messages_into_turns`).
+    pub(super) cited_messages: HashMap<EntityId, Vec<EntityId>>,
     pub(super) capabilities: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,
@@ -48,13 +53,21 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) early_empty_no_telemetry: bool,
 }
 
+/// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`
+/// keyspace), so they are read on the vault's own store. A row the room
+/// `read` holds is the room's, embedded inline there: a base marker under
+/// its id names a body the room replaced, and no job may name it.
 pub(super) fn pending_vectors_for_scores(
     store: &Store,
+    read: &crate::store::StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     scores: &[ScoredEntity],
 ) -> Result<Vec<PendingVectorEmbedding>> {
     let mut pending = Vec::new();
     for scored in scores {
+        if read.room_holds(&scored.id)? {
+            continue;
+        }
         if let Some(token) = store.pending_embedding_token(rtxn, &scored.id)? {
             pending.push(PendingVectorEmbedding {
                 id: scored.id,

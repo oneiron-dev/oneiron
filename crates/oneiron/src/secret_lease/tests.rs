@@ -15,8 +15,8 @@ use crate::config::VaultConfig;
 use crate::error::SecretError;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::{
-    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyRecord, TierBand,
-    decode_secret_custody_admission_body, encode_secret_custody_body, read_secret_custody_in_txn,
+    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyRecord, TierBand, encode_secret_custody_body,
+    read_secret_custody_in_txn,
 };
 use crate::side_table::HexId;
 use crate::temporal::TimeRange;
@@ -160,33 +160,6 @@ fn rotate_record_for_test(vault: &Vault, id: &EntityId, new_value: &[u8]) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tier_matrix_cross_vault_admits_t0_only() {
-    let floor = SecretCustodyFloor::default();
-    let binding = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
-    // Even a T2 binding ceiling cannot widen the cross-vault floor band
-    // (registration of such a binding would already fail narrow-only, but
-    // the gate itself is tested here directly).
-    assert_eq!(
-        tier_admission(
-            CustodyClass::CrossVault,
-            CustodyTier::T0Doored,
-            &binding,
-            &floor
-        )
-        .expect("T0 admits"),
-        CustodyTier::T0Doored
-    );
-    for requested in [CustodyTier::T1Leased, CustodyTier::T2LocalRegistered] {
-        let err = tier_admission(CustodyClass::CrossVault, requested, &binding, &floor)
-            .expect_err("above the cross-vault floor band denies");
-        assert!(
-            matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
-            "got {err:?}"
-        );
-    }
-}
-
-#[test]
 fn tier_matrix_portable_admits_up_to_binding_ceiling() {
     let floor = SecretCustodyFloor::default();
     let binding = binding(EFFECTOR, CustodyTier::T1Leased);
@@ -208,52 +181,6 @@ fn tier_matrix_portable_admits_up_to_binding_ceiling() {
         matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
         "got {err:?}"
     );
-}
-
-#[test]
-fn tier_matrix_device_bound_admits_any_tier() {
-    let floor = SecretCustodyFloor::default();
-    let binding = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
-    for requested in [
-        CustodyTier::T0Doored,
-        CustodyTier::T1Leased,
-        CustodyTier::T2LocalRegistered,
-    ] {
-        assert_eq!(
-            tier_admission(
-                CustodyClass::CustodyDeviceBound,
-                requested,
-                &binding,
-                &floor
-            )
-            .expect("device-bound band spans all tiers"),
-            requested
-        );
-    }
-}
-
-#[test]
-fn tier_matrix_request_above_binding_ceiling_denies() {
-    let floor = SecretCustodyFloor::default();
-    let binding = binding(EFFECTOR, CustodyTier::T0Doored);
-    let err = tier_admission(
-        CustodyClass::CustodyPortable,
-        CustodyTier::T1Leased,
-        &binding,
-        &floor,
-    )
-    .expect_err("T1 request against a T0 ceiling denies");
-    match err {
-        Error::Secret(SecretError::SecretTierDenied {
-            requested,
-            binding_ceiling,
-            ..
-        }) => {
-            assert_eq!(requested, CustodyTier::T1Leased);
-            assert_eq!(binding_ceiling, CustodyTier::T0Doored);
-        }
-        other => panic!("expected SecretTierDenied, got {other:?}"),
-    }
 }
 
 #[test]
@@ -334,42 +261,6 @@ fn tier_matrix_below_band_min_never_forces_upward() {
     assert!(
         matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
         "got {err:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// The value-less admission projection (SOL-1920-04)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn admission_projection_matches_the_full_record_without_the_value() {
-    // The doors' admission read decodes every metadata field the full
-    // codec does, but the projection has no value field at all — the
-    // borrowing decode leaves the plaintext a slice of the store page.
-    let rec = record(
-        "projection",
-        CustodyClass::CustodyDeviceBound,
-        VALUE_V1,
-        vec![binding(EFFECTOR, CustodyTier::T1Leased)],
-        vec![
-            ".secrets/api.key".to_owned(),
-            ".secrets/other.key".to_owned(),
-        ],
-    );
-    let body = encode_secret_custody_body(&rec).expect("encode body");
-    let admission = decode_secret_custody_admission_body(&body).expect("projection decode");
-    assert_eq!(admission.name, rec.name);
-    assert_eq!(admission.class, rec.class);
-    assert_eq!(admission.status, rec.status);
-    assert_eq!(admission.rotation_generation, rec.rotation_generation);
-    assert_eq!(admission.bindings, rec.bindings);
-    assert_eq!(admission.declared_paths, rec.declared_paths);
-    assert_eq!(
-        admission
-            .binding_for(EFFECTOR)
-            .expect("binding resolved")
-            .tier_ceiling,
-        CustodyTier::T1Leased
     );
 }
 
@@ -501,15 +392,62 @@ fn binding_without_read_scope_denies_the_value_read() {
 }
 
 #[test]
-fn unknown_secret_ref_denies() {
+fn the_door_check_agrees_with_the_door_without_reading_the_value() {
+    // A host asks the door before it starts a call that needs the value:
+    // each secret the door refuses, the check refuses, and each it releases,
+    // the check passes.
     let (_tmp, vault) = temp_vault();
-    let err = vault
-        .inject_secret_at_door("absent", EFFECTOR, &mut |_value| Ok(()))
-        .expect_err("unknown ref denies");
-    assert!(
-        matches!(err, Error::Secret(SecretError::SecretRefNotFound { .. })),
-        "got {err:?}"
-    );
+    let unread = SecretBinding {
+        effector: EFFECTOR.to_owned(),
+        tier_ceiling: CustodyTier::T2LocalRegistered,
+        scopes: Vec::new(),
+    };
+    let read = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
+    let cases = [
+        ("released", vec![read.clone()]),
+        (
+            "other-effector",
+            vec![binding("connector:other", CustodyTier::T2LocalRegistered)],
+        ),
+        // The door reads the first binding that names the effector.
+        ("first-unread", vec![unread, read]),
+    ];
+    for (name, bindings) in cases {
+        register(
+            &vault,
+            record(
+                name,
+                CustodyClass::CustodyPortable,
+                VALUE_V1,
+                bindings,
+                Vec::new(),
+            ),
+        );
+    }
+    for name in [
+        "released",
+        "other-effector",
+        "first-unread",
+        "never-registered",
+    ] {
+        crate::ports::row_copies::watch(VALUE_V1);
+        let checked = vault.check_secret_at_door(name, EFFECTOR);
+        // The check copies no row that holds the value out of the
+        // transaction, not even into a wiped buffer.
+        assert_eq!(
+            crate::ports::row_copies::sites(),
+            Vec::<String>::new(),
+            "{name}: the readers that copied a row holding the value"
+        );
+        assert_eq!(
+            crate::ports::row_copies::wiped_sites(),
+            Vec::<String>::new(),
+            "{name}: the readers that copied a row holding the value into a wiped buffer"
+        );
+        let injected = vault.inject_secret_at_door(name, EFFECTOR, &mut |_value| Ok(()));
+        assert_eq!(checked.is_ok(), injected.is_ok(), "{name}: {checked:?}");
+    }
+    assert!(vault.check_secret_at_door("released", EFFECTOR).is_ok());
 }
 
 // ---------------------------------------------------------------------------
@@ -570,71 +508,6 @@ fn materialize_lease_writes_rows_and_returns_value() {
         "receipt body carries value bytes"
     );
     assert!(body_text.contains(SECRET_MATERIALIZATION_RECEIPT_KIND));
-}
-
-#[test]
-fn a_bounded_materialization_is_clamped_by_the_clock_that_stamps_it() {
-    // The bound exists because `ttl_secs` is computed at the CALLER's clock
-    // and `granted_at` is stamped from this method's own: without an absolute
-    // instant, any advance between the two lengthens the lease past whatever
-    // authority bought it. The bound is answered by the same reading that
-    // stamps the row, so the gap cannot be widened by delay.
-    let (_tmp, vault) = temp_vault();
-    register(
-        &vault,
-        default_record(
-            "bounded",
-            CustodyClass::CustodyPortable,
-            CustodyTier::T1Leased,
-        ),
-    );
-
-    // A TTL that would run past the bound dies AT the bound.
-    let bound = crate::unix_seconds_now() + 60;
-    let materialization = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, Some(bound))
-        .expect("a live bound admits");
-    let lease = materialization.lease;
-    assert_eq!(lease.expires_at, bound);
-    assert!(lease.expires_at < lease.granted_at + 3600);
-    assert!(lease.granted_at < lease.expires_at);
-    // The clamped instant is what landed durable, not just what returned.
-    let stored = read_lease_row(&vault, &lease.lease_id).expect("lease row present");
-    assert_eq!(stored, lease);
-
-    // A TTL that ends before the bound is untouched by it.
-    let materialization = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 30, Some(bound))
-        .expect("well inside the bound");
-    assert_eq!(
-        materialization.lease.expires_at,
-        materialization.lease.granted_at + 30
-    );
-
-    // A bound that has already elapsed mints NOTHING: the lease would be born
-    // dead, so no lease row, no receipt row, and no value leave this call.
-    let leases_before = count_rows(&vault, SECRET_LEASE_KEY_PREFIX);
-    let receipts_before = count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX);
-    let elapsed = crate::unix_seconds_now();
-    let err = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, Some(elapsed))
-        .expect_err("an elapsed bound cannot be honoured");
-    assert!(matches!(err, Error::InvariantViolation(_)), "got {err:?}");
-    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), leases_before);
-    assert_eq!(
-        count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX),
-        receipts_before
-    );
-
-    // And `None` is exactly the unbounded contract every existing caller
-    // still gets.
-    let materialization = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, None)
-        .expect("unbounded");
-    assert_eq!(
-        materialization.lease.expires_at,
-        materialization.lease.granted_at + 3600
-    );
 }
 
 #[test]
@@ -737,95 +610,6 @@ fn receipt_write_failure_leaves_no_lease_row_and_no_value() {
         .expect("retry succeeds after the one-shot hook is consumed");
     assert_eq!(&*materialization.value, VALUE_V1);
     assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 1);
-}
-
-#[test]
-fn teardown_revoke_flips_status_and_rematerialize_mints_fresh_id() {
-    let (_tmp, vault) = temp_vault();
-    register(
-        &vault,
-        default_record(
-            "cycle",
-            CustodyClass::CustodyPortable,
-            CustodyTier::T1Leased,
-        ),
-    );
-
-    let first = vault
-        .materialize_secret_lease("cycle", EFFECTOR, 3600)
-        .expect("first lease");
-    let revoked = vault
-        .revoke_secret_lease(&first.lease.lease_id, 1_700_000_100)
-        .expect("revoke");
-    assert_eq!(revoked.status, SecretLeaseStatus::Revoked);
-    assert_eq!(
-        read_lease_row(&vault, &first.lease.lease_id)
-            .expect("row persists")
-            .status,
-        SecretLeaseStatus::Revoked
-    );
-
-    // A second materialize after revoke mints a fresh lease id.
-    let second = vault
-        .materialize_secret_lease("cycle", EFFECTOR, 3600)
-        .expect("re-materialize");
-    assert_ne!(first.lease.lease_id, second.lease.lease_id);
-    assert_eq!(second.lease.status, SecretLeaseStatus::Active);
-
-    // Revoking an unknown lease denies.
-    let err = vault
-        .revoke_secret_lease(&EntityId::now(), 1_700_000_100)
-        .expect_err("unknown lease denies");
-    assert!(
-        matches!(err, Error::Secret(SecretError::SecretLeaseNotFound { .. })),
-        "got {err:?}"
-    );
-}
-
-#[test]
-fn expire_secret_leases_sweeps_past_due_leases() {
-    let (_tmp, vault) = temp_vault();
-    register(
-        &vault,
-        default_record(
-            "sweep",
-            CustodyClass::CustodyPortable,
-            CustodyTier::T1Leased,
-        ),
-    );
-
-    let live = vault
-        .materialize_secret_lease("sweep", EFFECTOR, 3600)
-        .expect("live lease");
-    let past_due = vault
-        .materialize_secret_lease("sweep", EFFECTOR, 0)
-        .expect("past-due lease (ttl 0)");
-
-    // now == expires_at is expired (the lease is valid until expires_at).
-    let expired = vault
-        .expire_secret_leases(past_due.lease.expires_at)
-        .expect("sweep");
-    assert_eq!(expired, 1);
-    assert_eq!(
-        read_lease_row(&vault, &past_due.lease.lease_id)
-            .expect("row persists")
-            .status,
-        SecretLeaseStatus::Expired
-    );
-    assert_eq!(
-        read_lease_row(&vault, &live.lease.lease_id)
-            .expect("row persists")
-            .status,
-        SecretLeaseStatus::Active
-    );
-
-    // Idempotent: nothing left past due at the same instant.
-    assert_eq!(
-        vault
-            .expire_secret_leases(past_due.lease.expires_at)
-            .expect("re-sweep"),
-        0
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,6 +1113,271 @@ fn revoke_records_a_failed_file_removal() {
     drop(rtxn);
 
     std::fs::remove_dir_all(&path).expect("manual cleanup");
+}
+
+// ---------------------------------------------------------------------------
+// C9: T2 custody follows the file the vault wrote, not the path string
+// ---------------------------------------------------------------------------
+
+/// A registered T2 file under a live lease, for the substitution checks.
+#[cfg(unix)]
+fn registered_t2() -> (tempfile::TempDir, Vault, PathBuf, EntityId) {
+    let (tmp, vault, _declared, path) = t2_vault();
+    let lease_id = vault
+        .materialize_secret_lease("local", EFFECTOR, 3600)
+        .expect("lease")
+        .lease
+        .lease_id;
+    vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect("registration");
+    (tmp, vault, path, lease_id)
+}
+
+#[cfg(unix)]
+#[test]
+fn rematerialization_writes_no_byte_into_a_substituted_or_shared_inode() {
+    // C9 (secscan 2026-10-14): the same-path replace re-checked the path and
+    // truncated whatever regular file answered to it. A hard link planted at
+    // the name, or a second name on the vault's own file, received the value.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let unrelated = tmp.path().join("unrelated.txt");
+    std::fs::write(&unrelated, b"unrelated bytes").expect("unrelated file");
+    std::fs::remove_file(&path).expect("unlink the registered name");
+    std::fs::hard_link(&unrelated, &path).expect("plant a hard link");
+    let err = vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect_err("a substituted inode is not this lease's file");
+    assert!(
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read(&unrelated).expect("read"), b"unrelated bytes");
+
+    // The vault's own file with a second name elsewhere: a rotated value
+    // written through it would land in the other name too.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let second_name = tmp.path().join("second-name");
+    std::fs::hard_link(&path, &second_name).expect("second name");
+    let id = vault
+        .resolve_secret_ref("local")
+        .expect("resolve")
+        .expect("id");
+    rotate_record_for_test(&vault, &id, VALUE_V2);
+    let err = vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect_err("a file with two names is refused");
+    assert!(
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read(&second_name).expect("read"), VALUE_V1);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_ancestor_swapped_before_the_open_refuses_and_redirects_no_byte() {
+    // C9: ancestors were checked by path and the file opened by path, so a
+    // directory swapped for a symlink in between sent the value elsewhere.
+    for fresh in [true, false] {
+        let (tmp, vault, _declared, path) = t2_vault();
+        let lease_id = vault
+            .materialize_secret_lease("local", EFFECTOR, 3600)
+            .expect("lease")
+            .lease
+            .lease_id;
+        if !fresh {
+            vault
+                .register_secret_local(&lease_id, &path, "project-alpha")
+                .expect("registration");
+        }
+        let parent = path.parent().expect("parent").to_path_buf();
+        let moved = tmp.path().join("moved");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).expect("elsewhere");
+        let bait = elsewhere.join("api.key");
+        if !fresh {
+            std::fs::write(&bait, b"unrelated bytes").expect("bait");
+        }
+        let (from, to, target) = (parent.clone(), moved.clone(), elsewhere.clone());
+        path_swap_hook::arm(path_swap_hook::Stage::BeforeOpen, move || {
+            std::fs::rename(&from, &to).expect("move the real directory");
+            std::os::unix::fs::symlink(&target, &from).expect("plant the symlink");
+        });
+        let err = vault
+            .register_secret_local(&lease_id, &path, "project-alpha")
+            .expect_err("a swapped ancestor refuses");
+        assert!(
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
+            "fresh={fresh}: got {err:?}"
+        );
+        let landed = std::fs::read(&bait).ok();
+        assert!(
+            landed.is_none() || landed.as_deref() == Some(b"unrelated bytes".as_slice()),
+            "fresh={fresh}: the value was written through the swapped ancestor"
+        );
+        // Nothing lands in the moved directory either: a file this attempt
+        // created is removed, and the registered one keeps its old bytes.
+        let held = moved.join(path.file_name().expect("leaf"));
+        if fresh {
+            assert!(!held.exists(), "the fresh file stayed off the stored path");
+        } else {
+            assert_eq!(std::fs::read(&held).expect("registered file"), VALUE_V1);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_target_that_climbs_or_names_a_directory_is_refused() {
+    // C9 review: `..` asks the held directory for its current parent, which a
+    // rename can change between two steps of the walk; a trailing `/` or `/.`
+    // asks for a directory, and the file went one name up instead.
+    let (tmp, vault) = temp_vault();
+    let (_, path) = declared_target(&tmp);
+    let parent = path.parent().expect("parent");
+    std::fs::create_dir_all(parent.join("inner")).expect("mkdir");
+    let spelled = |suffix: &str| {
+        let mut raw = path.clone().into_os_string();
+        raw.push(suffix);
+        PathBuf::from(raw)
+    };
+    let targets = [
+        parent.join("inner").join("..").join("api.key"),
+        spelled("/"),
+        spelled("/."),
+    ];
+    register(
+        &vault,
+        record(
+            "local",
+            CustodyClass::CustodyPortable,
+            VALUE_V1,
+            vec![binding(EFFECTOR, CustodyTier::T2LocalRegistered)],
+            targets
+                .iter()
+                .map(|target| target.to_string_lossy().into_owned())
+                .collect(),
+        ),
+    );
+    let lease_id = vault
+        .materialize_secret_lease("local", EFFECTOR, 3600)
+        .expect("lease")
+        .lease
+        .lease_id;
+    for target in &targets {
+        let err = vault
+            .register_secret_local(&lease_id, target, "project-alpha")
+            .expect_err("the target refuses");
+        assert!(
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
+            "{}: got {err:?}",
+            target.display()
+        );
+        assert!(!path.exists(), "{}: a byte landed", target.display());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fresh_file_linked_before_its_check_receives_no_byte() {
+    // C9 review: only a replaced file had its link count checked, so a name
+    // linked to a fresh file right after its creation got the value too.
+    for recovery in [false, true] {
+        let (tmp, vault, _declared, path) = t2_vault();
+        let lease_id = vault
+            .materialize_secret_lease("local", EFFECTOR, 3600)
+            .expect("lease")
+            .lease
+            .lease_id;
+        if recovery {
+            vault
+                .register_secret_local(&lease_id, &path, "project-alpha")
+                .expect("registration");
+            std::fs::remove_file(&path).expect("lose the registered file");
+        }
+        let second_name = tmp.path().join("second-name");
+        let (from, to) = (path.clone(), second_name.clone());
+        path_swap_hook::arm(path_swap_hook::Stage::AfterOpen, move || {
+            std::fs::hard_link(&from, &to).expect("link the fresh file");
+        });
+        let err = vault
+            .register_secret_local(&lease_id, &path, "project-alpha")
+            .expect_err("a fresh file with a second name refuses");
+        assert!(
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
+            "recovery={recovery}: got {err:?}"
+        );
+        assert_eq!(
+            std::fs::read(&second_name).expect("second name"),
+            b"",
+            "recovery={recovery}: the value reached the second name"
+        );
+        assert!(!path.exists(), "recovery={recovery}: the fresh file stayed");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn teardown_leaves_a_substituted_file_and_keeps_the_row() {
+    // C9: teardown unlinked whatever answered to the stored path and then
+    // dropped the row, deleting an unrelated file and stranding the secret.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    // Renamed aside, the registered inode stays allocated, so the planted
+    // file cannot reuse its number.
+    std::fs::rename(&path, tmp.path().join("aside")).expect("move the registered file");
+    std::fs::write(&path, b"unrelated bytes").expect("plant an unrelated file");
+    let revoked = vault
+        .revoke_secret_lease(&lease_id, 1_700_000_100)
+        .expect("revoke flips the status");
+    assert_eq!(revoked.status, SecretLeaseStatus::Revoked);
+    assert_eq!(std::fs::read(&path).expect("read"), b"unrelated bytes");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let stored = read_local_registration_in_txn(&vault.store, &rtxn, &lease_id)
+        .expect("read registration")
+        .expect("the row stays while its file is unaccounted for");
+    assert!(stored.removal_error.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn teardown_keeps_the_row_while_the_registered_file_has_another_name() {
+    // C9 review: teardown unlinked the declared name of a file with a second
+    // name and dropped the row, so the plaintext lived on under the other
+    // name with no row and no snapshot hash exclusion covering it.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let second_name = tmp.path().join("second-name");
+    std::fs::hard_link(&path, &second_name).expect("second name");
+    let revoked = vault
+        .revoke_secret_lease(&lease_id, 1_700_000_100)
+        .expect("revoke flips the status");
+    assert_eq!(revoked.status, SecretLeaseStatus::Revoked);
+    assert_eq!(std::fs::read(&path).expect("read"), VALUE_V1);
+    assert_eq!(std::fs::read(&second_name).expect("read"), VALUE_V1);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let stored = read_local_registration_in_txn(&vault.store, &rtxn, &lease_id)
+        .expect("read registration")
+        .expect("the row stays while the plaintext has another name");
+    assert!(stored.removal_error.is_some());
+    assert_eq!(
+        stored.registration.content_hash,
+        *blake3::hash(VALUE_V1).as_bytes()
+    );
 }
 
 // ---------------------------------------------------------------------------

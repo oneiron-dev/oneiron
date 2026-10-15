@@ -15,12 +15,13 @@ use super::codec::{
     nested_map, nested_text, resolve_comm_party_in_txn, sole_active_claim_body_in_txn,
 };
 use super::evaluate::{
-    ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts, HydratedListProvenance,
-    evaluate_dispatch_compliance, normalize_jurisdiction,
+    ComplianceBinding, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,
+    HydratedListProvenance, compliance_binding, evaluate_dispatch_compliance,
+    normalize_jurisdiction,
 };
 use super::pack_store::active_compliance_pack_in_txn;
 use super::rules::{
-    CONFIDENCE_MILLIS_SCALE, PREDICATE_CRM_COMPLIANCE_EVIDENCE,
+    CONFIDENCE_MILLIS_SCALE, CompliancePack, PREDICATE_CRM_COMPLIANCE_EVIDENCE,
     PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION, PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE,
     PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
 };
@@ -42,6 +43,33 @@ pub(crate) fn campaign_compliance_gate(
     effect: &ExternalEffectGateInput,
     now_utc: u64,
 ) -> Result<Option<ComplianceVerdict>> {
+    Ok(governed_dispatch_in_txn(store, txn, effect, now_utc)?
+        .map(|(pack, facts)| evaluate_dispatch_compliance(&pack, &facts)))
+}
+
+/// The rows the gate's compliance leg binds `effect` to and which of them
+/// block it, before its verdict keeps only the first block and the stale-row
+/// wall reads the clock; `None` where compliance does not govern the effect.
+/// The checkpoint restore compares it across two vaults.
+pub(crate) fn campaign_compliance_binding(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+) -> Result<Option<ComplianceBinding>> {
+    // No row's binding reads the clock; only the stale-row wall does.
+    Ok(governed_dispatch_in_txn(store, txn, effect, 0)?
+        .map(|(pack, facts)| compliance_binding(&pack, &facts)))
+}
+
+/// The active pack and `effect`'s hydrated facts, or `None` when compliance
+/// does not govern it: no counterparty, no comm-owned PERSON behind the
+/// address, or one in no campaign.
+fn governed_dispatch_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    now_utc: u64,
+) -> Result<Option<(CompliancePack, DispatchComplianceFacts)>> {
     let Some(counterparty) = effect.counterparty.as_deref() else {
         return Ok(None);
     };
@@ -53,7 +81,7 @@ pub(crate) fn campaign_compliance_gate(
     }
     let pack = active_compliance_pack_in_txn(store, txn)?;
     let facts = hydrate_dispatch_compliance_facts(store, txn, effect, subject, now_utc)?;
-    Ok(Some(evaluate_dispatch_compliance(&pack, &facts)))
+    Ok(Some((pack, facts)))
 }
 
 /// Resolves every fact the evaluator is allowed to see.
@@ -103,19 +131,37 @@ fn jurisdiction_observation_in_txn(
 ) -> Result<Option<(String, Option<u16>)>> {
     let mut observations = Vec::new();
     for body in active_claim_bodies_in_txn(store, txn, subject, PREDICATE_COMM_JURISDICTION)? {
-        let value = decode_comm_jurisdiction_value(&body.value)?;
-        observations.push((
-            value.observed_at,
-            normalize_jurisdiction(&value.jurisdiction),
-            confidence_millis(body.confidence),
-        ));
+        observations.push(rank_jurisdiction_observation(&body)?);
     }
+    Ok(select_jurisdiction(observations))
+}
+
+/// One ACTIVE `comm.jurisdiction` observation as the gate ranks it: when it
+/// was observed, its normalized token, and its confidence in thousandths.
+pub(crate) type JurisdictionObservation = (u64, String, Option<u16>);
+
+/// Ranks one `comm.jurisdiction` body. A value that does not decode is an
+/// error, which fails the gate closed.
+pub(crate) fn rank_jurisdiction_observation(body: &ClaimBody) -> Result<JurisdictionObservation> {
+    let value = decode_comm_jurisdiction_value(&body.value)?;
+    Ok((
+        value.observed_at,
+        normalize_jurisdiction(&value.jurisdiction),
+        confidence_millis(body.confidence),
+    ))
+}
+
+/// The jurisdiction and confidence the gate selects from a subject's active
+/// observations.
+pub(crate) fn select_jurisdiction(
+    mut observations: Vec<JurisdictionObservation>,
+) -> Option<(String, Option<u16>)> {
     observations
         .sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    Ok(observations
+    observations
         .into_iter()
         .next()
-        .map(|(_, token, confidence)| (token, confidence)))
+        .map(|(_, token, confidence)| (token, confidence))
 }
 
 /// `ClaimBody::confidence` is a fraction in `[0, 1]`; the pack's floor is in

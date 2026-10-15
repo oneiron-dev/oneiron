@@ -42,8 +42,14 @@ side_tables! {
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
     AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson;
-    /// Admitted request nonce inside the replay window (empty marker), evicted once its signed
-    /// timestamp ages out. Key: u64hex16 ":" hex64.
+    /// The floor of the clock holder proofs are judged on (u64be seconds): the reading the last
+    /// admission committed, or the wall time an owner clock recovery set. Key: ().
+    AUTHORITY_SLIP_PROOF_CLOCK: SyncState b"authority:slip-proof-clock:v1" Raw;
+    /// The earliest signed time a holder proof may carry (u64be seconds): past every evicted
+    /// replay nonce, and at least the wall time of the last owner clock recovery. Key: ().
+    AUTHORITY_SLIP_PROOF_NOT_BEFORE: SyncState b"authority:slip-proof-not-before:v1" Raw;
+    /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
+    /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
@@ -62,6 +68,10 @@ side_tables! {
     DEFERRED_CHILD_OF: SyncState b"dc:w:" Raw;
     /// Endpoint index for a deferred ChildOf candidate. Key: hex32 ":" full dc:w: key.
     DEFERRED_CHILD_OF_ENDPOINT: SyncState b"de:" Raw;
+    /// The current row's applied-deletion fence: written with every soft erase and with a peer
+    /// tombstone accepted but not yet applied; lifted only by a local recreation, never by a peer.
+    /// Presence-only, empty value. Key: hex32 (entity id).
+    DELETION_ROW_FENCE: SyncState b"df:" Raw;
     /// Dependency index for a deferred Parent candidate. Key: kind ":" hex32 ":" full dp:w: key.
     DEFERRED_PARENT_DEPENDENCY: SyncState b"di:" Raw;
     /// Deferred Parent candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.
@@ -71,6 +81,10 @@ side_tables! {
     SYNC_DS_E: SyncState b"ds:e:" Raw;
     /// Local hard-delete marker. Key: hex32.
     DELETION_HARD_DELETE_MARKER: SyncState b"dt:" Raw;
+    /// The history one derived record quotes of an entity document: the incarnation-qualified
+    /// frontiers it cites, or the birth state when the entity had no document yet. Floors owner
+    /// purges while the citer is live. Key: hex32 (entity) ":" hex32 (citer).
+    ENTITY_DOC_CITATION_FLOOR: SyncState b"entity_doc:v1:citation_floor:" Named;
     /// Durable identity/provenance/status of one open or settled document fork. Key: hex32.
     ENTITY_DOC_FORK: SyncState b"entity_doc:v1:fork:" Named;
     /// Shallow Loro snapshot of a fork's diverged content at its opening base. Key: hex32.
@@ -104,6 +118,12 @@ side_tables! {
     /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
     /// empty value. Key: hex32 (entity id).
     DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
+    /// Digest of which install keys counted as mine-machine signers when an authority write last
+    /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
+    IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
+    /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
+    IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
     /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
     /// message. Key: hex16 (same hash as the seen marker).
     LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;
@@ -127,6 +147,11 @@ side_tables! {
     DELETION_WINDOW_LABEL: SyncState b"m:dw:" Raw;
     /// Client-only: last Unix-seconds timestamp this device reached fully-synced status. Key: ().
     SYNC_M_LAST_SYNC: SyncState b"m:last_sync" Raw;
+    /// The MACHINE row this install is (16 B entity id), minted once with its machine key; never
+    /// synced and never restored from another install. Key: ().
+    IDENTITY_MACHINE_ID: SyncState b"m:machine_id" Raw;
+    /// This install's machine signing-key seed (32 B), minted with its machine id. Key: ().
+    IDENTITY_MACHINE_SK: SyncState b"m:machine_sk" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
     /// Key: hex32 (entity id).
     SYNC_M_U_SEQ_E: SyncState b"m:u_seq:e:" Raw;

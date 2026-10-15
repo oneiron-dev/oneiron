@@ -1208,20 +1208,34 @@ mod cb_a {
         else {
             panic!("policy has source trust");
         };
-        let Some(Value::Map(permit)) = rows
+        let Some(Value::Array(permits)) = rows
             .iter_mut()
             .find_map(|(key, value)| (key.as_str() == Some("generated")).then_some(value))
         else {
-            panic!("policy has a Generated permit");
+            panic!("policy has actor-bound Generated permits");
         };
-        let actor_ref = permit
-            .iter_mut()
-            .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
-            .expect("Generated permit is actor-bound");
-        let actor = vault
+        // ARCH-0026: the stock rows bind the commitment projector and the
+        // Dreamer. The helper rebinds the projector's row and keeps the other.
+        let mut actor_refs = permits.iter_mut().map(|permit| {
+            let Value::Map(fields) = permit else {
+                panic!("Generated permit is a row");
+            };
+            fields
+                .iter_mut()
+                .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
+                .expect("Generated permit is actor-bound")
+        });
+        let (Some(actor_ref), Some(dreamer_ref), None) =
+            (actor_refs.next(), actor_refs.next(), actor_refs.next())
+        else {
+            panic!("the stock Generated rows bind the projector and the Dreamer");
+        };
+        let dreamer = vault
             .dreamer_authority()
             .expect("Dreamer authority")
             .entity_ref();
+        assert_eq!(*dreamer_ref, Value::from(dreamer.to_hex()));
+        let actor = EntityId::from_bytes([0xC5; 16]).expect("fixture writer id");
         assert_ne!(*actor_ref, Value::from(actor.to_hex()));
         *actor_ref = Value::from(actor.to_hex());
 
@@ -1588,8 +1602,36 @@ mod peer_fixture {
                 for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
                     bind_source_permit(entries, source, dreamer);
                 }
+            } else {
+                unbind_source_permit(entries, ClaimSource::Generated, dreamer);
             }
         })
+    }
+
+    /// Drops the row binding `actor` from the stock `source` permits.
+    fn unbind_source_permit(entries: &mut [(Value, Value)], source: ClaimSource, actor: EntityId) {
+        let (_, Value::Map(rows)) = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("source_trust"))
+            .expect("source trust")
+        else {
+            panic!("source trust map")
+        };
+        let (_, Value::Array(permits)) = rows
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some(source.as_str()))
+            .expect("source row")
+        else {
+            panic!("actor-bound source rows")
+        };
+        let actor_ref = Value::from(actor.to_hex());
+        permits.retain(|permit| {
+            !permit.as_map().is_some_and(|fields| {
+                fields
+                    .iter()
+                    .any(|(key, value)| key.as_str() == Some("actor_ref") && *value == actor_ref)
+            })
+        });
     }
 
     impl PeerFixture {
@@ -1597,8 +1639,9 @@ mod peer_fixture {
             Self::open_with_policy(|path, config| open_peer_policy_vault(path, config, true))
         }
 
-        /// Stock source policy plus an explicit ceiling for this Dreamer.
-        /// Generated still names the projector and cannot authorize this writer.
+        /// Stock source policy without the Dreamer's shipped Generated row,
+        /// plus an explicit ceiling for this Dreamer. Generated names only
+        /// the projector and cannot authorize this writer.
         pub(crate) fn open_without_generated_permit() -> Self {
             Self::open_with_policy(|path, config| open_peer_policy_vault(path, config, false))
         }

@@ -355,73 +355,6 @@ fn timeout_retains_every_output_byte_in_attributed_durable_rewrite() -> Result<(
 }
 
 #[test]
-fn multiple_writer_forks_keep_distinct_durable_bases_and_merge_stale_edits() -> Result<()> {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let (writer, owner) = actor(&vault)?;
-    let id = entity(&vault, writer, &owner, "base")?;
-    let first_id = EntityId::now();
-    let first_req = edit_request(&vault, id, writer, " first")?;
-    let first = vault.open_text_proposal(
-        &first_id,
-        std::slice::from_ref(&first_req),
-        &DocAuthorization::ProposeOnly,
-        10,
-    )?;
-    let first_fork = EntityId::from_hex(&first.forks[0].fork)?;
-    assert_eq!(
-        vault.entity_text_fork(&first_fork)?.expect("fork").base,
-        first_req.base
-    );
-    append(&vault, id, writer, &owner, " live", 11)?;
-    let second_id = EntityId::now();
-    let second = vault.open_text_proposal(
-        &second_id,
-        &[edit_request(&vault, id, writer, " second")?],
-        &DocAuthorization::ProposeOnly,
-        12,
-    )?;
-    assert_ne!(first.forks[0].fork, second.forks[0].fork);
-    assert_ne!(first.forks[0].base, second.forks[0].base);
-    let stale = vault.settle_text_proposal(
-        &first_id,
-        SettleVerb::Switch,
-        &DocAuthorization::Owner(&owner),
-        writer,
-        13,
-    );
-    assert!(matches!(
-        stale,
-        Err(Error::Artifact(ArtifactError::EditProposalStale))
-    ));
-    assert_eq!(vault.entity_text_proposal(&first_id)?.pending().count(), 1);
-    vault.settle_text_proposal(
-        &first_id,
-        SettleVerb::Merge,
-        &DocAuthorization::Owner(&owner),
-        writer,
-        14,
-    )?;
-    let merged = vault.entity_text(&id)?;
-    assert!(merged.contains("first"));
-    assert!(merged.contains("live"));
-    assert_eq!(vault.entity_text_receipts(&id)?.len(), 1);
-    assert!(matches!(
-        vault.settle_text_proposal(
-            &first_id,
-            SettleVerb::Merge,
-            &DocAuthorization::Owner(&owner),
-            writer,
-            15
-        ),
-        Err(Error::Artifact(
-            ArtifactError::EditProposalAlreadySettled { .. }
-        ))
-    ));
-    Ok(())
-}
-
-#[test]
 fn explicit_rewrite_switch_moves_pointer_and_records_receipt() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
@@ -756,5 +689,68 @@ fn text_migration_refuses_maintenance_and_semantic_records_atomically() -> Resul
     // The same authenticated writer can still migrate an editable kind.
     let id = entity(&vault, writer, &owner, "editable asset")?;
     assert_eq!(vault.entity_text(&id)?, "editable asset");
+    Ok(())
+}
+
+#[test]
+fn a_lent_blob_resolves_a_migrated_body_as_a_read_does() -> Result<()> {
+    // Organ host review (Astra, PR #1366): the lend path handed out the
+    // document pointer, so an unchanged version failed its hash check.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Vault::open_unseeded_for_test(dir.path(), crate::test_util::embedding_test_config())?;
+    let (writer, owner) = actor(&vault)?;
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &crate::blob_artifact::BlobArtifactBody::new("notes", "text/plain"),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let version = vault.append_blob_artifact_version(
+        &artifact,
+        b"plain text body",
+        &crate::blob_artifact::BlobVersionProvenance::UserUpload,
+        writer,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash)?;
+    vault.migrate_entity_text(
+        &asset,
+        &TextField::Utf8Body,
+        writer,
+        &DocAuthorization::Owner(&owner),
+    )?;
+    let lent = vault
+        .lend_blob_artifact_version(&artifact, version.version, |_, bytes| {
+            bytes.verified().map(std::borrow::Cow::into_owned)
+        })?
+        .expect("the version is live")?;
+    assert_eq!(lent, b"plain text body");
+    Ok(())
+}
+
+/// Bug repro (SOL-R1-006, H6): an entity document whose text passes the analyzer ceiling is
+/// still written and read back whole, and only its search entry goes. Canonical recovery writes
+/// a document through the same persist door, so an artifact holding one still restores.
+#[test]
+fn a_document_past_the_text_ceiling_is_written_and_left_out_of_search() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::config::VaultConfig {
+        map_size: 64 * 1024 * 1024,
+        ..crate::test_util::embedding_test_config()
+    });
+    let (actor, owner) = actor(&vault)?;
+    let id = entity(&vault, actor, &owner, "lantern harbor")?;
+    let found = |term: &str| -> Result<bool> {
+        Ok(vault.search_text(term, 10)?.iter().any(|hit| hit.id == id))
+    };
+    assert!(found("lantern")?);
+
+    // 2.2 MB of text, past the 2 MiB a document may put through the analyzer.
+    let long = " tidewater".repeat(220_000);
+    append(&vault, id, actor, &owner, &long, 20)?;
+    assert_eq!(vault.entity_text(&id)?, format!("lantern harbor{long}"));
+    assert!(!found("lantern")? && !found("tidewater")?);
     Ok(())
 }

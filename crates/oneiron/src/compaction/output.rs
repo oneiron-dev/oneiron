@@ -321,7 +321,7 @@ impl OutputContextEntry {
 /// Vault-local content-addressed side store. No interpretation or claim write.
 pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
     let source = OutputRef::from_bytes(bytes);
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if let Some(existing) = OUTPUT_BLOB.get(&vault.store, txn, &source.hash)? {
             if existing.as_slice() != bytes {
                 return Err(Error::CorruptedIndex("output content address"));
@@ -360,7 +360,7 @@ pub fn summarize_output(
         }
     }
     let summary = summarize(&bytes)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if let Some(existing) = OUTPUT_SUMMARY.get(&vault.store, txn, &key)? {
             return Ok(existing);
         }

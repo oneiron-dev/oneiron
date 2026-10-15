@@ -7,7 +7,12 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
+use super::feedback::FeedbackConfig;
+use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
+use super::oneironer::OneironerConfig;
+use super::recall::RecallConfig;
+use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
@@ -53,6 +58,10 @@ pub struct SyncServerConfig {
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
     /// fail-closed: no cross-origin browser access is granted.
     pub allowed_origins: Vec<String>,
+    /// Reverse proxies whose `X-Forwarded-For` the server believes when it
+    /// keys a request by client address. Empty: every caller is keyed by its
+    /// own connection, whatever headers it sends.
+    pub trusted_proxies: Vec<TrustedProxy>,
     /// Numeric vault scope for root lease registration/revocation.
     /// Hosted deployments must set a distinct value per tenant/vault; `0`
     /// preserves the legacy local single-vault scope.
@@ -73,10 +82,14 @@ pub struct SyncServerConfig {
     pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
-    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
-    pub max_lfs_object_bytes: Option<u64>,
+    /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
+    /// set. Always finite: an upload past it is refused mid-stream, and one
+    /// that declares a larger size is refused before it starts.
+    pub max_lfs_object_bytes: u64,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
     pub max_bulk_decompressed: usize,
+    /// The bounds on work a remote caller can start: git and LFS transfers.
+    pub limits: LimitsConfig,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -95,6 +108,7 @@ impl Default for SyncServerConfig {
             oauth_resource_indicator: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
+            trusted_proxies: Vec::new(),
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
@@ -104,8 +118,9 @@ impl Default for SyncServerConfig {
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
-            max_lfs_object_bytes: None,
+            max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
+            limits: LimitsConfig::default(),
             runtime: RuntimeConfig::default(),
         }
     }
@@ -156,6 +171,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("max_frame_size", &self.max_frame_size)
             .field("max_update_payload", &self.max_update_payload)
@@ -176,6 +192,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("limits", &self.limits)
             .field("runtime", &self.runtime)
             .finish()
     }
@@ -197,6 +214,7 @@ pub struct ServeConfig {
     pub oauth_resource_indicator: Option<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
+    pub trusted_proxies: Vec<TrustedProxy>,
     pub lease_vault_id: u64,
     pub dimensions: usize,
     pub map_size: usize,
@@ -215,16 +233,34 @@ pub struct ServeConfig {
     pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
-    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
-    pub max_lfs_object_bytes: Option<u64>,
+    /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
+    /// set. Always finite: an upload past it is refused mid-stream, and one
+    /// that declares a larger size is refused before it starts.
+    pub max_lfs_object_bytes: u64,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
     /// The `[embedder]` section, absent until some layer names a key in it.
     /// Absent means rung 0: no worker, no query door, vectors supplied by the
     /// client exactly as before this section existed.
     pub embedder: Option<EmbedderConfig>,
+    /// The `[oneironer]` tagger slot, absent until some layer names a key in
+    /// it. Absent means no tagger and no tagging marker.
+    pub oneironer: Option<OneironerConfig>,
     /// The `[backup]` section: local backup directory, schedule and retention.
     pub backup: BackupConfig,
+    /// The `[feedback]` section: where the owner's feedback goes.
+    pub feedback: FeedbackConfig,
+    /// The `[recall]` section: call mode's deadline.
+    pub recall: RecallConfig,
+    /// The `[limits]` section: the bounds on work a remote caller can start.
+    pub limits: LimitsConfig,
+    /// The `[import]` section: the queue a running `serve` imports session
+    /// logs from, off unless set.
+    pub import: super::ImportConfig,
+    /// The `[models]` section, absent until the config file names it.
+    /// Absent means no model seat is filled: every model-free path runs and
+    /// the Dreamer reports idle for want of a model.
+    pub models: Option<super::ModelsConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -250,6 +286,7 @@ impl Default for ServeConfig {
             oauth_resource_indicator: server.oauth_resource_indicator,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
+            trusted_proxies: server.trusted_proxies,
             lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
             map_size: vault.map_size,
@@ -272,7 +309,13 @@ impl Default for ServeConfig {
             max_bulk_decompressed: server.max_bulk_decompressed,
             runtime: server.runtime,
             embedder: None,
+            oneironer: None,
             backup: BackupConfig::default(),
+            feedback: FeedbackConfig::default(),
+            recall: RecallConfig::default(),
+            limits: LimitsConfig::default(),
+            import: super::ImportConfig::default(),
+            models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -292,6 +335,7 @@ impl fmt::Debug for ServeConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
@@ -326,7 +370,13 @@ impl fmt::Debug for ServeConfig {
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
+            .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("feedback", &self.feedback)
+            .field("recall", &self.recall)
+            .field("limits", &self.limits)
+            .field("import", &self.import)
+            .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -349,6 +399,7 @@ impl ServeConfig {
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
+            trusted_proxies: self.trusted_proxies.clone(),
             lease_vault_id: self.lease_vault_id,
             max_frame_size: self.max_frame_size,
             max_update_payload: self.max_update_payload,
@@ -360,6 +411,7 @@ impl ServeConfig {
             max_entity_blob: self.max_entity_blob,
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
+            limits: self.limits.clone(),
             runtime: self.runtime.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
@@ -378,6 +430,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {
                 oneiron::config::failure_signals::DeploymentTier::Managed
@@ -399,6 +452,16 @@ impl ServeConfig {
         // Beside it, how the embedder turns that model's output into stored
         // vectors, when the section says so before the provider loads.
         config.embedding_transform = embedder.and_then(crate::embedder::declared_transform);
+        // And where a vector hit counts as evidence in that space.
+        config.vector_evidence = embedder
+            .map(crate::embedder::evidence_floors)
+            .unwrap_or_default();
+        // An active tagger arms the outbox marker: every witnessed turn owes
+        // it a pass, committed with the turn (ARCH-0036, serving the tagger).
+        config.tagging = self
+            .oneironer
+            .as_ref()
+            .and_then(OneironerConfig::marker_config);
         config
     }
 

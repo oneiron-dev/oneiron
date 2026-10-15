@@ -19,6 +19,12 @@ use crate::session_overlay::{
     JournalEntry, JournalRole, JournalScope, SessionOverlay, SessionWriteRoute, TxnSegmentGuard,
 };
 
+/// A session door's check that its speaker may still speak into the stretch.
+/// The witness runs it first in every transaction it opens, its container
+/// probes and its writer, so a refused speaker learns nothing those reads
+/// would have found (Sol on engine-prs-01).
+pub(super) type Admit<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<()>;
+
 /// An overlay landing's pre-write state.
 pub(super) struct OverlaySink<'a, 'v> {
     session: &'a OffRecordSession<'v>,
@@ -91,7 +97,12 @@ impl Memory<'_> {
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
-            WitnessTarget::Session { session, summary },
+            WitnessTarget::Session {
+                session,
+                summary,
+                admit: None,
+                rostered: None,
+            },
             WitnessDoor::Guest,
             || {},
             |_| Ok(()),
@@ -99,29 +110,253 @@ impl Memory<'_> {
         )
     }
 
-    /// Host-bound variant for executor speech. `host_turn_ref` is derived from
-    /// the run identity behind a crate-private capability; it is deliberately a
-    /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a
-    /// deterministic retry target cannot weaken the guest `Some(turn_ref)`
-    /// refusal on [`crate::off_record::OffRecordSession::witness_executor_turn`].
-    pub(crate) fn witness_into_session_with_host_turn(
+    /// [`Self::witness_into_session`] for a transport: `owner`'s proof is
+    /// rechecked in the transaction that lands the turn, so a witness queued
+    /// behind a revocation writes nothing, on record or off. In a room, so is
+    /// the owner's place on its roster, so one queued behind their removal
+    /// writes nothing either.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when `owner` does not name this handle's actor, its proof
+    /// no longer holds or they are no longer in the stretch's room;
+    /// otherwise as [`Self::witness_into_session`].
+    pub fn witness_into_session_as(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         session: &OffRecordSession<'_>,
         turn: &WitnessTurn,
         summary: Option<&str>,
-        host_turn_ref: EntityId,
     ) -> MemoryResult<WitnessReceipt> {
+        let refused = |message: String| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Authenticate again as a live owner of this vault, then retry."],
+            )
+        };
+        if owner.actor() != self.actor {
+            return Err(refused(
+                "the owner proof names another actor than the witness".to_owned(),
+            ));
+        }
+        let room = session.room()?;
+        let admit = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
+            owner
+                .revalidate_in_txn(self.vault, txn)
+                .map_err(|error| refused(error.to_string()))?;
+            match room {
+                Some(room) if !session.is_member_in_txn(txn, room, owner.actor())? => {
+                    Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "the owner is not in this stretch's room".to_owned(),
+                        &["Join the room before speaking in it."],
+                    ))
+                }
+                _ => Ok(()),
+            }
+        };
         self.run_witness(
             turn,
-            WitnessTarget::Session { session, summary },
-            WitnessDoor::HostTurn(host_turn_ref),
+            WitnessTarget::Session {
+                session,
+                summary,
+                admit: Some(&admit),
+                rostered: None,
+            },
+            WitnessDoor::Guest,
             || {},
             |_| Ok(()),
             |_| Ok(()),
         )
     }
 
+    /// [`Self::witness_into_session`] for a participant of the stretch's room
+    /// (ARCH-0052 D5): this handle's actor must be on the room's roster, and
+    /// that, with `credential`'s liveness, is checked again in the
+    /// transaction that lands the turn, so a witness queued behind a leave or
+    /// a revocation writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when the actor is not in the stretch's room, or left it
+    /// or lost the credential while the witness waited; otherwise as
+    /// [`Self::witness_into_session`].
+    pub fn witness_into_session_as_member(
+        &self,
+        session: &OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+        credential: Option<&crate::authority::VerifiedSlip>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let refused = || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the speaker is not in this stretch's room".to_owned(),
+                &["Join the room before speaking in it."],
+            )
+        };
+        let room = session.require_in_room(self.actor).map_err(|_| refused())?;
+        let admit = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
+            // A read that fails is that failure, not a refusal.
+            let live = match credential {
+                Some(credential) => self.vault.capability_slip_is_live_in_txn(txn, credential)?,
+                None => true,
+            };
+            if live && session.is_member_in_txn(txn, room, self.actor)? {
+                Ok(())
+            } else {
+                Err(refused())
+            }
+        };
+        self.run_witness(
+            turn,
+            WitnessTarget::Session {
+                session,
+                summary,
+                admit: Some(&admit),
+                rostered: Some(room),
+            },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+    }
+
+    /// Executor speech: a bound run's turn. `admit` is the run's own check,
+    /// run first in each transaction the witness opens ([`Admit`]), so a
+    /// refusal keeps nothing of the turn and reveals nothing of the room. `host_turn_ref`, when present, is derived from the run
+    /// identity behind a crate-private capability; it is deliberately a
+    /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a
+    /// deterministic retry target cannot weaken the guest `Some(turn_ref)`
+    /// refusal on [`crate::off_record::OffRecordSession::witness_executor_turn`].
+    pub(crate) fn witness_into_session_for_run(
+        &self,
+        session: &OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+        host_turn_ref: Option<EntityId>,
+        admit: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness(
+            turn,
+            WitnessTarget::Session {
+                session,
+                summary,
+                admit: Some(&admit),
+                rostered: None,
+            },
+            host_turn_ref.map_or(WitnessDoor::Guest, WitnessDoor::HostTurn),
+            || {
+                #[cfg(test)]
+                if let Some(hook) = self
+                    .vault
+                    .test_hooks()
+                    .before_run_speech_writer
+                    .lock()
+                    .expect("run speech hook poisoned")
+                    .take()
+                {
+                    hook();
+                }
+            },
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+    }
+
+    /// The writer a witness lands in: a session door's [`Admit`] first, so a
+    /// speaker it refuses learns nothing the actor checks would have read,
+    /// then those checks and `write`.
+    ///
+    /// Speech by a participant of a stretch's room into its overlay
+    /// (`rostered`) is the room's to admit (ARCH-0052 D5): the actor's
+    /// identity, and in a shared vault their current binding, are checked as
+    /// for any write, then the room's roster. A shared vault's content grant
+    /// does not decide it, because nothing staged in the overlay reaches the
+    /// shared vault; only a save does, through every base check. So a
+    /// rostered Viewer speaks off record and still writes nothing durable.
+    /// Every other witness, in base or in an overlay, runs the full check of
+    /// any actor write ([`Self::verify_actor_write_in_txn`]).
+    pub(super) fn with_witness_write_txn_as<T>(
+        &self,
+        callback: crate::store::Callback,
+        admit: Option<Admit<'_>>,
+        rostered: Option<(&OffRecordSession<'_>, EntityId)>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        self.vault.write_txn_door(callback, |wtxn| {
+            admit.map_or(Ok(()), |admit| admit(wtxn))?;
+            let Some((session, room)) = rostered else {
+                self.verify_actor_write_in_txn(wtxn)?;
+                return write(wtxn);
+            };
+            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
+                self.vault.verify_write_actor_in_txn(
+                    wtxn,
+                    &crate::WriteActor::new(self.actor, self.actor_class),
+                )?;
+            }
+            if !session.is_member_in_txn(wtxn, room, self.actor)? {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "the speaker is not in this stretch's room".to_owned(),
+                    &["Join the room before speaking in it."],
+                ));
+            }
+            write(wtxn)
+        })
+    }
+
     // ── the overlay landing ─────────────────────────────────────────────
+
+    /// The overlay landing's guards in its writer, ahead of the shared door,
+    /// and the speaker's PERSON byline, once an erased PERSON is refused.
+    ///
+    /// A participant speaking by the room's roster alone (`rostered`) names
+    /// no message id: the stretch gives each message its own. Any id they
+    /// named would be read by the shared door and the staging, so its kind,
+    /// its body, or whatever holds it would shape the answer (Astra and Sol
+    /// on #1411). The refusal comes before anything reads the id, and is the
+    /// same whatever the vault holds. Nothing is lost: this door mints a
+    /// fresh turn for every call, so a named id never made a retry land.
+    ///
+    /// Any other door's id that the room does not hold must be one base
+    /// never gave out: a hard-deleted id is refused, as the base writer
+    /// refuses it, so a save cannot bring it back.
+    pub(super) fn overlay_guards_in_txn(
+        &self,
+        plan: &WitnessPlan<'_>,
+        sink: &OverlaySink<'_, '_>,
+        rostered: bool,
+        wtxn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<Option<EntityId>> {
+        let named = plan
+            .turn
+            .messages
+            .iter()
+            .any(|message| message.id.is_some());
+        if rostered && named {
+            return Err(MemoryError::bad_request_with(
+                "a participant names no message id in an off-record stretch",
+                &["Leave the message id out, and the stretch gives the message one."],
+            ));
+        }
+        for id in plan.message_ids() {
+            if !sink.overlay.contains_entity(&id)?
+                && self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+            {
+                return Err(hard_deleted_refusal(&id));
+            }
+        }
+        let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
+        super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
+        Ok(person_author)
+    }
 
     pub(super) fn overlay_sink<'a, 'v>(
         &self,

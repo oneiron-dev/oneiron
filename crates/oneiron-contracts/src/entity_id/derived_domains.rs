@@ -42,6 +42,10 @@ pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
 /// WIRE-P1). No parts.
 pub const EMBEDDED_OWNER_ACTOR: &[u8] = b"oneiron 2026-08 embedded-owner-actor v1";
 
+/// A named agent principal the owner mints a credential for
+/// (`oneiron token agent`). Parts: agent name.
+pub const AGENT_PRINCIPAL: &[u8] = b"oneiron/agent-principal/v1";
+
 /// The System actor that owns engine projection writes
 /// (`commitment_schedule::commitment_projection_actor`). No parts.
 pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.actor.v1\0";
@@ -117,9 +121,25 @@ pub const FIRST_PARTY_SKILL_HUB: &[u8] = b"oneiron/first-party-skill-hub/v1";
 /// (`skill_hub::pack_catalog::builtin`). No parts.
 pub const BUILTIN_CONNECTOR_PACK_HUB: &[u8] = b"oneiron/built-in-connector-packs/v1";
 
+/// An imported conversation (`ingest::history`). Parts: source, native
+/// conversation id.
+pub const HISTORY_CONVERSATION: &[u8] = b"oneiron.ingest.history.conversation.v1";
+
+/// An imported TURN (`ingest::history`). Parts: source, native conversation id,
+/// native id of the turn's first message.
+pub const HISTORY_TURN: &[u8] = b"oneiron.ingest.history.turn.v1";
+
+/// An imported MESSAGE (`ingest::history`). Parts: source, native message id,
+/// content hash.
+pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
+
+/// A NOTE imported from a folder of markdown notes (`note::import`). Parts:
+/// folder, the file's path under it.
+pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 30] = [
+pub(crate) const ALL: [&[u8]; 35] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -130,6 +150,7 @@ pub(crate) const ALL: [&[u8]; 30] = [
     COMM_PROJECTED_CLAIM,
     CONNECTOR_ACTOR,
     EMBEDDED_OWNER_ACTOR,
+    AGENT_PRINCIPAL,
     COMMITMENT_PROJECTION_ACTOR,
     COMMITMENT_INSTANCE,
     LINKEDIN_ENTITY,
@@ -150,4 +171,8 @@ pub(crate) const ALL: [&[u8]; 30] = [
     OUTBOUND_RECEIPT_RECORD,
     FIRST_PARTY_SKILL_HUB,
     BUILTIN_CONNECTOR_PACK_HUB,
+    HISTORY_CONVERSATION,
+    HISTORY_TURN,
+    HISTORY_MESSAGE,
+    IMPORTED_NOTE,
 ];

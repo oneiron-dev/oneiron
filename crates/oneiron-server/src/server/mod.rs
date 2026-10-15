@@ -1,13 +1,21 @@
 //! Sync server state and maintenance jobs, split by concern.
+mod board_publisher;
 mod core;
 mod embedding;
 mod leases;
 mod lifecycle;
 mod message_stream;
+mod oversight;
+mod recall;
+mod recall_rerank;
+mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
+pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
+pub use self::oversight::OversightStartError;
+pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
 mod slip_transport_tests;
@@ -29,6 +37,6 @@ use oneiron::sync::WindowKey;
 #[cfg(test)]
 use oneiron::sync::lease::{self, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 #[cfg(test)]
-use oneiron::sync::schema::{read_window_list, schema_version_bytes};
+use oneiron::sync::schema::read_window_list;
 #[cfg(test)]
 use std::sync::Arc;

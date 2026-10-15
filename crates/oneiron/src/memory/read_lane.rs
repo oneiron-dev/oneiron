@@ -20,14 +20,45 @@ pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
 impl Memory<'_> {
     /// Opens the bound actor's scoped read.
     ///
-    /// The actor row must hold its class (store truth). An actor bound to a
-    /// verified credential reads under that credential's key. Otherwise the
-    /// vault owner, a human actor whose owner verification passes, reads
-    /// under the owner's key: DEC-0005's own-device ceiling, all of the
-    /// owner's vault. Every other actor reads under its grants. `claims` is
-    /// the verb's contract: record verbs serve every claim status, retrieval
-    /// channels only surfaceable claims.
+    /// The actor row must hold its class (store truth). The vault owner, a
+    /// human actor whose owner verification passes, reads under the owner's
+    /// key: DEC-0005's own-device ceiling, all of the owner's vault. So does
+    /// the owner bound to its own live, full owner-grade credential. Any
+    /// other actor bound to a verified credential reads under that
+    /// credential's key; one other than the owner reads a relationship-scoped
+    /// or private row only on a live grant for its relationship, and an
+    /// unscoped row as the credential's records allow. Every other actor
+    /// reads under its grants. `claims` is the verb's contract: record verbs
+    /// serve every claim status, retrieval channels only surfaceable claims.
+    /// A handle bound to a room turn reads inside that room on every lane.
     pub(crate) fn read_lane(&self, claims: ClaimReadStatus) -> MemoryResult<ScopedRead<'_>> {
+        // The room resolver opens its own snapshots, so it runs only once the
+        // verification snapshot here has closed: LMDB allows one per thread.
+        let key = self.actor_read_key()?;
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
+    /// The bound actor's own read, without a bound room turn's ceiling: what
+    /// its grants alone admit. A room read checks it beside membership; it
+    /// never serves a row inside a turn.
+    pub(crate) fn own_read_lane(&self, claims: ClaimReadStatus) -> MemoryResult<ScopedRead<'_>> {
+        Ok(self
+            .vault
+            .scoped_read(self.actor_read_key()?)
+            .with_claim_status(claims))
+    }
+
+    /// The bound actor's read key, verified in one snapshot, for the caller
+    /// where it sits.
+    fn actor_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
+        Ok(self.identity_read_key()?.at(self.locality))
+    }
+
+    /// The bound actor's read key by identity alone.
+    fn identity_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self
             .vault
             .store
@@ -35,38 +66,20 @@ impl Memory<'_> {
             .read_txn()
             .map_err(|error| MemoryError::from(Error::from(error)))?;
         verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        let owner = self.is_vault_owner_in_txn(&txn)?;
         if let Some(proof) = &self.read_proof {
-            let key = (proof.claims().holder_ref == self.actor.to_hex())
-                .then(|| ScopedReadActorKey::from_verified_slip(proof))
-                .flatten()
+            // The one key every proof-backed door builds (credential_key.rs).
+            return self
+                .vault
+                .credential_read_key_in_txn(&txn, proof, self.actor, owner)?
                 .ok_or_else(|| {
                     MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
                         "the bound read credential does not grant this actor a read",
                         &["Present a credential minted for this actor that carries the read verb."],
                     )
-                })?;
-            return Ok(self.vault.scoped_read(key).with_claim_status(claims));
+                });
         }
-        let owner = if self.actor_class == crate::EdgeActorClass::Human
-            && self.actor == crate::vault::embedded_owner_actor_id()?
-        {
-            // The local embedded-owner reader is the host's own-device read lane.
-            // A separately paired authority root does not turn it into a peer.
-            true
-        } else {
-            match self.verify_owner_in_txn(&txn) {
-                Ok(()) => true,
-                // Not the owner: a human without the binding, or another class.
-                Err(error)
-                    if error.code == MEMORY_CODE_OWNER_BINDING_REQUIRED
-                        || error.code == MEMORY_CODE_FORBIDDEN =>
-                {
-                    false
-                }
-                Err(error) => return Err(error),
-            }
-        };
         let key = if owner {
             ScopedReadActorKey::vault_owner(self.actor)
         } else {
@@ -79,7 +92,54 @@ impl Memory<'_> {
             })?
             .require_access_grants(Some(self.actor))
         };
-        Ok(self.vault.scoped_read(key).with_claim_status(claims))
+        Ok(key)
+    }
+
+    /// Of `ids`, the ones a handle bound to a read credential reads, each
+    /// judged by the lane's point read in one snapshot, as `get_entity`
+    /// judges it. `None` is a handle bound to no credential: its surfaces
+    /// show what the actor's own verbs do.
+    pub(crate) fn credential_readable_ids(
+        &self,
+        ids: &[EntityId],
+    ) -> MemoryResult<Option<std::collections::BTreeSet<EntityId>>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        let reads: Vec<_> = ids.iter().map(|id| PointRead::id(*id)).collect();
+        let rows = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .read(&reads, None)
+            .map_err(MemoryError::from)?
+            .value;
+        Ok(Some(
+            rows.into_iter()
+                .flatten()
+                .filter(|row| row.body.is_some())
+                .map(|row| row.id)
+                .collect(),
+        ))
+    }
+
+    /// Whether the bound actor is the vault owner: the local embedded owner,
+    /// or a human whose owner binding verifies.
+    pub(super) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
+        super::credential_key::actor_is_vault_owner_in_txn(
+            self.vault,
+            txn,
+            self.actor,
+            self.actor_class,
+        )
+    }
+
+    /// Carries a bound room turn onto a read key, so any lane built from the
+    /// key, here or deeper in retrieval, reads inside the room (ARCH-0067 §8).
+    /// The ceiling is the room's as of this read, never only as it opened.
+    pub(crate) fn in_room_turn(&self, key: ScopedReadActorKey) -> MemoryResult<ScopedReadActorKey> {
+        Ok(match self.room_turn_now()? {
+            Some(turn) => key.in_room_turn(turn),
+            None => key,
+        })
     }
 
     /// Resolves a facade ref for a read on `lane`. A ref that resolves to
@@ -137,12 +197,34 @@ impl Memory<'_> {
         self.read_views_after(lane, targets, || {})
     }
 
+    /// [`Self::read_views`] for a door whose output no read can follow
+    /// exactly (a pack writer lays a body's fields out in its own rows): a
+    /// body the write door refuses, stored while the owner's scan was off, is
+    /// withheld whole, as one no decoder reads is, whatever the switch is now.
+    pub(super) fn read_views_whole_body(
+        &self,
+        lane: &ScopedRead<'_>,
+        targets: &[ReadTargetSlot],
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        self.read_views_in(lane, targets, true, || {})
+    }
+
     /// The callback is a test seam for a write between row admission and
     /// projection; production callers pass an empty callback.
     pub(super) fn read_views_after(
         &self,
         lane: &ScopedRead<'_>,
         targets: &[ReadTargetSlot],
+        after_read: impl FnOnce(),
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        self.read_views_in(lane, targets, false, after_read)
+    }
+
+    fn read_views_in(
+        &self,
+        lane: &ScopedRead<'_>,
+        targets: &[ReadTargetSlot],
+        whole_body: bool,
         after_read: impl FnOnce(),
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
         let reads: Vec<_> = targets
@@ -157,7 +239,18 @@ impl Memory<'_> {
             for target in targets {
                 let view = match target {
                     Some((_, mode)) => match rows.next().flatten() {
-                        Some(row) => self.entity_view_of_in_txn(txn, row, *mode)?,
+                        Some(row) => {
+                            let refused = whole_body
+                                && row
+                                    .body
+                                    .as_deref()
+                                    .is_some_and(crate::batch::export::write_door_refuses_body);
+                            self.entity_view_of_in_txn(lane, txn, row, *mode)?
+                                .map(|view| EntityView {
+                                    body: view.body.filter(|_| !refused),
+                                    ..view
+                                })
+                        }
                         None => None,
                     },
                     None => None,
@@ -170,8 +263,11 @@ impl Memory<'_> {
 
     /// Projects one admitted row to the typed entity view. A deleted shell
     /// has no body and projects to nothing.
+    /// Projects a row `lane` admitted; its short ref is read where the lane
+    /// reads, a room's view included.
     pub(super) fn entity_view_of_in_txn(
         &self,
+        lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         row: ReadRow,
         mode: ReadMode,
@@ -179,7 +275,7 @@ impl Memory<'_> {
         let Some(body) = row.body else {
             return Ok(None);
         };
-        let short_ref = self.short_ref_of_in_txn(txn, &row.id)?.map(|reference| {
+        let short_ref = short_ref_in_txn(&lane.store_read(), txn, &row.id)?.map(|reference| {
             let short = reference.split(':').next().unwrap_or(&reference);
             match mode {
                 ReadMode::Pinned(revision) => {

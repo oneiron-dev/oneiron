@@ -2,6 +2,7 @@
 use super::*;
 use crate::error::Error;
 use crate::memory::MemoryResult;
+use crate::store::Callback;
 
 /// A pump attempts every due handle even if another actor has lost admission.
 #[derive(Debug, Default)]
@@ -9,6 +10,21 @@ pub struct MessageStreamPump {
     pub finalized: Vec<MessageStreamReceipt>,
     pub refused: Vec<(EntityId, MessageStreamError)>,
 }
+/// A host's own condition on a terminal write, judged inside that write's
+/// transaction (the credential a stream answers is still live, say).
+type TerminalGate<'g> = Option<&'g dyn Fn(&heed::RwTxn<'_>) -> bool>;
+
+fn admit_terminal(gate: TerminalGate<'_>, txn: &heed::RwTxn<'_>) -> MemoryResult<()> {
+    if gate.is_some_and(|admit| !admit(txn)) {
+        return Err(crate::memory::MemoryError::new(
+            crate::memory::MEMORY_CODE_FORBIDDEN,
+            "the stream's host refused its terminal write",
+            &["Cancel the stream; nothing was committed."],
+        ));
+    }
+    Ok(())
+}
+
 impl Memory<'_> {
     pub fn finalize_stream(
         &self,
@@ -20,7 +36,24 @@ impl Memory<'_> {
             handle,
             StreamFinality::Final,
             StreamFinalityReason::ExplicitFinalize,
-            false,
+            None,
+        )
+    }
+    /// [`Self::finalize_stream`], committed only while `admit` holds inside
+    /// the write transaction. A refusal commits nothing and leaves the stream
+    /// open for the host to cancel.
+    pub fn finalize_stream_if(
+        &self,
+        handle: MessageStreamHandle,
+        admit: impl Fn(&heed::RwTxn<'_>) -> bool,
+    ) -> MessageStreamResult<MessageStreamReceipt> {
+        let entry = self.stream_entry(handle)?;
+        self.vault.finish_stream_entry(
+            &entry,
+            handle,
+            StreamFinality::Final,
+            StreamFinalityReason::ExplicitFinalize,
+            Some(&admit),
         )
     }
     pub fn cancel_stream(
@@ -43,7 +76,7 @@ impl Memory<'_> {
         };
         let entry = self.stream_entry(handle)?;
         self.vault
-            .finish_stream_entry(&entry, handle, StreamFinality::Cancelled, reason, false)
+            .finish_stream_entry(&entry, handle, StreamFinality::Cancelled, reason, None)
     }
 }
 impl Vault {
@@ -53,11 +86,11 @@ impl Vault {
         handle: MessageStreamHandle,
         finality: StreamFinality,
         reason: StreamFinalityReason,
-        recovered: bool,
+        gate: TerminalGate<'_>,
     ) -> MessageStreamResult<MessageStreamReceipt> {
         let mut state = lock(entry)?;
         state.check(handle)?;
-        let receipt = commit_terminal(self, &state, finality, reason, recovered)?;
+        let receipt = commit_terminal(self, &state, finality, reason, false, gate)?;
         // Storage success is authoritative. No output is removed on an error.
         state.terminal = true;
         #[cfg(feature = "sync")]
@@ -100,6 +133,7 @@ impl Vault {
                     }
                 },
                 false,
+                None,
             ) {
                 Ok(receipt) => {
                     state.terminal = true;
@@ -157,6 +191,7 @@ impl Vault {
                 StreamFinality::Partial,
                 StreamFinalityReason::ProcessCrashRecovery,
                 true,
+                None,
             )?;
         }
         Ok(())
@@ -168,6 +203,7 @@ fn commit_terminal(
     finality: StreamFinality,
     reason: StreamFinalityReason,
     recovered: bool,
+    gate: TerminalGate<'_>,
 ) -> MessageStreamResult<MessageStreamReceipt> {
     let seed = &state.seed;
     // A postcommit index hook can return an error after a successful commit.
@@ -196,11 +232,21 @@ fn commit_terminal(
         ),
     };
     let memory = vault.memory(seed.actor, seed.class()?);
+    // A host's gate is host code inside the transaction, so a gated write
+    // takes the hosts' door: a group of its own.
+    let callback = if gate.is_some() {
+        Callback::Opaque
+    } else {
+        Callback::Audited
+    };
     let written: MessageStreamResult<()> = if seed.continuation {
-        vault.try_with_write_txn(|txn| -> MessageStreamResult<()> {
+        vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
+            admit_terminal(gate, txn)?;
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
             admission::authorize(vault, txn, seed, &text)?;
+            let was_final = storage::receipt(vault, txn, seed.message_id)?
+                .is_none_or(|prior| prior.finality == StreamFinality::Final);
             #[cfg(feature = "sync")]
             crate::entity_doc::append_message_stream_in_txn(
                 vault,
@@ -218,6 +264,17 @@ fn commit_terminal(
             }
             receipt.bytes = text.len() as u64;
             storage::finish(vault, txn, seed, &receipt)?;
+            // Readers see only final words: a finalize that adds some, or
+            // makes a non-final MESSAGE final again, re-dirties its TURN.
+            // One that ends a final MESSAGE as non-final takes its words out
+            // of the transcript: no new words for a branch, but the sieve and
+            // the projector read what the turn says now.
+            let now_final = finality == StreamFinality::Final;
+            if now_final && (!state.pending.is_empty() || !was_final) {
+                storage::redirty_turn(vault, txn, seed)?;
+            } else if was_final && !now_final {
+                crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, &seed.turn)?;
+            }
             Ok(())
         })
     } else {
@@ -231,8 +288,10 @@ fn commit_terminal(
             .witness_with_route_and_txn_effect(
                 &seed.turn(text),
                 None,
+                callback,
                 || {},
                 |txn| -> MemoryResult<()> {
+                    admit_terminal(gate, txn)?;
                     #[cfg(feature = "sync")]
                     crate::entity_doc::birth_message_stream_in_txn(
                         vault,

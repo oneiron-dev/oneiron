@@ -557,7 +557,7 @@ fn update_connector_send_task_body(
     now: u64,
     update: impl FnOnce(&mut ConnectorSendTaskBody) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, update)
     })
 }

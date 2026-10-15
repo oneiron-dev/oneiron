@@ -181,7 +181,7 @@ The original primary/secondary tables show an HDD-over-NVMe recall-rate
 inversion (HDD/NVMe median 2.27×, 2.46×, 2.54×, 1.52× at 1/10/100/300).
 **Do not use those recall rows as a device-read-speed comparison.** Every
 public recall persists one retrieval-telemetry row through
-`Store::record_retrieval_run_with_visibility` and its own LMDB write
+`Store::record_retrieval_run_admitted` and its own LMDB write
 transaction + `commit()` (`store/retrieval_telemetry/run_store.rs`). The
 retrieval-run record stores `elapsed_us` **before** that commit is attempted
 (`vault/search_retrieval.rs`); full public-call latency includes it.
@@ -291,7 +291,6 @@ uvx --from chromadb==1.5.9 chroma run --path /tmp/chroma-beam --host 127.0.0.1 -
 python3 crates/oneiron-bench/scripts/fixture_model_stub.py
 ONEIRON_EVAL_API_KEY=fixture-only cargo run -p oneiron-bench -j 8 -- beam measure crates/oneiron-bench/fixtures/beam_measure.chroma.example.json > supported.json
 ONEIRON_EVAL_API_KEY=fixture-only cargo run -p oneiron-bench -j 8 -- beam measure crates/oneiron-bench/fixtures/beam_measure.no_evidence.chroma.example.json > no-evidence.json
-python3 -m unittest discover -s crates/oneiron-bench/scripts -p test_fixture_model_stub.py -v
 ```
 
 The receipt [`results/beam-chroma-fixture-2026-09-27.json`](results/beam-chroma-fixture-2026-09-27.json)

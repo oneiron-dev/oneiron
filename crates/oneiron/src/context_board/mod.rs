@@ -9,6 +9,7 @@ mod capabilities;
 mod observations;
 #[cfg(test)]
 mod observations_tests;
+mod own_changes;
 mod read_set;
 mod room;
 mod room_verbs;
@@ -16,17 +17,24 @@ mod room_verbs;
 mod room_verbs_tests;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
-pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
-pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
+pub use read_set::{
+    ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
+    ProposalReason, ServedLifecycle, SessionReadSet,
+};
+pub(crate) use room::scope_worlds;
+pub use room::{
+    RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
+};
+pub(crate) use room_verbs::{room_ceiling_in, room_clearance_in, room_roster_in};
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;
 mod hydration;
 mod self_brief;
-pub(crate) use history::validate_board_claim;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
 };
+pub(crate) use history::{fold_board_turns_in_txn, validate_board_claim};
 pub use self_brief::{
     BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
     SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
@@ -35,6 +43,7 @@ mod memories;
 mod memories_frame;
 mod memories_projection;
 mod memory_pins;
+mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod plugin;
@@ -42,15 +51,10 @@ mod stream;
 
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
-    BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, DeliveryClass, DeliveryPolicy,
-    DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, RouteObservation,
-    StreamConnectionId, StreamConnectionState, SubscriptionError, SubscriptionReceipt,
-    SubscriptionScope, WakeEnvelope,
-};
-pub use stream::{
-    BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
-    WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
-    WakeReportDisposition,
+    BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
+    DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
+    RouteObservation, StreamConnectionId, StreamConnectionState, SubscriptionError,
+    SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
 #[cfg(test)]
 mod surfaces_tests;
@@ -75,6 +79,10 @@ pub use memories::{
     MemoriesSection, MemoryRow, MemorySlot, MemorySource,
 };
 pub use memories_projection::project_memories_section;
+pub(crate) use notifications::{NotificationRecipientScope, notification_recipient_scope};
+pub use notifications::{
+    caller_marker_contains, notification_body_json, notification_scoped_to_caller,
+};
 pub use plugin::{
     AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
     BoardBlockWriteEnvelope, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
@@ -94,7 +102,7 @@ pub use plugin::{
 };
 pub use tasks::{
     CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow,
-    TasksSection, expand_task, failed_lane, fold_up_status, render_tasks_section,
+    TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status, render_tasks_section,
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
 
@@ -109,43 +117,4 @@ pub(super) fn one_line_token(s: &str) -> String {
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-mod test_support {
-    use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
-    use crate::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
-
-    pub(super) fn run_tree_node(
-        attempt_id: &str,
-        agent_id: Option<&str>,
-        status: RunTreeStatus,
-    ) -> RunTreeNode {
-        run_tree_node_with_worker_kind(attempt_id, agent_id, status, AGENT_DISPATCH_ATTEMPT_TYPE)
-    }
-
-    pub(super) fn run_tree_node_with_worker_kind(
-        attempt_id: &str,
-        agent_id: Option<&str>,
-        status: RunTreeStatus,
-        worker_kind: &str,
-    ) -> RunTreeNode {
-        RunTreeNode {
-            attempt_id: attempt_id.to_owned(),
-            run_id: None,
-            parent_id: None,
-            worker_kind: worker_kind.to_owned(),
-            worker: None,
-            agent_id: agent_id.map(str::to_owned),
-            status,
-            result_ref: None,
-            timestamps: RunTreeTimestamps {
-                created_at: 1,
-                updated_at: 2,
-            },
-            failure: None,
-            events: Vec::new(),
-            children: Vec::new(),
-        }
-    }
 }

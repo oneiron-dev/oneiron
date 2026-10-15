@@ -14,15 +14,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
 | `src/agent_verbs.rs` | src | m | 29 fn | — | — |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
-| `src/embedded.rs` | src | m | 1 fn · 14 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
+| `src/embedded.rs` | src | m | 1 fn · 17 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
-| `src/lib.rs` | src | s | 2 struct · 12 fn · 2 const · 1 mod · 2 re-export | OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
+| `src/lib.rs` | src | s | 2 struct · 13 fn · 2 const · 1 mod · 2 re-export | OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
 | `src/llm.rs` | src | s | 1 struct · 1 trait · 2 fn | OwnServerTransport, RemoteLlmClient | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
-| `src/remote/mod.rs` | src | m | 7 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
+| `src/remote/mod.rs` | src | m | 8 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/pairing.rs` | src | s | 2 crate-vis | — | — |
-| `src/remote/response.rs` | src | s | 6 crate-vis | — | — |
-| `src/remote/tests.rs` | test | m | — | — | — |
+| `src/remote/response.rs` | src | s | 7 crate-vis | — | — |
+| `src/remote/tests.rs` | test | s | — | — | — |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |
@@ -30,5 +30,3 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/numeric_boundaries.rs` | test | s | — | — | The shared timestamp bound must agree with JavaScript's safe integers |
 | `tests/origin_security.rs` | test | s | — | — | Credentials may travel over HTTP only to loopback development endpoints |
 | `tests/retained_correctness.rs` | test | s | — | — | Retained admission regressions through the actual shared SDK dispatcher |
-| `tests/same_pid_reopen.rs` | test | s | — | — | ONE-1441 §Test/Shared #3 — same-PID reopen opens one shared native vault |
-| `tests/transport_ownership.rs` | test | s | — | — | ONE-1441 §Test/Shared #7 — `bindings_depend_on_one_http_stack` |

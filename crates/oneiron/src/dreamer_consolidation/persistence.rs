@@ -3,7 +3,7 @@ use super::conflict::deterministic_claim_id;
 #[cfg(test)]
 use super::conflict::{ConflictSet, PriorHead, conflict_open_marker_id};
 use super::provenance::{PromotionCandidate, source_meet};
-use super::support::{TURN_BODY_FACET_REF_KEY, invalid_consolidation};
+use super::support::{SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consolidation};
 use crate::claim::{
     ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
     claim_evidence_taint,
@@ -25,6 +25,12 @@ pub(super) fn identity_scope(identity: &super::conflict::ConflictIdentity) -> Re
         let value = rmpv::decode::read_value(&mut topic.as_slice())
             .map_err(|_| invalid_consolidation("conflict topic key"))?;
         fields.push((Value::from("topic_key"), value));
+    }
+    if identity.project != crate::claim::default_project_id() {
+        fields.push((
+            Value::from(SCOPE_PROJECT_KEY),
+            Value::Binary(identity.project.as_bytes().to_vec()),
+        ));
     }
     Ok(Value::Map(fields))
 }
@@ -123,6 +129,8 @@ pub(super) fn open_marker(
 
 /// Records an explicit close as an ordinary gated promotion claim. The open
 /// marker remains as audit evidence; replays of this run use the same id.
+/// The close lands in the marker's own project (its body stamp) and cites
+/// only evidence in that project (ONE-1592 P3).
 pub fn close_persistent_conflict(
     vault: &Vault,
     run: &crate::dreamer_promotion::DreamerRunContext,
@@ -130,6 +138,19 @@ pub fn close_persistent_conflict(
     resolution: Value,
     evidence_refs: Vec<EntityId>,
 ) -> Result<crate::dreamer_promotion::PromotionOutcome> {
+    let close = conflict_close_candidate(vault, run, open, resolution, evidence_refs)?;
+    crate::dreamer_promotion::promote_consolidated_claims(vault, run, vec![close])
+}
+
+/// The close [`close_persistent_conflict`] promotes, for a door that writes
+/// it under its own fence.
+pub(crate) fn conflict_close_candidate(
+    vault: &Vault,
+    run: &crate::dreamer_promotion::DreamerRunContext,
+    open: EntityId,
+    resolution: Value,
+    evidence_refs: Vec<EntityId>,
+) -> Result<PromotionCandidate> {
     let body = vault
         .get_claim(&open)?
         .ok_or(invalid_consolidation("conflict marker not found"))?;
@@ -139,6 +160,28 @@ pub fn close_persistent_conflict(
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation("conflict subject"));
     };
+    let project = body.scope_project;
+    {
+        let txn = vault.store.env.read_txn()?;
+        for id in &evidence_refs {
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
+                .ok_or_else(|| invalid_consolidation("conflict evidence not found"))?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(crate::error::Error::CorruptedIndex("record header"))?;
+            let source = super::resources::stored_project(
+                &vault.store,
+                &txn,
+                *id,
+                header.entity_type,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if source != Some(project) {
+                return Err(invalid_consolidation(
+                    "conflict evidence crossed the marker's project",
+                ));
+            }
+        }
+    }
     let value = Value::Map(vec![
         (
             Value::from("open_marker"),
@@ -154,6 +197,7 @@ pub fn close_persistent_conflict(
         body.world,
         None,
         body.rel,
+        body.scope_project,
         super::conflict::topic_key(body.scope.as_ref())?.as_deref(),
     )?;
     let meet = source_meet(
@@ -163,8 +207,21 @@ pub fn close_persistent_conflict(
             .unwrap_or(ClaimSource::Generated),
     );
     let mut candidate = ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, body.subject, value, 1.0);
-    if let Some(scope) = body.scope {
-        candidate = candidate.with_scope(scope);
+    // The marker's own stamp is its project; a scope-map entry can never move
+    // it. Promotion keeps only a map scope, so a non-map one adds nothing.
+    let mut fields = match body.scope {
+        Some(Value::Map(fields)) => fields,
+        _ => Vec::new(),
+    };
+    fields.retain(|(key, _)| key.as_str() != Some(SCOPE_PROJECT_KEY));
+    if project != crate::claim::default_project_id() {
+        fields.push((
+            Value::from(SCOPE_PROJECT_KEY),
+            Value::Binary(project.as_bytes().to_vec()),
+        ));
+    }
+    if !fields.is_empty() {
+        candidate = candidate.with_scope(Value::Map(fields));
     }
     if let Some(rel) = body.rel {
         candidate = candidate.with_relationship(rel);
@@ -172,21 +229,17 @@ pub fn close_persistent_conflict(
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }
-    crate::dreamer_promotion::promote_consolidated_claims(
-        vault,
-        run,
-        vec![PromotionCandidate {
-            claim_id,
-            candidate,
-            evidence_turn_refs: evidence_refs,
-            provenance_chain: Vec::new(),
-            supersedes: None,
-            evidence_meet: meet,
-            occurred: crate::TimeRange {
-                start: run.now_ms,
-                end: run.now_ms,
-            },
-            learned_at: run.now_ms,
-        }],
-    )
+    Ok(PromotionCandidate {
+        claim_id,
+        candidate,
+        evidence_turn_refs: evidence_refs,
+        provenance_chain: Vec::new(),
+        supersedes: None,
+        evidence_meet: meet,
+        occurred: crate::TimeRange {
+            start: run.now_ms,
+            end: run.now_ms,
+        },
+        learned_at: run.now_ms,
+    })
 }

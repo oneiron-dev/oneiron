@@ -124,7 +124,7 @@ fn cited(pin: &WeaveRecipePin, source: ClaimSource) -> Value {
     })
 }
 fn claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
-    // Owner approval may advance the proposal without changing its output.
+    // The owner may approve or decline the proposal without changing its output.
     let mut original = body.clone();
     original.approval = ClaimApprovalStatus::Proposed;
     Ok(*blake3::hash(&crate::claim::encode_claim_body(&original)?).as_bytes())
@@ -157,9 +157,13 @@ fn cached_result(
                 || body.subject != ClaimSubject::Entity(pin.subject)
                 || body.source != Some(source)
                 || body.lifecycle != ClaimLifecycleStatus::Active
+                // The owner may have decided the proposal since; a declined
+                // one is still this attempt's committed output.
                 || !matches!(
                     body.approval,
-                    ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved
+                    ClaimApprovalStatus::Proposed
+                        | ClaimApprovalStatus::Approved
+                        | ClaimApprovalStatus::Rejected
                 )
                 || claim_evidence_taint(&body) != Some(source)
                 // The Dreamer's MACHINE signature binds these same bytes.
@@ -300,7 +304,7 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         .with_evidence(cited(&pin, source))
         .with_evidence_taint(source)?;
         let now = ctx.now_ms / 1000;
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             if cached_result(vault, txn, attempt, &pin, actor, &id)? {
                 return Ok(());
             }

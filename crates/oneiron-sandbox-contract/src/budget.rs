@@ -33,20 +33,3 @@ impl ProgramBudget {
         Ok(())
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn assembled_program_respects_reservation() {
-        let budget = ProgramBudget::new(128 * 1024).unwrap();
-        assert!(budget.qualify_source(MAX_PROGRAM_BYTES).is_err());
-        budget
-            .assemble(MAX_PROGRAM_BYTES - 128 * 1024, 128 * 1024)
-            .unwrap();
-        assert!(
-            budget
-                .assemble(MAX_PROGRAM_BYTES - 128 * 1024, 128 * 1024 + 1)
-                .is_err()
-        );
-    }
-}

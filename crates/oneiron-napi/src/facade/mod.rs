@@ -24,6 +24,13 @@ mod verbs_claims;
 mod verbs_services;
 
 pub(crate) use self::boundary::{BoundaryResult, boundary_error, facade_error, ts_to_engine};
+
+/// Every door of this binding that opens a vault calls this first. Crash
+/// output never carries world text (owner ruling 2026-10-14, fix 6), so the
+/// engine's panic hook goes in before any vault opens.
+pub(crate) fn before_vault_open() {
+    oneiron::panic_report::install_panic_hook();
+}
 pub use self::bridge::{ActorScopedVault, VaultBridge};
 // `numeric.rs` names this DTO through `super::`, as it did when both lived in
 // the flat file; it is the only DTO the rest of the crate reaches via `facade::`.

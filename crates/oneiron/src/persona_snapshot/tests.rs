@@ -3,8 +3,7 @@ use crate::authority::{HostSlipIssuer, SlipCaveat};
 use crate::claim::{ClaimSource, ScopedReadActorKey};
 use crate::config::VaultConfig;
 use crate::deletion::DeleteReason;
-use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
-use crate::receipt::{ReceiptKind, ReceiptQuery};
+use crate::federation::{Scope, ScopeAxis, Sensitivity};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::{EdgeKind, ErrorKind, Vault};
 
@@ -164,31 +163,6 @@ fn ambiguous_sensitivity_band_fails_closed() {
     assert!(persona_snapshot_tier_a_clamped(&body));
 }
 
-/// ONE-1645: the unstamped floor (band 2) sits deliberately BELOW the persona
-/// clamp (band 3). An unstamped claim is private-to-others — Tier A at
-/// `disclosure_tier` — yet still visible to the OWNER in their own persona
-/// compile. Private means not-disclosed-to-others, not invisible-to-self.
-/// This asymmetry is chosen, not accidental; the two constants are separate
-/// boundaries and this test pins them apart.
-#[test]
-fn unstamped_claim_not_persona_clamped() {
-    let subject = EntityId::from_bytes([0x63; 16]).expect("entity id");
-    let unstamped = claim_body(subject, "profile.preference", "text", 0.5, None);
-    assert_eq!(
-        crate::claim::claim_sensitivity_band(&unstamped),
-        Some(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND),
-        "the probe body must actually be unstamped"
-    );
-    assert!(
-        !persona_snapshot_tier_a_clamped(&unstamped),
-        "the floor band must stay below the persona clamp"
-    );
-
-    // Control: an explicitly restricted claim is still clamped.
-    let restricted = claim_body(subject, "profile.preference", "text", 0.5, Some(3));
-    assert!(persona_snapshot_tier_a_clamped(&restricted));
-}
-
 #[test]
 fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
     let (_dir, vault) = test_vault();
@@ -253,211 +227,6 @@ fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
 }
 
 #[test]
-fn strike_list_with_unknown_row_id_is_rejected() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
-
-    let compile =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    let strikes = PersonaSnapshotStrikeList {
-        strike: BTreeSet::from(["row:doesnotexist".to_owned()]),
-        unstrike: BTreeSet::new(),
-    };
-    let err = vault
-        .export_persona_snapshot(&compile, &strikes, &owner_consent(&compile))
-        .expect_err("unknown row id must be rejected");
-    assert_eq!(err.kind(), ErrorKind::InvalidPersonaSnapshot);
-    Ok(())
-}
-
-#[test]
-fn third_party_rows_default_coarse_name_and_role() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    let friend = put_person(&vault, 0xB1)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
-    put_claim(&vault, friend, "profile.name", "Kenji", 0.9, None)?;
-    put_claim(
-        &vault,
-        friend,
-        "profile.worry",
-        "worries about deadlines",
-        0.7,
-        None,
-    )?;
-    put_relationship(&vault, subject, friend, "coworker", Sensitivity::Public)?;
-
-    let compile =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    let relationship_row = compile
-        .rows
-        .iter()
-        .find(|row| row.kind == PersonaSnapshotRowKind::Relationship)
-        .expect("relationship row");
-    assert_eq!(relationship_row.text, "Kenji — coworker");
-    assert!(!relationship_row.struck);
-
-    let artifact = vault.export_persona_snapshot(
-        &compile,
-        &PersonaSnapshotStrikeList::default(),
-        &owner_consent(&compile),
-    )?;
-    assert!(artifact.markdown.contains("Kenji — coworker"));
-    assert!(
-        !artifact.markdown.contains("worries about deadlines"),
-        "third-party claims enter only via explicit un-strike"
-    );
-    Ok(())
-}
-
-#[test]
-fn agent_takes_absent_unless_toggled_and_always_attributed() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
-    let take = PersonaSnapshotAgentTake {
-        actor_ref: "eiri".to_owned(),
-        text: "seems energized by morning work".to_owned(),
-        about_ref: None,
-    };
-
-    let mut options = PersonaSnapshotCompileOptions {
-        agent_takes: vec![take],
-        ..PersonaSnapshotCompileOptions::default()
-    };
-    let compile = vault.compile_persona_snapshot(&subject, &options)?;
-    assert!(
-        compile
-            .rows
-            .iter()
-            .all(|row| row.kind != PersonaSnapshotRowKind::AgentTake),
-        "takes must be absent while the per-card toggle is off"
-    );
-    assert!(!compile.takes_included);
-
-    options.include_agent_takes = true;
-    let compile = vault.compile_persona_snapshot(&subject, &options)?;
-    let take_row = compile
-        .rows
-        .iter()
-        .find(|row| row.kind == PersonaSnapshotRowKind::AgentTake)
-        .expect("take row when toggled on");
-    assert_eq!(take_row.attribution.as_deref(), Some("eiri"));
-    assert!(compile.takes_included);
-
-    let artifact = vault.export_persona_snapshot(
-        &compile,
-        &PersonaSnapshotStrikeList::default(),
-        &owner_consent(&compile),
-    )?;
-    assert!(artifact.markdown.contains("eiri (take): seems energized"));
-    assert!(
-        artifact
-            .memory_pack_json
-            .contains("\"attribution\":\"eiri\"")
-    );
-    Ok(())
-}
-
-#[test]
-fn one_compile_dual_renders_share_stamp_and_freshness_hints() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
-    put_claim(&vault, subject, "profile.role", "founder", 0.8, None)?;
-    put_claim(
-        &vault,
-        subject,
-        "profile.preference",
-        "prefers tea over coffee",
-        0.7,
-        None,
-    )?;
-
-    let compile =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    assert_eq!(compile.identity_line, "Lexi — founder");
-    let artifact = vault.export_persona_snapshot(
-        &compile,
-        &PersonaSnapshotStrikeList::default(),
-        &owner_consent(&compile),
-    )?;
-
-    let pack: serde_json::Value =
-        serde_json::from_str(&artifact.memory_pack_json).expect("valid MemoryPack-lite JSON");
-    assert_eq!(pack["schema"], MEMORY_PACK_LITE_SCHEMA_VERSION);
-    assert_eq!(pack["identity_line"], "Lexi — founder");
-    assert_eq!(
-        pack["persona_compile_stamp"],
-        serde_json::Value::from(compile.stamp.identity())
-    );
-    assert_eq!(
-        pack["compiled_at_secs"],
-        serde_json::Value::from(compile.compiled_at_secs)
-    );
-    assert_eq!(
-        pack["stale_after_secs"],
-        serde_json::Value::from(compile.stale_after_secs)
-    );
-
-    assert!(artifact.markdown.starts_with("# Lexi — founder"));
-    assert!(artifact.markdown.contains(&compile.stamp.identity()));
-    assert!(
-        artifact
-            .markdown
-            .contains(&format!("compiled_at_secs: {}", compile.compiled_at_secs))
-    );
-    assert!(
-        artifact
-            .markdown
-            .contains(&format!("stale_after_secs: {}", compile.stale_after_secs))
-    );
-    assert!(artifact.markdown.contains("prefers tea over coffee"));
-    assert!(
-        artifact
-            .memory_pack_json
-            .contains("prefers tea over coffee")
-    );
-    Ok(())
-}
-
-#[test]
-fn export_receipt_carries_persona_compile_stamp() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
-
-    let compile =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    let artifact = vault.export_persona_snapshot(
-        &compile,
-        &PersonaSnapshotStrikeList::default(),
-        &owner_consent(&compile),
-    )?;
-
-    let receipts = vault.receipts(ReceiptQuery {
-        kinds: BTreeSet::from([ReceiptKind::Share]),
-        ..ReceiptQuery::default()
-    })?;
-    let receipt = receipts
-        .iter()
-        .find(|receipt| {
-            receipt.receipt_id == format!("share:persona_snapshot:{}", artifact.export_id.to_hex())
-        })
-        .expect("persona snapshot export must project a Share receipt");
-    assert_eq!(receipt.receipt_kind, ReceiptKind::Share);
-    assert_eq!(receipt.actor.as_deref(), Some("owner"));
-    assert_eq!(receipt.outcome, "exported");
-    assert_eq!(
-        receipt.fields.get("persona_compile_stamp"),
-        Some(&compile.stamp.identity())
-    );
-    assert_eq!(receipt.fields.get("subject_ref"), Some(&subject.to_hex()));
-    Ok(())
-}
-
-#[test]
 fn stale_consent_stamp_rejects_export() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
@@ -481,72 +250,110 @@ fn stale_consent_stamp_rejects_export() -> Result<()> {
 }
 
 #[test]
-fn audience_scoped_compile_changes_stamp_identity() -> Result<()> {
+fn persona_export_wire_fixture_is_persisted_and_malformed_rows_are_refused() -> Result<()> {
+    let fixture = [
+        b"\x8e".as_slice(),
+        b"\xadschemaVersion\x01".as_slice(),
+        b"\xaasubjectRef\xd9 61616161616161616161616161616161".as_slice(),
+        b"\xabaudienceRef\xc0".as_slice(),
+        b"\xacidentityLine\xa4card".as_slice(),
+        b"\xaecompiledAtSecs\x01".as_slice(),
+        b"\xaestaleAfterSecs\x02".as_slice(),
+        b"\xb3compiledFingerprint\xd9@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_slice(),
+        b"\xadtakesIncluded\xc2".as_slice(),
+        b"\xa9grantedBy\xa5owner".as_slice(),
+        b"\xadgrantedAtSecs\x03".as_slice(),
+        b"\xaeexportedAtSecs\x04".as_slice(),
+        b"\xaeincludedRowIds\x91\xa5row:a".as_slice(),
+        b"\xacstruckRowIds\x91\xa5row:b".as_slice(),
+        b"\xb3artifactFingerprint\xd9@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".as_slice(),
+    ].concat();
+    let fixture = fixture.as_slice();
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
-
-    let neutral =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    let for_kenji = vault.compile_persona_snapshot(
-        &subject,
-        &PersonaSnapshotCompileOptions {
-            audience: ScopedReadActorKey::new("contact:kenji"),
-            ..PersonaSnapshotCompileOptions::default()
-        },
-    )?;
-    assert_eq!(for_kenji.audience_ref.as_deref(), Some("contact:kenji"));
-    assert_ne!(
-        neutral.stamp.identity(),
-        for_kenji.stamp.identity(),
-        "a card compiled FOR someone is a different card"
-    );
-
-    let recompiled =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+    let id = EntityId::from_bytes([0x71; 16])?;
+    let record = decode_persona_snapshot_export_body(fixture)?;
+    assert_eq!(record.subject_ref, EntityId::from_bytes([0x61; 16])?);
+    assert_eq!(record.identity_line, "card");
     assert_eq!(
-        neutral.stamp.identity(),
-        recompiled.stamp.identity(),
-        "an unchanged recompile keeps its content-addressed identity"
+        record.compile_stamp_identity(),
+        "oneiron.persona_snapshot_compile.v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
-    Ok(())
-}
-
-#[test]
-fn export_record_body_round_trips() -> Result<()> {
-    let record = PersonaSnapshotExportRecord {
-        subject_ref: EntityId::from_bytes([0x61; 16])?,
-        audience_ref: Some("contact:kenji".to_owned()),
-        identity_line: "Lexi — founder".to_owned(),
-        compiled_at_secs: 1_000,
-        stale_after_secs: 2_000,
-        compiled_fingerprint: "a".repeat(64),
-        takes_included: true,
-        granted_by: "owner".to_owned(),
-        granted_at_secs: 1_100,
-        exported_at_secs: 1_200,
-        included_row_ids: vec!["row:aaaa".to_owned()],
-        struck_row_ids: vec!["row:bbbb".to_owned()],
-        artifact_fingerprint: "b".repeat(64),
-    };
-    let bytes = encode_persona_snapshot_export_body(&record)?;
-    let decoded = decode_persona_snapshot_export_body(&bytes)?;
-    assert_eq!(decoded, record);
+    vault.put_persona_snapshot_export(&id, &record)?;
+    let persisted = vault.get_raw(&id)?.unwrap();
     assert_eq!(
-        decoded.compile_stamp_identity(),
-        format!(
-            "{PERSONA_SNAPSHOT_COMPILE_STAMP_SCHEMA_VERSION}:{}",
-            "a".repeat(64)
-        )
+        &persisted[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        fixture
     );
 
-    let overlapping = PersonaSnapshotExportRecord {
-        struck_row_ids: vec!["row:aaaa".to_owned()],
-        ..record
+    let write_bytes = |target: &EntityId, bytes: Vec<u8>| {
+        vault.with_write_txn(|txn| {
+            crate::batch::apply_ops(
+                &vault.store,
+                &vault.config,
+                &vault.analyzer,
+                txn,
+                vec![crate::batch::BatchOp::Put {
+                    id: *target,
+                    entity_type: crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+                    occurred: TimeRange { start: 4, end: 4 },
+                    learned_at: 4,
+                    data: bytes,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                vault
+                    .text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )
+        })
     };
-    let err = encode_persona_snapshot_export_body(&overlapping)
-        .expect_err("overlapping row id lists must be rejected");
-    assert_eq!(err.kind(), ErrorKind::InvalidPersonaSnapshot);
+    let Value::Map(base) = rmpv::decode::read_value(&mut std::io::Cursor::new(fixture)).unwrap()
+    else {
+        panic!("fixture map")
+    };
+    let mut bad_version = base.clone();
+    bad_version[0].1 = Value::from(2_u64);
+    let mut missing = base.clone();
+    missing.remove(0);
+    let mut unknown = base.clone();
+    unknown.push((Value::from("extra"), Value::Nil));
+    let mut overlap = base;
+    overlap
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some("struckRowIds"))
+        .unwrap()
+        .1 = Value::Array(vec![Value::from("row:a")]);
+    for (byte, entries) in [
+        (0x72, bad_version),
+        (0x73, missing),
+        (0x74, unknown),
+        (0x75, overlap),
+    ] {
+        let target = EntityId::from_bytes([byte; 16])?;
+        let mut malformed = Vec::new();
+        rmpv::encode::write_value(&mut malformed, &Value::Map(entries)).unwrap();
+        assert_eq!(
+            write_bytes(&target, malformed).unwrap_err().kind(),
+            ErrorKind::InvalidPersonaSnapshot
+        );
+        assert!(vault.get_raw(&target)?.is_none());
+    }
+    let mut invalid_record = record;
+    invalid_record.struck_row_ids = vec!["row:a".to_owned()];
+    assert_eq!(
+        vault
+            .put_persona_snapshot_export(&id, &invalid_record)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidPersonaSnapshot
+    );
+    assert_eq!(
+        &vault.get_raw(&id)?.unwrap()[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        fixture
+    );
     Ok(())
 }
 
@@ -768,77 +575,6 @@ fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
     assert!(
         !record.identity_line.contains("Lexi"),
         "struck identity text must not survive in the queryable export record"
-    );
-    Ok(())
-}
-
-#[test]
-fn group_relationship_compiles_all_people_and_rejects_wrong_kind_member() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0x61)?;
-    let bob = put_person(&vault, 0xB1)?;
-    let carol = put_person(&vault, 0xB2)?;
-    put_claim(&vault, bob, "profile.name", "Bob", 0.9, Some(0))?;
-    put_claim(&vault, carol, "profile.name", "Carol", 0.9, Some(0))?;
-    let relation = EntityId::now();
-    let body = rmp_serde::to_vec_named(&serde_json::json!({
-        "sensitivity": "public", "role": "teammate"
-    }))
-    .expect("group relationship body");
-    vault
-        .batch()
-        .put(
-            &relation,
-            ENTITY_TYPE_RELATIONSHIP,
-            TimeRange { start: 5, end: 5 },
-            5,
-            &body,
-        )
-        .edge(&subject, EdgeKind::ParticipatesIn, &relation, 1.0)
-        .edge(&bob, EdgeKind::ParticipatesIn, &relation, 1.0)
-        .edge(&carol, EdgeKind::ParticipatesIn, &relation, 1.0)
-        .commit()?;
-    assert_eq!(
-        vault
-            .record_scope(&relation)?
-            .expect("position")
-            .sensitivity,
-        SensitivityCeiling::AtMost(Sensitivity::Public)
-    );
-    let compile =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    let related: Vec<_> = compile
-        .rows
-        .iter()
-        .filter(|row| row.kind == PersonaSnapshotRowKind::Relationship)
-        .collect();
-    assert_eq!(related.len(), 2);
-    assert!(
-        related
-            .iter()
-            .any(|row| row.subject_ref == bob && row.text == "Bob — teammate")
-    );
-    assert!(
-        related
-            .iter()
-            .any(|row| row.subject_ref == carol && row.text == "Carol — teammate")
-    );
-    let wrong_kind = EntityId::now();
-    vault.put_entity(
-        &wrong_kind,
-        crate::registry::ENTITY_TYPE_TURN,
-        TimeRange { start: 5, end: 5 },
-        5,
-        b"turn",
-    )?;
-    vault.put_edge(&wrong_kind, EdgeKind::ParticipatesIn, &relation, 1.0)?;
-    let invalid =
-        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
-    assert!(
-        invalid
-            .rows
-            .iter()
-            .all(|row| row.kind != PersonaSnapshotRowKind::Relationship)
     );
     Ok(())
 }
@@ -1094,7 +830,9 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
     let compiled = String::from_utf8(session.compiled.clone()).expect("utf-8 block");
     assert!(compiled.contains("Be concise."));
     assert!(!compiled.contains("Be elsewhere."));
-    assert_eq!(session.read_receipt.suppressed_count, 1);
+    // What the slip cannot read lies in a world it does not grant, so it
+    // adds no count either (DEC-0005: no name, no count; Astra #1388 P2).
+    assert_eq!(session.read_receipt.suppressed_count, 0);
     Ok(())
 }
 

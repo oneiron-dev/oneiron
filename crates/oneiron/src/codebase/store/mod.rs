@@ -136,7 +136,7 @@ impl IndexRowId for HashIndexKey {
 }
 
 pub(crate) fn codebase_candidate_matches_filters(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     repo_ref: Option<&RepoRef>,
@@ -165,7 +165,7 @@ pub(crate) fn codebase_candidate_matches_filters(
 }
 
 pub(crate) fn codebase_candidate_matches_scope_key(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope_key: &CodebaseScopeKey,
@@ -404,7 +404,7 @@ impl Vault {
         // The final writer view decides every derived write, not merely the
         // manifest. A registration committed between passes excludes its blob
         // from ASSET, CODE_SYMBOL and snapshot in one transaction.
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let (files, custody_report) =
                 self.apply_custody_to_snapshot(wtxn, &snapshot, &contents)?;
             let filtered_snapshot = CodebaseSnapshot::new(

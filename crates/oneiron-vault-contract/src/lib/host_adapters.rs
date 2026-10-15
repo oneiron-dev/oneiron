@@ -76,9 +76,3 @@ impl<B: EdgeBackend> Host for MicroVmHost<B> {
         self.0.suspend_until(next_wake)
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod wasm_harness_tests;

@@ -22,6 +22,11 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) output_context: OutputWorkingContext,
     pub(super) output_run: Option<EntityId>,
     pub(super) output_decay: OutputDecayPolicy,
+    /// The host's compaction seat for this run, when it keeps one.
+    pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
+    /// Shadow mode: each program is type-checked before it runs, and the
+    /// check is recorded, never acted on.
+    pub(super) code_check: Option<&'a oneiron_code_check::ShadowCheck>,
     /// Next order for the public compatibility witness door, whose callers do
     /// not have an [`EngineExecutorConfig`] run id. Explicit-order witnesses
     /// bypass this allocator and retain their exact order.
@@ -56,6 +61,8 @@ impl<'a> EngineNativeExecutor<'a> {
                 overview_after_turns: 2,
                 stub_after_turns: 5,
             },
+            compaction: None,
+            code_check: None,
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -83,7 +90,7 @@ impl<'a> EngineNativeExecutor<'a> {
         gated_write: &'a GatedActorWrite<'a>,
     ) -> EngineExecutorResult<Self> {
         Ok(Self {
-            storage: ExecutorStorage::for_session(session)?,
+            storage: ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?,
             backend,
             seat: None,
             lease,
@@ -96,6 +103,8 @@ impl<'a> EngineNativeExecutor<'a> {
                 overview_after_turns: 2,
                 stub_after_turns: 5,
             },
+            compaction: None,
+            code_check: None,
             next_witness_order: AtomicU32::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
@@ -118,6 +127,15 @@ impl<'a> EngineNativeExecutor<'a> {
         self
     }
 
+    /// Shadow mode: type-check each generated program before it runs and
+    /// record what the check found beside the step. The program runs as it
+    /// would unchecked; nothing is blocked.
+    #[must_use]
+    pub fn with_code_check(mut self, shadow: &'a oneiron_code_check::ShadowCheck) -> Self {
+        self.code_check = Some(shadow);
+        self
+    }
+
     /// Host policy for code-run console context. The default keeps the most
     /// recent observations full, then a bounded overview, then a reference.
     #[must_use]
@@ -126,14 +144,48 @@ impl<'a> EngineNativeExecutor<'a> {
         self
     }
 
-    /// Land a native compaction in the SAME output context used to build this
+    /// Binds the host's compaction seat for this run (agent-runtime-v1 §d7):
+    /// the window compacts itself, and fills park with a typed reason.
+    #[must_use]
+    pub fn with_compaction(mut self, seat: &'a mut super::compaction::RunCompaction) -> Self {
+        self.compaction = Some(seat);
+        self
+    }
+
+    /// Land a gated compaction in the SAME output context used to build this
     /// executor's next model request. A rejected mint changes no output views.
+    /// The request must be this run's own session, so no other run's
+    /// lineage can bind these steps. The run's host door rules first, as it
+    /// does on the seat's landing (#1405, Wonder P3-1).
     pub fn integrate_compaction(
         &mut self,
         driver: &mut crate::compaction::CompactionDriver,
         byline: crate::WriteActor,
-        request: &crate::compaction::CompactionRequest,
-        product: crate::compaction::CompactionProduct,
+        gated: crate::compaction::GatedCompaction,
+        accumulated: &[crate::compaction::CompactionWindowMessage],
+    ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        self.admit_compaction_read()?;
+        let placement = crate::compaction::EpochPlacement::default();
+        self.integrate_in(driver, byline, placement, gated, accumulated)
+    }
+
+    /// The run seat's swap: its summary is born at the run's `placement`.
+    pub(super) fn integrate_placed(
+        &mut self,
+        driver: &mut crate::compaction::CompactionDriver,
+        byline: crate::WriteActor,
+        placement: crate::compaction::EpochPlacement,
+        gated: crate::compaction::GatedCompaction,
+    ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        self.integrate_in(driver, byline, placement, gated, &[])
+    }
+
+    fn integrate_in(
+        &mut self,
+        driver: &mut crate::compaction::CompactionDriver,
+        byline: crate::WriteActor,
+        placement: crate::compaction::EpochPlacement,
+        gated: crate::compaction::GatedCompaction,
         accumulated: &[crate::compaction::CompactionWindowMessage],
     ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
         self.verify_storage_dispatcher_binding()?;
@@ -149,7 +201,16 @@ impl<'a> EngineNativeExecutor<'a> {
         let record = self.storage.get_code_run_replay_record(&run_id)?.ok_or(
             crate::Error::CorruptedIndex("missing executor replay record"),
         )?;
-        let span = crate::code_run::ExecutorOutputSpan::from_replay(&record, request)?;
+        let request = gated.request().clone();
+        if request.session_ref
+            != crate::code_run::executor_compaction_session_id(self.gated_write.run_ref(), run_id)?
+        {
+            return Err(crate::Error::InvalidConfig(
+                "compaction request names another session".into(),
+            )
+            .into());
+        }
+        let span = crate::code_run::ExecutorOutputSpan::from_replay(&record, &request)?;
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
@@ -157,7 +218,7 @@ impl<'a> EngineNativeExecutor<'a> {
             unreachable!("canonical storage checked before sync")
         };
         let plan =
-            driver.integrate_with_coverage(vault, byline, request, product, accumulated, &span)?;
+            driver.integrate_with_coverage(vault, byline, placement, gated, accumulated, &span)?;
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
         let last = request
@@ -285,13 +346,15 @@ impl<'a> EngineNativeExecutor<'a> {
     /// Refuses a mismatched storage/dispatcher pair before ANY read or write.
     ///
     /// Correctness must not rest on a caller having picked the matching
-    /// constructor pair, so both dimensions are checked: the session ref, and
-    /// the OWNING VAULT's identity. The vault check is what catches two vaults
-    /// whose refs compare equal — `None == None` for a pair of canonical runs,
-    /// or the same session ref entered in two different vaults.
+    /// constructor pair, so every dimension is checked: the session ref, the
+    /// OWNING VAULT's identity, and the participant a session-bound run acts
+    /// as. The vault check is what catches two vaults whose refs compare
+    /// equal — `None == None` for a pair of canonical runs, or the same
+    /// session ref entered in two different vaults.
     pub(super) fn verify_storage_dispatcher_binding(&self) -> EngineExecutorResult<()> {
         if self.storage.session_ref() != self.gated_write.session_ref()
             || self.storage.vault_id() != self.gated_write.vault_id()
+            || self.storage.participant() != self.gated_write.participant()
         {
             return Err(Error::InvalidConfig(
                 "executor storage/dispatcher binding mismatch".to_owned(),

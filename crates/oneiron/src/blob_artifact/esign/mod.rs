@@ -8,9 +8,9 @@ mod notice_dispatch;
 pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 #[cfg(test)]
-mod lifecycle_tests;
-#[cfg(test)]
 mod tests;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use ledger::mark_sent_for_test;
 pub(crate) use ledger::{reject_event_delete, validate_event_claim};
 pub use model::{
     AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument,
@@ -22,8 +22,10 @@ mod capability;
 mod ceremony;
 mod principals;
 pub use capability::EsignCapability;
+pub(crate) use capability::recipient_capability_unrevoked_in;
 pub use ceremony::{ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningOutcome, SigningPage};
 pub use principals::{SigningAutonomy, SigningPrincipal};
+pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
 
 mod outbound;
 pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};
@@ -36,11 +38,15 @@ pub use rate::{EsignRateCheck, EsignRateReceipt};
 pub mod render;
 mod seal;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
+mod sealer;
+pub use sealer::{
+    EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,
+    EsignSignatureRevision, EsignVerdict, SealDegrade, SealProfile, SealVerdict,
+};
+mod signature_revision;
+pub use signature_revision::SEAL_CONTENTS_LADDER;
 
 mod reseal;
-
-#[cfg(test)]
-mod seal_tests;
 
 mod public_read;
 

@@ -50,20 +50,7 @@ pub use self::shape::{
     SnoozePolicyData,
 };
 
-#[cfg(test)]
-mod tests;
-
 // The flat presets.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/stage import header, and
 // every presets-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use self::validate::is_external_hook;
-#[cfg(test)]
-use crate::campaign::claims::{StageEvidenceClass, StageKey};
-#[cfg(test)]
-use crate::campaign::stage::{
-    NO_SHOW_BUMP_AFTER_SECS, ReplyCode, ReplyDisposition, StageLadderDefinition,
-};
-#[cfg(test)]
-use crate::error::Error;

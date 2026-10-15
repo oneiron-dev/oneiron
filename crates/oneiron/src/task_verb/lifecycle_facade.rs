@@ -237,11 +237,8 @@ impl Memory<'_> {
                 super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
             }
 
-            // ONE-1702 SEAM (own-task settlement → WAKE/CARRIER): this is the
-            // producer call site for `mint_own_task_event` → `route_event`.
-            // ONE-1702 has not landed on this base and owns both signatures and
-            // every `context_board/stream.rs` edit, so the call is added on its
-            // rebase; no oracle-only event injection substitutes for it.
+            // The TASK put above is announced after commit; the board
+            // publisher (`context_board::stream::publish`) routes it.
             Ok((landed.clone(), false))
         })?;
 
@@ -292,8 +289,18 @@ impl Memory<'_> {
         handle: &super::TaskAskHandle,
         word: &super::TaskAskWord,
     ) -> MemoryResult<super::TaskAskAnswer> {
+        // A person's word is theirs to give: a human connector running
+        // generated code does not make that code's answer the person's.
+        if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot answer in a person's name",
+                &["Ask the person to answer through their own client."],
+            ));
+        }
         let answer = self.with_verified_actor_write_txn(|txn| {
-            let group = super::ask_record::read_group(self.vault(), txn, handle.group_ref)?
+            let group = self
+                .ask_group_in(txn, handle.group_ref)?
                 .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
             let now = self.vault().store.clock.now_recorded_at();
             let answer = super::ask_record::admit_word(
@@ -378,7 +385,8 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<super::TaskAskSoftConfirmNotice>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let group = super::ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+        let group = self
+            .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && person != self.actor()

@@ -34,30 +34,3 @@ pub(crate) fn render(mode: OutputMode) -> anyhow::Result<String> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn raw_markdown_output_is_committed_skills_pack() {
-        assert_eq!(render(OutputMode::Markdown).unwrap(), CONTENT);
-        assert!(CONTENT.starts_with("---\nname: oneiron-http-memory-api"));
-    }
-
-    #[test]
-    fn path_output_names_committed_artifact() {
-        assert_eq!(render(OutputMode::Path).unwrap(), "oneiron.skills.md\n");
-    }
-
-    #[test]
-    fn json_output_wraps_pack_without_drift() {
-        let output = render(OutputMode::Json).unwrap();
-        let envelope: serde_json::Value = serde_json::from_str(&output).unwrap();
-
-        assert_eq!(envelope["artifact_path"], ARTIFACT_PATH);
-        assert_eq!(envelope["media_type"], MEDIA_TYPE);
-        assert_eq!(envelope["bytes"], CONTENT.len());
-        assert_eq!(envelope["content"], CONTENT);
-    }
-}

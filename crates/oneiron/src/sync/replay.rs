@@ -19,7 +19,7 @@ pub fn replay_entity(
     entity: ReplicatedEntity<'_>,
     tier: ImportTier,
 ) -> crate::Result<()> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         vault
             .batch_in()
             .with_import_tier(tier)

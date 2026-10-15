@@ -906,6 +906,35 @@ fn autonomy_mode_rejects_expired_read_grant_even_with_historical_at() {
     );
 }
 
+/// Review repro (access deletion fences): a read grant whose delete was
+/// accepted but not applied keeps its Active body. The autonomy mode it backs
+/// no longer resolves, as for a revoked grant.
+#[test]
+fn autonomy_mode_rejects_a_read_grant_deleted_here() {
+    let clock = crate::ports::ManualClock::new(1_000);
+    let mut config = embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, owner, request) =
+        fixture_with_config(ChannelIdentityAutonomyRung::ScopedRead, config);
+    let state = vault
+        .apply_channel_identity_autonomy(&request, &owner)
+        .unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    let resolve = || {
+        vault.resolve_channel_identity_autonomy_mode(
+            &request.read_envelope.identity_ref,
+            &request.relationship_context,
+            1_000,
+        )
+    };
+    assert!(resolve().is_ok());
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &reference, &[1; 25]))
+        .unwrap();
+    assert!(vault.get_access_grant(&reference).unwrap().is_some());
+    assert!(resolve().is_err(), "a deleted read grant backs no mode");
+}
+
 #[test]
 fn revoked_read_action_and_unified_grants_fail_closed() {
     for which in 0..3 {
@@ -1247,6 +1276,57 @@ fn owner_can_apply_another_context_without_reminting_shared_read_authority() {
     assert_eq!(verified.mode.rung, ChannelIdentityAutonomyRung::DraftOnly);
     assert_eq!(verified.mode.read_grant_ref, second.mode.read_grant_ref);
     assert_eq!(verified.mode.action_grant_ref, second.mode.action_grant_ref);
+}
+
+/// engine-prs-07: a fenced identity whose Active body is still stored
+/// authorizes no scoped read and resolves no autonomy mode.
+#[test]
+fn a_fenced_identity_authorizes_no_scoped_read() {
+    let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::ScopedRead);
+    let state = vault
+        .apply_channel_identity_autonomy(&request, &owner)
+        .unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    let item = MailboxReadCandidate {
+        identity_ref: request.read_envelope.identity_ref,
+        label: Some("inbox".to_owned()),
+        thread_ref: Some("thread:1".to_owned()),
+        occurred_at: 15,
+    };
+    assert!(
+        vault
+            .authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &item)
+            .unwrap()
+    );
+    // An unobserved delete fences the row and leaves its body in place.
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    crate::deletion::ROW_DELETION_FENCE
+        .put(
+            &vault.store,
+            &mut wtxn,
+            &crate::side_table::HexId(request.read_envelope.identity_ref),
+            &Vec::new(),
+        )
+        .unwrap();
+    wtxn.commit().unwrap();
+    assert!(
+        crate::ports::EntityStoreRead::port_entity_raw(
+            &vault.store,
+            &vault.store.env.read_txn().unwrap(),
+            &request.read_envelope.identity_ref,
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert!(!matches!(
+        vault.authorize_channel_identity_scoped_read(&reference, &request.actor_ref, &item),
+        Ok(true)
+    ));
+    assert!(
+        vault
+            .verify_channel_identity_autonomy(&request, &owner)
+            .is_err()
+    );
 }
 
 #[test]
@@ -2014,5 +2094,3 @@ fn graduation_duplicate_admission_is_atomic_and_survives_reopen() {
         [evidence.receipt_ref]
     );
 }
-
-mod space_posting;

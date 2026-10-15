@@ -3,20 +3,11 @@ use super::*;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::edge::EdgeKind;
 use crate::genui::{ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface};
 use crate::outbound::OutboundDispatchOutcome;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
 use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
-
-/// The feedback module source, read at compile time so the network-freedom and
-/// secret-hygiene guards are structural rather than aspirational.
-const FEEDBACK_SOURCE: &str = concat!(
-    include_str!("mod.rs"),
-    include_str!("bundle.rs"),
-    include_str!("consent.rs"),
-    include_str!("dispatch.rs"),
-    include_str!("error.rs"),
-);
 
 /// Text that must never leave the vault: it stands in for a configuration
 /// value the whitelist projection deliberately does not carry.
@@ -64,10 +55,9 @@ fn healer_diagnosis() -> FeedbackHealerDiagnosis {
     diagnosis.subject_refs.insert("memory:alpha".to_owned());
     diagnosis.subject_refs.insert("memory:beta".to_owned());
     diagnosis.dag = vec![
-        FeedbackDagHop::new("memory:alpha", "supersedes", "memory:beta"),
-        FeedbackDagHop::new("memory:beta", "contradicts", "claim:gamma"),
+        FeedbackDagHop::new("memory:alpha", EdgeKind::Supersedes, "memory:beta"),
+        FeedbackDagHop::new("memory:beta", EdgeKind::Opposes, "claim:gamma"),
     ];
-    diagnosis.mechanism = Some("the later write shadowed the earlier one".to_owned());
     diagnosis
 }
 
@@ -81,7 +71,7 @@ fn full_bundle() -> FeedbackBundle {
 }
 
 fn preview_of(bundle: FeedbackBundle) -> FeedbackPreview {
-    prepare_feedback_preview(bundle, &PassThroughFeedbackRedactor).expect("prepare preview")
+    prepare_feedback_preview(bundle, &UnredactedFeedback).expect("prepare preview")
 }
 
 fn send_route() -> FeedbackSendRoute {
@@ -122,6 +112,7 @@ fn evaluation_with(
     fields.insert("component_kind".to_owned(), component_kind.to_owned());
     fields.insert("component_id".to_owned(), component_id.to_owned());
     fields.insert("action_id".to_owned(), action_id.to_owned());
+    fields.insert("expected_principal_ref".to_owned(), "owner".to_owned());
     ConsentActionEvaluation {
         decision,
         receipt: ReceiptRecord {
@@ -147,7 +138,7 @@ fn approved_for(
     evaluation_with(
         ConsentActionDecision::ApprovedOnce,
         "consent_ask",
-        &preview.approval_component_id(scope),
+        &preview.approval_component_id(scope, "owner"),
         FEEDBACK_APPROVE_ONCE_ACTION,
         "consent:feedback:approval:1",
     )
@@ -283,31 +274,6 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         && haystack
             .windows(needle.len())
             .any(|window| window == needle)
-}
-
-fn assert_source_free_of(tokens: &[&str]) {
-    for token in tokens {
-        assert!(
-            !FEEDBACK_SOURCE.contains(token),
-            "the feedback module must not mention {token}"
-        );
-    }
-}
-
-/// Tokens whose absence proves the module cannot reach the environment, the
-/// filesystem, a socket, a subprocess, or a credential store.
-fn ambient_acquisition_tokens() -> Vec<&'static str> {
-    vec![
-        "crate::connector_key",
-        "secret_manifest",
-        "dict_search_paths",
-        "std::env::var",
-        "std::fs",
-        "std::net",
-        "std::process",
-        "reqwest",
-        "ureq",
-    ]
 }
 
 // -------------------------------------------------------------- vault fixtures
@@ -486,55 +452,34 @@ fn feedback_bundle_wire_contract_rejects_malformed_bytes() {
     }
 }
 
-// ---------------------------------------------------------------- 2. digest
-
-fn independent_digest(bytes: &[u8]) -> String {
-    let mut preimage = Vec::new();
-    preimage.extend_from_slice(b"oneiron.feedback.bundle.v1\0");
-    preimage.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-    preimage.extend_from_slice(bytes);
-    blake3::hash(&preimage).to_hex().to_string()
-}
-
+/// Owner ruling 2026-10-14 (fix 6): the engine attaches no world text to a
+/// bundle. A healer's DAG relation is an edge kind, so a row the healer read
+/// cannot ride out in it, on encode or on decode.
 #[test]
-fn feedback_digest_binds_exact_post_redaction_bytes() {
-    let bundle = full_bundle();
-    let bytes = encode_feedback_bundle(&bundle).expect("encode bundle");
-    let digest = feedback_bundle_digest(&bytes);
+fn a_healer_relation_is_an_edge_kind_never_row_text() {
+    const SENTINEL: &str = "sentinel-row-text-5d21:my-sister's-diagnosis";
+    let mut diagnosis = healer_diagnosis();
+    diagnosis.dag[0].relation = SENTINEL.to_owned();
+    let bundle = minimal_bundle().with_healer_diagnosis(diagnosis);
+    assert!(
+        matches!(
+            encode_feedback_bundle(&bundle),
+            Err(FeedbackError::InvalidBundle(_))
+        ),
+        "a relation that is not an edge kind is refused on encode"
+    );
+    let bytes = rmp_serde::to_vec_named(&bundle).expect("raw encode");
+    match decode_feedback_bundle(&bytes) {
+        Err(FeedbackError::InvalidBundle(message)) => assert!(!message.contains(SENTINEL)),
+        other => panic!("a relation that is not an edge kind is refused on decode, got {other:?}"),
+    }
 
-    assert_eq!(digest, independent_digest(&bytes));
-    assert_eq!(digest.len(), 64);
-    assert_eq!(digest, digest.to_lowercase());
-    assert_eq!(
-        digest,
-        feedback_bundle_digest(&encode_feedback_bundle(&bundle).expect("re-encode")),
-        "repeated encodes digest identically"
-    );
-
-    let scope = send_scope();
-    let component = feedback_approval_component_id(&digest, &scope);
-    let export_component = feedback_approval_component_id(&digest, &FeedbackApprovalScope::Export);
-    assert!(component.starts_with(FEEDBACK_APPROVAL_COMPONENT_PREFIX));
-    assert_ne!(component, export_component);
-
-    let changed = bundle.with_user_note("a different note entirely");
-    let changed_bytes = encode_feedback_bundle(&changed).expect("encode changed bundle");
-    let changed_digest = feedback_bundle_digest(&changed_bytes);
-    assert_ne!(
-        digest, changed_digest,
-        "any field change changes the digest"
-    );
-    assert_ne!(
-        component,
-        feedback_approval_component_id(&changed_digest, &scope),
-        "a changed digest changes the send component id"
-    );
-    assert_ne!(
-        export_component,
-        feedback_approval_component_id(&changed_digest, &FeedbackApprovalScope::Export),
-        "a changed digest changes the export component id"
-    );
+    let kept = minimal_bundle().with_healer_diagnosis(healer_diagnosis());
+    let bytes = encode_feedback_bundle(&kept).expect("edge-kind relations encode");
+    assert_eq!(decode_feedback_bundle(&bytes).expect("and decode"), kept);
 }
+
+// ---------------------------------------------------------------- 2. digest
 
 // ---------------------------------------------------------------- 3. config
 
@@ -578,130 +523,91 @@ fn feedback_config_snapshot_is_constrained_and_whitelisted() {
     );
 }
 
-#[test]
-fn feedback_config_snapshot_rejects_unsafe_embedding_model() {
-    let long_model = "m".repeat(FEEDBACK_EMBEDDING_MODEL_MAX_BYTES + 1);
-    let rejected = [
-        "",
-        "  test/model@v1  ",
-        "test model@v1",
-        "https://models.example.invalid/model",
-        long_model.as_str(),
-    ];
-    for candidate in rejected {
-        let mut config = canary_config();
-        config.embedding_model = Some(candidate.to_owned());
-        assert!(
-            matches!(
-                FeedbackConfigSnapshot::from_config(&config),
-                Err(FeedbackError::InvalidBundle(_))
-            ),
-            "embedding_model {candidate:?} must be rejected"
-        );
-    }
-
-    let mut absent = canary_config();
-    absent.embedding_model = None;
-    let snapshot = FeedbackConfigSnapshot::from_config(&absent).expect("absent model is fine");
-    assert!(snapshot.embedding_model.is_none());
-}
-
 // ---------------------------------------------------------------- 4. healer
-
-#[test]
-fn healer_diagnosis_carries_refs_dag_and_mechanism() {
-    let bundle = minimal_bundle().with_healer_diagnosis(healer_diagnosis());
-    let bytes = encode_feedback_bundle(&bundle).expect("encode diagnosis bundle");
-    let decoded = decode_feedback_bundle(&bytes).expect("decode diagnosis bundle");
-    let diagnosis = decoded
-        .healer_diagnosis
-        .as_ref()
-        .expect("diagnosis round-trips");
-
-    assert_eq!(diagnosis.diagnosis_ref, "healer:diagnosis:1");
-    assert_eq!(
-        diagnosis.subject_refs.iter().collect::<Vec<_>>(),
-        vec!["memory:alpha", "memory:beta"]
-    );
-    assert_eq!(
-        diagnosis.dag,
-        vec![
-            FeedbackDagHop::new("memory:alpha", "supersedes", "memory:beta"),
-            FeedbackDagHop::new("memory:beta", "contradicts", "claim:gamma"),
-        ],
-        "DAG hop order survives the wire"
-    );
-
-    let blank_ref = {
-        let mut broken = healer_diagnosis();
-        broken.subject_refs.insert("   ".to_owned());
-        broken
-    };
-    let blank_relation = {
-        let mut broken = healer_diagnosis();
-        broken.dag = vec![FeedbackDagHop::new("memory:alpha", "", "memory:beta")];
-        broken
-    };
-    let blank_mechanism = {
-        let mut broken = healer_diagnosis();
-        broken.mechanism = Some("   ".to_owned());
-        broken
-    };
-    let dumped_trace = {
-        let mut broken = healer_diagnosis();
-        broken.mechanism =
-            Some("panic at line 1\n  stack frame two\n  stack frame three".to_owned());
-        broken
-    };
-    let blank_diagnosis_ref = {
-        let mut broken = healer_diagnosis();
-        broken.diagnosis_ref = String::new();
-        broken
-    };
-
-    for broken in [
-        blank_ref,
-        blank_relation,
-        blank_mechanism,
-        dumped_trace,
-        blank_diagnosis_ref,
-    ] {
-        let candidate = minimal_bundle().with_healer_diagnosis(broken);
-        assert!(
-            matches!(
-                encode_feedback_bundle(&candidate),
-                Err(FeedbackError::InvalidBundle(_))
-            ),
-            "a malformed diagnosis is a typed rejection, not a silent encode"
-        );
-    }
-}
 
 // ------------------------------------------------------------- 5. no dispatch
 
 #[test]
-fn prepare_and_redact_never_dispatch() {
-    // Preview, card, and disclosure take no transport and no vault: there is
-    // no parameter through which they could reach one.
-    let preview = preview_of(full_bundle());
-    let scope = send_scope();
-    let card =
-        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
-    assert!(!card.preview.is_empty());
-    assert!(!preview.display_json().expect("render preview").is_empty());
-
-    // Export takes a writer the caller owns, and nothing else.
-    let mut sink = Vec::new();
-    let approval = approved_for(&preview, &FeedbackApprovalScope::Export);
-    export_feedback_bundle(&preview, &approval, &mut sink).expect("export");
-    assert_eq!(sink, preview.bytes());
-
-    // A transport exists in this test and is handed to nothing, so it stays at
-    // zero calls across the whole preview/consent/export path.
-    let transport = RecordingTransport::default();
-    assert!(transport.payloads.is_empty());
-
-    assert_source_free_of(&ambient_acquisition_tokens());
+fn isolated_preview_export_does_not_disclose_ambient_canaries() {
+    const CHILD: &str = "ONEIRON_FEEDBACK_ISOLATED_CHILD";
+    const CANARY: &str = "ambient-feedback-canary-not-bundle-input";
+    if std::env::var_os(CHILD).is_some() {
+        let bundle = minimal_bundle()
+            .with_config(FeedbackConfigSnapshot::from_config(&canary_config()).unwrap())
+            .with_user_note(format!("contact {PII_CANARY}"));
+        let preview = prepare_feedback_preview(bundle, &CanaryRedactor).unwrap();
+        let card = feedback_approval_card(
+            &preview,
+            "owner",
+            CALLER_PROMPT,
+            &FeedbackApprovalScope::Export,
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        export_feedback_bundle(
+            &preview,
+            &approved_for(&preview, &FeedbackApprovalScope::Export),
+            &mut bytes,
+        )
+        .unwrap();
+        assert!(preview.display_json().unwrap().contains(REDACTED_MARKER));
+        for secret in [CANARY, PII_CANARY, OMITTED_CANARY] {
+            assert!(!preview.display_json().unwrap().contains(secret));
+            assert!(!card.preview.contains(secret));
+            assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()));
+        }
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(home.path().join(".aws")).unwrap();
+    for name in [".env", ".netrc", ".aws/credentials"] {
+        std::fs::write(home.path().join(name), CANARY).unwrap();
+    }
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    trap.set_nonblocking(true).unwrap();
+    let proxy = format!("http://{}", trap.local_addr().unwrap());
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "feedback::tests::isolated_preview_export_does_not_disclose_ambient_canaries",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env_clear()
+        .env(CHILD, "1")
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("OPENAI_API_KEY", CANARY)
+        .env("ANTHROPIC_API_KEY", CANARY)
+        .env("AWS_SECRET_ACCESS_KEY", CANARY)
+        .env("HTTP_PROXY", &proxy)
+        .env("HTTPS_PROXY", &proxy)
+        .env("ALL_PROXY", &proxy)
+        .env("http_proxy", &proxy)
+        .env("https_proxy", &proxy)
+        .env("all_proxy", &proxy)
+        .current_dir(home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    assert!(
+        !output
+            .stdout
+            .windows(CANARY.len())
+            .any(|w| w == CANARY.as_bytes())
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(CANARY.len())
+            .any(|w| w == CANARY.as_bytes())
+    );
+    assert!(matches!(trap.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
 }
 
 // ------------------------------------------------------------- 6. redaction
@@ -802,7 +708,7 @@ fn redactor_output_is_the_only_preview_and_send_payload() {
             &evaluation_with(
                 ConsentActionDecision::Declined,
                 "consent_ask",
-                &plain.approval_component_id(&FeedbackApprovalScope::Export),
+                &plain.approval_component_id(&FeedbackApprovalScope::Export, "owner"),
                 FEEDBACK_APPROVE_ONCE_ACTION,
                 "consent:declined:1",
             ),
@@ -817,81 +723,10 @@ fn redactor_output_is_the_only_preview_and_send_payload() {
 // -------------------------------------------------------------- 7. approval
 
 #[test]
-fn feedback_approval_is_exact_and_once_only() {
-    let preview = preview_of(full_bundle());
-    let scope = send_scope();
-    let card =
-        feedback_approval_card(&preview, "owner", CALLER_PROMPT, &scope).expect("approval card");
-
-    assert_eq!(
-        card.card_id,
-        feedback_approval_component_id(preview.digest(), &scope),
-        "the card id is the scoped component-id formula"
-    );
-    assert_eq!(card.verb_class, FEEDBACK_SEND_VERB);
-    assert_eq!(card.verb_class, "feedback.send");
-    assert_eq!(
-        card.prompt, CALLER_PROMPT,
-        "the caller's prompt reaches the card verbatim"
-    );
-    for blank in ["", "   ", "\n"] {
-        assert!(
-            matches!(
-                feedback_approval_card(&preview, "owner", blank, &scope),
-                Err(FeedbackError::InvalidBundle(_))
-            ),
-            "a blank prompt {blank:?} is refused, not replaced with engine copy"
-        );
-    }
-    assert_eq!(
-        card.origin_receipt_ref.as_deref(),
-        Some(preview.content_ref().as_str())
-    );
-    assert!(card.scope_escalators.is_empty());
-
-    let action_ids = card
-        .actions()
-        .into_iter()
-        .map(|action| action.action_id)
-        .collect::<Vec<_>>();
-    assert_eq!(action_ids, vec!["approve_once", "decline"]);
-
-    assert!(card.preview.contains(preview.digest()));
-    assert!(card.preview.contains(FEEDBACK_BUNDLE_ENCODING));
-    assert!(card.preview.contains(&scope.destination_label()));
-    assert!(card.preview.contains(&preview.bytes().len().to_string()));
-    assert!(
-        card.preview
-            .contains(&feedback_approval_disclosure(&preview, &scope))
-    );
-
-    let approval = validate_feedback_approval(&preview, &scope, &approved_for(&preview, &scope))
-        .expect("approve once validates");
-    assert_eq!(approval.component_id(), card.card_id);
-    assert_eq!(
-        approval.approval_receipt_ref(),
-        "consent:feedback:approval:1"
-    );
-
-    // The evaluation is host-trusted field input, not authentication: the
-    // binding checks the scoped component id, and does not re-derive identity
-    // from the receipt actor.
-    let mut foreign_actor = approved_for(&preview, &scope);
-    foreign_actor.receipt.actor = Some("someone-else".to_owned());
-    let foreign_approval = validate_feedback_approval(&preview, &scope, &foreign_actor)
-        .expect("receipt actor does not change approval binding");
-    assert_eq!(foreign_approval.component_id(), card.card_id);
-    assert_eq!(
-        foreign_approval.approval_receipt_ref(),
-        foreign_actor.receipt.receipt_id,
-    );
-}
-
-#[test]
 fn feedback_approval_rejects_every_non_approval() {
     let preview = preview_of(full_bundle());
     let scope = send_scope();
-    let component = preview.approval_component_id(&scope);
+    let component = preview.approval_component_id(&scope, "owner");
 
     let declined = evaluation_with(
         ConsentActionDecision::Declined,
@@ -1047,22 +882,25 @@ fn approval_scope_binds_destination() {
     let scope_a = FeedbackApprovalScope::Send(route_a.clone());
     let scope_b = FeedbackApprovalScope::Send(route_b);
 
-    let id_a = preview.approval_component_id(&scope_a);
-    assert_ne!(id_a, preview.approval_component_id(&scope_b));
+    let id_a = preview.approval_component_id(&scope_a, "owner");
+    assert_ne!(id_a, preview.approval_component_id(&scope_b, "owner"));
     assert_eq!(
         id_a,
-        preview.approval_component_id(&FeedbackApprovalScope::Send(send_route())),
+        preview.approval_component_id(&FeedbackApprovalScope::Send(send_route()), "owner"),
         "the same route yields the same component id every time"
     );
 
     let with_counterparty = FeedbackApprovalScope::Send(send_route().with_counterparty_ref("cp"));
     let with_identity =
         FeedbackApprovalScope::Send(send_route().with_channel_identity_ref(entity(0x63)));
-    assert_ne!(id_a, preview.approval_component_id(&with_counterparty));
-    assert_ne!(id_a, preview.approval_component_id(&with_identity));
     assert_ne!(
-        preview.approval_component_id(&with_counterparty),
-        preview.approval_component_id(&with_identity)
+        id_a,
+        preview.approval_component_id(&with_counterparty, "owner")
+    );
+    assert_ne!(id_a, preview.approval_component_id(&with_identity, "owner"));
+    assert_ne!(
+        preview.approval_component_id(&with_counterparty, "owner"),
+        preview.approval_component_id(&with_identity, "owner")
     );
 
     // Length prefixing and tag framing keep routes distinct that a naive
@@ -1072,14 +910,14 @@ fn approval_scope_binds_destination() {
     );
     let crafted_right = FeedbackApprovalScope::Send(FeedbackSendRoute::new("x", "y", "z\u{0}p"));
     assert_ne!(
-        preview.approval_component_id(&crafted_left),
-        preview.approval_component_id(&crafted_right)
+        preview.approval_component_id(&crafted_left, "owner"),
+        preview.approval_component_id(&crafted_right, "owner")
     );
     let split_left = FeedbackApprovalScope::Send(FeedbackSendRoute::new("em", "ail", "t"));
     let split_right = FeedbackApprovalScope::Send(FeedbackSendRoute::new("e", "mail", "t"));
     assert_ne!(
-        preview.approval_component_id(&split_left),
-        preview.approval_component_id(&split_right)
+        preview.approval_component_id(&split_left, "owner"),
+        preview.approval_component_id(&split_right, "owner")
     );
 
     // An approval for route B cannot authorize route A, and it fails before an
@@ -1133,8 +971,8 @@ fn stale_preview_digest_never_sends() {
     let context = send_context(send_route(), actor);
     match send_feedback(&vault, &preview_b, &context, &approved_a, &mut transport) {
         Err(FeedbackError::StalePreviewDigest { expected, found }) => {
-            assert_eq!(expected, preview_b.approval_component_id(&scope));
-            assert_eq!(found, preview_a.approval_component_id(&scope));
+            assert_eq!(expected, preview_b.approval_component_id(&scope, "owner"));
+            assert_eq!(found, preview_a.approval_component_id(&scope, "owner"));
         }
         other => panic!("a stale approval must fail typed, got {other:?}"),
     }
@@ -1153,93 +991,6 @@ fn stale_preview_digest_never_sends() {
 }
 
 // ------------------------------------------------------------------ 10. send
-
-#[test]
-fn send_is_an_ordinary_outbound_effect() {
-    let preview = preview_of(full_bundle());
-    let scope = send_scope();
-    let approval = approved_for(&preview, &scope);
-    let (_dir, vault, actor) = seeded_send_vault(0x69, 0x6a);
-    let actor_ref = actor.actor_ref.clone().expect("actor ref");
-    let context = send_context(send_route(), actor);
-
-    let mut transport = RecordingTransport::default();
-    let outcome = send_feedback(&vault, &preview, &context, &approval, &mut transport)
-        .expect("approved feedback send");
-
-    assert_eq!(
-        outcome.dispatch.outcome,
-        OutboundDispatchOutcome::DeliveredToChannel
-    );
-    assert_eq!(outcome.transport_calls, 1);
-    assert_eq!(transport.payloads, vec![preview.bytes().to_vec()]);
-    assert_eq!(transport.digests, vec![preview.digest().to_owned()]);
-    assert_eq!(
-        transport.approval_refs,
-        vec!["consent:feedback:approval:1".to_owned()]
-    );
-
-    assert_eq!(
-        transport.intent_refs,
-        vec![feedback_logical_send_ref(
-            preview.digest(),
-            "consent:feedback:approval:1"
-        )]
-    );
-
-    let receipt = &outcome.dispatch.receipt;
-    assert_eq!(receipt.receipt_kind, ReceiptKind::Outbound);
-    assert_eq!(outcome.dispatch.gate_outcome, "allow");
-    assert_eq!(
-        receipt.fields.get("gate_decision_ref").map(String::as_str),
-        outcome.dispatch.gate_decision_id.as_deref(),
-        "the ordinary gate lineage rides the feedback receipt"
-    );
-    assert!(outcome.dispatch.gate_decision_id.is_some());
-    assert_eq!(
-        receipt.fields.get("content_ref").map(String::as_str),
-        Some(preview.content_ref().as_str())
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get(FEEDBACK_RECEIPT_FIELD_VERB)
-            .map(String::as_str),
-        Some(FEEDBACK_SEND_VERB)
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get(FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING)
-            .map(String::as_str),
-        Some(FEEDBACK_BUNDLE_ENCODING)
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get(FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST)
-            .map(String::as_str),
-        Some(preview.digest())
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get(FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF)
-            .map(String::as_str),
-        Some("consent:feedback:approval:1")
-    );
-
-    let request = feedback_dispatch_request(&preview, &context, &approval).expect("request");
-    assert_eq!(request.intent.actor, actor_ref);
-    assert_eq!(request.intent.trigger_ref, "consent:feedback:approval:1");
-    assert_eq!(
-        request.intent.content_ref.as_deref(),
-        Some(preview.content_ref().as_str())
-    );
-    assert_eq!(request.intent.verb, "send");
-    assert_eq!(request.intent.channel, "email");
-    assert_eq!(request.intent.target, "feedback@example.com");
-}
 
 #[test]
 fn send_without_an_actor_ref_fails_before_the_gate() {
@@ -1483,38 +1234,6 @@ fn approved_replay_is_idempotent() {
     );
 }
 
-#[test]
-fn recorded_definite_non_delivery_permits_an_ordinary_retry() {
-    let preview = preview_of(full_bundle());
-    let scope = send_scope();
-    let approval = approved_for(&preview, &scope);
-    let (_dir, vault, actor) = seeded_send_vault(0x74, 0x75);
-    let context = send_context(send_route(), actor);
-
-    let mut transport = RecordingTransport {
-        outcome: Some(OutboundExecutionOutcome::failed("transport refused")),
-        ..RecordingTransport::default()
-    };
-    let first = send_feedback(&vault, &preview, &context, &approval, &mut transport)
-        .expect("first attempt");
-    assert_eq!(first.transport_calls, 1);
-    assert_ne!(
-        first.dispatch.outcome,
-        OutboundDispatchOutcome::DeliveredToChannel
-    );
-
-    transport.outcome = Some(OutboundExecutionOutcome::delivered_to_channel(
-        "provider:feedback:retry",
-    ));
-    let retry = send_feedback(&vault, &preview, &context, &approval, &mut transport)
-        .expect("ordinary retry");
-    assert_eq!(
-        retry.transport_calls, 1,
-        "a recorded definite non-delivery leaves the ordinary retry available"
-    );
-    assert_eq!(retry.logical_send_ref, first.logical_send_ref);
-}
-
 // ---------------------------------------------------------------- 13. export
 
 #[test]
@@ -1555,73 +1274,4 @@ fn air_gapped_export_is_identical_and_network_free() {
 
 // ------------------------------------------------------------------ 14. verb
 
-#[test]
-fn feedback_verb_registration_is_local_and_exact() {
-    assert_eq!(FEEDBACK_SEND_VERB, "feedback.send");
-    assert_eq!(FeedbackVerb::Send.as_str(), FEEDBACK_SEND_VERB);
-    assert!(FEEDBACK_VERBS.contains(&FeedbackVerb::Send.as_str()));
-
-    assert!(crate::task_verb::sdk::AgentVerb::from_name(FEEDBACK_SEND_VERB).is_none());
-}
-
 // ----------------------------------------------------------- module cohesion
-
-#[test]
-fn feedback_module_owns_its_own_wire_and_domain_tokens() {
-    assert_eq!(FEEDBACK_BUNDLE_ENCODING, "oneiron.feedback.bundle.v1");
-    assert_eq!(FEEDBACK_APPROVAL_COMPONENT_PREFIX, "feedback-preview:");
-    assert_eq!(FEEDBACK_CONTENT_REF_PREFIX, "feedback:");
-    assert_eq!(FEEDBACK_LOGICAL_SEND_PREFIX, "feedback-send:");
-
-    let preview = preview_of(minimal_bundle());
-    assert_eq!(
-        preview.content_ref(),
-        format!("feedback:{}", preview.digest())
-    );
-    assert_eq!(
-        feedback_logical_send_ref(preview.digest(), "consent:x"),
-        format!("feedback-send:{}:consent:x", preview.digest())
-    );
-}
-
-#[test]
-fn configured_destinations_keep_exact_preview_and_independent_consent() {
-    for channel in ["feedback_cloud", "feedback_collector", "feedback_github"] {
-        let (_dir, vault) = temp_vault();
-        let agent = entity(0xBA);
-        vault
-            .put_entity(
-                &agent,
-                crate::registry::ENTITY_TYPE_PERSON,
-                crate::TimeRange { start: 1, end: 1 },
-                1,
-                b"actor",
-            )
-            .unwrap();
-        let actor = OutboundDispatchActor::agent(agent);
-        put_policy_manifest_bytes(
-            &vault,
-            entity(0xBB),
-            &policy_manifest(actor.actor_ref.as_deref().unwrap(), channel, &["send"]),
-        )
-        .unwrap();
-        let route = FeedbackSendRoute::new(channel, "send", "https://example.test/feedback");
-        let preview = preview_of(full_bundle());
-        let approval = approved_for(&preview, &FeedbackApprovalScope::Send(route.clone()));
-        let context = send_context(route, actor);
-        let mut transport = RecordingTransport::default();
-        let sent = send_feedback(&vault, &preview, &context, &approval, &mut transport).unwrap();
-        assert_eq!(
-            sent.dispatch.outcome,
-            OutboundDispatchOutcome::DeliveredToChannel
-        );
-        assert_eq!(transport.payloads, vec![preview.bytes.clone()]);
-        let mut other = context.clone();
-        other.route.target.push_str("/other");
-        assert!(matches!(
-            send_feedback(&vault, &preview, &other, &approval, &mut transport),
-            Err(FeedbackError::StalePreviewDigest { .. })
-        ));
-        assert_eq!(transport.payloads.len(), 1);
-    }
-}

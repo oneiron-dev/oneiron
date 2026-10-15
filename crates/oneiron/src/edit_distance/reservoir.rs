@@ -66,7 +66,7 @@
 //! There is deliberately **no off-record override**: no argument, no scope
 //! field, no builder method admits fenced content. Opting in after the fact is
 //! the one thing the fence exists to make impossible, so the surface simply
-//! does not exist — enforced by `tests::no_override_api_on_the_export_surface`.
+//! does not exist.
 //!
 //! # The door
 //!
@@ -383,7 +383,7 @@ pub fn rebuild_reservoir_index(vault: &Vault) -> Result<()> {
         (rebuilt, stale)
     };
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for key in &stale {
             CANDIDATE.delete(&vault.store, wtxn, key)?;
         }
@@ -581,7 +581,7 @@ fn record_export(
         since: scope.since,
         at: vault.store.clock.now_recorded_at(),
     };
-    vault.with_write_txn(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
+    vault.with_write_txn_grouped(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
     Ok(id)
 }
 

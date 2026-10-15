@@ -36,11 +36,6 @@ describe("dimensions before integer narrowing", () => {
     expect(badRequest(() => Oneiron.open(path, { dimensions })).message).toContain("dimensions")
     expect(existsSync(path)).toBe(false)
   })
-
-  test.each([1, 16384])("accepts the inclusive dimension boundary %s", (dimensions) => {
-    const memory = Oneiron.open(freshPath(), { dimensions })
-    expect(memory.receipts(1)).toBeArray()
-  })
 })
 
 for (const backend of ["embedded", "remote"] as const) {

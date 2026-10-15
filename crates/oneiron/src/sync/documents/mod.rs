@@ -66,7 +66,7 @@ impl DocumentRegistry {
         if residents.len() >= MAX_RESIDENTS {
             return Err(Error::InvariantViolation("live document limit reached"));
         }
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, id)?;
             // Startup step 3: snapshot first, then ordered pending updates.
             let doc = storage::load(&self.vault, txn, id)?;
@@ -114,7 +114,7 @@ impl DocumentRegistry {
         selector: &super::selector::SyncSelector,
     ) -> Result<()> {
         let bytes = super::selector::encode_sync_selector(selector)?;
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, id)?;
             DS_E.put(&self.vault.store, txn, &HexId(id), &bytes)?;
             Ok(())
@@ -127,7 +127,7 @@ impl DocumentRegistry {
     /// Subscribe an own device to a NOTE on the owner lane: a `ds:e:{id}` row
     /// with an empty value, replayed as an owner REQUEST on every connect.
     pub fn subscribe_owner(&self, id: EntityId) -> Result<()> {
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             owner_note_admission(&self.vault, txn, id)?;
             DS_E.put(&self.vault.store, txn, &HexId(id), &Vec::new())?;
             Ok(())
@@ -145,7 +145,7 @@ impl DocumentRegistry {
             .vault
             .entities_by_type(crate::registry::ENTITY_TYPE_NOTE)?
         {
-            let subscribed = self.vault.with_write_txn(|txn| {
+            let subscribed = self.vault.with_write_txn_grouped(|txn| {
                 let key = HexId(id);
                 if DS_E.contains(&self.vault.store, txn, &key)?
                     || owner_note_admission(&self.vault, txn, id).is_err()
@@ -291,7 +291,7 @@ impl EntityDocument {
         let frame = encode_document(self.id, document_sub_tags::UPDATE, &bytes)
             .into_result()
             .map_err(|_| Error::InvariantViolation("document edit exceeds wire limit"))?;
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
             let seq = storage::append(&self.vault, txn, self.id, &bytes)?;
             QD_E.put(
@@ -365,7 +365,7 @@ impl EntityDocument {
                 SyncProtocolValidation::DocumentPendingUpdate,
             ));
         }
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
             if self.vault.get_entity_type_in_txn(txn, &self.id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
@@ -420,7 +420,7 @@ impl EntityDocument {
     ) -> Result<Vec<u8>> {
         let peer = storage::decode_vv(remote_vv)?;
         let resident = self.lock()?;
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
             let note_doc;
             let mut note_head = None;
@@ -514,7 +514,7 @@ impl EntityDocument {
         if !covers(&remote, &doc.oplog_vv()) {
             return Ok(());
         }
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             let keys: Vec<Vec<u8>> = QD_E.scan_keys(
                 &self.vault.store,
                 txn,
@@ -561,7 +561,11 @@ pub(crate) fn owner_note_admission(
         || crate::settings::device_only_withholds(
             &vault.store,
             txn,
-            &crate::settings::device_only_worlds_in(&vault.store, txn)?,
+            &crate::settings::device_local_worlds_at(
+                vault,
+                txn,
+                crate::claim::CallerLocality::OffDevice,
+            )?,
             &id,
         )?
     {
@@ -570,6 +574,48 @@ pub(crate) fn owner_note_admission(
         ));
     }
     Ok(())
+}
+
+/// Whether an outgoing document frame carries text a device-only world now
+/// keeps here, judged as it is released: the flags are read and the frame
+/// accepted under the vault's device-only acceptance lock. Every frame that
+/// can carry text is judged, a NOTE's state, update, command and receipt
+/// included: NOTE authority is a further check, never an exemption. Requests
+/// and acks carry version vectors only. A frame that cannot be judged stays.
+pub fn document_frame_withheld(vault: &Vault, frame: &[u8]) -> bool {
+    if frame.first() != Some(&crate::sync::transport::TAG_DOCUMENT) {
+        return false;
+    }
+    let Ok(document) = crate::sync::transport::decode_document(&frame[1..]) else {
+        return false;
+    };
+    if matches!(
+        document.kind,
+        document_sub_tags::REQUEST | document_sub_tags::ACK
+    ) {
+        return false;
+    }
+    (|| -> Result<bool> {
+        let _accepting = vault.device_only_acceptance();
+        let rtxn = vault.store.env.read_txn()?;
+        text_withheld(vault, &rtxn, document.entity)
+    })()
+    .unwrap_or(true)
+}
+
+/// Whether a device-only world keeps `id`'s text on this device. Its local
+/// edits stay journaled, unsent, until the flag clears.
+pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+    crate::settings::device_only_withholds(
+        &vault.store,
+        txn,
+        &crate::settings::device_local_worlds_at(
+            vault,
+            txn,
+            crate::claim::CallerLocality::OffDevice,
+        )?,
+        &id,
+    )
 }
 
 fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {

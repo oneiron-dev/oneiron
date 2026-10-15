@@ -8,11 +8,11 @@ use super::controls::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackPolicyControls,
     ContextPackRetrievalBudgetControls, ContextPackTimeControls, CoreContextPackRequest,
 };
-use super::resolve_core_interlocutor_set;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
 };
+use super::{RoomAudience, resolve_core_disclosure, resolve_core_interlocutor_set};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -79,11 +79,15 @@ pub(crate) async fn run_context_pack(
                 .map_err(|error| core_engine_error("room audience failed", error))
         })
         .transpose()?;
+    let room = room_members
+        .as_deref()
+        .map(|members| RoomAudience::resolve(&server.vault, auth, members))
+        .transpose()?;
     let interlocutors = resolve_core_interlocutor_set(
         &server.vault,
         auth,
         req.interlocutors.as_ref(),
-        room_members.as_deref(),
+        room.as_ref(),
     )?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
@@ -113,8 +117,20 @@ pub(crate) async fn run_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let scoped_read = if let Some(members) = room_members.as_deref() {
-        scoped_read.for_audience(members)
+    let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
+        // Every row a room reads lies in its members' met world set, as a
+        // room turn's ceiling holds it (ARCH-0067 §8).
+        let scoped_read = match server
+            .vault
+            .room_world_set(members)
+            .map_err(|e| core_engine_error("room world set failed", e))?
+        {
+            Some(worlds) => scoped_read.within_worlds(worlds),
+            None => scoped_read,
+        };
+        scoped_read
+            .for_audience(members)
+            .with_peer_reads(room.agent_reads())
     } else if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
         // Contact records are not PERSON identities. Only a unique explicit
         // person link may resolve one; unresolved participants fail closed.
@@ -155,26 +171,17 @@ pub(crate) async fn run_context_pack(
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
         .map_err(|error| {
-            tracing::error!(error = %error, "core context-pack scoped read setup failed");
+            tracing::error!(kind = ?error.kind(), "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)
         })?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
     // the one applied (design §11 rule 6).
-    let disclosure = interlocutors
-        .as_ref()
-        .map(|set| {
-            if room_members.is_some() {
-                oneiron::DisclosureContext::resolve_room(&server.vault, set.clone())
-            } else {
-                oneiron::DisclosureContext::resolve(&server.vault, set.clone())
-            }
-        })
-        .transpose()
-        .map_err(|error| {
-            tracing::error!(error = %error, "core context-pack disclosure resolution failed");
-            core_engine_error("core context-pack disclosure resolution failed", error)
-        })?;
+    let disclosure = resolve_core_disclosure(
+        &server.vault,
+        interlocutors.as_ref(),
+        room.as_ref().map(|room| room.reader.is_some()),
+    )?;
 
     let mut builder = server
         .vault
@@ -209,6 +216,8 @@ pub(crate) async fn run_context_pack(
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
     }
+    // Reaction signals ride the same clamp as the pack they come with.
+    let signal_disclosure = disclosure.clone();
 
     let track_plain_pack = memories.is_none();
     let (mut response, memories, cursor) = run_context_pack_builder(
@@ -237,7 +246,14 @@ pub(crate) async fn run_context_pack(
             *observed = staged;
         }
     }
-    read_reaction_signals(server, auth, &req, &scoped_read, &mut response)?;
+    read_reaction_signals(
+        server,
+        auth,
+        &req,
+        &scoped_read,
+        signal_disclosure.as_ref(),
+        &mut response,
+    )?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     Ok((response, memories, cursor))
 }
@@ -568,6 +584,7 @@ fn read_reaction_signals(
     auth: &CoreAuth,
     req: &CoreContextPackRequest,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
+    disclosure: Option<&oneiron::disclosure::DisclosureContext>,
     response: &mut CoreContextPackResponse,
 ) -> Result<(), ApiError> {
     let Some(since) = req.signals_since else {
@@ -602,17 +619,22 @@ fn read_reaction_signals(
         .vault
         .reactions_since(person, since)
         .map_err(|e| core_engine_error("reaction signal read failed", e))?;
-    // An owner-grade feed of one person's messages keeps the owner's reach;
-    // a delegated, room-scoped or interlocutor-scoped read is filtered by
-    // the same scoped read as the pack. Paging follows the filter, so a
-    // cursor never names a signal this caller was not shown.
-    let scoped =
-        !auth.is_owner_grade() || req.conversation_id.is_some() || req.interlocutors.is_some();
+    // A credential reads each signal under its own key, as the pack does, so
+    // a full-scope slip that is not the owner's hears of nothing its key
+    // withholds. Only an owner-grade caller with no slip keeps the raw feed
+    // of one person's messages; a delegated, room-scoped or
+    // interlocutor-scoped read is filtered by the same scoped read and
+    // disclosure clamp as the pack. Paging follows the filter, so a cursor
+    // never names a signal this caller was not shown.
+    let scoped = auth.verified_slip().is_some()
+        || !auth.is_owner_grade()
+        || req.conversation_id.is_some()
+        || req.interlocutors.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         if scoped
             && !scoped_read
-                .is_reaction_signal_readable(&signal)
+                .is_reaction_signal_readable_under(&signal, disclosure)
                 .map_err(|e| core_engine_error("reaction signal scope failed", e))?
         {
             continue;

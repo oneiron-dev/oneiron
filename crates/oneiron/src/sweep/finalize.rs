@@ -59,7 +59,7 @@ pub(super) fn finalize_job(
     inject_uw_row_before_finalize(vault)?;
 
     let job_ids: BTreeSet<&str> = job.scope.entity_ids.iter().map(String::as_str).collect();
-    let finalized = vault.with_write_txn(|wtxn| {
+    let finalized = vault.with_write_txn_grouped(|wtxn| {
         // FINAL CARRIER FENCE (in-txn, FIRST step, NO mutation before it):
         // any `u:w:` row present at AllCompacted-finalize is a post-
         // compaction arrival → abort with no mutation, signalling defer.
@@ -153,6 +153,13 @@ pub(super) fn finalize_job(
                 .port_redaction_receipt_sweep_complete(wtxn, id, now)?;
             finalized += 1;
         }
+        // An erased epoch summary's words have left every window now, and
+        // what it was withdrawn for retires with them.
+        for hex in &job.scope.entity_ids {
+            if let Ok(id) = EntityId::from_hex(hex) {
+                crate::ports::retire_withdrawn_in_txn(&vault.store, wtxn, &id)?;
+            }
+        }
         // Obligation row deletion LAST, same txn (crash-safe ordering).
         vault.store.sync_queue.delete(wtxn, job_key)?;
         Ok(Some(finalized))
@@ -230,7 +237,7 @@ pub(super) fn rewrite_job_for_retry(
     updated.retry_state.next_attempt_at = now.saturating_add(backoff);
     updated.retry_state.last_error_code = Some(error_code.to_owned());
     let value = encode_hard_erase_sweep_job_value(&updated)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         vault.store.sync_queue.put(wtxn, job_key, &value)?;
         Ok(())
     })

@@ -6,7 +6,6 @@ mod tests;
 
 use base64::Engine;
 use oneiron::EntityId;
-use oneiron::claim::ScopedReadActorKey;
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, WindowIndexEntry, home_search_candidates, index_selection_revision,
     promotion_snapshot, selected_item_blob, window_index_page, window_index_projection,
@@ -17,7 +16,10 @@ use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{AppError, CoreAuth, CoreScope, RpcRequest, rpc_error, rpc_result};
+use super::{AppError, CoreAuth, CoreScope, RpcRequest};
+
+/// A result and the rows it carries (DEC-0005).
+type Answer = (Value, Option<Vec<EntityId>>);
 use crate::server::SyncServer;
 
 /// One revision-bound metadata projection per authenticated socket. Replacing
@@ -77,7 +79,7 @@ pub(super) fn run(
     auth: &CoreAuth,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
-) -> Result<Vec<Vec<u8>>, crate::protocol::ProtocolError> {
+) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -95,15 +97,7 @@ pub(super) fn run(
             )),
         }
     })();
-    match result {
-        Ok(value) => rpc_result(request.request_id, value).or_else(|_| {
-            rpc_error(
-                request.request_id,
-                AppError::bad_request("RPC result byte limit exceeded", None),
-            )
-        }),
-        Err(error) => rpc_error(request.request_id, error),
-    }
+    super::RpcReply::answer(request.request_id, result)
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {
@@ -170,7 +164,7 @@ fn index(
     params: Value,
     cache: &mut Option<ResidenceIndexCache>,
     budgets: ResidenceOperationBudgets,
-) -> Result<Value, AppError> {
+) -> Result<Answer, AppError> {
     let input: IndexRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let after = input
@@ -188,7 +182,9 @@ fn index(
     let page_limit = input.limit.min(budgets.index_page_limit);
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof).ok_or_else(AppError::unauthorized)?;
+    let actor = crate::api::credential_read_key(&server.vault, proof)
+        .map_err(AppError::from)?
+        .at(auth.locality());
     let scoped = server.vault.scoped_read(actor);
     let current_vv = doc.oplog_vv().encode();
     let grant = server
@@ -345,10 +341,17 @@ fn index(
                 .is_some_and(|last| last.entity_id > id.to_hex())
         })
         .map(|id| id.to_hex());
-    Ok(json!({
-        "window": window.as_str(), "items": items, "nextCursor": next,
-        "revision": retained.revision.as_str(),
-    }))
+    let rows = items
+        .iter()
+        .map(|item| EntityId::from_hex(&item.entity_id).ok())
+        .collect();
+    Ok((
+        json!({
+            "window": window.as_str(), "items": items, "nextCursor": next,
+            "revision": retained.revision.as_str(),
+        }),
+        rows,
+    ))
 }
 
 fn index_changed() -> AppError {
@@ -359,7 +362,7 @@ fn index_changed() -> AppError {
     )
 }
 
-fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value, AppError> {
+fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, AppError> {
     let input: TouchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
@@ -367,7 +370,9 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value, A
     // A stored grant constrains the selector; the actor's live scoped-read
     // floor must ALSO admit the exact target. Either denial looks missing.
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof).ok_or_else(AppError::unauthorized)?;
+    let actor = crate::api::credential_read_key(&server.vault, proof)
+        .map_err(AppError::from)?
+        .at(auth.locality());
     if !server
         .vault
         .scoped_read(actor)
@@ -396,21 +401,26 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value, A
             &loro::VersionVector::new().encode(),
         )
         .map_err(|_| AppError::internal_server_error("item document unavailable"))?;
-    Ok(json!({
-        "window": window.as_str(),
-        "entityId": id.to_hex(),
-        "blob": base64::engine::general_purpose::STANDARD.encode(blob),
-        "document": base64::engine::general_purpose::STANDARD.encode(document),
-    }))
+    Ok((
+        json!({
+            "window": window.as_str(),
+            "entityId": id.to_hex(),
+            "blob": base64::engine::general_purpose::STANDARD.encode(blob),
+            "document": base64::engine::general_purpose::STANDARD.encode(document),
+        }),
+        Some(vec![id]),
+    ))
 }
 
-fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value, AppError> {
+fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, AppError> {
     let input: PromotionRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = ScopedReadActorKey::from_verified_slip(proof).ok_or_else(AppError::unauthorized)?;
+    let actor = crate::api::credential_read_key(&server.vault, proof)
+        .map_err(AppError::from)?
+        .at(auth.locality());
     let scoped = server.vault.scoped_read(actor);
     if !scoped
         .is_entity_readable(&id)
@@ -428,20 +438,29 @@ fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Value,
     {
         return Err(AppError::not_found("item", None));
     }
+    // Every row of the window a walk admitted this reader: the snapshot
+    // carries no other.
+    let mut rows = vec![id];
     let snapshot = promotion_snapshot(
         &server.vault,
         &doc,
         &window,
         crate::handler::selector_grant_scope(),
         &selector,
-        |item| scoped.is_entity_readable(&item),
+        |item| {
+            rows.push(item);
+            scoped.is_entity_readable(&item)
+        },
     )
     .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?
     .ok_or_else(|| AppError::not_found("window promotion", None))?;
-    Ok(json!({
-        "window": window.as_str(),
-        "snapshot": base64::engine::general_purpose::STANDARD.encode(snapshot),
-    }))
+    Ok((
+        json!({
+            "window": window.as_str(),
+            "snapshot": base64::engine::general_purpose::STANDARD.encode(snapshot),
+        }),
+        Some(rows),
+    ))
 }
 
 fn search(
@@ -449,7 +468,7 @@ fn search(
     auth: &CoreAuth,
     params: Value,
     budgets: ResidenceOperationBudgets,
-) -> Result<Value, AppError> {
+) -> Result<Answer, AppError> {
     let input: SearchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     if input.query.trim().is_empty()
@@ -472,6 +491,7 @@ fn search(
         read_window_list(&server.root_doc).into_iter().collect();
     let mut selected_by_window = std::collections::HashMap::new();
     let mut hits = Vec::with_capacity(input.limit);
+    let mut rows = Vec::with_capacity(input.limit);
     for (id, score, window) in candidates {
         if !current_windows.contains(&window) {
             continue;
@@ -504,6 +524,7 @@ fn search(
             Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
         ) {
             hits.push(json!({"entityId": id.to_hex(), "score": score}));
+            rows.push(id);
             if hits.len() == input.limit {
                 break;
             }
@@ -521,5 +542,8 @@ fn search(
     {
         return Err(AppError::not_found("grant", None));
     }
-    Ok(json!({"hits": hits, "source": "home", "complete": true}))
+    Ok((
+        json!({"hits": hits, "source": "home", "complete": true}),
+        Some(rows),
+    ))
 }

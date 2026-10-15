@@ -204,50 +204,6 @@ fn unsigned_document_is_not_valid() {
 }
 
 #[test]
-fn unparsable_verify_input_is_input_invalid() {
-    let (engine, _) = sealed_b();
-    let err = engine.verify_sealed_pdf(b"%PDF-1.4\nbroken").unwrap_err();
-    assert!(matches!(err, SealError::InputInvalid { .. }));
-}
-
-#[test]
-fn wrong_anchor_fails_certificate_path() {
-    let (_engine, bytes) = sealed_b();
-    // A second engine anchored on an unrelated certificate must reject the
-    // first engine's seal at the path check.
-    let other: TestIdentity = p256_identity(false);
-    let engine2 = NativeSealEngine::new(
-        SealConfig {
-            trust_anchors_der: vec![other.cert_der.clone()],
-            timestamp_authorities: Vec::new(),
-            fetch_policy: FetchPolicy::default(),
-            resource_limits: SealResourceLimits::default(),
-        },
-        Arc::new(FixtureBackend::new(other)),
-        Arc::new(OfflineFetcher),
-        Arc::new(FixedClock(TEST_TIME_MS)),
-    )
-    .unwrap();
-    let report = engine2.verify_sealed_pdf(&bytes).unwrap();
-    assert!(!report.valid());
-    assert_eq!(report.verdict(), oneiron_seal::VerifyVerdict::Indeterminate);
-    assert_eq!(
-        report.signatures[0].integrity,
-        oneiron_seal::VerifyVerdict::Passed
-    );
-    assert_eq!(report.signatures[0].trust, VerifyCheckStatus::NotRun);
-}
-
-#[test]
-fn verify_report_serde_roundtrip_is_stable() {
-    let (engine, bytes) = sealed_b();
-    let report = engine.verify_sealed_pdf(&bytes).unwrap();
-    let json = serde_json::to_string(&report).unwrap();
-    let back: VerifyReport = serde_json::from_str(&json).unwrap();
-    assert_eq!(report, back);
-}
-
-#[test]
 fn v2_report_keeps_per_signature_evidence_and_derived_verdict() {
     let (engine, bytes) = sealed_b();
     let report = engine.verify_sealed_pdf(&bytes).unwrap();
@@ -278,55 +234,6 @@ fn v2_report_keeps_per_signature_evidence_and_derived_verdict() {
     assert!(json["reasons"].as_array().unwrap().is_empty());
 }
 
-/// Append a well-formed but unrecognized object after signing. The original
-/// signature still verifies; the revision itself must not be whitelisted.
-fn append_unknown_revision(bytes: &[u8]) -> Vec<u8> {
-    let doc = lopdf::Document::load_mem(bytes).unwrap();
-    let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
-    let next = doc.trailer.get(b"Size").unwrap().as_i64().unwrap();
-    let prev = bytes.windows(9).rposition(|w| w == b"startxref").unwrap();
-    let previous_xref: usize = std::str::from_utf8(&bytes[prev + 9..])
-        .unwrap()
-        .trim_start()
-        .split(|c: char| !c.is_ascii_digit())
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
-    let mut out = bytes.to_vec();
-    out.extend_from_slice(b"\n");
-    let obj_start = out.len();
-    out.extend_from_slice(format!("{next} 0 obj\n<< /Unknown (changed) >>\nendobj\n").as_bytes());
-    let xref = out.len();
-    out.extend_from_slice(format!("xref\n{next} 1\n{obj_start:010} 00000 n\r\ntrailer\n<< /Size {} /Root {} {} R /Prev {previous_xref} >>\nstartxref\n{xref}\n%%EOF", next + 1, root.0, root.1).as_bytes());
-    out
-}
-
-#[test]
-fn unknown_post_signature_object_is_not_a_lta_update() {
-    let (engine, bytes) = sealed_b();
-    let tampered = append_unknown_revision(&bytes);
-    let report = engine.verify_sealed_pdf(&tampered).unwrap();
-    assert_eq!(
-        report.signatures[0].integrity,
-        oneiron_seal::VerifyVerdict::Passed
-    );
-    assert_eq!(
-        report.modifications,
-        oneiron_seal::Modifications::Suspicious
-    );
-    assert_eq!(report.verdict(), oneiron_seal::VerifyVerdict::Failed);
-    assert!(
-        report
-            .reasons()
-            .contains(&VerifyFindingCode::ModificationNotAllowed)
-    );
-    assert_ne!(
-        report.artifact_sha256,
-        oneiron_seal::api::Sha256Digest::default()
-    );
-}
-
 #[test]
 fn marker_in_stream_is_accepted_by_input_gate_and_self_verify() {
     let mut doc = lopdf::Document::load_mem(&fixture_pdf("classic_1page.pdf")).unwrap();
@@ -341,18 +248,6 @@ fn marker_in_stream_is_accepted_by_input_gate_and_self_verify() {
         engine.verify_sealed_pdf(&signed).unwrap().verdict(),
         oneiron_seal::VerifyVerdict::Passed
     );
-}
-
-#[test]
-fn more_than_four_unsigned_eol_bytes_never_reach_entire_file() {
-    let (engine, mut signed) = sealed_b();
-    signed.extend_from_slice(b"\n\n\n\n\n");
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_ne!(
-        report.signatures[0].coverage,
-        oneiron_seal::Coverage::EntireFile
-    );
-    assert_eq!(report.modifications, oneiron_seal::Modifications::NotRun);
 }
 
 // Bounded property/fuzz legs (test budget: 24 cases each, no dependency

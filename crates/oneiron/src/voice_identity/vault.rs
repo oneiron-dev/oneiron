@@ -74,7 +74,7 @@ impl Vault {
             return Ok(());
         }
         CONSENT.encode_value(event)?;
-        self.with_write_txn(|wtxn| put_consent_event_once(&self.store, wtxn, event))
+        self.with_write_txn_grouped(|wtxn| put_consent_event_once(&self.store, wtxn, event))
             .map(|_| ())
     }
 
@@ -128,7 +128,7 @@ impl Vault {
 
         let store = &self.store;
         let subject = request.subject_ref;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let consent = admit_enrollment_consent(store, wtxn, request)?;
             for sample in &ordered {
                 admit_sample_origin(sample, is_contact_enrollment, &consent)?;
@@ -288,7 +288,7 @@ impl Vault {
             b"voice_identity.roster",
             roster.voice_session_ref.as_bytes(),
         );
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             ROSTER.put(&self.store, wtxn, &digest, &roster)?;
             Ok(())
         })?;
@@ -366,7 +366,7 @@ impl Vault {
             .checked_add(retention_secs)
             .ok_or(Error::ArithmeticOverflow("voice print retention deadline"))?;
         let store = &self.store;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             require_relationship_entity(store, wtxn, &relationship_ref)?;
             let record =
                 read_active_print(store, wtxn, &subject_ref)?.ok_or(Error::EntityNotFound)?;
@@ -393,7 +393,7 @@ impl Vault {
     /// Returns the pruned subjects in ascending id order.
     pub fn prune_expired_voice_prints(&self, now: u64) -> Result<Vec<EntityId>> {
         let store = &self.store;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let mut expired: Vec<EntityId> = Vec::new();
             for subject in active_print_subjects(store, wtxn)? {
                 let Some(record) = read_active_print(store, wtxn, &subject)? else {
@@ -439,7 +439,7 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("voice reference guard poisoned"))?;
         let store = &self.store;
         let subject = request.subject_ref;
-        let (tally, replayed) = self.with_write_txn(|wtxn| {
+        let (tally, replayed) = self.with_write_txn_grouped(|wtxn| {
             if put_consent_event_once(store, wtxn, &event)? == ConsentEventWrite::Replayed {
                 return Ok((VoiceDeletionTally::default(), true));
             }
@@ -476,7 +476,7 @@ pub(crate) fn put_voice_roster_for_test(
         b"voice_identity.roster",
         roster.voice_session_ref.as_bytes(),
     );
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         ROSTER.put(&vault.store, wtxn, &digest, roster)?;
         Ok(())
     })
@@ -491,5 +491,5 @@ pub(crate) fn put_raw_voice_roster_for_test(
     bytes: &[u8],
 ) -> Result<()> {
     let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
-    vault.with_write_txn(|wtxn| ROSTER.put_undecodable(&vault.store, wtxn, &digest, bytes))
+    vault.with_write_txn_grouped(|wtxn| ROSTER.put_undecodable(&vault.store, wtxn, &digest, bytes))
 }

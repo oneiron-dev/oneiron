@@ -11,7 +11,7 @@ use std::time::Duration;
 use oneiron::embed::{Embedder, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler};
 
 use super::core::SyncServer;
-use crate::embedder::{EmbedQueryRefusal, QueryEmbedder};
+use crate::embedder::{EmbedQueryRefusal, EmbedderSlot, QueryEmbedder};
 
 /// Ceiling on the error backoff. Long enough that a sleeping laptop or a
 /// stopped endpoint does not spin, short enough that recovery is automatic.
@@ -27,6 +27,20 @@ pub(crate) struct EmbedderDescriptor {
 }
 
 impl SyncServer {
+    /// The embedder as this server serves it, for the owner: what config
+    /// asks for, what the vault pins and what loaded. Blocking: it reads the
+    /// vault's pins.
+    pub(crate) fn embedder_report(
+        &self,
+    ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
+        let doctor = self.vault.doctor()?;
+        Ok(crate::owner::embedder::EmbedderReport::served(
+            self.embedder.as_ref().map(EmbedderSlot::config),
+            &doctor,
+            self.embedder.as_ref().map(EmbedderSlot::dense_state),
+        ))
+    }
+
     /// The active provider's identity, or `None` at rung 0.
     pub(crate) fn embedder_descriptor(&self) -> Option<EmbedderDescriptor> {
         let slot = self.embedder.as_ref()?;
@@ -42,7 +56,7 @@ impl SyncServer {
     /// Blocking: the endpoint provider makes a blocking HTTP call and the local
     /// provider runs a forward pass. Neither may happen on a runtime worker
     /// thread, so async callers take [`Self::embed_query_off_runtime`].
-    fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedQueryRefusal> {
+    pub(crate) fn embed_query(&self, text: &str) -> Result<Vec<f32>, EmbedQueryRefusal> {
         let Some(slot) = self.embedder.as_ref() else {
             return Err(EmbedQueryRefusal::NotConfigured);
         };
@@ -63,7 +77,10 @@ impl SyncServer {
         tokio::task::spawn_blocking(move || server.embed_query(&text))
             .await
             .unwrap_or_else(|error| {
-                tracing::warn!(%error, "query embedding task failed to join");
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "query embedding task failed to join"
+                );
                 Err(EmbedQueryRefusal::Failed)
             })
     }
@@ -102,12 +119,17 @@ impl SyncServer {
                     if !complained {
                         if error.kind() == oneiron::ErrorKind::EmbeddingTransformChanged {
                             tracing::error!(
-                                ?error,
+                                kind = ?error.kind(),
                                 "the loaded model makes vectors another way than the vault's were made; it fills and answers nothing. Stop the server and run `oneiron-server reembed`, or restore the settings that made the vault"
+                            );
+                        } else if error.kind() == oneiron::ErrorKind::EmbeddingModelChanged {
+                            tracing::error!(
+                                kind = ?error.kind(),
+                                "the embedder endpoint serves another model than the vault's; it fills and answers nothing. Serve the vault's model there again, or stop the server and run `oneiron-server reembed`"
                             );
                         } else {
                             tracing::warn!(
-                                ?error,
+                                kind = ?error.kind(),
                                 "embedder is not ready; the vault serves lexical and graph reads and the worker keeps retrying"
                             );
                         }
@@ -132,7 +154,7 @@ impl SyncServer {
                     "embedding worker started without an embedder",
                 ))?;
             let embedder: Arc<dyn QueryEmbedder> =
-                slot.ensure_ready(|transform| server.vault().adopt_embedding_transform(transform))?;
+                slot.ensure_ready(|admission| admission.into_vault(server.vault()))?;
             let config = slot.config();
             server.vault.cold_attach_embedder()?;
             server
@@ -144,7 +166,7 @@ impl SyncServer {
             )
             .with_batch_size(config.batch_size)
             .with_lease_duration_ms(config.lease_ms);
-            if let Some(remote) = crate::embedder::build_remote_rung(config)? {
+            if let Some(remote) = slot.remote_rung(server.run_receipts())? {
                 reconciler = reconciler.with_remote_rung(remote)?;
             }
             Ok(reconciler)
@@ -193,9 +215,10 @@ impl SyncServer {
                 }
                 Ok(Err(error)) => {
                     if !failing {
-                        tracing::warn!(?error, "embedding reconciliation failed; backing off");
+                        tracing::warn!(kind = ?error.kind(), "embedding reconciliation failed; backing off");
                         failing = true;
                     }
+                    self.readmit_embedder().await;
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
@@ -204,10 +227,33 @@ impl SyncServer {
                 // drive, and a silent exit would leave rows pending with no
                 // trace of why.
                 Err(error) => {
-                    tracing::error!(%error, "embedding reconciliation task ended; worker stopping");
+                    tracing::error!(
+                        panicked = error.is_panic(),
+                        "embedding reconciliation task ended; worker stopping"
+                    );
                     return;
                 }
             }
+        }
+    }
+
+    /// Admits the provider again after a failed pass. An endpoint whose
+    /// answers were refused because its server came back with another
+    /// profile is admitted with the floors that profile takes; one that came
+    /// back with another model or transform is refused here too, and answers
+    /// no query until it is restored.
+    async fn readmit_embedder(self: &Arc<Self>) {
+        let server = Arc::clone(self);
+        let readmitted = tokio::task::spawn_blocking(move || {
+            let slot = server.embedder.as_ref()?;
+            Some(
+                slot.ensure_ready(|admission| admission.into_vault(server.vault()))
+                    .map(drop),
+            )
+        })
+        .await;
+        if let Ok(Some(Err(error))) = readmitted {
+            tracing::debug!(kind = ?error.kind(), "embedder not admitted again after a failed pass");
         }
     }
 
@@ -242,6 +288,13 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         &self,
         input: &oneiron::memory::IndexedRevisionInput,
     ) -> oneiron::Result<Vec<f32>> {
+        Ok(oneiron::memory::IndexedRevisionEmbedder::embed_revision_marked(self, input)?.0)
+    }
+
+    fn embed_revision_marked(
+        &self,
+        input: &oneiron::memory::IndexedRevisionInput,
+    ) -> oneiron::Result<(Vec<f32>, oneiron::embed::EmbeddingProvenance)> {
         // The engine's own projection, the one it decided this revision is
         // embeddable by; it never asks for a revision with nothing to embed.
         let payload = input.payload().ok_or(oneiron::Error::InvariantViolation(
@@ -249,7 +302,7 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         ))?;
         let values = self
             .provider
-            .embed(&[oneiron::embed::PendingEmbeddingInput {
+            .embed_marked(&[oneiron::embed::PendingEmbeddingInput {
                 entity_id: input.entity,
                 payload,
                 pending_embedding_token: input.source_revision_ref.0.to_vec(),
@@ -265,6 +318,10 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider {
         }
         Ok(value)
     }
+
+    fn provenance(&self) -> oneiron::embed::EmbeddingProvenance {
+        self.provider.provenance()
+    }
 }
 impl SyncServer {
     fn refresh_indexed_idle(
@@ -276,8 +333,7 @@ impl SyncServer {
             .as_ref()
             .ok_or(oneiron::Error::InvariantViolation("missing idle embedder"))?;
         let provider = IndexedProvider {
-            provider: slot
-                .ensure_ready(|transform| self.vault().adopt_embedding_transform(transform))?,
+            provider: slot.ensure_ready(|admission| admission.into_vault(self.vault()))?,
         };
         if provider.provider.locality() == oneiron::embed::EmbedderLocality::ThirdParty {
             return Err(oneiron::Error::InvalidConfig(

@@ -25,6 +25,7 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) attempt_id: AttemptId,
     pub(super) idempotency_supported: bool,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
     pub(super) parked: Option<OutboundDispatchOutcome>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
 }
@@ -42,6 +43,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         attempt_id,
         idempotency_supported,
         verified_actor,
+        owner_proof,
         parked,
         suppression_receipt,
     } = input;
@@ -57,6 +59,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
         verified_actor,
+        owner_proof,
         dedupe_key: request.intent.dedupe_key.clone(),
         suppression_receipt,
     };

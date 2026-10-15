@@ -22,7 +22,7 @@ use super::storage::{
     load_neighbors, load_neighbors_lenient, load_required_vector, load_vector_into, read_count,
     read_entry_point,
 };
-use super::types::{BeamOptions, GraphSource, HeapEntry};
+use super::types::{BeamOptions, ExpandedLists, GraphSource, HeapEntry, neighbor_list_hash};
 
 /// Vector search over the NSW graph.
 ///
@@ -87,7 +87,9 @@ pub(crate) fn hnsw_search(
     };
     if count == 0 {
         let graph_rows_exist = match graph {
-            GraphSource::Persisted => store.hnsw_neighbors().first(rtxn)?.is_some(),
+            GraphSource::Persisted | GraphSource::PersistedLogged(_) => {
+                store.hnsw_neighbors().first(rtxn)?.is_some()
+            }
             GraphSource::Rebuilt(neighbors_by_id) => !neighbors_by_id.is_empty(),
         };
         if entry_point.is_some() || graph_rows_exist {
@@ -171,6 +173,27 @@ pub(crate) fn hnsw_search(
         .collect())
 }
 
+/// The score [`hnsw_search`] gives `vector` for `query_vector`, computed
+/// exactly: on the full row when the search rescores, on the scoring prefix
+/// otherwise.
+pub(crate) fn exact_score(
+    config: &VaultConfig,
+    query_vector: &[f32],
+    vector: &[f32],
+    skip_rescore: bool,
+) -> Result<f32> {
+    let rescore_active =
+        config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
+    let dims = if rescore_active {
+        query_vector.len()
+    } else {
+        score_dims_for(config)
+    };
+    let distance = PreparedCosine::new(score_prefix(query_vector, dims)?)
+        .distance(score_prefix(vector, dims)?);
+    Ok((1.0 - distance).clamp(-1.0, 1.0))
+}
+
 /// The scoring prefix length for one vault: `fast_dims` when the MRL funnel
 /// is configured, full `dimensions` otherwise.
 pub(super) fn score_dims_for(config: &VaultConfig) -> usize {
@@ -208,6 +231,28 @@ pub(super) fn beam_search(
         query_vector,
         entry_point,
         (options, GraphSource::Persisted),
+        dimensions,
+        ops,
+    )
+}
+
+/// [`beam_search`] over the persisted rows that also logs every neighbour list
+/// it expands (see [`ExpandedLists`]).
+pub(super) fn beam_search_logged(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    query_vector: &[f32],
+    (entry_point, log): (EntityId, &std::cell::RefCell<ExpandedLists>),
+    options: BeamOptions,
+    dimensions: usize,
+    ops: &mut u64,
+) -> Result<Vec<HeapEntry>> {
+    beam_search_graph(
+        store,
+        txn,
+        query_vector,
+        entry_point,
+        (options, GraphSource::PersistedLogged(log)),
         dimensions,
         ops,
     )
@@ -256,7 +301,9 @@ fn beam_search_graph(
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
     let mut visible: BinaryHeap<HeapEntry> = BinaryHeap::new();
     let graph_nodes = match graph {
-        GraphSource::Persisted => usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0),
+        GraphSource::Persisted | GraphSource::PersistedLogged(_) => {
+            usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0)
+        }
         GraphSource::Rebuilt(neighbors_by_id) => neighbors_by_id.len(),
     };
     // Reserve extra headroom so the visited set can absorb frontier growth
@@ -271,7 +318,7 @@ fn beam_search_graph(
         || crate::ports::EntityStoreRead::port_entity_raw(store, txn, &entry_point)?.is_some()
     {
         results.push(entry);
-        if check_existence && !crate::vault_cleanup::is_archived_in_txn(store, txn, &entry_point)? {
+        if check_existence && is_match(store, txn, &entry_point)? {
             visible.push(entry);
         }
     }
@@ -285,10 +332,16 @@ fn beam_search_graph(
 
         *ops += 1;
         let neighbors = match graph {
-            GraphSource::Persisted if lenient_neighbors => {
+            GraphSource::Persisted | GraphSource::PersistedLogged(_) if lenient_neighbors => {
                 load_neighbors_lenient(store, txn, &current.id)?
             }
             GraphSource::Persisted => load_neighbors(store, txn, &current.id)?,
+            GraphSource::PersistedLogged(log) => {
+                let neighbors = load_neighbors(store, txn, &current.id)?;
+                log.borrow_mut()
+                    .push((current.id, neighbor_list_hash(&neighbors)));
+                neighbors
+            }
             // The in-memory rebuild was produced by this module and carries
             // no reserved-sentinel or ragged-length rows, so the lenient and
             // strict decodes coincide.
@@ -326,7 +379,7 @@ fn beam_search_graph(
             if check_existence
                 && (visible.len() < ef
                     || distance < visible.peek().map_or(f32::INFINITY, |entry| entry.distance))
-                && !crate::vault_cleanup::is_archived_in_txn(store, txn, &neighbor_id)?
+                && is_match(store, txn, &neighbor_id)?
             {
                 visible.push(candidate);
                 if visible.len() > ef {
@@ -353,6 +406,14 @@ fn beam_search_graph(
     };
     found.sort_unstable();
     Ok(found)
+}
+
+/// Whether a node the walk scored can be a match: not archived, and not a
+/// row the reading room hides (the walk passes through it, see
+/// [`load_vector_into`]).
+fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(!store.vectors().hides(id.as_bytes())
+        && !crate::vault_cleanup::is_archived_in_txn(store, txn, id)?)
 }
 
 #[allow(clippy::too_many_arguments)]

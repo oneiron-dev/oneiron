@@ -114,7 +114,7 @@ pub fn request_opt_out_clear(
     let Some(party_ref) = resolve_party(vault, party)? else {
         return Err(CommError::ActiveOptOutNotFound);
     };
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         let records = comm_records_in_txn(vault, &*wtxn)?;
         let active = matching_claims_in_txn(
             vault,
@@ -179,7 +179,7 @@ pub fn approve_pending_opt_out_clear(
     let Some(party_ref) = resolve_party(vault, party)? else {
         return Err(CommError::PendingGateNotFound);
     };
-    let ruling = vault.try_with_write_txn(|wtxn| {
+    let ruling = vault.try_with_write_txn_grouped(|wtxn| {
         // Authorize the approving actor from the write transaction's view so a
         // concurrent delete/recreate cannot leave the gate consumed under a
         // stale authorization decision (TOCTOU).
@@ -461,7 +461,7 @@ pub fn mint_send_override(
 ) -> CommResult<EntityId> {
     let actor_ref = actor.entity_ref();
     let channel_class = channel_class.map(normalize_channel_class);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         // Authorize from the write transaction's own view, so a concurrent
         // delete/recreate cannot leave an override minted under a stale
         // authorization decision.

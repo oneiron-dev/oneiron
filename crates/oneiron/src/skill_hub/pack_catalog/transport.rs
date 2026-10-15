@@ -51,7 +51,7 @@ impl Vault {
             return Err(invalid("requested pack content hash drift"));
         }
         let pinned = reference.clone();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &reference.hub_id)? != configuration {
                 return Err(invalid("hub changed during pack fetch"));

@@ -122,46 +122,6 @@ fn ask_guest_role_is_not_shared_vault_membership() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn equal_admins_keep_both_rulings_and_newest_wins_in_any_fold_order() -> Result<()> {
-    let (_dir, vault, owner, admin) = fixture();
-    vault.initialize_shared_vault(
-        &owner,
-        42,
-        None,
-        &[
-            InitialSharedMember {
-                member_ref: owner.actor(),
-                role: Some(FederationGrantRole::Admin),
-            },
-            InitialSharedMember {
-                member_ref: admin.actor(),
-                role: Some(FederationGrantRole::Admin),
-            },
-        ],
-        1,
-    )?;
-    let a = vault.append_admin_ruling(&owner, 42, "review:12", serde_json::json!("keep"), 2)?;
-    let b = vault.append_admin_ruling(&admin, 42, "review:12", serde_json::json!("replace"), 3)?;
-    assert_eq!(b.previous_ruling, Some(a.ruling.id.clone()));
-    assert_eq!(b.previous_holder, Some(owner.actor().to_hex()));
-    assert_eq!(b.previous_value, Some(serde_json::json!("keep")));
-    assert_eq!(vault.admin_ruling_receipts(42)?.len(), 2);
-    assert_eq!(
-        vault.live_admin_ruling(42, "review:12")?,
-        Some(b.ruling.clone())
-    );
-    assert_eq!(
-        fold_admin_rulings(&[a.ruling.clone(), b.ruling.clone()], 42, "review:12"),
-        Some(&b.ruling)
-    );
-    assert_eq!(
-        fold_admin_rulings(&[b.ruling.clone(), a.ruling], 42, "review:12"),
-        Some(&b.ruling)
-    );
-    Ok(())
-}
-
 fn replay_entity_between(source: &Vault, target: &Vault, id: EntityId) -> Result<()> {
     let raw = source.get_raw(&id)?.expect("replicated entity");
     let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();

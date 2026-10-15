@@ -72,3 +72,12 @@ pub(crate) fn scope(conv: EntityId, path: ScopePath, include_forks: bool) -> Sco
         include_forks,
     }
 }
+
+/// Marks `turn` as followed by `next` on a canonical chain, as a received DAG
+/// record carries before its room selects a HEAD: the room's ChildOf-only
+/// preview then refuses it as an unselected DAG.
+pub(crate) fn mark_canonical(vault: &Vault, turn: &EntityId, next: &EntityId) {
+    vault
+        .with_write_txn(|txn| super::graph::CANONICAL.put(&vault.store, txn, turn, next))
+        .expect("canonical mark");
+}

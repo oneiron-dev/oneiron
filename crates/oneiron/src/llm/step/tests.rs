@@ -485,6 +485,108 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     Ok(())
 }
 
+/// A metered backend below the step (a host's run admission, admitting each
+/// rung on its own permit) can find the budget spent after the step's own
+/// admission passed. That is the same budget trap, with its park and its
+/// resume signal, never a model failure; the step's lease is released.
+#[test]
+fn a_backend_that_finds_the_budget_spent_opens_the_budget_trap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(LlmError::BudgetDenied(
+        crate::llm::BudgetDenied::Exhausted,
+    ))]);
+    let guard = guard_with_limit(10_000);
+
+    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect("trap outcome is Ok");
+    let StepOutcome::Trapped { trap, .. } = outcome else {
+        panic!("expected trapped step");
+    };
+    assert_eq!(trap.kind, DreamerTrapKind::Budget);
+    assert_eq!(backend.calls(), 1);
+    let parked = DreamerRunnerStore::new(&vault)
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
+    assert_eq!(parked.park_owner, trap_park_owner(&trap.trap_claim_id));
+    assert_eq!(
+        guard.read().reserved_units,
+        0,
+        "the step's lease is released"
+    );
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
+/// After an answered response, a corrective call that finds the budget spent
+/// below the step fails the step as a spent correction admission does, even
+/// when that response reported no usage: it was still paid for.
+#[test]
+fn a_spent_budget_after_an_answer_without_usage_is_not_a_fresh_trap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let mut unpriced = response_fixture("not json");
+    unpriced.usage = LlmUsage::zero();
+    let backend = ScriptedBackend::new(vec![
+        Ok(unpriced),
+        Err(LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted)),
+    ]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::ClassifiedLlm {
+            source: LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted),
+            ..
+        })
+    ));
+    assert_eq!(backend.calls(), 2);
+    assert!(
+        DreamerRunnerStore::new(&vault)
+            .parked_attempt(fixture.attempt_id)?
+            .is_none()
+    );
+    Ok(())
+}
+
+/// Astra R2 #1304: the budget trap and its park committed in two
+/// transactions, so a crash or a refused park between them left an open trap
+/// over an unparked attempt; boot recovery requeued it and a fresh budget ran
+/// it without the signal. The trap now lands only with its park.
+#[test]
+fn a_budget_trap_lands_only_with_its_park() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    // Another owner holds the park, so this trap's park is refused.
+    DreamerRunnerStore::new(&vault).park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
+        reason: "driver park".to_owned(),
+        park_owner: "wake-worker".to_owned(),
+        now: 10,
+    })?;
+    let backend = ScriptedBackend::new(Vec::new()); // must never be called
+    let guard = guard_with_limit(100); // reserve 500 > limit 100 → Exhausted
+
+    block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("a refused park fails the trapped step");
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
+        0,
+        "no trap may stay open over an attempt it did not park"
+    );
+    assert_eq!(backend.calls(), 0);
+    Ok(())
+}
+
 #[test]
 fn signal_before_wait_ordering() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -2950,16 +3052,16 @@ fn shared_schema_shim_contains_encoded_and_draft4_reference_traps() {
         let mut request = request_fixture();
         request.envelope.response_format = ResponseFormat::Json { schema };
         assert!(matches!(
-            super::schema::validate_fallback(&request, &response_fixture(output)),
+            super::schema::validate_fallback(&request, &response_fixture(output), None),
             Err(DurableStepError::SchemaValidation { attempts: 1, .. })
         ));
     }
     let schema = json!({"$defs":{"a":{"type":"integer"}},"$ref":"#/$defs/%61"});
     let mut request = request_fixture();
     request.envelope.response_format = ResponseFormat::Json { schema };
-    assert!(super::schema::validate_fallback(&request, &response_fixture("3")).is_ok());
+    assert!(super::schema::validate_fallback(&request, &response_fixture("3"), None).is_ok());
     assert!(matches!(
-        super::schema::validate_fallback(&request, &response_fixture("\"bad\"")),
+        super::schema::validate_fallback(&request, &response_fixture("\"bad\""), None),
         Err(DurableStepError::SchemaValidation { attempts: 1, .. })
     ));
     assert!(super::validate_json_schema(&json!({"type":"integer"}), &json!(3)).is_ok());

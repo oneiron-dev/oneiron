@@ -1,5 +1,6 @@
 //! The one receipted point-read entry: ids and short references, each at its
 //! own read frontier, answered from one snapshot under one receipt.
+use super::access_gate::HeldAuthority;
 use super::versions::AdmittedRevision;
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -37,6 +38,23 @@ impl ScopedRead<'_> {
             header.learned_at,
             raw.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
         )))
+    }
+
+    /// Whether this reader may read each of `ids` now, as
+    /// [`Self::get_entities_parts_in_txn`] admits it, without taking its
+    /// body out: no live projection and no short-reference hash. Every id is
+    /// judged in the one snapshot, so the reader's relationship authority is
+    /// resolved once for all of them.
+    pub(crate) fn entities_readable_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<Vec<bool>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let authority = HeldAuthority::default();
+        ids.iter()
+            .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
+            .collect()
     }
 
     /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake
@@ -209,13 +227,33 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected_opaque(reads, requested, |_, _| Ok(false), project)
+    }
+
+    /// [`Self::read_projected`], where `opaque` names, in the read's own
+    /// snapshot, an id whose withheld row this reader may not learn of: it
+    /// adds no count, as a missing row adds none.
+    pub(crate) fn read_projected_opaque<T, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
             let (row, withheld) = match read.target {
-                ReadTarget::Id(id) => self.id_row_in(&txn, &policy, &filter, id, read.mode)?,
+                ReadTarget::Id(id) => {
+                    let (row, withheld) = self.id_row_in(&txn, &policy, &filter, id, read.mode)?;
+                    if withheld > 0 && opaque(&txn, &id)? {
+                        (row, 0)
+                    } else {
+                        (row, withheld)
+                    }
+                }
                 ReadTarget::ShortRef {
                     short_id,
                     content_hash,
@@ -294,7 +332,7 @@ impl ScopedRead<'_> {
         let revealed = hydrated.deletion.is_some()
             && self.audience_readable_in(txn, &hydrated.id)?
             && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
-            && !(self.actor_key.enforce_access_grants
+            && !(self.relationship_gated_in(txn)?
                 && matches!(
                     hydrated.entity_type,
                     crate::registry::ENTITY_TYPE_CLAIM

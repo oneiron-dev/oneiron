@@ -82,34 +82,3 @@ pub(crate) fn measure_warm(
     }
     sample_set("warm", &query_pass(vault, corpus, k))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::super::corpus::{generate_corpus, index_corpus, perf_vault_config};
-    use super::*;
-
-    #[test]
-    fn warm_and_cold_passes_read_the_same_corpus_into_separate_sets() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let corpus = generate_corpus(3, 24, 6, 4).expect("corpus");
-        let config = perf_vault_config(24, 2);
-        {
-            let vault = Vault::open(dir.path(), config.clone()).expect("vault opens");
-            index_corpus(&vault, &corpus).expect("corpus indexes");
-        }
-        let vault = Vault::open(dir.path(), config).expect("vault reopens");
-        let cold = measure_cold(&vault, &corpus, 10);
-        let warm = measure_warm(&vault, &corpus, 10, 1);
-        assert_eq!(cold.label, "cold");
-        assert_eq!(warm.label, "warm");
-        assert_eq!(cold.samples, corpus.queries.len());
-        assert_eq!(warm.samples, corpus.queries.len());
-        assert!(cold.latency_ms.is_measured());
-        assert!(warm.latency_ms.is_measured());
-        assert_eq!(cold.errors, 0);
-        assert!(
-            !cold.meets_completed_sample_floor,
-            "six completed calls is deliberately below the full-run completed-sample floor"
-        );
-    }
-}

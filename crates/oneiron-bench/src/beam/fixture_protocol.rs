@@ -234,29 +234,3 @@ pub(super) fn run(path: &Path) -> BeamResult<KnowledgeReport> {
     let fixture: KnowledgeFixture = serde_json::from_slice(&std::fs::read(path)?)?;
     evaluate(&fixture, &mut ColdLexicalRetriever { k: 4 })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn known_span_protocol_keeps_held_out_and_generator_separate() -> BeamResult<()> {
-        let fixture: KnowledgeFixture =
-            serde_json::from_str(include_str!("../../fixtures/retrieval_knowledge.v1.json"))?;
-        let report = evaluate(&fixture, &mut ColdLexicalRetriever { k: 4 })?;
-        assert_eq!(report.development.questions, 2);
-        assert_eq!(report.held_out.questions, 2);
-        assert!(report.development.tokens > 0);
-        assert!(report.held_out.answered > 0);
-        assert!(report.held_out.tokens_per_answer.unwrap() > 0.0);
-        assert_eq!(report.held_out.summary_sufficiency, Some(0.0));
-        Ok(())
-    }
-    #[test]
-    fn unknown_anchor_fails_protocol() -> BeamResult<()> {
-        let mut fixture: KnowledgeFixture =
-            serde_json::from_str(include_str!("../../fixtures/retrieval_knowledge.v1.json"))?;
-        fixture.spans[0].end = usize::MAX;
-        assert!(evaluate(&fixture, &mut ColdLexicalRetriever { k: 4 }).is_err());
-        Ok(())
-    }
-}

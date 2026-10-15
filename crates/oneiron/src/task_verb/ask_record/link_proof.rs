@@ -4,7 +4,7 @@
 //! and signatures replicate; a token digest alone cannot authorize an answer.
 
 use super::*;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand_core::{OsRng, RngCore};
 
 /// Local ed25519 seed that signs one ask group's option-link words. Key: id16 (group).
@@ -130,7 +130,7 @@ pub(super) fn validate_source(
         .try_into()
         .map_err(|_| invalid())?;
     verifying
-        .verify(
+        .verify_strict(
             &transcript(
                 fact.group,
                 proof.revision,
@@ -219,6 +219,6 @@ pub(in crate::task_verb) fn verify_settlement(
     }
     let key = VerifyingKey::from_bytes(&group.link_verify_key).map_err(|_| invalid())?;
     let bytes: [u8; 64] = proof.as_slice().try_into().map_err(|_| invalid())?;
-    key.verify(&settlement_message(result)?, &Signature::from_bytes(&bytes))
+    key.verify_strict(&settlement_message(result)?, &Signature::from_bytes(&bytes))
         .map_err(|_| invalid())
 }

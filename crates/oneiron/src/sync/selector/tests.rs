@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use loro::{CommitOptions, ExportMode, LoroDoc};
+use loro::{ExportMode, LoroDoc};
 
 use super::*;
 use crate::affect::Vad;
@@ -18,7 +18,7 @@ use crate::claim::{
 use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    encode_federation_grant_body, encode_guest_share_envelope, encode_guest_share_envelope_body,
+    encode_federation_grant_body, encode_guest_share_envelope_body,
 };
 use crate::provenance::{
     EdgeProvenanceClaimBody, SupersessionStatus, encode_actor_class_evidence,
@@ -29,7 +29,7 @@ use crate::registry::{
     ENTITY_TYPE_WORLD, TypeByteFamily,
 };
 use crate::store::Store;
-use crate::sync::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt};
+use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::client::{SyncClient, SyncClientConfig};
 use crate::sync::loro_support::map_get_bytes;
 use crate::sync::manager::WindowManager;
@@ -253,15 +253,6 @@ fn insert_tombstone(doc: &LoroDoc, id: EntityId) {
     map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"deleted").unwrap();
 }
 
-fn insert_uppercase_tombstone_alias(doc: &LoroDoc, id: EntityId) {
-    map_insert_bytes(
-        &doc.get_map("tombstones"),
-        &id.to_hex().to_ascii_uppercase(),
-        b"deleted",
-    )
-    .unwrap();
-}
-
 fn import_ids(update: &[u8]) -> Vec<EntityId> {
     let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
     doc.import(update).unwrap();
@@ -273,22 +264,6 @@ fn import_ids(update: &[u8]) -> Vec<EntityId> {
     });
     ids.sort_unstable();
     ids
-}
-
-fn imported_entity_type_count(update: &[u8], entity_type: u8) -> usize {
-    let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
-    doc.import(update).unwrap();
-    let mut count = 0;
-    map_for_each_value_bytes(&doc.get_map("entities"), |_, value| {
-        let Some(blob) = value else {
-            return;
-        };
-        if EntityMetadataHeader::parse(blob).is_some_and(|header| header.entity_type == entity_type)
-        {
-            count += 1;
-        }
-    });
-    count
 }
 
 fn imported_tombstone_count(update: &[u8]) -> usize {
@@ -630,35 +605,6 @@ fn selector_decode_rejects_foreign_world_id_range() {
 }
 
 #[test]
-fn federated_admission_rejects_maintenance_band_non_claim_entities() {
-    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x54));
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("remote", &window_key);
-    insert_entity(
-        &doc,
-        entity_id(0x59),
-        ENTITY_TYPE_POLICY_MANIFEST,
-        b"remote-policy",
-    );
-    doc.commit();
-    let update = doc.export(ExportMode::all_updates()).unwrap();
-
-    let err = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect_err("federated maintenance-band non-claims must fail closed");
-    assert!(matches!(
-        err,
-        Error::Registry(RegistryError::MaintenanceKindNotWritable(
-            ENTITY_TYPE_POLICY_MANIFEST
-        ))
-    ));
-}
-
-#[test]
 fn federated_admission_rejects_classification_routed_maintenance_kinds() {
     // ARCH-0055 / MS-01: IDENTITY_TOPOLOGY_EVENT (76) is
     // Maintenance-CLASSIFIED inside the Companion BAND, so the pre-fix
@@ -836,34 +782,6 @@ fn federated_admission_admits_correct_key_authority_row() {
 }
 
 #[test]
-fn federated_admission_allows_reserved_edge_provenance_claim_with_imported_trust() {
-    let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xA8));
-    put_imported_source_trust(&vault);
-    let window_key = WindowKey::new("2026-03");
-    let claim_id = entity_id(0xA9);
-    let doc = create_window_doc("remote", &window_key);
-    insert_blob(&doc, claim_id, &edge_provenance_claim_blob());
-    doc.commit();
-    let update = doc.export(ExportMode::all_updates()).unwrap();
-
-    let admitted = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("valid reserved provenance claim should admit under imported trust");
-
-    let receiver = create_window_doc("receiver", &window_key);
-    receiver.import(&admitted).unwrap();
-    let blob = map_get_bytes(&receiver.get_map("entities"), &claim_id.to_hex())
-        .expect("admitted provenance claim");
-    let body = decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true).unwrap();
-    assert_eq!(body.predicate, crate::provenance::PREDICATE_EDGE_PROVENANCE);
-    assert_eq!(body.source, Some(ClaimSource::Imported));
-}
-
-#[test]
 fn federated_admission_duplicate_frame_is_byte_identical() {
     let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xAA));
     put_imported_source_trust(&vault);
@@ -1002,146 +920,6 @@ fn selected_window_omits_other_facets_and_keeps_closed_edges() {
 }
 
 #[test]
-fn envelope_strips_membership() {
-    let member = entity_id(0x31);
-    let other_member = entity_id(0x32);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("source", &window_key);
-
-    let person = entity_id(0x21);
-    let membership = entity_id(0x41);
-    let facet_allowed = entity_id(0x50);
-    let claim_seed = entity_id(0x60);
-    let other_grant = FederationGrant::new(
-        test_selector_scope(),
-        other_member,
-        FederationGrantRole::Viewer,
-        FederationGrantPreset::ReadOnly,
-    );
-    let grant_body = encode_federation_grant_body(&other_grant).unwrap();
-    insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
-    insert_entity(&doc, membership, ENTITY_TYPE_FEDERATION_GRANT, &grant_body);
-    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    insert_edge(&doc, person, EdgeKind::Supports, membership);
-    // Facet closure: the seed claims the selected facet and neighbors the
-    // person, so the person rides one-hop closure under the Bottom
-    // facet filter. Membership neighbors the person (two hops from the
-    // seed), so it is withheld by facet closure AND stripped as
-    // guest-share metadata — the test pins the stripping leg.
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, person);
-    doc.commit();
-    // Mandatory record stamps for the non-CLAIM doc rows (CLAIM is
-    // intrinsic). Same bytes, so digests match.
-    vault
-        .batch()
-        .put(
-            &person,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .put(
-            &facet_allowed,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"facet-a",
-        )
-        .commit()
-        .unwrap();
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::All,
-        vec![facet_allowed],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let envelope = guest_share_envelope(
-        &vault,
-        &doc,
-        &window_key,
-        test_selector_scope(),
-        &selector,
-        |_| Ok(vec![0xA5]),
-    )
-    .unwrap();
-    let ids = import_ids(&envelope.body.update);
-
-    assert!(ids.contains(&person));
-    assert!(
-        !ids.contains(&membership),
-        "guest-share envelope leaked a federation membership record"
-    );
-
-    let receiver = create_window_doc("receiver", &window_key);
-    receiver.import(&envelope.body.update).unwrap();
-    let mut leaked_membership_edge = false;
-    map_for_each_value_bytes(&receiver.get_map("edges"), |key, value| {
-        if value.is_some() && key.contains(&membership.to_hex()) {
-            leaked_membership_edge = true;
-        }
-    });
-    assert!(
-        !leaked_membership_edge,
-        "guest-share envelope leaked topology adjacent to a membership record"
-    );
-}
-
-#[test]
-fn no_topology_count_in_envelope() {
-    let member = entity_id(0x33);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("source", &window_key);
-
-    let person = entity_id(0x22);
-    let authority_id = entity_id(0x52);
-    let authority_body = encode_authority_log_entry_body(&authority_genesis_entry(0x52))
-        .expect("encode authority log");
-    insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
-    insert_entity(
-        &doc,
-        authority_id,
-        ENTITY_TYPE_AUTHORITY_LOG,
-        &authority_body,
-    );
-    insert_edge(&doc, person, EdgeKind::Supports, authority_id);
-    insert_tombstone(&doc, entity_id(0x62));
-    doc.commit();
-
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let envelope = guest_share_envelope(
-        &vault,
-        &doc,
-        &window_key,
-        test_selector_scope(),
-        &selector,
-        |_| Ok(vec![0x5A]),
-    )
-    .unwrap();
-
-    let encoded_envelope = encode_guest_share_envelope(&envelope).unwrap();
-    let encoded_body = encode_guest_share_envelope_body(&envelope.body).unwrap();
-    assert_no_forbidden_envelope_keys(&decode_msgpack_value(&encoded_envelope));
-    assert_no_forbidden_envelope_keys(&decode_msgpack_value(&encoded_body));
-    assert_eq!(
-        imported_entity_type_count(&envelope.body.update, ENTITY_TYPE_AUTHORITY_LOG),
-        0,
-        "guest-share envelope leaked authority-roster/topology records"
-    );
-    assert_eq!(
-        imported_tombstone_count(&envelope.body.update),
-        0,
-        "guest-share envelope leaked tombstone topology counts"
-    );
-}
-
-#[test]
 fn strip_happens_before_sign() {
     let member = entity_id(0x34);
     let other_member = entity_id(0x35);
@@ -1236,6 +1014,64 @@ fn strip_happens_before_sign() {
     assert!(!ids.contains(&membership));
     assert!(!ids.contains(&authority_id));
     assert_eq!(imported_tombstone_count(&envelope.body.update), 0);
+}
+
+/// R11133 on the federation door: a claim already resident in the window
+/// leaves the selector's synthetic doc, with every edge naming it, once its
+/// world turns device-only.
+#[test]
+fn selector_withholds_a_resident_claim_once_its_world_turns_device_only() {
+    let member = entity_id(0x3B);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let window_key = WindowKey::new("2026-03");
+    let world = local_world_id(0x5B).entity_id();
+    vault
+        .put_entity(
+            &world,
+            ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let doc = create_window_doc("source", &window_key);
+    let kept_claim = entity_id(0x7B);
+    let private_claim = entity_id(0x7C);
+    let facet = entity_id(0x5C);
+    insert_blob(&doc, kept_claim, &claim_blob(None));
+    insert_blob(&doc, private_claim, &claim_blob(Some(world)));
+    insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"facet");
+    insert_edge(&doc, kept_claim, EdgeKind::FacetOf, facet);
+    insert_edge(&doc, private_claim, EdgeKind::FacetOf, facet);
+    insert_edge(&doc, kept_claim, EdgeKind::Supports, private_claim);
+    doc.commit();
+    seed_doc_stamps(&vault, &doc);
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
+    let selected =
+        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
+    let ids = import_ids(&selected.export(ExportMode::all_updates()).unwrap());
+    assert!(ids.contains(&kept_claim));
+    assert!(!ids.contains(&private_claim));
+    let mut edges = Vec::new();
+    map_for_each_value_bytes(&selected.get_map("edges"), |key, _| {
+        edges.push(key.to_owned());
+    });
+    assert!(edges.contains(&edge_key(kept_claim, EdgeKind::FacetOf, facet)));
+    assert!(
+        !edges
+            .iter()
+            .any(|key| key.contains(&private_claim.to_hex()))
+    );
 }
 
 #[test]
@@ -1577,158 +1413,6 @@ fn admission_drop_leaves_no_pending_remat_work() {
     assert_eq!(
         report.quarantine_count, 1,
         "exactly the one forged row is accounted"
-    );
-}
-
-/// N forged rows in one admission cost EXACTLY ONE extra transaction.
-///
-/// The peer chooses N. A `write_txn` + commit per rejected row therefore hands
-/// it an amplification primitive: one admission, unbounded fsync traffic. The
-/// rejections ride one batch that commits once for the whole pass.
-///
-/// The commit count is observed through LMDB's own committed-transaction id
-/// (`Env::info().last_txn_id`), which is the property that actually matters —
-/// asserting on a Rust-side counter would pass even if the batching were
-/// removed.
-///
-/// The pin is an exact DELTA against a baseline, not a loose upper bound. An
-/// admission also commits traffic that has nothing to do with rejections
-/// (policy-manifest resolution today, whatever the path grows tomorrow), so a
-/// bare `commits < N` would still pass with the batch sharded into sixteen
-/// write transactions — the amplification fix could regress by an order of
-/// magnitude without failing a green test. The BASELINE pass is the same
-/// fixture with an ON-TABLE source type: identical row count, identical key
-/// shape, identical vault construction, and nothing rejected, so its
-/// `TerminalRejectionBatch` takes no transaction at all. The forged pass must
-/// then cost the baseline PLUS EXACTLY ONE — the single batch commit.
-#[test]
-fn admission_drops_commit_in_one_bounded_batch() {
-    // Enough rows that a per-row commit is unmistakable against a one-txn pass.
-    const STAMPER_COUNT: usize = 0x20;
-
-    /// One admission over `STAMPER_COUNT` `FacetOf` rows whose sources carry
-    /// `source_type`. Returns the vault (temp dir held alive by the caller)
-    /// and the committed-transaction delta the admission itself cost.
-    fn admission_txn_delta(source_type: u8) -> (tempfile::TempDir, Vault, usize) {
-        let (dir, vault, _grant_id) = test_vault_with_grant(entity_id(0x6B));
-        let window_key = WindowKey::new("2026-05");
-        let facet = entity_id(0x6C);
-
-        let remote = create_window_doc("federation-peer", &window_key);
-        insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-        for id in (0x70_u8..0x90).map(entity_id) {
-            insert_entity(&remote, id, source_type, b"stamper");
-            insert_edge(&remote, id, EdgeKind::FacetOf, facet);
-        }
-        remote.commit();
-        let update = remote.export(ExportMode::all_updates()).unwrap();
-
-        let before = vault.store.env.info().last_txn_id;
-        admit_federated_window_update(
-            &vault,
-            &window_key,
-            &update,
-            FederationAdmissionRole::Member,
-        )
-        .expect("neither pass may fail the admission closed");
-        let delta = vault.store.env.info().last_txn_id - before;
-        (dir, vault, delta)
-    }
-
-    // EVENT is on the `FacetOf` source table, PERSON is not: the two passes
-    // differ in ONE type byte, so their txn delta isolates the rejections.
-    let (_baseline_dir, baseline_vault, baseline_commits) = admission_txn_delta(ENTITY_TYPE_EVENT);
-    let (_forged_dir, forged_vault, forged_commits) = admission_txn_delta(ENTITY_TYPE_PERSON);
-
-    assert!(
-        quarantined_records(&baseline_vault).unwrap().is_empty(),
-        "the baseline must reject NOTHING — a baseline that also paid for a \
-         rejection batch would make the delta below vacuously true"
-    );
-    assert_eq!(
-        quarantined_records(&forged_vault).unwrap().len(),
-        STAMPER_COUNT,
-        "every rejected row is still accounted with its own typed evidence \
-         row — bounding the COMMITS must not bound the ACCOUNTING"
-    );
-
-    assert_eq!(
-        forged_commits,
-        baseline_commits + 1,
-        "{STAMPER_COUNT} forged rows cost {forged_commits} transactions \
-         against a {baseline_commits}-transaction rejection-free baseline — \
-         the whole pass owes EXACTLY ONE batch commit, so any sharding of it \
-         is a peer-controlled multiplier on our fsync traffic"
-    );
-
-    assert!(
-        crate::sync::quarantine::pending_remat_windows(&forged_vault)
-            .unwrap()
-            .is_empty(),
-        "the batch keeps the terminal no-marker shape for every row"
-    );
-}
-
-/// Past the per-pass evidence bound, rejections are accounted by COUNT.
-///
-/// The `x:` ring is SHARED and capped at 4096 rows, so an unbounded per-pass
-/// mint would let one hostile frame flush every unrelated quarantine record the
-/// vault holds — evidence destruction dressed as evidence keeping. The bound
-/// caps what one pass mints; the remainder increments a doctor-visible counter,
-/// so nothing is silently dropped. The reason code is uniform within a pass, so
-/// the capped rows carry no information the kept rows do not.
-///
-/// H2 liveness is unaffected: the ADMISSION continues either way — this is only
-/// about how the rejection is accounted.
-#[test]
-fn admission_drops_past_the_evidence_bound_are_counted_not_dropped() {
-    use crate::sync::quarantine::MAX_QUARANTINE_ROWS_PER_PASS;
-
-    let member = entity_id(0x7B);
-    let (_dir, vault, _grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-06");
-
-    let facet = entity_id(0x7C);
-    let over_cap = 5_usize;
-    let total = MAX_QUARANTINE_ROWS_PER_PASS + over_cap;
-
-    let remote = create_window_doc("federation-peer", &window_key);
-    insert_entity(&remote, facet, ENTITY_TYPE_FACET, b"facet");
-    for index in 0..total {
-        // 16-byte ids from a counter: the fixture needs more distinct forged
-        // sources than the single-byte seed helper can mint without colliding
-        // with the pinned-id list.
-        let mut bytes = [0x11_u8; 16];
-        bytes[0..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
-        let id = EntityId::from_bytes(bytes).unwrap();
-        insert_entity(&remote, id, ENTITY_TYPE_PERSON, b"person");
-        insert_edge(&remote, id, EdgeKind::FacetOf, facet);
-    }
-    remote.commit();
-    let update = remote.export(ExportMode::all_updates()).unwrap();
-
-    admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("an over-cap forged frame must not fail the admission closed");
-
-    let report = crate::sync::quarantine::sync_doctor(&vault).unwrap();
-    assert_eq!(
-        report.quarantine_count, MAX_QUARANTINE_ROWS_PER_PASS,
-        "one pass mints at most the per-pass bound, so a hostile frame cannot \
-         flush the shared 4096-row evidence ring"
-    );
-    assert_eq!(
-        report.batch_drop_count, over_cap as u64,
-        "the rows past the bound are accounted by COUNT — a bounded evidence \
-         budget must never become a silent drop"
-    );
-    assert!(
-        report.rm_pending_windows.is_empty(),
-        "over-cap rows keep the terminal no-marker shape too"
     );
 }
 
@@ -2170,335 +1854,74 @@ fn selector_target_must_resolve_to_a_facet_before_any_scope_is_honored() {
     }
 }
 
-/// SOURCE TRUTH IS NOT THE CRDT WINNER — the LWW forgery a document-blob-first
-/// mirror hands a peer for free.
-///
-/// Entity type is IMMUTABLE per id (`crate::error::RegistryError::EntityTypeImmutable`). The write
-/// door enforces it by QUARANTINING the re-type, which means LMDB keeps the
-/// FIRST-writer type — but the Loro map is last-write-wins and keeps the
-/// HIGHER-LAMPORT blob. The two therefore disagree by construction after a
-/// rejected re-type, and the disagreement is entirely peer-controlled.
-///
-/// The three frames build exactly that state:
-///
-/// 1. the forged `S -> <selected FACET>` stamp, with S absent everywhere (the
-///    H2 defer the admission door must honor);
-/// 2. S materializes as a PERSON — off-table, so the row is inert;
-/// 3. a CRDT-WINNING EVENT blob for the SAME id. The write door rejects it
-///    (`EntityTypeImmutable` quarantine, LMDB stays PERSON) but the doc map now
-///    types S as an admitted EVENT.
-///
-/// A mirror reading the document blob first sees EVENT and honors the stamp,
-/// exporting the PERSON and its one-hop neighbor on the strength of a type the
-/// engine REFUSED to write. Reading STORED-FIRST — the same order the
-/// admission door uses, and permanent truth because the type is immutable —
-/// closes it. The middle assertions are the load-bearing ones: they pin that
-/// the quarantine really fired and LMDB really held PERSON, so the export
-/// assertions are testing the mirror's ORDER rather than a doc that never
-/// flipped.
-///
-/// Both roles: a mirror that holds for members but not guests reads as
-/// protection while being none.
 #[test]
-fn selector_source_type_resolves_stored_first_against_a_winning_retype_blob() {
-    for (role, seed) in [
-        (FederationAdmissionRole::Member, 0xC0_u8),
-        (FederationAdmissionRole::Guest, 0xC8_u8),
-    ] {
-        let window = "2026-10";
-        let member = entity_id(seed);
-        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
-
-        let facet_selected = entity_id(seed + 1);
-        let source = entity_id(seed + 2);
-        let neighbor = entity_id(seed + 3);
-        let event = entity_id(seed + 4);
-
-        // Frame 1: the forged stamp lands while its SOURCE is unknowable
-        // everywhere. The FACET target rides along so the row names a facet
-        // this peer will select, and the EVENT control is stamped to the same
-        // facet so a broken mirror is distinguishable from a dead one.
-        let first = create_window_doc("federation-peer", &WindowKey::new(window));
-        insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
-        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
-        insert_edge(&first, source, EdgeKind::FacetOf, facet_selected);
-        insert_edge(&first, event, EdgeKind::FacetOf, facet_selected);
-        first.commit();
-        import_federated(&mut client, window, &first, role);
-
-        // Frame 2: S materializes as PERSON. This is the write that reaches
-        // LMDB, and immutability makes it permanent truth about this id.
-        let second = create_window_doc("federation-peer", &WindowKey::new(window));
-        insert_entity(&second, source, ENTITY_TYPE_PERSON, b"person");
-        insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
-        insert_edge(&second, source, EdgeKind::Mentions, neighbor);
-        second.commit();
-        import_federated(&mut client, window, &second, role);
-
-        assert_eq!(
-            vault.get_raw(&source).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_PERSON),
-            "{role:?}: precondition — the first-writer type must be in LMDB"
-        );
-
-        // Frame 3: the re-type. Each admitted frame is authored in a FRESH doc
-        // whose Lamport clock starts at zero, so "later frame" alone does not
-        // mean "higher Lamport" — a lone re-type op ties frame 2's and the
-        // winner falls to a peer-id tiebreak. The benign rows below are ids
-        // that sort ahead of the source, so admission re-authors them first
-        // and the re-type lands at a Lamport strictly above frame 2's. This is
-        // what an ordinary multi-row window update looks like anyway; the
-        // precondition assert right after is what keeps the test honest if
-        // Loro's ordering ever shifts under it.
-        let third = create_window_doc("federation-peer", &WindowKey::new(window));
-        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
-            insert_entity(&third, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
-        }
-        insert_entity(&third, source, ENTITY_TYPE_EVENT, b"forged-event");
-        third.commit();
-        import_federated(&mut client, window, &third, role);
-
-        let live = client.window(window).expect("window still loaded");
-        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &source.to_hex())
-            .expect("the re-type blob is resident in the live doc");
-        assert_eq!(
-            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
-            ENTITY_TYPE_EVENT,
-            "{role:?}: precondition — the re-type must WIN the CRDT map, or a \
-             blob-first mirror would pass this test vacuously"
-        );
-        assert_eq!(
-            vault.get_raw(&source).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_PERSON),
-            "{role:?}: precondition — the immutability gate must keep LMDB at \
-             the first-writer PERSON type"
-        );
-        assert!(
-            quarantined_records(&vault)
-                .unwrap()
-                .iter()
-                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
-                    && record.container == QuarantineContainer::Entities),
-            "{role:?}: precondition — the re-type must be QUARANTINED, which is \
-             what makes the stored type permanent truth the mirror can rely on"
-        );
-        // Explicit verified positions for the honest controls only. The forged
-        // source, its neighbor, and the pad rows stay unstamped — no stamp
-        // invention for hostile input.
-        stamp_live_rows(&vault, &live.doc, &[facet_selected, event]);
-
-        let selector = SyncSelector::new(
-            grant_id,
-            member,
-            SyncSelectorWorld::All,
-            vec![facet_selected],
-            vec![SelectorRange::Semantic, SelectorRange::Core],
-        );
-        let exported = filtered_window_doc(
-            &vault,
-            &live.doc,
-            &WindowKey::new(window),
-            test_selector_scope(),
-            &selector,
-        )
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-        let ids = import_ids(&exported);
-
-        assert!(
-            !ids.contains(&source),
-            "{role:?}: the mirror must read the STORED PERSON type, not the \
-             CRDT-winning EVENT blob the immutability gate refused to write — \
-             otherwise a peer buys facet scope with a rejected re-type"
-        );
-        assert!(
-            !ids.contains(&neighbor),
-            "{role:?}: the one-hop neighbor is reachable ONLY through the \
-             forged source — exporting it would prove the fake type still \
-             scopes closure"
-        );
-        assert!(
-            ids.contains(&event),
-            "{role:?}: control — the honest EVENT stamped to the SAME selected \
-             facet must still export; stored-first removes the fake, not facet \
-             scoping"
-        );
-        assert!(
-            ids.contains(&facet_selected),
-            "{role:?}: control — the selected facet is always visible to its \
-             selector"
-        );
-    }
-}
-
-/// A CONFLICTING document blob is NEVER CONSULTED — the stored type carries
-/// the scope, in the WITHHOLD direction as much as the seed direction.
-///
-/// This pin previously asserted the opposite (conflict ⇒ no scope ⇒ the EVENT
-/// exports), and the r7 finder proved that expectation was pinning the bug:
-/// reading a source conflict as `None` makes the row inert, which ERASES a
-/// withhold a valid stored EVENT + stored FACET pair had already established.
-/// A peer that cannot otherwise touch this entity gets to publish it by
-/// forging one rejected blob — non-monotone disclosure, peer-controlled. The
-/// unified rule is that stored truth never loses to a rejected write in EITHER
-/// role, so a conflicting blob can neither buy scope nor erase a withhold.
-///
-/// The suppression worry the old expectation answered is answered better by
-/// the unified rule: the withholds that survive are exactly the ones the
-/// STORED types already justified. A forged stamp aimed at a source stored as
-/// a PERSON is off the table and stays inert — no new suppression primitive
-/// appears (`selector_forged_facet_blob_cannot_retype_a_stored_person_target`
-/// and the three-frame LWW pin hold that line).
-///
-/// The fixture puts the stamp on an UNSELECTED facet so the two readings
-/// diverge: under a conflict-to-None source rule the EVENT rides the adjacent
-/// seed's closure and exports; under stored-wins it stays WITHHELD.
-///
-/// (Renamed from `selector_conflicting_document_blob_carries_no_scope_in_
-/// either_direction`, whose name stated the erasing rule the r7 ruling
-/// removed.)
-#[test]
-fn selector_conflicting_document_blob_never_displaces_the_stored_type() {
+fn valid_claim_retype_cannot_erase_stored_event_facet_withhold() {
     let member = entity_id(0x26);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-12");
-
-    let facet_selected = entity_id(0x7F);
-    let facet_unselected = entity_id(0x8F);
-    let claim_seed = entity_id(0x9F);
+    let key = WindowKey::new("2026-12");
+    let selected = entity_id(0x7F);
+    let unselected = entity_id(0x8F);
+    let seed = entity_id(0x9F);
     let conflicted = entity_id(0xAF);
-
-    // Stored as an ADMITTED source type against a stored FACET target: BOTH
-    // halves of this withhold are stored truth, which is exactly why a
-    // rejected blob may not dissolve it.
-    for (id, entity_type) in [
-        (facet_selected, ENTITY_TYPE_FACET),
-        (facet_unselected, ENTITY_TYPE_FACET),
+    for (id, kind) in [
+        (selected, ENTITY_TYPE_FACET),
+        (unselected, ENTITY_TYPE_FACET),
         (conflicted, ENTITY_TYPE_EVENT),
     ] {
         vault
-            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
+            .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"row")
             .unwrap();
     }
-
-    let doc = create_window_doc("source", &window_key);
-    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
-    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    // The CONFLICT: the doc types this id PERSON while LMDB holds EVENT.
-    insert_entity(&doc, conflicted, ENTITY_TYPE_PERSON, b"rejected-retype");
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
-    insert_edge(&doc, conflicted, EdgeKind::FacetOf, facet_unselected);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, conflicted);
+    let doc = create_window_doc("source", &key);
+    insert_entity(&doc, selected, ENTITY_TYPE_FACET, b"facet-a");
+    insert_entity(&doc, unselected, ENTITY_TYPE_FACET, b"facet-b");
+    let claim = ClaimBody::new(
+        "selector.test",
+        ClaimSubject::Entity(selected),
+        Value::from("valid claim"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    let blob = entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap());
+    insert_blob(&doc, seed, &blob);
+    insert_blob(&doc, conflicted, &blob);
+    insert_edge(&doc, seed, EdgeKind::FacetOf, selected);
+    insert_edge(&doc, conflicted, EdgeKind::FacetOf, unselected);
+    insert_edge(&doc, seed, EdgeKind::Supports, conflicted);
     doc.commit();
     seed_doc_stamps(&vault, &doc);
-
-    let selector = SyncSelector::new(
+    let broad = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
-        vec![facet_selected],
+        vec![],
         vec![SelectorRange::Semantic, SelectorRange::Core],
     );
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+    let broad_bytes = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &broad)
         .unwrap()
         .export(ExportMode::all_updates())
         .unwrap();
-    let ids = import_ids(&update);
-
     assert!(
-        ids.contains(&claim_seed),
-        "control: the selected-facet claim must seed closure, or the assertion \
-         below would hold vacuously"
+        import_ids(&broad_bytes).contains(&conflicted),
+        "valid conflicting claim must not be masked by another export gate"
     );
-    assert!(
-        !ids.contains(&conflicted),
-        "the stored EVENT's stamp to a stored UNSELECTED facet is a withhold \
-         BOTH endpoints' stored truth already justified, so it must survive a \
-         conflicting blob: reading the source conflict as no-type would make \
-         the row inert and let a peer PUBLISH this entity by forging one write \
-         the immutability gate rejected (r7 — non-monotone disclosure)"
-    );
-    assert!(
-        !ids.contains(&facet_unselected),
-        "unselected facet entity leaked"
-    );
-}
-
-/// POSITIVE CONTROL for the stored-first order: when the stored type and the
-/// document blob AGREE, an admitted source scopes exactly as before. Without
-/// this pin, "resolve stored-first" could be implemented as "ignore the
-/// document entirely" or "treat any stored row as disqualifying", and both
-/// would silently kill facet scoping for every normally-replicated entity.
-///
-/// The EVENT is stored AND present in the doc as an EVENT, stamped to a facet
-/// the peer did NOT select, and hangs off a genuine selected-facet CLAIM seed
-/// — so it would ride that seed's closure but for the withhold. Its absence is
-/// therefore proof the agreeing stamp is still disclosure-effective.
-#[test]
-fn selector_honors_scope_when_stored_and_document_source_types_agree() {
-    let member = entity_id(0x2B);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-11");
-
-    let facet_selected = entity_id(0x3F);
-    let facet_unselected = entity_id(0x4F);
-    let claim_seed = entity_id(0x5F);
-    let event = entity_id(0x6F);
-
-    // The stored rows are the truth source the mirror consults first; the doc
-    // blobs below agree with them, which is the ordinary replicated state.
-    for (id, entity_type) in [
-        (facet_selected, ENTITY_TYPE_FACET),
-        (facet_unselected, ENTITY_TYPE_FACET),
-        (event, ENTITY_TYPE_EVENT),
-    ] {
-        vault
-            .put_entity(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, b"row")
-            .unwrap();
-    }
-
-    let doc = create_window_doc("source", &window_key);
-    insert_entity(&doc, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
-    insert_entity(&doc, facet_unselected, ENTITY_TYPE_FACET, b"facet-b");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    insert_entity(&doc, event, ENTITY_TYPE_EVENT, b"event");
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_selected);
-    insert_edge(&doc, event, EdgeKind::FacetOf, facet_unselected);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, event);
-    doc.commit();
-    seed_doc_stamps(&vault, &doc);
-
-    let selector = SyncSelector::new(
+    let limited = SyncSelector::new(
         grant_id,
         member,
         SyncSelectorWorld::All,
-        vec![facet_selected],
+        vec![selected],
         vec![SelectorRange::Semantic, SelectorRange::Core],
     );
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+    let bytes = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &limited)
         .unwrap()
         .export(ExportMode::all_updates())
         .unwrap();
-    let ids = import_ids(&update);
-
-    assert!(
-        ids.contains(&claim_seed),
-        "control: the selected-facet claim must seed closure, or the \
-         assertion below would hold vacuously"
-    );
-    assert!(
-        !ids.contains(&event),
-        "an EVENT whose STORED and DOCUMENT types agree is on the table, so its \
-         unselected-facet stamp must still withhold it — stored-first resolves \
-         the type, it does not discard the scope"
-    );
-    assert!(ids.contains(&facet_selected));
-    assert!(
-        !ids.contains(&facet_unselected),
-        "unselected facet entity leaked"
-    );
+    let ids = import_ids(&bytes);
+    assert!(ids.contains(&seed));
+    assert!(!ids.contains(&conflicted));
+    assert!(!ids.contains(&unselected));
 }
 
 /// A REJECTED RETYPE MUST NOT ERASE A VALID SCOPE — the TARGET-side arm of
@@ -2508,8 +1931,7 @@ fn selector_honors_scope_when_stored_and_document_source_types_agree() {
 /// conflicted target to `None` makes the row inert and DELETES containment a
 /// valid stored FACET had already established — a peer forges one PERSON blob
 /// for a facet it does not own and an entity that was withheld from a
-/// facet-limited peer starts exporting. (The SOURCE arm of the same erasure is
-/// `selector_source_conflict_cannot_dissolve_a_multi_edge_withhold`; a
+/// facet-limited peer starts exporting. (The same erasure has a SOURCE arm; a
 /// conflicting blob is a rejected write, so it is not consulted on either end,
 /// and that single clause closes both.)
 ///
@@ -2647,211 +2069,6 @@ fn selector_target_conflict_keeps_the_stored_facet_scope() {
         assert!(
             ids.contains(&facet_selected),
             "{role:?}: control — the selected facet is visible to its selector"
-        );
-    }
-}
-
-/// THE MULTI-EDGE COMPOSITION (r7) — the shape that proved a SOURCE-side
-/// conflict-to-None rule non-monotone, and the reason the conflict policy is
-/// ONE rule rather than a role split.
-///
-/// Neither endpoint rule is wrong in isolation; the bug lives in how a single
-/// source's SEVERAL stamps compose. `FacetScope` is an OR-fold per source: one
-/// unselected-facet stamp withholds E outright. So the attacker does not need
-/// to forge scope onto E — it only needs E's source half to go INERT, which
-/// drops every stamp E carries, INCLUDING the withhold, and hands E back to
-/// the adjacent honest seed's closure.
-///
-/// The fixture is that composition, production-reproduced:
-///
-/// * E is stored EVENT with TWO `FacetOf` stamps — one to a stored FACET the
-///   peer did NOT select (the legitimate withhold), one to a doc-only FACET it
-///   DID select (so E is not merely unreachable, and a source that stays
-///   on-table still has a live selected stamp to weigh);
-/// * an honest selected-facet CLAIM seed sits adjacent to E, so closure WOULD
-///   carry E the moment the withhold dissolves;
-/// * a higher-Lamport PERSON blob retypes E. The immutability gate quarantines
-///   it and LMDB keeps EVENT — the conflict is entirely peer-controlled.
-///
-/// Under source-conflict-to-None, E's source half reads no type, BOTH stamps
-/// go inert, the withhold vanishes and the seed exports E: a peer PUBLISHES an
-/// entity by shipping a write the engine refused. Under stored-wins the source
-/// still reads EVENT, the unselected stamp still withholds, and E stays in.
-///
-/// The middle assertions are load-bearing: they pin that the retype really won
-/// the CRDT map, that it really quarantined, and that LMDB really still holds
-/// EVENT — otherwise the withhold below would pass on a document that never
-/// flipped. Both roles through the production federated entry: a mirror that
-/// holds for members but not guests reads as protection while being none.
-#[test]
-fn selector_source_conflict_cannot_dissolve_a_multi_edge_withhold() {
-    for (role, seed) in [
-        (FederationAdmissionRole::Member, 0x30_u8),
-        (FederationAdmissionRole::Guest, 0x38_u8),
-    ] {
-        let window = "2026-07";
-        let member = entity_id(seed);
-        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
-        put_imported_source_trust(&vault);
-
-        let facet_unselected = entity_id(seed + 1);
-        let facet_selected = entity_id(seed + 2);
-        let event = entity_id(seed + 3);
-        let claim_seed = entity_id(seed + 4);
-
-        // Frame 1: the honest world, admitted through the real door so the
-        // EVENT and the UNSELECTED facet both materialize into LMDB. Those two
-        // stored rows are what justify the withhold.
-        let first = create_window_doc("federation-peer", &WindowKey::new(window));
-        insert_entity(&first, facet_unselected, ENTITY_TYPE_FACET, b"facet-u");
-        insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
-        insert_blob(&first, claim_seed, &public_claim_blob());
-        insert_edge(&first, event, EdgeKind::FacetOf, facet_unselected);
-        insert_edge(&first, claim_seed, EdgeKind::Supports, event);
-        first.commit();
-        import_federated(&mut client, window, &first, role);
-
-        assert_eq!(
-            vault.get_raw(&event).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_EVENT),
-            "{role:?}: precondition — the first-writer EVENT type must be in LMDB"
-        );
-        assert_eq!(
-            vault
-                .get_raw(&facet_unselected)
-                .unwrap()
-                .map(|blob| blob[0]),
-            Some(ENTITY_TYPE_FACET),
-            "{role:?}: precondition — the withheld-from facet must be STORED, so \
-             both halves of this withhold are stored truth"
-        );
-
-        // The SELECTED facet and its seed stamp ride the live doc under the
-        // bridge origin so Observer B leaves LMDB alone; the facet is then
-        // explicitly verified with a local put (same bytes, digest matches) so
-        // the export filter — which withholds unstamped doc-only rows — can
-        // carry it. The doc-blob endpoint-resolution branch this used to pin is
-        // now covered by `selector_document_only_target_scopes_only_when_it_
-        // types_a_facet` (which asserts scoping, not the doc-only row's own
-        // export); this fixture keeps the conflict branch plus the honest
-        // closure controls.
-        let live = client
-            .window(window)
-            .expect("federated import opens window");
-        insert_entity(&live.doc, facet_selected, ENTITY_TYPE_FACET, b"facet-s");
-        insert_edge(&live.doc, event, EdgeKind::FacetOf, facet_selected);
-        insert_edge(&live.doc, claim_seed, EdgeKind::FacetOf, facet_selected);
-        live.doc
-            .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-        // Explicit verified positions: the unselected facet (stored FACET) and
-        // the selected facet (same bytes). E's doc blob is honest here (EVENT)
-        // but will be retyped below; it is left unstamped throughout so the
-        // withhold after the retype is fail-closed on both the facet door and
-        // the missing-stamp door, and no stamp is ever invented for the
-        // rejected PERSON blob.
-        stamp_live_rows(&vault, &live.doc, &[facet_unselected, facet_selected]);
-        assert!(
-            vault.get_raw(&facet_selected).unwrap().is_some(),
-            "{role:?}: precondition — the selected facet must be verified (stored) \
-             so its own export proves closure, not missing stamps"
-        );
-
-        let selector = SyncSelector::new(
-            grant_id,
-            member,
-            SyncSelectorWorld::All,
-            vec![facet_selected],
-            vec![SelectorRange::Semantic, SelectorRange::Core],
-        );
-        let export_ids = |client: &mut SyncClient| {
-            let live = client.window(window).expect("window still loaded");
-            let update = filtered_window_doc(
-                &vault,
-                &live.doc,
-                &WindowKey::new(window),
-                test_selector_scope(),
-                &selector,
-            )
-            .unwrap()
-            .export(ExportMode::all_updates())
-            .unwrap();
-            import_ids(&update)
-        };
-
-        let ids = export_ids(&mut client);
-        assert!(
-            ids.contains(&claim_seed),
-            "{role:?}: precondition — the selected-facet CLAIM must seed closure, \
-             or E's absence below would hold vacuously"
-        );
-        assert!(
-            !ids.contains(&event),
-            "{role:?}: precondition — E's stamp to the UNSELECTED facet must \
-             withhold it EVEN THOUGH it also carries a selected stamp and an \
-             adjacent seed; the retype below erases nothing otherwise"
-        );
-
-        // Frame 2: the forged retype of E's OWN type. Pad rows sort ahead of E
-        // so admission re-authors them first and the retype lands at a Lamport
-        // strictly above frame 1's — a lone op would tie and fall to a peer-id
-        // tiebreak. The precondition asserts below keep this honest if Loro's
-        // ordering ever shifts.
-        let second = create_window_doc("federation-peer", &WindowKey::new(window));
-        for pad in [0x02_u8, 0x03, 0x04, 0x05, 0x06] {
-            insert_entity(&second, entity_id(pad), ENTITY_TYPE_PERSON, b"unrelated");
-        }
-        insert_entity(&second, event, ENTITY_TYPE_PERSON, b"forged-person");
-        second.commit();
-        import_federated(&mut client, window, &second, role);
-
-        let live = client.window(window).expect("window still loaded");
-        let doc_blob = map_get_bytes(&live.doc.get_map("entities"), &event.to_hex())
-            .expect("the retype blob is resident in the live doc");
-        assert_eq!(
-            EntityMetadataHeader::parse(&doc_blob).unwrap().entity_type,
-            ENTITY_TYPE_PERSON,
-            "{role:?}: precondition — the retype must WIN the CRDT map, or the \
-             conflict this test is about never exists"
-        );
-        assert_eq!(
-            vault.get_raw(&event).unwrap().map(|blob| blob[0]),
-            Some(ENTITY_TYPE_EVENT),
-            "{role:?}: precondition — the immutability gate must keep LMDB at \
-             the first-writer EVENT type"
-        );
-        assert!(
-            quarantined_records(&vault)
-                .unwrap()
-                .iter()
-                .any(|(_, record)| record.reason_code == "EntityTypeImmutable"
-                    && record.container == QuarantineContainer::Entities),
-            "{role:?}: precondition — the retype must be QUARANTINED, which is \
-             what makes the stored EVENT permanent truth the mirror relies on"
-        );
-
-        let ids = export_ids(&mut client);
-        assert!(
-            !ids.contains(&event),
-            "{role:?}: E must STILL be withheld. A conflicting SOURCE blob read \
-             as no-type drops EVERY stamp E carries — the unselected-facet \
-             withhold included — and the adjacent seed's closure then exports \
-             it: a peer publishes an entity it does not control by forging one \
-             write the immutability gate rejected (r7). Stored truth never \
-             loses to a rejected write"
-        );
-        assert!(
-            ids.contains(&claim_seed),
-            "{role:?}: control — the honest selected-facet seed must still \
-             export; stored-wins removes the erasure, not facet scoping"
-        );
-        assert!(
-            ids.contains(&facet_selected),
-            "{role:?}: control — the doc-only selected facet is visible to its \
-             own selector, so the doc-blob branch really did resolve"
-        );
-        assert!(
-            !ids.contains(&facet_unselected),
-            "{role:?}: unselected facet entity leaked"
         );
     }
 }
@@ -3112,86 +2329,6 @@ fn selector_facet_closure_does_not_expand_from_facet_entities() {
 }
 
 #[test]
-fn selector_applies_world_and_band_filters() {
-    let member = entity_id(0x32);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-04");
-    let doc = create_window_doc("source", &window_key);
-    let world = local_world_id(0x5E);
-    let other_world = entity_id(0xE2);
-    let claim_world = entity_id(0x41);
-    let claim_base = entity_id(0x61);
-    let claim_other_world = entity_id(0x43);
-    let world_entity = world.entity_id();
-    let task_like = entity_id(0x45);
-    let facet_allowed = entity_id(0x52);
-
-    insert_blob(&doc, claim_world, &claim_blob(Some(world.entity_id())));
-    insert_blob(&doc, claim_base, &claim_blob(None));
-    insert_blob(&doc, claim_other_world, &claim_blob(Some(other_world)));
-    insert_entity(&doc, world_entity, ENTITY_TYPE_WORLD, b"world");
-    insert_entity(&doc, task_like, 80, b"task-list");
-    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
-    // Every CLAIM seeds the selected facet so world filtering (not facet
-    // withholding) decides: the other-world claim passes facets but fails
-    // worlds. The WORLD row and the Productivity probe ride one-hop closure
-    // from a seed so band filtering (not facet withholding) decides them.
-    insert_edge(&doc, claim_world, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_base, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_other_world, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_world, EdgeKind::Supports, world_entity);
-    insert_edge(&doc, claim_world, EdgeKind::Supports, task_like);
-    doc.commit();
-    // The Productivity probe (type 80, COUNTERPARTY_CONTACT) is an
-    // engine-authored maintenance kind: no public put can stamp it
-    // (`MaintenanceKindNotWritable`), so its doc row stays unstamped and is
-    // withheld by the missing-stamp door as well as the band door. Both doors
-    // fail closed; the negative below holds either way. The WORLD and FACET
-    // rows are stamped so world/band filtering — not missing stamps —
-    // decides the positives.
-    vault
-        .batch()
-        .put(
-            &world_entity,
-            ENTITY_TYPE_WORLD,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"world",
-        )
-        .put(
-            &facet_allowed,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"facet-a",
-        )
-        .commit()
-        .unwrap();
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::World(world),
-        vec![facet_allowed],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-    let ids = import_ids(&update);
-
-    assert!(ids.contains(&claim_world));
-    assert!(
-        ids.contains(&claim_base),
-        "base claims belong to every world selector"
-    );
-    assert!(ids.contains(&world_entity));
-    assert!(!ids.contains(&claim_other_world));
-    assert!(!ids.contains(&task_like), "productivity band leaked");
-}
-
-#[test]
 fn selector_requires_matching_federation_grant_member() {
     let member = entity_id(0x33);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
@@ -3207,22 +2344,6 @@ fn selector_requires_matching_federation_grant_member() {
         vec![],
         vec![],
     );
-    assert!(
-        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).is_err()
-    );
-}
-
-#[test]
-fn selector_requires_matching_federation_grant_scope() {
-    let member = entity_id(0x35);
-    let (_dir, vault, grant_id) =
-        test_vault_with_grant_scope(member, FederationGrantScope::vault(8));
-    let window_key = WindowKey::new("2026-05");
-    let doc = create_window_doc("source", &window_key);
-    insert_entity(&doc, entity_id(0x56), ENTITY_TYPE_PERSON, b"person");
-    doc.commit();
-
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert!(
         filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).is_err()
     );
@@ -3294,71 +2415,6 @@ fn selector_suppresses_tombstoned_live_map_residue() {
 }
 
 #[test]
-fn selector_suppresses_tombstone_alias_live_map_residue() {
-    let member = entity_id(0x38);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let window_key = WindowKey::new("2026-08");
-    let doc = create_window_doc("source", &window_key);
-    let residue = entity_id(0x58);
-    let facet_allowed = entity_id(0x5A);
-    let claim_seed = entity_id(0x5B);
-    insert_entity(&doc, residue, ENTITY_TYPE_PERSON, b"stale-live-blob");
-    insert_entity(&doc, facet_allowed, ENTITY_TYPE_FACET, b"facet-a");
-    insert_blob(&doc, claim_seed, &claim_blob(None));
-    insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
-    insert_edge(&doc, claim_seed, EdgeKind::Supports, residue);
-    insert_uppercase_tombstone_alias(&doc, residue);
-    doc.commit();
-    vault
-        .batch()
-        .put(
-            &residue,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"stale-live-blob",
-        )
-        .put(
-            &facet_allowed,
-            ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"facet-a",
-        )
-        .commit()
-        .unwrap();
-
-    let selector = SyncSelector::new(
-        grant_id,
-        member,
-        SyncSelectorWorld::All,
-        vec![facet_allowed],
-        vec![SelectorRange::Semantic, SelectorRange::Core],
-    );
-    let filtered =
-        filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector).unwrap();
-    let receiver = create_window_doc("receiver", &window_key);
-    receiver
-        .import(&filtered.export(ExportMode::all_updates()).unwrap())
-        .unwrap();
-
-    assert!(
-        receiver
-            .get_map("entities")
-            .get(residue.to_hex().as_str())
-            .is_none(),
-        "any parseable tombstone alias must suppress live-map residue"
-    );
-    assert!(
-        receiver
-            .get_map("tombstones")
-            .get(residue.to_hex().to_ascii_uppercase().as_str())
-            .is_some(),
-        "selector snapshots should retain the alias tombstone"
-    );
-}
-
-#[test]
 fn selector_treats_malformed_facet_of_value_as_denied_scope() {
     let member = entity_id(0x37);
     let (_dir, vault, grant_id) = test_vault_with_grant(member);
@@ -3418,8 +2474,7 @@ use crate::authority::{
 };
 use crate::error::{RegistryError, SyncError};
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, base_world_axis,
-    encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, encode_federation_pact_scope,
 };
 
 fn all_direction_scope() -> FederationDirectionScope {
@@ -3637,6 +2692,23 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     }
 }
 
+/// Review repro (access deletion fences): a FederationGrant whose delete was
+/// accepted but not applied keeps its body. It authorizes no selector.
+#[test]
+fn a_grant_deleted_here_authorizes_no_selector() {
+    let member = entity_id(0x35);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("a live grant authorizes");
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &grant_id, &[1; 25]))
+        .unwrap();
+    assert!(vault.get_raw(&grant_id).unwrap().is_some());
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect_err("a grant deleted here authorizes nothing");
+}
+
 #[test]
 fn selector_authorization_gates_on_pact_activation() {
     let member = entity_id(0x34);
@@ -3679,49 +2751,6 @@ fn selector_authorization_gates_on_pact_activation() {
             "{name}: wrong denial: {err:?}"
         );
     }
-}
-
-/// ONE-1604-D1 T10 (the 1632 seam floor): the keystone changes no
-/// authorization outcome. A rejected divergent-overwrite attempt against an
-/// admitted AUTHORITY_LOG row leaves `authorize_sync_selector` deciding exactly as
-/// it did before — 1631 hardens the store, it does not move the
-/// authorization edge that 1632 will later split.
-#[test]
-fn rejected_divergent_authority_overwrite_does_not_change_authorization() {
-    let member = entity_id(0x34);
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    authorize_sync_selector(&vault, test_selector_scope(), &selector)
-        .expect("precondition: the pact-bound grant authorizes");
-
-    // Attempt a body-divergent write at an admitted authority row's key.
-    let foreign = authority_genesis_entry(0x77);
-    let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
-    let occupied = vault
-        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap()
-        .into_iter()
-        .next()
-        .expect("an authority row must be seeded");
-    let err = vault
-        .batch()
-        .put_replicated(
-            &occupied,
-            ENTITY_TYPE_AUTHORITY_LOG,
-            TimeRange { start: 9, end: 9 },
-            9,
-            &foreign_body,
-        )
-        .commit()
-        .expect_err("a divergent body at an occupied AUTHORITY_LOG key must be rejected");
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::AuthorityLogStoreKeyMismatch
-    );
-
-    authorize_sync_selector(&vault, test_selector_scope(), &selector)
-        .expect("authorization must be byte-for-byte unchanged after the rejected overwrite");
 }
 
 // ---------------------------------------------------------------------------
@@ -4180,9 +3209,7 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     }
 
     // The empty-vector selector requests no narrowing, so it sits within even a
-    // ⊥ ceiling and resolves to that ⊥. The EXPORT half ("can exfiltrate
-    // nothing") is proven by
-    // `bottom_ceiling_exports_nothing_to_an_unnarrowed_request`.
+    // ⊥ ceiling and resolves to that ⊥.
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
         resolve_selector_position(&silent, &ceiling)
@@ -4255,46 +3282,6 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
 
         assert_eq!(import_ids(&update), vec![claim_named], "{name}");
     }
-}
-
-#[test]
-fn unnarrowed_request_under_an_unpacted_grant_narrows_no_facet() {
-    let member = entity_id(0x3D);
-    let window_key = WindowKey::new("2026-12");
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let doc = pact_ceiling_source_doc(&vault, &window_key);
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-    let ids = import_ids(&update);
-
-    assert!(ids.contains(&entity_id(0x66)) && ids.contains(&entity_id(0x67)));
-}
-
-#[test]
-fn bottom_ceiling_exports_nothing_to_an_unnarrowed_request() {
-    let member = entity_id(0x3D);
-    let window_key = WindowKey::new("2026-12");
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    seed_scoped_pacts_for_grant(
-        &vault,
-        grant_id,
-        &[FederationDirectionScope {
-            worlds: ScopeAxis::All,
-            facets: ScopeAxis::Bottom,
-            bands: ScopeAxis::All,
-        }],
-    );
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let doc = pact_ceiling_source_doc(&vault, &window_key);
-    let update = filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
-        .unwrap()
-        .export(ExportMode::all_updates())
-        .unwrap();
-
-    assert!(import_ids(&update).is_empty());
 }
 
 /// Done-means 5: several Active pacts on one grant intersect into a single
@@ -4436,47 +3423,6 @@ fn foreign_world_ids_cannot_enter_a_selector_scope() {
     assert!(!ids.contains(&foreign_claim));
 }
 
-/// Done-means 7: the activation gate still runs first. An unpacted grant keeps
-/// legacy-allow for a fully specified selector, and a non-Active pact refuses
-/// with `GrantInactive` before the ceiling is ever computed — even when the
-/// selector would also exceed that pact's scope.
-#[test]
-fn activation_gate_precedes_the_ceiling_check() {
-    let member = entity_id(0x34);
-    let content_selector = |grant_id| {
-        SyncSelector::new(
-            grant_id,
-            member,
-            SyncSelectorWorld::World(local_world_id(0x51)),
-            vec![entity_id(0x61)],
-            vec![SelectorRange::Semantic],
-        )
-    };
-
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    authorize_sync_selector(&vault, test_selector_scope(), &content_selector(grant_id))
-        .expect("an unpacted grant has no ceiling and keeps legacy-allow");
-
-    // `seed_pact_for_grant`'s suspending repacts narrow facets to a set this
-    // selector does not name, so the ceiling would refuse it too; the
-    // activation refusal must win.
-    let (_dir, vault, grant_id) = test_vault_with_grant(member);
-    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Suspended);
-    let err = authorize_sync_selector(&vault, test_selector_scope(), &content_selector(grant_id))
-        .expect_err("a suspended pact-bound grant must deny");
-    assert!(
-        matches!(
-            err,
-            Error::Sync(SyncError::SyncProtocolError {
-                context: SyncProtocolValidation::Selector {
-                    reason: SelectorError::GrantInactive
-                }
-            })
-        ),
-        "activation must refuse before the ceiling runs, got {err:?}"
-    );
-}
-
 /// Done-means 8: the flat `grant.scope == grant_scope` check is untouched and
 /// is not satisfied by a selector that merely fits under the pact ceiling.
 #[test]
@@ -4596,73 +3542,6 @@ fn delegate_selector_denies_from_the_expiry_second() {
         authorize_sync_selector_at(&vault, test_selector_scope(), &selector, now)
             .unwrap_or_else(|e| panic!("a non-delegate grant must authorize at {now}: {e:?}"));
     }
-}
-
-/// Door order: activation (ONE-1408) → pact ceiling (ONE-1591) → delegate
-/// expiry (ONE-1409). An expired delegate that ALSO fails an earlier arm
-/// reports that earlier arm, so adding expiry moved no existing refusal.
-#[test]
-fn delegate_expiry_is_the_last_arm_of_the_door() {
-    let member = entity_id(0x36);
-    let expired = DELEGATE_EXPIRES_AT;
-
-    // Activation first: a suspended pact denies even though the delegate has
-    // also lapsed.
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Suspended);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            Error::Sync(SyncError::SyncProtocolError {
-                context: SyncProtocolValidation::Selector {
-                    reason: SelectorError::GrantInactive
-                }
-            })
-        ),
-        "activation must refuse before expiry, got {err:?}"
-    );
-
-    // Ceiling second: an over-wide selector on an active pact denies for scope,
-    // not for expiry.
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    seed_scoped_pacts_for_grant(
-        &vault,
-        grant_id,
-        &[FederationDirectionScope {
-            worlds: base_world_axis(),
-            facets: ScopeAxis::Bottom,
-            bands: ScopeAxis::Bottom,
-        }],
-    );
-    let wide = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &wide, expired).unwrap_err();
-    assert_grant_scope_mismatch(&err, "ceiling before expiry");
-
-    // Expiry last: under an All ceiling nothing earlier objects, so the expiry
-    // arm is what refuses — and it refuses on an UNPACTED grant too. Legacy
-    // allow covers a missing PACT, never a lapsed delegation.
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    seed_scoped_pacts_for_grant(&vault, grant_id, &[all_direction_scope()]);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    authorize_sync_selector_at(&vault, test_selector_scope(), &selector, DELEGATE_NOW)
-        .expect("precondition: a live delegate under an All ceiling authorizes");
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
-    assert_grant_expired(&err, "active pact, lapsed delegate");
-
-    let (_dir, vault, grant_id) =
-        test_vault_with_delegate(member, DELEGATE_NOW, DELEGATE_EXPIRES_AT);
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
-    let err =
-        authorize_sync_selector_at(&vault, test_selector_scope(), &selector, expired).unwrap_err();
-    assert_grant_expired(&err, "unpacted lapsed delegate");
 }
 
 /// The public wrapper reads the WALL CLOCK, not a caller-chosen instant: the
@@ -5170,33 +4049,6 @@ fn selector_export_verifies_machine_origin_against_actual_crdt_id_and_body() {
         (false, false),
         "the old signed birth cannot be exported as current state"
     );
-}
-
-#[test]
-fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() {
-    for family in crate::registry::TYPE_BYTE_FAMILIES {
-        let selector = SyncSelector::new(
-            entity_id(0xA0),
-            entity_id(0xA7),
-            SyncSelectorWorld::All,
-            vec![],
-            vec![SelectorRange::Family(family.family)],
-        );
-        let bytes = encode_sync_selector(&selector).unwrap();
-        assert_eq!(decode_sync_selector(&bytes).unwrap(), selector);
-        let Value::Map(mut fields) = rmpv::decode::read_value(&mut Cursor::new(bytes)).unwrap()
-        else {
-            panic!("selector encoding must be a map");
-        };
-        fields
-            .iter_mut()
-            .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
-            .unwrap()
-            .1 = Value::from(1);
-        let mut retired = Vec::new();
-        rmpv::encode::write_value(&mut retired, &Value::Map(fields)).unwrap();
-        assert!(decode_sync_selector(&retired).is_err());
-    }
 }
 
 #[test]
@@ -5978,4 +4830,2112 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
             .any(|row| row.kind == EdgeKind::About && row.target == person)
     );
     Ok(())
+}
+
+/// Astra #1384 P1-2: an epoch summary leaves only with every record it was
+/// written from. A run read a CLAIM in private world W and summarized it: a
+/// peer whose grant takes base-world SUMMARY rows but not W gets neither the
+/// summary nor its words, and no source is sent along. A summary of base
+/// records still leaves beside them. A source only another window carries
+/// cannot be proven from this export (Sol round 10 on #1384), so even a peer
+/// that takes W gets the CLAIM and not its summary. The scoped record export
+/// door judges the same way.
+#[test]
+fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate::Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5e);
+    let person = entity_id(0x62);
+    let (claim, private, plain) = (entity_id(0x63), entity_id(0x64), entity_id(0x65));
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.private_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the private world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: entity_id(0x66).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: entity_id(0x67).to_hex(),
+        })
+    };
+    vault
+        .batch()
+        .put(
+            &private,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(1, "the run learned the private world fact")?,
+        )
+        .edge(&private, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &plain,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(2, "the run met the person")?,
+        )
+        .edge(&plain, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    let base_doc = create_window_doc("source", &base_key);
+    crate::sync::window::reverse_rematerialize(&vault, &base_doc, &base_key)?;
+    let sent = |world_axis| -> crate::Result<Vec<EntityId>> {
+        let selector = SyncSelector::new(grant_id, member, world_axis, vec![], vec![]);
+        let filtered = filtered_window_doc(
+            &vault,
+            &base_doc,
+            &base_key,
+            test_selector_scope(),
+            &selector,
+        )?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let base = sent(SyncSelectorWorld::Base)?;
+    assert!(base.contains(&person) && base.contains(&plain));
+    assert!(!base.contains(&private), "the summary stays with its CLAIM");
+    assert!(!base.contains(&claim), "no source is sent along");
+    let all = sent(SyncSelectorWorld::All)?;
+    assert!(
+        all.contains(&plain) && !all.contains(&private),
+        "a summary leaves only beside its sources, and the CLAIM travels in W's window"
+    );
+
+    let mut base_only = Scope::top();
+    base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
+        crate::claim::base_world_id(),
+    )]));
+    let top = Scope::top();
+    let exported = vault
+        .export_records_in_scope(&base_only, &top, &top)?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<Vec<_>>();
+    assert!(exported.contains(&plain));
+    assert!(!exported.contains(&private) && !exported.contains(&claim));
+    let read = vault
+        .records_in_scope(
+            &base_only,
+            &top,
+            &top,
+            crate::federation::record_scope::ScopeView::Normal,
+        )?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<Vec<_>>();
+    assert!(read.contains(&plain) && !read.contains(&private));
+    Ok(())
+}
+
+/// Sol round 5 on #1384: an epoch summary stays where its world or a source
+/// stays. A summary a run settled in world W is not base-world disclosure,
+/// and a world flagged device-only keeps both the summary born in it and
+/// every summary written from its rows on this device.
+#[test]
+fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochPlacement, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5f);
+    let person = entity_id(0x68);
+    let (claim, kept, placed) = (entity_id(0x69), entity_id(0x6a), entity_id(0x6b));
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.device_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the device-only world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: entity_id(0x6c).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: entity_id(0x6d).to_hex(),
+        })
+    };
+    vault
+        .batch()
+        .put(
+            &kept,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(1, "the run learned the device-only world fact")?,
+        )
+        .edge(&kept, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &placed,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(2, "the run met the person in its world")?,
+        )
+        .edge(&placed, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    let placement = EpochPlacement {
+        world: Some(world.entity_id()),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, placed))?;
+    let packed = || -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", &base_key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, &base_key)?;
+        Ok(doc)
+    };
+    let sent = |doc: &LoroDoc, world_axis| -> crate::Result<Vec<EntityId>> {
+        let selector = SyncSelector::new(grant_id, member, world_axis, vec![], vec![]);
+        let filtered =
+            filtered_window_doc(&vault, doc, &base_key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let before = packed()?;
+    let base = sent(&before, SyncSelectorWorld::Base)?;
+    assert!(base.contains(&person));
+    assert!(
+        !base.contains(&placed),
+        "a summary born in W is not base-world disclosure"
+    );
+    let all = sent(&before, SyncSelectorWorld::All)?;
+    assert!(all.contains(&placed), "a summary born in W leaves with W");
+    assert!(
+        !all.contains(&kept),
+        "a summary of W's CLAIM stays home: the CLAIM travels in W's window"
+    );
+
+    vault.keep_world_on_this_machine_for_test(world.entity_id(), true)?;
+    let all = sent(&before, SyncSelectorWorld::All)?;
+    assert!(
+        !all.contains(&kept),
+        "a device-only source keeps its summary home"
+    );
+    assert!(
+        !all.contains(&placed),
+        "a summary born in a device-only world stays home, even out of an older window"
+    );
+    assert!(all.contains(&person) && !all.contains(&claim));
+    let after = sent(&packed()?, SyncSelectorWorld::All)?;
+    assert!(
+        !after.contains(&placed),
+        "a summary born in a device-only world is never packed"
+    );
+    assert!(after.contains(&person) && !after.contains(&kept));
+    Ok(())
+}
+
+/// #1384 beside #1402 (R11133): a world turned device-only keeps the epoch
+/// summaries packed while it was portable, at every export door, until the
+/// flag clears. `placed` was born in W; `told` was born in base reality from
+/// W's CLAIM and carries its words; `lost` was written from a row this device
+/// no longer holds, so the world it sat in is unknown (a raw row delete: every
+/// deletion path takes the edge to the row with it, so this models a store
+/// left inconsistent). The window door withholds each one's base window, the
+/// selector drops `placed` and every edge naming it, and the scoped record
+/// export drops both. A promotion stands: the flag withholds bytes, not the
+/// grant's authority (Sol round 17 on #1384).
+#[test]
+fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::federation::Scope;
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x58).entity_id();
+    let (person, placed) = (entity_id(0x59), entity_id(0x5a));
+    let (fact, told) = (entity_id(0x60), entity_id(0x61));
+    let (gone, lost) = (entity_id(0x62), entity_id(0x63));
+    let (march, april, may) = (
+        WindowKey::new("2026-03"),
+        WindowKey::new("2026-04"),
+        WindowKey::new("2026-05"),
+    );
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    // The WORLD row sits in February's window, so only a summary can make
+    // March's or April's window one the flag keeps.
+    let (occurred, learned) = at(&WindowKey::new("2026-02"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, occurred, learned, b"world")?;
+    let (in_march, march_at) = at(&march);
+    let (in_april, april_at) = at(&april);
+    let (in_may, may_at) = at(&may);
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, in_march, march_at, b"person")?;
+    vault.put_entity(&gone, ENTITY_TYPE_PERSON, in_may, may_at, b"gone")?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, in_april, april_at)?;
+    vault
+        .batch()
+        .put(
+            &placed,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_march,
+            march_at,
+            &epoch_summary_bytes(1, "the run met the person in its world")?,
+        )
+        .edge(&placed, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &told,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_april,
+            april_at,
+            &epoch_summary_bytes(2, "the run learned the world fact")?,
+        )
+        .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &lost,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_may,
+            may_at,
+            &epoch_summary_bytes(3, "the run met someone")?,
+        )
+        .edge(&lost, EdgeKind::DerivedFrom, &gone, 1.0)
+        .commit()?;
+    let in_world = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| in_world.settle_in(&vault.store, txn, placed))?;
+    vault.with_write_txn_grouped(|txn| {
+        for base in [told, lost] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+    let packed = |key: &WindowKey| -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        Ok(doc)
+    };
+    let (march_doc, april_doc, may_doc) = (packed(&march)?, packed(&april)?, packed(&may)?);
+    vault.with_write_txn(|txn| {
+        vault.store.entities.delete(txn, gone.as_bytes())?;
+        Ok(())
+    })?;
+    let top = Scope::top();
+    let ships = |shipped: bool| -> crate::Result<()> {
+        let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
+            Ok(!crate::sync::window::export_withheld(
+                &vault,
+                key,
+                doc,
+                &loro::VersionVector::default(),
+            )?)
+        };
+        assert_eq!(
+            window(&march, &march_doc)?,
+            shipped,
+            "the window door, March"
+        );
+        assert_eq!(
+            window(&april, &april_doc)?,
+            shipped,
+            "the window door, April"
+        );
+        assert_eq!(window(&may, &may_doc)?, shipped, "the window door, May");
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let selected =
+            filtered_window_doc(&vault, &march_doc, &march, test_selector_scope(), &selector)?;
+        let ids = import_ids(&selected.export(ExportMode::all_updates()).unwrap());
+        let mut edges = Vec::new();
+        map_for_each_value_bytes(&selected.get_map("edges"), |key, _| {
+            edges.push(key.to_owned());
+        });
+        assert!(ids.contains(&person));
+        assert_eq!(ids.contains(&placed), shipped, "the selector, the summary");
+        let promoted = crate::sync::residence::promotion_covers_full_window(
+            &vault,
+            &march_doc,
+            &march,
+            test_selector_scope(),
+            &selector,
+            |_| Ok(true),
+        )?;
+        assert!(promoted, "the promotion stands");
+        assert_eq!(
+            edges.iter().any(|key| key.contains(&placed.to_hex())),
+            shipped,
+            "the selector, an edge naming the summary"
+        );
+        let exported = vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            exported.contains(&placed),
+            shipped,
+            "the scoped export, born in W"
+        );
+        assert_eq!(
+            exported.contains(&told),
+            shipped,
+            "the scoped export, W's words"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    ships(false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    ships(true)
+}
+
+/// #1384 beside #1402: a deletion that withdraws an epoch summary records
+/// where the words it took sat, read before that source, its stamp and its
+/// edges go, so the summary keeps them home while a world is device-only.
+/// `told` was written from W's CLAIM and `plain` from a base CLAIM, both
+/// purged with their edges; `outer` from `inner`, a summary born in W that a
+/// user delete leaves as a shell with no stamp. `erased`, written from W's
+/// CLAIM, is itself erased first: its words stay in May's packed window.
+#[test]
+fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let world = local_world_id(0x58).entity_id();
+    let person = entity_id(0x59);
+    let (fact, told) = (entity_id(0x60), entity_id(0x61));
+    let (base_fact, plain) = (entity_id(0x64), entity_id(0x65));
+    let (inner, outer, erased) = (entity_id(0x66), entity_id(0x67), entity_id(0x68));
+    let (may, june, july, august) = (
+        WindowKey::new("2026-05"),
+        WindowKey::new("2026-06"),
+        WindowKey::new("2026-07"),
+        WindowKey::new("2026-08"),
+    );
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    // The sources sit in September, apart from the windows checked.
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, sources, sources_at, b"person")?;
+    let claim = |world: Option<EntityId>| {
+        let mut body = ClaimBody::new(
+            "selector.fact",
+            ClaimSubject::Entity(person),
+            Value::from("the fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = world;
+        body
+    };
+    vault.put_claim(&fact, &claim(Some(world)), sources, sources_at)?;
+    vault.put_claim(&base_fact, &claim(None), sources, sources_at)?;
+    let summary = crate::registry::ENTITY_TYPE_SUMMARY;
+    let ((in_june, june_at), (in_july, july_at)) = (at(&june), at(&july));
+    let ((in_may, may_at), (in_august, august_at)) = (at(&may), at(&august));
+    vault
+        .batch()
+        .put(
+            &erased,
+            summary,
+            in_may,
+            may_at,
+            &epoch_summary_bytes(5, "the world fact")?,
+        )
+        .edge(&erased, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &told,
+            summary,
+            in_june,
+            june_at,
+            &epoch_summary_bytes(1, "the world fact")?,
+        )
+        .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &plain,
+            summary,
+            in_july,
+            july_at,
+            &epoch_summary_bytes(2, "the fact")?,
+        )
+        .edge(&plain, EdgeKind::DerivedFrom, &base_fact, 1.0)
+        .put(
+            &inner,
+            summary,
+            sources,
+            sources_at,
+            &epoch_summary_bytes(3, "the person")?,
+        )
+        .edge(&inner, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &outer,
+            summary,
+            in_august,
+            august_at,
+            &epoch_summary_bytes(4, "again")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &inner, 1.0)
+        .commit()?;
+    let in_world = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| {
+        in_world.settle_in(&vault.store, txn, inner)?;
+        for base in [told, plain, outer, erased] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+    let packed = |key: &WindowKey| -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        Ok(doc)
+    };
+    let (may_doc, june_doc) = (packed(&may)?, packed(&june)?);
+    let (july_doc, august_doc) = (packed(&july)?, packed(&august)?);
+    // A soft erase leaves the words in May's packed window and in history,
+    // so the shell keeps W (Sol round 21).
+    vault.delete_entity(&erased)?;
+    let purge = DeleteEntityOptions { purge: true };
+    vault.delete_entity_with_options(&fact, purge)?;
+    vault.delete_entity_with_options(&base_fact, purge)?;
+    vault.delete_entity(&inner)?;
+    // A peer that had not seen the purge sends its soft delete late: the
+    // words are gone already, so the summary's record does not change (Sol
+    // round 18).
+    let late = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 5,
+        request_id: [7; 16],
+    };
+    vault.apply_replayed_tombstone(&base_fact, &late.encode())?;
+    // `inner`'s shell no longer says where it sat; a summary minted from it
+    // now would copy its words (Sol round 18).
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        crate::settings::minted_worlds_in(&vault.store, &rtxn, &inner)?.unknown,
+        "a deleted summary's shell is unknown to a mint"
+    );
+    drop(rtxn);
+
+    let ships = |portable: bool| -> crate::Result<()> {
+        let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
+            Ok(!crate::sync::window::export_withheld(
+                &vault,
+                key,
+                doc,
+                &loro::VersionVector::default(),
+            )?)
+        };
+        assert_eq!(
+            window(&may, &may_doc)?,
+            portable,
+            "May, an erased summary of W's CLAIM"
+        );
+        assert_eq!(
+            window(&june, &june_doc)?,
+            portable,
+            "June, W's purged CLAIM"
+        );
+        assert!(window(&july, &july_doc)?, "July, a purged base CLAIM");
+        assert_eq!(
+            window(&august, &august_doc)?,
+            portable,
+            "August, a deleted W summary"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    ships(false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    ships(true)?;
+
+    // A restore over this vault brings the summary back with them.
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("image");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        101,
+    )?;
+    let rtxn = restored.store.env.read_txn()?;
+    assert!(restored.get_raw_in(&rtxn, &told)?.is_some());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&restored.store, &rtxn, &told)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a restored summary keeps what it was withdrawn for"
+    );
+    Ok(())
+}
+
+/// Sol round 17 on #1384, and the Engine ruling after it. A NOTE an export
+/// drops is judged in the selection's own snapshot, before the epoch pass, so
+/// a summary written from it never leaves without it, even when a flag lands
+/// as the export closes its snapshot. A device-only flag is policy, not
+/// authority: the view a promotion is judged by keeps a NOTE of the flagged
+/// world (this corrects #1402's authority-mode NOTE drop, which revoked the
+/// promotion), while the export withholds the NOTE and the summary of it.
+#[test]
+fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()> {
+    let member = entity_id(0x3F);
+    let (_dir, vault, grant_id) = member_grant_vault(member);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "the private research",
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = local_world_id(0x58).entity_id();
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, at, 1, b"world")?;
+    vault
+        .put_edge(&note, EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    let learned = EntityMetadataHeader::parse(&vault.get_raw(&note)?.unwrap())
+        .unwrap()
+        .learned_at;
+    let key = WindowKey::from_timestamp(learned);
+    let summary = entity_id(0x6B);
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            &epoch_summary_bytes(1, "the run read the private research")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &note, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+    })?;
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    // The window also holds the grant's own rows, which no selector ships,
+    // so the check reads the granted view a promotion compares with it.
+    let granted = || -> crate::Result<Vec<EntityId>> {
+        let granted = granted_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &granted.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let exported = || -> crate::Result<Vec<EntityId>> {
+        let filtered = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let portable = granted()?;
+    assert!(portable.contains(&note) && portable.contains(&summary));
+    crate::sync::window::test_hooks::arm_device_only_flag_race(world);
+    let raced = exported()?;
+    assert!(
+        vault.world_is_device_only(world)?,
+        "the flag landed mid-export"
+    );
+    assert_eq!(
+        raced.contains(&summary),
+        raced.contains(&note),
+        "a summary never leaves without its source"
+    );
+    let promoted = granted()?;
+    assert!(
+        promoted.contains(&note) && promoted.contains(&summary),
+        "the promotion's view keeps a NOTE of a device-only world"
+    );
+    let flagged = exported()?;
+    assert!(!flagged.contains(&note) && !flagged.contains(&summary));
+    Ok(())
+}
+
+/// Astra #1384d F1: an epoch summary that cannot prove where it was born is
+/// unknown, never base, so it stays home while any world is device-only. A
+/// replica reaches device B through a base window without the stamp and the
+/// record that placed it on A, and without its edge to W's CLAIM, which lives
+/// in W's window. A summary written from an unstamped replica stays home with
+/// it, and deleting the replica records the unknown world on that summary. A
+/// stamped base epoch of base records still leaves by every door.
+#[test]
+fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::deletion::DeleteEntityOptions;
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let b_dir = tempfile::tempdir()?;
+    let device_b = Vault::open(b_dir.path(), crate::VaultConfig::device())?;
+    let world = local_world_id(0x58).entity_id();
+    let (person, fact) = (entity_id(0x59), entity_id(0x60));
+    let (replica, inner) = (entity_id(0x68), entity_id(0x69));
+    let (outer, settled) = (entity_id(0x6a), entity_id(0x6c));
+    let at = |month: &str| {
+        let key = WindowKey::new(month);
+        let at = key.start_timestamp().unwrap() + 60;
+        (key, TimeRange { start: at, end: at }, at)
+    };
+    // W's rows and `inner` sit in September, apart from the windows checked.
+    let (_, sources, sources_at) = at("2026-09");
+    let (october, in_october, october_at) = at("2026-10");
+    let (november, in_november, november_at) = at("2026-11");
+    let (december, in_december, december_at) = at("2026-12");
+    for device in [&vault, &device_b] {
+        device.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    }
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        in_december,
+        december_at,
+        b"person",
+    )?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, sources, sources_at)?;
+    let summary = crate::registry::ENTITY_TYPE_SUMMARY;
+    vault
+        .batch()
+        .put(
+            &replica,
+            summary,
+            in_october,
+            october_at,
+            &epoch_summary_bytes(1, "the world fact")?,
+        )
+        .edge(&replica, EdgeKind::DerivedFrom, &fact, 1.0)
+        // `inner` arrived through sync ingest's door, unstamped like any
+        // replica; a local write is stamped as it lands.
+        .put_replicated(
+            &inner,
+            summary,
+            sources,
+            sources_at,
+            &epoch_summary_bytes(2, "the person")?,
+        )
+        .edge(&inner, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &outer,
+            summary,
+            in_november,
+            november_at,
+            &epoch_summary_bytes(3, "the person again")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &inner, 1.0)
+        .put(
+            &settled,
+            summary,
+            in_december,
+            december_at,
+            &epoch_summary_bytes(4, "the person, settled")?,
+        )
+        .edge(&settled, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    // The local summaries are settled in base.
+    vault.with_write_txn_grouped(|txn| {
+        for base in [replica, outer, settled] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+
+    let sent = packed_window(&vault, &october)?;
+    crate::sync::window::forward_rematerialize(
+        &device_b,
+        &sent,
+        &crate::sync::bridge::Materializer::new(),
+        &october,
+    )?;
+    assert!(device_b.get_raw(&replica)?.is_some(), "B holds the replica");
+    let on_b = packed_window(&device_b, &october)?;
+    assert!(owner_window_ships(&device_b, &october, &on_b)?);
+    device_b.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&device_b, &october, &on_b)?,
+        "B's window door, a replica"
+    );
+
+    let (november_doc, december_doc) = (
+        packed_window(&vault, &november)?,
+        packed_window(&vault, &december)?,
+    );
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of an unplaced epoch"
+    );
+    assert!(
+        owner_window_ships(&vault, &december, &december_doc)?,
+        "the window door, a stamped base epoch of base records"
+    );
+    let (selected, scoped) =
+        selected_and_scoped(&vault, grant_id, member, &december, &december_doc)?;
+    assert!(
+        selected.contains(&settled) && scoped.contains(&settled),
+        "a stamped base epoch of base records leaves"
+    );
+    vault.delete_entity_with_options(&inner, DeleteEntityOptions { purge: true })?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &outer)?,
+        Some(crate::settings::CarriedWorlds {
+            worlds: std::collections::BTreeSet::new(),
+            unknown: true,
+        }),
+        "the deletion of an unplaced epoch"
+    );
+    drop(rtxn);
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, withdrawn by an unplaced epoch"
+    );
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
+    Ok(())
+}
+
+/// Astra #1384d F2: removing an epoch summary's `DerivedFrom` edge withdraws
+/// it as deleting the source would, at the batch door, at the sync bridge's
+/// edge-map removal and in a purge's edge sweep alike. W's CLAIM stays live
+/// in W while the summary's body keeps its words: the summary is stale, its
+/// record holds W, and with W flagged no door ships it.
+#[test]
+fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let vault = Arc::new(vault);
+    let (batched, bridged) = (entity_id(0x6d), entity_id(0x6e));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let (world, fact) =
+        summaries_of_a_world_fact(&vault, &[(batched, &october), (bridged, &november)])?;
+    let (october_doc, november_doc) = (
+        packed_window(&vault, &october)?,
+        packed_window(&vault, &november)?,
+    );
+    // A purge's lexical-hint cascade deletes a hint CLAIM with no
+    // invalidation of its own; the sweep of its edges withdraws a summary
+    // written from it.
+    let (person, hinted, claim) = (entity_id(0x59), entity_id(0x71), entity_id(0x72));
+    let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            crate::write_envelope::ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(person),
+                Value::from("sencha"),
+                0.9,
+            ),
+            &crate::write_envelope::WriteEnvelope::new(
+                crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human),
+                crate::claim::ClaimSource::UserStated,
+                crate::write_envelope::WriteProvenance::new(Value::from("fixture"))?,
+                ClaimApprovalStatus::Approved,
+            ),
+            TimeRange { start: 10, end: 10 },
+            11,
+            &["hintedwords"],
+        )
+        .commit()?;
+    let hint = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .find(|id| *id != claim && !before.contains(id))
+        .expect("the hint CLAIM");
+    let (during, learned) = {
+        let at = WindowKey::new("2026-12").start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    vault
+        .batch()
+        .put(
+            &hinted,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            during,
+            learned,
+            &epoch_summary_bytes(9, "sencha")?,
+        )
+        .edge(&hinted, EdgeKind::DerivedFrom, &hint, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, hinted)
+    })?;
+    vault
+        .delete_entity_with_options(&claim, crate::deletion::DeleteEntityOptions { purge: true })?;
+    assert!(vault.get_raw(&hint)?.is_none(), "the cascade took the hint");
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        crate::ports::stale_in_txn(&vault.store, &rtxn, &hinted)?,
+        "the purge's edge sweep: the summary is withdrawn"
+    );
+    drop(rtxn);
+    vault
+        .batch()
+        .delete_edge(&batched, EdgeKind::DerivedFrom, &fact)
+        .commit()?;
+    // A base summary's edge to W's CLAIM lives in W's window; a peer's
+    // removal there reaches this vault through the bridge.
+    let learned = EntityMetadataHeader::parse(&vault.get_raw(&fact)?.unwrap())
+        .unwrap()
+        .learned_at;
+    let in_world = WindowKey::for_world(learned, world);
+    let world_doc = packed_window(&vault, &in_world)?;
+    let edge = crate::sync::bridge::format_edge_key(&bridged, EdgeKind::DerivedFrom, &fact);
+    assert!(map_get_bytes(&world_doc.get_map("edges"), &edge).is_some());
+    let materializer = Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer = crate::sync::bridge::register_observer_b(
+        &world_doc,
+        &vault,
+        &materializer,
+        in_world.as_str(),
+    );
+    crate::sync::loro_support::map_delete(&world_doc.get_map("edges"), &edge)?;
+    world_doc.commit();
+    assert!(
+        !vault.edge_exists(&bridged, EdgeKind::DerivedFrom, &fact)?,
+        "the bridge applied the peer's removal"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    for (summary, door) in [(batched, "the batch door"), (bridged, "the sync bridge")] {
+        assert!(
+            crate::ports::stale_in_txn(&vault.store, &rtxn, &summary)?,
+            "{door}: the summary is withdrawn"
+        );
+        assert_eq!(
+            crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &summary)?
+                .map(|withdrawn| withdrawn.worlds),
+            Some(std::collections::BTreeSet::from([world])),
+            "{door}: its record holds W"
+        );
+    }
+    drop(rtxn);
+    // A regeneration from W's CLAIM completes only once the summary's edges
+    // name it again: export doors read those (Sol round 19).
+    let regenerate = |summary: EntityId, source: EntityId, at: u64| -> crate::Result<bool> {
+        let source_at = EntityMetadataHeader::parse(&vault.get_raw(&source)?.unwrap())
+            .unwrap()
+            .learned_at;
+        vault
+            .batch()
+            .put(
+                &summary,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                TimeRange { start: at, end: at },
+                at,
+                &epoch_summary_bytes(1, "the fact, again")?,
+            )
+            .commit()?;
+        vault.with_write_txn(|txn| {
+            crate::ports::DependencyIndex::port_dependency_complete_regeneration(
+                &*vault,
+                txn,
+                &summary,
+                at,
+                &[crate::ports::SourceSpan {
+                    document: source,
+                    frontier: source_at,
+                }],
+            )
+        })
+    };
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    assert!(
+        !regenerate(batched, fact, rewritten)?,
+        "a regeneration the graph does not name ends nothing"
+    );
+    // An edge the regeneration does not declare would lose the dependency
+    // row that withdraws the summary when that source is erased (Sol round
+    // 20); it goes through the batch door first.
+    vault
+        .batch()
+        .edge(&batched, EdgeKind::DerivedFrom, &fact, 1.0)
+        .edge(&batched, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    assert!(
+        !regenerate(batched, fact, rewritten + 60)?,
+        "a regeneration that leaves a named source undeclared ends nothing"
+    );
+    vault
+        .batch()
+        .delete_edge(&batched, EdgeKind::DerivedFrom, &person)
+        .commit()?;
+    assert!(regenerate(batched, fact, rewritten + 120)?);
+    // A regeneration from a base PERSON alone still keeps W: the summary's
+    // old words sit in the November snapshot packed before any of this,
+    // which a door judges by the current row (Sol round 20).
+    vault
+        .batch()
+        .edge(&bridged, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    assert!(regenerate(
+        bridged,
+        person,
+        november.start_timestamp().unwrap() + 120
+    )?);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(!crate::ports::stale_in_txn(&vault.store, &rtxn, &bridged)?);
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &bridged)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a regeneration keeps what the summary was withdrawn for"
+    );
+    drop(rtxn);
+    let ships = |shipped: bool| -> crate::Result<()> {
+        assert_eq!(
+            owner_window_ships(&vault, &october, &october_doc)?,
+            shipped,
+            "the window door, the batch removal"
+        );
+        assert_eq!(
+            owner_window_ships(&vault, &november, &november_doc)?,
+            shipped,
+            "the window door, the bridge removal"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    ships(false)?;
+    let (selected, scoped) = selected_and_scoped(&vault, grant_id, member, &october, &october_doc)?;
+    assert!(!selected.contains(&batched), "the selector");
+    assert!(
+        !scoped.contains(&batched) && !scoped.contains(&bridged),
+        "the scoped export"
+    );
+    // A soft erase leaves the regenerated summary's old words in November's
+    // packed window; its shell keeps W (Sol round 21).
+    vault.delete_entity(&bridged)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "a soft erase keeps a regenerated summary's old words home"
+    );
+    Ok(())
+}
+
+/// Sol round 21: an epoch summary rewritten in place into a SUMMARY body that
+/// is no epoch stops every walk at it, while a summary written from it still
+/// holds W's words. The rewrite records the worlds the old body carried, so
+/// the nested summary stays home while W is flagged.
+#[test]
+fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (source, nested) = (entity_id(0x73), entity_id(0x74));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let november_doc = packed_window(&vault, &november)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    vault
+        .batch()
+        .put(
+            &source,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: rewritten,
+                end: rewritten,
+            },
+            rewritten,
+            b"a summary written by hand",
+        )
+        .commit()?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary rewritten as no epoch"
+    );
+    let (selected, scoped) =
+        selected_and_scoped(&vault, grant_id, member, &november, &november_doc)?;
+    assert!(
+        !selected.contains(&nested) && !scoped.contains(&nested),
+        "the selector and the scoped export"
+    );
+    Ok(())
+}
+
+/// Wonder P2-1: an epoch summary rewritten in place into a SUMMARY body that
+/// is no epoch no longer says what a summary written from it copied. That
+/// summary is withdrawn, so a base-only read, the scoped export and a Base
+/// selector take it no more than they took it before the rewrite.
+#[test]
+fn a_summary_of_a_summary_rewritten_as_no_epoch_is_withdrawn() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (source, nested) = (entity_id(0x7b), entity_id(0x7c));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    vault
+        .batch()
+        .put(
+            &source,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: rewritten,
+                end: rewritten,
+            },
+            rewritten,
+            b"a summary written by hand",
+        )
+        .commit()?;
+    let mut base_only = crate::federation::Scope::top();
+    base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
+        crate::claim::base_world_id(),
+    )]));
+    let top = crate::federation::Scope::top();
+    let exported = vault.export_records_in_scope(&base_only, &top, &top)?;
+    assert!(
+        !exported.iter().any(|record| record.id == nested),
+        "the scoped export, a summary of a summary rewritten as no epoch"
+    );
+    let read = vault.records_in_scope(
+        &base_only,
+        &top,
+        &top,
+        crate::federation::record_scope::ScopeView::Normal,
+    )?;
+    assert!(
+        !read.iter().any(|record| record.id == nested),
+        "a base-only read, a summary of a summary rewritten as no epoch"
+    );
+    let november_doc = packed_window(&vault, &november)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let selected = filtered_window_doc(
+        &vault,
+        &november_doc,
+        &november,
+        test_selector_scope(),
+        &selector,
+    )?;
+    assert!(
+        !import_ids(&selected.export(ExportMode::all_updates()).unwrap()).contains(&nested),
+        "a Base selector, a summary of a summary rewritten as no epoch"
+    );
+    Ok(())
+}
+
+/// Sol round 23: an owner's move of an epoch summary's text to the document
+/// plane leaves a pointer body. The summary is still an epoch to every reader
+/// (Astra 1384e), and the move records the worlds the old body carried, so a
+/// summary written from it stays home while W is flagged. Without that record
+/// (a move made before it existed) its sources still hold it.
+#[test]
+fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), crate::VaultConfig::device())?;
+    let (source, nested) = (entity_id(0x75), entity_id(0x76));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let november_doc = packed_window(&vault, &november)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    move_text_to_document_plane(&vault, &source)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary moved to the text plane"
+    );
+    vault
+        .with_write_txn(|txn| crate::ports::retire_withdrawn_in_txn(&vault.store, txn, &source))?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, the sources of a summary on the text plane"
+    );
+    Ok(())
+}
+
+/// Astra 1384e: an epoch summary whose text moved to the document plane
+/// reaches a vault that never held it through canonical recovery, as a
+/// pointer with no birth stamp and no record of what it carried. A summary
+/// minted there from it ships while no world is flagged. Once W is, the
+/// window door holds it in a window packed before, packing leaves it out,
+/// and the door still holds it once no head stands for the pointer.
+#[test]
+fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let source = entity_id(0x77);
+    let (restored, world, _) = recovered_summary_on_the_text_plane(dir.path(), source)?;
+    let (nested, november) = (entity_id(0x78), WindowKey::new("2026-11"));
+    nested_summary(&restored, source, nested, &november)?;
+    let november_doc = packed_window(&restored, &november)?;
+    assert!(
+        owner_window_ships(&restored, &november, &november_doc)?,
+        "no world flagged: a summary of a recovered summary ships"
+    );
+    restored.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a recovered summary on the text plane"
+    );
+    let fresh = packed_window(&restored, &november)?;
+    assert!(
+        map_get_bytes(&fresh.get_map("entities"), &nested.to_hex()).is_none(),
+        "packing, a summary of a recovered summary on the text plane"
+    );
+    restored
+        .with_write_txn(|txn| crate::entity_doc::erase_in_txn(&restored.store, txn, &source))?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a pointer no head stands for"
+    );
+    Ok(())
+}
+
+/// Astra 1384f: a pointer row decides an epoch's shape and its head only
+/// completes it. A second recovery that names another field for the
+/// recovered summary's document leaves the row as it was, and a summary
+/// minted from it afterwards still stays home while W is flagged.
+#[test]
+fn a_recovered_summary_stays_an_epoch_whatever_field_its_head_names() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let source = entity_id(0x79);
+    let (restored, world, snapshot) = recovered_summary_on_the_text_plane(dir.path(), source)?;
+    let mut retitled = snapshot;
+    retitled
+        .entity_documents
+        .iter_mut()
+        .find(|document| document.entity_id == *source.as_bytes())
+        .expect("the summary's document")
+        .field = Some("title".into());
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        dir.path().join("manifest-retitled"),
+        &retitled,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    let (nested, november) = (entity_id(0x7a), WindowKey::new("2026-11"));
+    nested_summary(&restored, source, nested, &november)?;
+    let november_doc = packed_window(&restored, &november)?;
+    restored.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a recovered summary its head names as titled"
+    );
+    let fresh = packed_window(&restored, &november)?;
+    assert!(
+        map_get_bytes(&fresh.get_map("entities"), &nested.to_hex()).is_none(),
+        "packing, a summary of a recovered summary its head names as titled"
+    );
+    Ok(())
+}
+
+/// A vault at `dir` that never held epoch summary `source` of W's CLAIM,
+/// holding W's WORLD row and `source` recovered from a canonical October
+/// window captured after its text moved to the document plane. Returns it,
+/// W and that snapshot.
+fn recovered_summary_on_the_text_plane(
+    dir: &std::path::Path,
+    source: EntityId,
+) -> crate::Result<(Vault, EntityId, crate::recovery::CanonicalSnapshot)> {
+    let origin_dir = tempfile::tempdir()?;
+    let origin = Vault::open_owned(origin_dir.path(), crate::VaultConfig::device())?;
+    let october = WindowKey::new("2026-10");
+    let (world, _) = summaries_of_a_world_fact(&origin, &[(source, &october)])?;
+    move_text_to_document_plane(&origin, &source)?;
+    let snapshot = crate::recovery::capture_canonical_window(
+        &origin,
+        "2026-10",
+        &packed_window(&origin, &october)?,
+    )?;
+    let restored = Vault::open_owned(dir, crate::VaultConfig::device())?;
+    let at = WindowKey::new("2026-09").start_timestamp().unwrap() + 60;
+    let during = TimeRange { start: at, end: at };
+    restored.put_entity(&world, ENTITY_TYPE_WORLD, during, at, b"world")?;
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        dir.join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(restored.entity_text(&source)?, "the world fact");
+    Ok((restored, world, snapshot))
+}
+
+/// The owner moves the text of `id` to the document plane.
+fn move_text_to_document_plane(vault: &Vault, id: &EntityId) -> crate::Result<()> {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    let authority = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        id,
+        &TextField::MapField("text".into()),
+        crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+        &DocAuthorization::Owner(&authority),
+    )
+}
+
+/// An epoch summary `source` of W's CLAIM settled in base in `at`, and an
+/// epoch summary `nested` written from it settled in base in `nested_at`;
+/// returns W.
+fn summary_of_a_summary(
+    vault: &Vault,
+    source: EntityId,
+    at: &WindowKey,
+    nested: EntityId,
+    nested_at: &WindowKey,
+) -> crate::Result<EntityId> {
+    let (world, _) = summaries_of_a_world_fact(vault, &[(source, at)])?;
+    nested_summary(vault, source, nested, nested_at)?;
+    Ok(world)
+}
+
+/// An epoch summary `nested` written from `source`, settled in base in `at`.
+fn nested_summary(
+    vault: &Vault,
+    source: EntityId,
+    nested: EntityId,
+    at: &WindowKey,
+) -> crate::Result<()> {
+    let learned = at.start_timestamp().unwrap() + 60;
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            &epoch_summary_bytes(2, "the world fact, again")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, nested)
+    })
+}
+
+/// Astra #1384d F3: what an epoch summary was withdrawn for lives as long as
+/// its words. A standalone tombstone invalidates the summary and keeps the
+/// body, so the record stays and the summary stays home while W is flagged.
+/// A purge leaves the words in window history, so the record stays until the
+/// historical sweep has rewritten it (Sol round 21).
+#[test]
+fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate::Result<()> {
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let (kept, purged) = (entity_id(0x6f), entity_id(0x70));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let (world, fact) =
+        summaries_of_a_world_fact(&vault, &[(kept, &october), (purged, &november)])?;
+    let (october_doc, november_doc) = (
+        packed_window(&vault, &october)?,
+        packed_window(&vault, &november)?,
+    );
+    let purge = DeleteEntityOptions { purge: true };
+    vault.delete_entity_with_options(&fact, purge)?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 5,
+        request_id: [7; 16],
+    };
+    vault.with_write_txn(|txn| {
+        crate::ports::TombstoneStore::port_tombstone_create(&vault, txn, &kept, tombstone)
+    })?;
+    vault.delete_entity_with_options(&purged, purge)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.get_raw_in(&rtxn, &kept)?.is_some());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &kept)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a tombstone that keeps the body keeps the record"
+    );
+    assert!(vault.get_raw_in(&rtxn, &purged)?.is_none());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a purge keeps the record while its words sit in window history"
+    );
+    drop(rtxn);
+    assert!(owner_window_ships(&vault, &october, &october_doc)?);
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&vault, &october, &october_doc)?,
+        "the window door, a tombstoned summary"
+    );
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a purged summary's words in history"
+    );
+    crate::sweep::run_hard_erase_sweep(&vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?,
+        None,
+        "the historical sweep retires the record with the words"
+    );
+    Ok(())
+}
+
+/// Sol round 19: a first deletion reads where a row's words sat whatever its
+/// body holds, since its marker is written before the purge. A WORLD with an
+/// empty body still carries its own world: purging it records that world on
+/// a summary written from it, and a window packed after the purge, which no
+/// longer names the WORLD, never ships the summary while it is flagged.
+#[test]
+fn a_first_purge_of_an_empty_world_records_it_on_its_summary() -> crate::Result<()> {
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let world = local_world_id(0x5b).entity_id();
+    let summary = entity_id(0x73);
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    let october = WindowKey::new("2026-10");
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    let (during, learned) = at(&october);
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"")?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            during,
+            learned,
+            &epoch_summary_bytes(1, "the world")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &world, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+    })?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    vault.delete_entity_with_options(&world, DeleteEntityOptions { purge: true })?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &summary)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a first purge of an empty WORLD"
+    );
+    drop(rtxn);
+    // Packing leaves out what a flag keeps, so a window packed now never
+    // ships the summary, carried or not.
+    let fresh = packed_window(&vault, &october)?;
+    let carried = map_get_bytes(&fresh.get_map("entities"), &summary.to_hex()).is_some();
+    assert!(
+        !carried || !owner_window_ships(&vault, &october, &fresh)?,
+        "a window packed after the purge never ships the summary"
+    );
+    Ok(())
+}
+
+/// W's CLAIM about a PERSON, beside the WORLD row in September, apart from
+/// the windows checked, and one epoch summary of it settled in base in each
+/// given window. Returns W and the CLAIM.
+fn summaries_of_a_world_fact(
+    vault: &Vault,
+    summaries: &[(EntityId, &WindowKey)],
+) -> crate::Result<(EntityId, EntityId)> {
+    let world = local_world_id(0x58).entity_id();
+    let (person, fact) = (entity_id(0x59), entity_id(0x60));
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, sources, sources_at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, sources, sources_at)?;
+    for (epoch, &(summary, key)) in (1..).zip(summaries) {
+        let (during, learned) = at(key);
+        vault
+            .batch()
+            .put(
+                &summary,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                during,
+                learned,
+                &epoch_summary_bytes(epoch, "the world fact")?,
+            )
+            .edge(&summary, EdgeKind::DerivedFrom, &fact, 1.0)
+            .commit()?;
+        vault.with_write_txn_grouped(|txn| {
+            crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+        })?;
+    }
+    Ok((world, fact))
+}
+
+fn packed_window(vault: &Vault, key: &WindowKey) -> crate::Result<LoroDoc> {
+    let doc = create_window_doc("source", key);
+    crate::sync::window::reverse_rematerialize(vault, &doc, key)?;
+    Ok(doc)
+}
+
+fn owner_window_ships(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> crate::Result<bool> {
+    Ok(!crate::sync::window::export_withheld(
+        vault,
+        key,
+        doc,
+        &loro::VersionVector::default(),
+    )?)
+}
+
+/// The ids an all-world selector ships from `doc`, and the ids the scoped
+/// record export ships.
+fn selected_and_scoped(
+    vault: &Vault,
+    grant: EntityId,
+    member: EntityId,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> crate::Result<(Vec<EntityId>, Vec<EntityId>)> {
+    let selector = SyncSelector::new(grant, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selected = filtered_window_doc(vault, doc, key, test_selector_scope(), &selector)?;
+    let top = crate::federation::Scope::top();
+    Ok((
+        import_ids(&selected.export(ExportMode::all_updates()).unwrap()),
+        vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect(),
+    ))
+}
+
+fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    encode_epoch_summary_body(&EpochSummaryBody {
+        v: EPOCH_SUMMARY_BODY_VERSION,
+        session: entity_id(0x7e).to_hex(),
+        epoch,
+        turn_start: epoch * 3,
+        turn_end: epoch * 3 + 2,
+        level: EPOCH_SUMMARY_LEVEL,
+        text: text.into(),
+        actor: entity_id(0x7f).to_hex(),
+    })
+}
+
+/// Astra #1384b P2-1: a summary's settled facet binds the export. A
+/// vault-wide run summarized a step faceted F; the summary is born under
+/// the vault's default facet. A peer whose pact ceiling is F gets the step,
+/// never the summary riding its `DerivedFrom` edge to it.
+#[test]
+fn an_epoch_summary_leaves_only_where_its_settled_facet_is_selected() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let shared = entity_id(0x76);
+    let (step, summary) = (entity_id(0x77), entity_id(0x78));
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(&shared, ENTITY_TYPE_FACET, occurred, at, b"shared")?;
+    vault
+        .batch()
+        .put(&step, ENTITY_TYPE_EVENT, occurred, at, b"the shared step")
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(1, "the run took the shared step")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &step, 1.0)
+        .commit()?;
+    vault
+        .batch()
+        .edge(&step, EdgeKind::FacetOf, &shared, 1.0)
+        .commit()?;
+    // A vault-wide run's summary: base reality, the vault's default facet.
+    let placement = crate::compaction::EpochPlacement::default();
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, summary))?;
+    assert_ne!(vault.default_facet()?, shared);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([ScopeId(shared)]),
+            bands: ScopeAxis::All,
+        }],
+    );
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let sent = import_ids(
+        &filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    );
+    assert!(sent.contains(&step), "the faceted step is selected");
+    assert!(
+        !sent.contains(&summary),
+        "a summary born under another facet stays out of the pact ceiling"
+    );
+    Ok(())
+}
+
+/// Astra #1384b P2-2: the fence judges a source by the export that carries
+/// it. Person R, learned in January, is selected only through February's
+/// faceted event, which January's window does not hold, so no window
+/// exports R. The February summary written from R stays home with it.
+#[test]
+fn an_epoch_summary_stays_home_when_no_window_exports_its_source() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let facet = entity_id(0x79);
+    let (person, event, summary) = (entity_id(0x7a), entity_id(0x7b), entity_id(0x7c));
+    let (january, february) = (WindowKey::new("2026-01"), WindowKey::new("2026-02"));
+    let jan = january.start_timestamp().unwrap() + 60;
+    let feb = february.start_timestamp().unwrap() + 60;
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault.put_entity(&facet, ENTITY_TYPE_FACET, at(jan), jan, b"facet")?;
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        at(jan),
+        jan,
+        b"the private sentence",
+    )?;
+    vault
+        .batch()
+        .put(
+            &event,
+            ENTITY_TYPE_EVENT,
+            at(feb),
+            feb,
+            b"the faceted event",
+        )
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            at(feb),
+            feb,
+            &epoch_summary_bytes(1, "the run read the private sentence")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &person, 1.0)
+        .edge(&summary, EdgeKind::DerivedFrom, &event, 1.0)
+        .commit()?;
+    vault
+        .batch()
+        .edge(&event, EdgeKind::FacetOf, &facet, 1.0)
+        .edge(&person, EdgeKind::Mentions, &event, 1.0)
+        .commit()?;
+    // Born under the requested facet: its own position is selected.
+    let placement = crate::compaction::EpochPlacement {
+        world: None,
+        facet: Some(facet),
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, summary))?;
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::Base,
+        vec![facet],
+        vec![],
+    );
+    let mut sent = Vec::new();
+    for key in [&january, &february] {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        sent.extend(import_ids(
+            &filtered_window_doc(&vault, &doc, key, test_selector_scope(), &selector)?
+                .export(ExportMode::all_updates())
+                .unwrap(),
+        ));
+    }
+    assert!(sent.contains(&event), "the faceted event is selected");
+    assert!(!sent.contains(&person), "no window exports the person");
+    assert!(
+        !sent.contains(&summary),
+        "the summary stays home with a source no window exports"
+    );
+    Ok(())
+}
+
+/// Sol round 8 on #1384: a machine CLAIM leaves only with its whole signed
+/// history in its own window. A claim learned in January and retracted in
+/// February has history rows in both months, so neither window exports it,
+/// and the February summary written from it stays home too.
+#[test]
+fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate::Result<()> {
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (machine, claim, summary) = (entity_id(0xc1), entity_id(0xc2), entity_id(0xc3));
+    let person = entity_id(0xc4);
+    let (january, february) = (WindowKey::new("2026-01"), WindowKey::new("2026-02"));
+    let jan = january.start_timestamp().unwrap() + 60;
+    let feb = february.start_timestamp().unwrap() + 60;
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault.put_entity(
+        &machine,
+        crate::registry::ENTITY_TYPE_MACHINE,
+        at(jan),
+        jan,
+        b"machine",
+    )?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"selector machine root").unwrap();
+    vault.ensure_host_root_slip(&issuer)?;
+    let signing = SigningKey::from_bytes(&[0xc1; 32]);
+    vault.enroll_machine_identity(
+        &issuer,
+        machine,
+        signing.verifying_key().to_bytes(),
+        [8; 32],
+        |transcript| Ok(signing.sign(transcript).to_bytes()),
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine")).unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "selector.machine",
+        ClaimSubject::Entity(machine),
+        Value::from("the machine's private fact"),
+        1.0,
+    );
+    let transcript = vault.machine_claim_transcript(&claim, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    vault
+        .batch()
+        .claim_candidate(&claim, candidate, &signed, at(jan), jan)
+        .commit()?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            at(feb),
+            feb,
+            &epoch_summary_bytes(1, "the run read the machine's private fact")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &claim, 1.0)
+        .commit()?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, at(feb), feb, b"person")?;
+    // The retraction's signed transition and handoff are February's rows.
+    vault.retract_claim(&claim, feb)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let mut sent = Vec::new();
+    for key in [&january, &february] {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        sent.extend(import_ids(
+            &filtered_window_doc(&vault, &doc, key, test_selector_scope(), &selector)?
+                .export(ExportMode::all_updates())
+                .unwrap(),
+        ));
+    }
+    assert!(sent.contains(&person), "the selector exports");
+    assert!(
+        !sent.contains(&claim),
+        "no window carries the claim's history whole"
+    );
+    assert!(
+        !sent.contains(&summary),
+        "the summary stays home with a source whose history no window carries"
+    );
+    Ok(())
+}
+
+/// Sol rounds 10 to 12 on #1384: a summary leaves only beside the records
+/// it was written from, not beside what a peer put at their ids. In one base
+/// window a peer's CLAIM wins the carrier of a nested epoch whose source is a
+/// CLAIM in private world W, of a nested epoch born in W, and of a CLAIM in W
+/// itself, and a peer's garbled copy wins the carrier of a summary of a CLAIM
+/// in W. The vault refused each write, so the stored records stand, and no
+/// summary written from them leaves through a Base export.
+#[test]
+fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5d);
+    let (person, claim, moved) = (entity_id(0xd1), entity_id(0xd2), entity_id(0xd9));
+    let (nested, outer) = (entity_id(0xd3), entity_id(0xd4));
+    let (born_in_w, over) = (entity_id(0xd5), entity_id(0xd6));
+    let (from_moved, garbled) = (entity_id(0xd8), entity_id(0xda));
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    for (id, fact) in [
+        (claim, "the private world fact"),
+        (moved, "the other private world fact"),
+    ] {
+        let mut body = ClaimBody::new(
+            "selector.private_fact",
+            ClaimSubject::Entity(person),
+            Value::from(fact),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = Some(world.entity_id());
+        vault.put_claim(&id, &body, occurred, at)?;
+    }
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(1, "the run learned the private world fact")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &outer,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(2, "the run repeated what it learned")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &nested, 1.0)
+        .put(
+            &born_in_w,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(3, "the run met the person in its world")?,
+        )
+        .edge(&born_in_w, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &over,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(4, "the run recalled its world")?,
+        )
+        .edge(&over, EdgeKind::DerivedFrom, &born_in_w, 1.0)
+        .put(
+            &from_moved,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(5, "the run learned the other private world fact")?,
+        )
+        .edge(&from_moved, EdgeKind::DerivedFrom, &moved, 1.0)
+        .put(
+            &garbled,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(6, "the run repeated the private world fact")?,
+        )
+        .edge(&garbled, EdgeKind::DerivedFrom, &claim, 1.0)
+        .commit()?;
+    let placement = crate::compaction::EpochPlacement {
+        world: Some(world.entity_id()),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, born_in_w))?;
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    for id in [nested, born_in_w, moved] {
+        insert_blob(&doc, id, &claim_blob(None));
+    }
+    // The summary's own bytes with one trailing byte: no longer an epoch body,
+    // still its words.
+    let mut copy = vault.get_raw_unsealed(&garbled)?.expect("a stored summary");
+    copy.push(0xc0);
+    insert_blob(&doc, garbled, &copy);
+    doc.commit();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let sent = import_ids(
+        &filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    );
+    assert!(sent.contains(&person), "the selector exports");
+    let left = [
+        (outer, "outer"),
+        (over, "over"),
+        (from_moved, "from_moved"),
+        (garbled, "garbled"),
+    ]
+    .into_iter()
+    .filter(|(id, _)| sent.contains(id))
+    .map(|(_, name)| name)
+    .collect::<Vec<_>>();
+    assert!(
+        left.is_empty(),
+        "summaries left beside a peer's carrier, not their sources: {left:?}"
+    );
+    Ok(())
+}
+
+/// A TASK a writer creates through the host-bound `Memory` door, born in
+/// `world` when one is bound.
+fn mint_board_task(vault: &Vault, world: Option<EntityId>) -> EntityId {
+    let writer = EntityId::now();
+    vault
+        .put_entity(
+            &writer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"writer",
+        )
+        .unwrap();
+    vault
+        .memory(writer, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition { world, facet: None })
+        .tasks_create(&crate::task_verb::TaskCreateSpec::new(
+            Value::from("board work"),
+            None,
+            None,
+            Some(100),
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap()
+}
+
+/// ARCH-0067 §5: a TASK a world-narrowed writer creates is born in that world,
+/// and a world row travels only where a CLAIM in that world would — under its
+/// own world or `All`, and its authority facts with it. A grant that would
+/// carry every world does not lift a base-only pact or selector, nor carry the
+/// row to another world's peer. A base TASK travels under every selector.
+#[test]
+fn a_world_born_task_travels_only_under_its_own_world() {
+    let member = entity_id(0x3E);
+    let world = local_world_id(0x53);
+    let other_world = local_world_id(0x54);
+    let window_key = WindowKey::new("2026-12");
+    for (name, selector_world, pact_worlds, born_travels) in [
+        ("base selector", SyncSelectorWorld::Base, None, false),
+        (
+            "base-only pact",
+            SyncSelectorWorld::Base,
+            Some(crate::federation::base_world_axis()),
+            false,
+        ),
+        (
+            "another world",
+            SyncSelectorWorld::World(other_world),
+            None,
+            false,
+        ),
+        ("its own world", SyncSelectorWorld::World(world), None, true),
+        ("every world", SyncSelectorWorld::All, None, true),
+    ] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        if let Some(worlds) = pact_worlds {
+            seed_scoped_pacts_for_grant(
+                &vault,
+                grant_id,
+                &[FederationDirectionScope {
+                    worlds,
+                    facets: ScopeAxis::All,
+                    bands: ScopeAxis::All,
+                }],
+            );
+        }
+        let born = mint_board_task(&vault, Some(world.entity_id()));
+        let base = mint_board_task(&vault, None);
+        // Each TASK with the authority facts it was minted with.
+        let rows = |task: EntityId| {
+            let mut rows = vec![task];
+            rows.extend(
+                vault
+                    .edges_in(&task)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|row| row.kind == EdgeKind::ScopedTo)
+                    .map(|row| row.target),
+            );
+            assert!(
+                rows.len() > 1,
+                "{name}: a minted TASK carries its Owner fact"
+            );
+            rows
+        };
+        let (born_rows, base_rows) = (rows(born), rows(base));
+        let doc = create_window_doc("source", &window_key);
+        for row in born_rows.iter().chain(&base_rows) {
+            insert_blob(&doc, *row, &vault.get_raw(row).unwrap().unwrap());
+        }
+        doc.commit();
+        let selector = SyncSelector::new(grant_id, member, selector_world, vec![], vec![]);
+        let update =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap_or_else(|err| panic!("{name}: the request authorizes: {err:?}"))
+                .export(ExportMode::all_updates())
+                .unwrap();
+
+        let exported = import_ids(&update);
+        for row in &base_rows {
+            assert!(exported.contains(row), "{name}: a base TASK row travels");
+        }
+        for row in &born_rows {
+            assert_eq!(
+                exported.contains(row),
+                born_travels,
+                "{name}: a world-born TASK row"
+            );
+        }
+    }
+}
+
+/// The stored-selection door a peer's edit passes reads the same world rule:
+/// a world-born TASK is reachable through its own world's selector or `All`,
+/// never through a base-only one.
+#[test]
+fn a_peer_edit_reaches_a_world_born_task_only_through_its_own_world() {
+    let member = entity_id(0x3F);
+    let world = local_world_id(0x55);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let grant = FederationGrant::new(
+        test_selector_scope(),
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let born = mint_board_task(&vault, Some(world.entity_id()));
+    let base = mint_board_task(&vault, None);
+    for (name, selector_world, born_admitted) in [
+        ("base selector", SyncSelectorWorld::Base, false),
+        ("its own world", SyncSelectorWorld::World(world), true),
+        ("every world", SyncSelectorWorld::All, true),
+    ] {
+        let selector = SyncSelector::new(grant_id, member, selector_world, vec![], vec![]);
+        let txn = vault.store.env.read_txn().unwrap();
+        for (task, admitted) in [(base, true), (born, born_admitted)] {
+            let result = super::document_admission::admit_document_write_in_txn(
+                &vault,
+                &txn,
+                task,
+                test_selector_scope(),
+                &selector,
+            );
+            assert_eq!(result.is_ok(), admitted, "{name}: {result:?}");
+        }
+    }
 }

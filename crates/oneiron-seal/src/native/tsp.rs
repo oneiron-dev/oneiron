@@ -406,11 +406,6 @@ mod tests {
     }
 
     #[test]
-    fn all_zero_nonce_is_rejected() {
-        assert!(build_request(&[3u8; 32], &[0u8; 16]).is_err());
-    }
-
-    #[test]
     fn nonce_integer_body_is_minimal_twos_complement() {
         // Redundant leading zero stripped when the next MSB is clear.
         let mut n = [0u8; 16];

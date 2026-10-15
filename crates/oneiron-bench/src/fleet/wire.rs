@@ -181,10 +181,33 @@ impl Agent {
         let items = pack["items"]
             .as_array()
             .ok_or("recall did not return items")?;
-        if !items
-            .iter()
-            .any(|item| item["short_id"].as_str() == Some(self.expected_message.as_str()))
-        {
+        // An item names the revision it read beside its short id; rejoin
+        // them as `MemoryItem::reference` does.
+        let reference = |item: &Value| {
+            let short_id = item["short_id"].as_str()?;
+            Some(match item["source_revision_ref"].as_str() {
+                Some(revision) => format!("{short_id}@{revision}"),
+                None => short_id.to_owned(),
+            })
+        };
+        // A hit on a message comes back as its TURN, which quotes the message
+        // by its short id (ARCH-0004).
+        let (message, _) = self
+            .expected_message
+            .split_once('@')
+            .ok_or("committed message has no pinned revision")?;
+        let quotes_message = |item: &Value| {
+            item["kind"] == "TURN"
+                && item["cited_messages"].as_array().is_some_and(|cited| {
+                    cited
+                        .iter()
+                        .any(|quoted| quoted["short_id"].as_str() == Some(message))
+                })
+        };
+        if !items.iter().any(|item| {
+            reference(item).as_deref() == Some(self.expected_message.as_str())
+                || quotes_message(item)
+        }) {
             return Err(
                 format!("agent {} recall omitted its committed message", self.index).into(),
             );

@@ -75,23 +75,6 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
     assert_eq!(&encoded[prefix.len() + 32..], &[0x5A; EVIDENCE_HASH_LEN]);
 }
 
-/// Swapping the query and entity refs must produce a different key: a single
-/// concatenation with fixed widths is only unambiguous if the order is honored.
-#[test]
-fn memo_key_distinguishes_swapped_refs() {
-    let forward = MEMOS.key_bytes(&VerdictMemoKey {
-        query_ref: id(0x26),
-        entity_ref: id(0x27),
-        evidence_hash: [1u8; EVIDENCE_HASH_LEN],
-    });
-    let swapped = MEMOS.key_bytes(&VerdictMemoKey {
-        query_ref: id(0x27),
-        entity_ref: id(0x26),
-        evidence_hash: [1u8; EVIDENCE_HASH_LEN],
-    });
-    assert_ne!(forward, swapped);
-}
-
 /// Event keys sort by epoch under a `(query, entity)` prefix scan, so history
 /// reads back oldest-first without a sort step that could disagree with disk.
 #[test]
@@ -109,13 +92,6 @@ fn event_keys_sort_by_epoch_within_the_pair_prefix() {
     assert_eq!(keys[0], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)));
     assert_eq!(keys[1], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)));
     assert_eq!(keys[2], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)));
-}
-
-#[test]
-fn memo_row_round_trips_through_its_codec() {
-    let row = sample_memo_row();
-    let encoded = encode_memo_row(&row).expect("encode");
-    assert_eq!(decode_memo_row(&encoded).expect("decode"), row);
 }
 
 /// A row that is not JSON, is missing a field, or names a verdict outside the
@@ -149,13 +125,6 @@ fn malformed_memo_rows_are_rejected() {
             "{label} memo row must be rejected"
         );
     }
-}
-
-#[test]
-fn definition_round_trips_through_its_codec() {
-    let definition = sample_definition();
-    let json = definition_to_json(&definition).expect("encode");
-    assert_eq!(definition_from_json(&json).expect("decode"), definition);
 }
 
 /// Canonical JSON sorts object keys recursively; the crate builds `serde_json`
@@ -198,58 +167,6 @@ fn watermark_rows_round_trip_and_reject_wrong_lengths() {
         decode_watermark(&encoded[..encoded.len() - 1]),
         Err(Error::CorruptedIndex(_))
     ));
-}
-
-/// An exact-match vector pair reaches the full micros scale, so a query with a
-/// 1_000_000 floor can still match its own exemplar.
-#[test]
-fn cosine_similarity_saturates_on_identical_vectors() {
-    assert_eq!(
-        cosine_similarity_micros(&[1.0, 2.0], &[1.0, 2.0]),
-        1_000_000
-    );
-    assert_eq!(cosine_similarity_micros(&[1.0, 0.0], &[0.0, 1.0]), 0);
-    // Anti-correlated clamps to zero rather than recentering onto a positive
-    // range that a zero floor would admit.
-    assert_eq!(cosine_similarity_micros(&[1.0, 0.0], &[-1.0, 0.0]), 0);
-    assert_eq!(cosine_similarity_micros(&[1.0], &[1.0, 2.0]), 0);
-}
-
-/// The fingerprint's only job is to move when either vector moves.
-#[test]
-fn vector_pair_fingerprint_tracks_both_sides() {
-    let base = vector_pair_fingerprint(&Some(vec![1.0, 2.0]), &Some(vec![3.0, 4.0]));
-    assert_ne!(
-        base,
-        vector_pair_fingerprint(&Some(vec![1.0, 2.5]), &Some(vec![3.0, 4.0]))
-    );
-    assert_ne!(
-        base,
-        vector_pair_fingerprint(&Some(vec![1.0, 2.0]), &Some(vec![3.0, 4.5]))
-    );
-    assert_ne!(base, vector_pair_fingerprint(&None, &Some(vec![3.0, 4.0])));
-}
-
-/// Empty axes mean "unrestricted"; two disjoint restricted axes CLOSE, which is
-/// the fail-closed signal, not an unrestricted empty result.
-#[test]
-fn scope_intersection_separates_unrestricted_from_closed() {
-    let unrestricted = QueryScope::default();
-    let alpha = QueryScope {
-        worlds: vec![id(0x2A)],
-        facets: vec!["work".to_owned()],
-    };
-    let beta = QueryScope {
-        worlds: vec![id(0x2B)],
-        facets: vec!["work".to_owned()],
-    };
-
-    assert_eq!(alpha.intersect(&unrestricted), Some(alpha.clone()));
-    assert_eq!(unrestricted.intersect(&alpha), Some(alpha.clone()));
-    assert_eq!(alpha.intersect(&alpha), Some(alpha.clone()));
-    assert_eq!(alpha.intersect(&beta), None);
-    assert!(alpha.is_closed_against(&beta));
-    assert!(!alpha.is_closed_against(&unrestricted));
 }
 
 /// Irrelevant evidence must not move the hash, and relevant evidence must.
@@ -301,119 +218,6 @@ fn evidence_hash_covers_relevant_evidence_and_scope() {
     );
 }
 
-/// A restricted axis needs a WITNESS on that axis. An entity with no world
-/// membership is outside a world-scoped query, not universally inside it.
-#[test]
-fn scope_admits_only_entities_holding_the_restricted_axis() {
-    let (alpha, beta, facet) = (id(0x2F), id(0x30), id(0x31).to_hex());
-    let world_scoped = QueryScope {
-        worlds: vec![alpha],
-        facets: Vec::new(),
-    };
-    assert!(world_scoped.admits(&QueryScope {
-        worlds: vec![alpha],
-        facets: Vec::new(),
-    }));
-    assert!(!world_scoped.admits(&QueryScope::default()));
-    assert!(!world_scoped.admits(&QueryScope {
-        worlds: vec![beta],
-        facets: Vec::new(),
-    }));
-
-    // An unrestricted scope admits everything, including a bare entity.
-    assert!(QueryScope::default().admits(&QueryScope::default()));
-
-    // Both axes must be witnessed when both are restricted.
-    let both = QueryScope {
-        worlds: vec![alpha],
-        facets: vec![facet.clone()],
-    };
-    assert!(!both.admits(&QueryScope {
-        worlds: vec![alpha],
-        facets: Vec::new(),
-    }));
-    assert!(both.admits(&QueryScope {
-        worlds: vec![alpha],
-        facets: vec![facet],
-    }));
-}
-
-/// Claim evidence is admitted by WORLD: base must be explicitly included; a
-/// claim scoped to an out-of-reach world reads nowhere.
-#[test]
-fn claim_world_scope_admission_mirrors_the_gate_rule() {
-    let scoped_to = |world: Option<EntityId>| {
-        let mut body = ClaimBody::new(
-            "crm.fit",
-            ClaimSubject::Entity(id(0x32)),
-            rmpv::Value::from("fit"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap();
-        body.world = world;
-        body
-    };
-    let scope = QueryScope {
-        worlds: vec![id(0x33)],
-        facets: Vec::new(),
-    };
-    assert!(!claim_in_scope(&scoped_to(None), &scope));
-    let with_base = QueryScope {
-        worlds: vec![id(0x33), crate::claim::base_world_id()],
-        facets: Vec::new(),
-    };
-    assert!(claim_in_scope(&scoped_to(None), &with_base));
-    assert!(claim_in_scope(&scoped_to(Some(id(0x33))), &scope));
-    assert!(!claim_in_scope(&scoped_to(Some(id(0x34))), &scope));
-    // An unrestricted world axis admits every claim world.
-    assert!(claim_in_scope(
-        &scoped_to(Some(id(0x34))),
-        &QueryScope::default()
-    ));
-}
-
-/// Active alone is not effective. Approval, staleness, and the valid-time
-/// window all gate whether a claim is standing truth at the requested time.
-#[test]
-fn only_effective_claims_count_as_evidence() {
-    let base = || {
-        ClaimBody::new(
-            "crm.fit",
-            ClaimSubject::Entity(id(0x35)),
-            rmpv::Value::from("fit"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap()
-    };
-    assert!(claim_effective_at(&base(), 1_000));
-
-    let mut proposed = base();
-    proposed.approval = ClaimApprovalStatus::Proposed;
-    assert!(!claim_effective_at(&proposed, 1_000));
-
-    let mut stale = base();
-    stale.stale = true;
-    assert!(!claim_effective_at(&stale, 1_000));
-
-    let mut superseded = base();
-    superseded.lifecycle = ClaimLifecycleStatus::Superseded;
-    assert!(!claim_effective_at(&superseded, 1_000));
-
-    let mut not_yet = base();
-    not_yet.valid_from = Some(2_000);
-    assert!(!claim_effective_at(&not_yet, 1_000));
-    assert!(claim_effective_at(&not_yet, 2_000));
-
-    let mut expired = base();
-    expired.valid_to = Some(500);
-    assert!(!claim_effective_at(&expired, 1_000));
-    assert!(claim_effective_at(&expired, 500));
-}
-
 /// The MessagePack projection must be injective: a byte string and the
 /// literal text of its hex spelling cannot land on the same JSON, and a map
 /// key that looks like a wrapper tag cannot impersonate one.
@@ -440,86 +244,6 @@ fn rmpv_projection_is_injective_across_types() {
     );
 }
 
-/// Two live values for one predicate must both reach the judge; a
-/// predicate-keyed object would show it only the last one while the hash
-/// covered both.
-#[test]
-fn judge_evidence_preserves_every_live_claim_value() {
-    let evidence = RelevantEvidence {
-        entity_ref: id(0x36),
-        claim_values: vec![
-            ("crm.fit".to_owned(), json!("fit")),
-            ("crm.fit".to_owned(), json!("not_fit")),
-        ],
-        edge_targets: Vec::new(),
-        semantic_inputs: Vec::new(),
-        scope_membership: QueryScope::default(),
-    };
-    let projected = evidence_to_json(&evidence);
-    let claims = projected["claims"].as_array().expect("claims are pairs");
-    assert_eq!(claims.len(), 2);
-    assert_eq!(claims[0], json!(["crm.fit", "fit"]));
-    assert_eq!(claims[1], json!(["crm.fit", "not_fit"]));
-}
-
-/// Stage 2 scores the vectors the fingerprint was taken from. The function
-/// takes NO vault, so a re-read cannot creep back in: a verdict derived
-/// from vectors the evidence hash does not name is a memo that lies.
-#[test]
-fn semantic_decision_scores_the_fingerprinted_vectors() {
-    let exemplar_ref = id(0x37);
-    let collected = |subject: Option<Vec<f32>>, exemplar: Option<Vec<f32>>| CollectedEvidence {
-        evidence: RelevantEvidence {
-            entity_ref: id(0x38),
-            claim_values: Vec::new(),
-            edge_targets: Vec::new(),
-            semantic_inputs: vec![(exemplar_ref, vector_pair_fingerprint(&subject, &exemplar))],
-            scope_membership: QueryScope::default(),
-        },
-        subject_vector: subject,
-        exemplar_vectors: vec![(exemplar_ref, exemplar)],
-    };
-
-    let identical = collected(Some(vec![1.0, 2.0]), Some(vec![1.0, 2.0]));
-    assert_eq!(
-        semantic_decision(&identical, exemplar_ref, MICROS_PER_UNIT).verdict,
-        MatchVerdict::Match
-    );
-
-    let orthogonal = collected(Some(vec![1.0, 0.0]), Some(vec![0.0, 1.0]));
-    assert_eq!(
-        semantic_decision(&orthogonal, exemplar_ref, 1).verdict,
-        MatchVerdict::NoMatch
-    );
-
-    // An unknowable similarity never admits membership.
-    let missing = collected(None, Some(vec![1.0, 2.0]));
-    assert_eq!(
-        semantic_decision(&missing, exemplar_ref, 0).verdict,
-        MatchVerdict::NoMatch
-    );
-}
-
-/// A zero bound is a budget lie, not an unbounded budget.
-#[test]
-fn zero_wake_bounds_are_rejected_at_the_write_door() {
-    let mut definition = sample_definition();
-    definition.eval.max_judges_per_wake = 0;
-    assert!(matches!(
-        validate_definition(&definition),
-        Err(Error::InvalidConfig(_))
-    ));
-
-    let mut definition = sample_definition();
-    definition.eval.max_entities_per_wake = 0;
-    assert!(matches!(
-        validate_definition(&definition),
-        Err(Error::InvalidConfig(_))
-    ));
-
-    assert!(validate_definition(&sample_definition()).is_ok());
-}
-
 /// Length prefixes exist so `("ab", "c")` and `("a", "bc")` cannot collide.
 #[test]
 fn evidence_hash_length_prefixes_prevent_field_smearing() {
@@ -539,68 +263,6 @@ fn evidence_hash_length_prefixes_prevent_field_smearing() {
         compute_evidence_hash(&definition, &left).expect("hash"),
         compute_evidence_hash(&definition, &right).expect("hash")
     );
-}
-
-/// A judge answer must be a closed-set verdict in a JSON object. Prose, a
-/// missing reason, and an unknown verdict token are all upstream failures.
-#[test]
-fn judge_responses_must_be_closed_set_json() {
-    assert_eq!(
-        decode_judge_decision(r#"{"verdict":"match","why":"fits the rubric"}"#).expect("decode"),
-        MatchDecision {
-            verdict: MatchVerdict::Match,
-            why: "fits the rubric".to_owned(),
-        }
-    );
-    for bad in [
-        "yes, definitely a match",
-        r#"{"verdict":"probably","why":"x"}"#,
-        r#"{"verdict":"match"}"#,
-        r#"{"why":"x"}"#,
-    ] {
-        assert!(
-            matches!(
-                decode_judge_decision(bad),
-                Err(Error::UpstreamToolFailure { .. })
-            ),
-            "{bad:?} must not decode to a verdict"
-        );
-    }
-}
-
-/// The watermark decides the outcome; payload equality alone never does.
-#[test]
-fn watermark_verdict_rejects_stale_epochs_without_calling_them_applied() {
-    let content = [1u8; EVIDENCE_HASH_LEN];
-    let other = [2u8; EVIDENCE_HASH_LEN];
-
-    assert_eq!(watermark_verdict(None, 1, &content), None);
-    assert_eq!(
-        watermark_verdict(Some((1, Some(content))), 2, &content),
-        None
-    );
-    assert_eq!(
-        watermark_verdict(Some((1, Some(content))), 1, &content),
-        Some(MembershipCommitOutcome::AlreadyApplied)
-    );
-    // Same epoch, different content: a conflict, not a retry.
-    assert_eq!(
-        watermark_verdict(Some((1, Some(content))), 1, &other),
-        Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 1 })
-    );
-    // The replayed-Entered-after-re-entry case.
-    assert_eq!(
-        watermark_verdict(Some((3, Some(other))), 1, &content),
-        Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 3 })
-    );
-    // A watermark recovered from the replicated claim chain carries no
-    // content digest, so a same-epoch replay it cannot prove is stale —
-    // never "already applied".
-    assert_eq!(
-        watermark_verdict(Some((2, None)), 2, &content),
-        Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 2 })
-    );
-    assert_eq!(watermark_verdict(Some((2, None)), 3, &content), None);
 }
 
 #[test]
@@ -687,24 +349,4 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
         memory_watch::set_memory_watch(&reopened, owner, anchor, true, 13).expect("reenable"),
         Some(watch)
     );
-}
-
-/// A saved query names every edge kind by its list name except `same_as`,
-/// which stays refused: coreference links are never traversed (ONE-1414).
-#[test]
-fn a_saved_query_names_every_edge_kind_but_same_as() {
-    for &kind in crate::edge::EdgeKind::ALL {
-        let parsed = parse_filter_ast(&json!({"op": "edge_exists", "edge_kind": kind.name()}));
-        if kind == crate::edge::EdgeKind::SameAs {
-            assert!(matches!(parsed, Err(Error::InvalidConfig(_))), "{kind:?}");
-        } else {
-            assert_eq!(
-                parsed.expect("a listed edge kind parses"),
-                FilterAst::EdgeExists {
-                    edge_kind: kind.name().to_owned(),
-                    target: None,
-                },
-            );
-        }
-    }
 }

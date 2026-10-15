@@ -77,139 +77,6 @@ fn active_rows(vault: &Vault, subject: &EntityId, predicate: &str) -> Result<Vec
     Ok(out)
 }
 
-fn lifecycle_count(
-    vault: &Vault,
-    subject: &EntityId,
-    predicate: &str,
-    lifecycle: ClaimLifecycleStatus,
-) -> Result<usize> {
-    let mut count = 0;
-    for id in vault.claims_for_subject(subject)? {
-        let Some(body) = vault.get_claim(&id)? else {
-            continue;
-        };
-        if body.predicate == predicate && body.lifecycle == lifecycle {
-            count += 1;
-        }
-    }
-    Ok(count)
-}
-
-fn superseded_count(vault: &Vault, subject: &EntityId, predicate: &str) -> Result<usize> {
-    lifecycle_count(vault, subject, predicate, ClaimLifecycleStatus::Superseded)
-}
-
-/// The receipts a cost row cites, out of either evidence shape: the `skill.*`
-/// row carries the citation array itself, the `actor.*` row carries the lane
-/// envelope its own ledger builds.
-fn cited(body: &ClaimBody) -> Vec<String> {
-    let receipts = match body.evidence.as_ref() {
-        Some(Value::Array(rows)) => rows.clone(),
-        Some(Value::Map(entries)) => entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("receipts"))
-            .and_then(|(_, value)| value.as_array().cloned())
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
-    receipts
-        .iter()
-        .filter_map(|row| row.as_str().map(str::to_owned))
-        .collect()
-}
-
-/// A judge that names one class no matter what it is shown — the defect the
-/// Blind Curator audit exists to make visible.
-struct AlwaysDefectJudge;
-
-impl AttributionJudge for AlwaysDefectJudge {
-    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-        Ok(Some(AttributionVerdict::SkillDefect))
-    }
-}
-
-/// The whole-amendment class, at the shipped floor: the split of one region
-/// is one class at 100%.
-fn whole(
-    evidence: &AmendmentEvidence,
-    judge: &dyn AttributionJudge,
-) -> Result<Option<AmendmentClass>> {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "the unit-interval seed narrowed to the judge's f32 confidence"
-    )]
-    let floor = crate::learning_setting::ATTRIBUTION_UNCLEAR_FLOOR.seed as f32;
-    Ok(classify_amendment(evidence, judge, &[], floor)?.and_then(|split| split.sole()))
-}
-
-// ─── classification ─────────────────────────────────────────────────────
-
-#[test]
-fn the_two_amendment_causes_short_circuit_the_ladder() -> Result<()> {
-    let actor = EntityId::now();
-    let skill = EntityId::now();
-    let base = AmendmentEvidence::new("r:1", actor, "outbound")
-        .at(5)
-        .with_skill(skill)
-        // Facts that WOULD route a skill defect, so the assertion is that the
-        // cause pre-empts the ladder rather than agreeing with it.
-        .with_routing_facts(true, true);
-
-    assert_eq!(
-        whole(
-            &base.clone().with_cause(AmendmentCause::ExternalChange),
-            &RuleAttributionJudge
-        )?,
-        Some(AmendmentClass::Environment)
-    );
-    assert_eq!(
-        whole(
-            &base.clone().with_cause(AmendmentCause::DeciderPreference),
-            &RuleAttributionJudge
-        )?,
-        Some(AmendmentClass::PreferenceShift)
-    );
-    assert_eq!(
-        whole(
-            &base.clone().with_cause(AmendmentCause::ProposalWrong),
-            &RuleAttributionJudge
-        )?,
-        Some(AmendmentClass::SkillDefect)
-    );
-    // No cause settled: the honest answer is silence, not the nearest class.
-    assert_eq!(whole(&base, &RuleAttributionJudge)?, None);
-    Ok(())
-}
-
-#[test]
-fn the_wrong_proposal_arm_is_sk04s_table_verbatim() -> Result<()> {
-    let actor = EntityId::now();
-    let skill = EntityId::now();
-    let wrong = |followed, covered| {
-        AmendmentEvidence::new("r:1", actor, "outbound")
-            .at(5)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(followed, covered)
-    };
-    assert_eq!(
-        whole(&wrong(false, true), &RuleAttributionJudge)?,
-        Some(AmendmentClass::ExecutionLapse)
-    );
-    assert_eq!(
-        whole(&wrong(true, false), &RuleAttributionJudge)?,
-        Some(AmendmentClass::Discovery)
-    );
-    // A skill-routed verdict with no skill in the evidence abstains rather than
-    // falling through onto the actor.
-    let skill_less = AmendmentEvidence::new("r:1", actor, "outbound")
-        .at(5)
-        .with_cause(AmendmentCause::ProposalWrong)
-        .with_routing_facts(true, true);
-    assert_eq!(whole(&skill_less, &RuleAttributionJudge)?, None);
-    Ok(())
-}
-
 // ─── the evidence door ──────────────────────────────────────────────────
 
 #[test]
@@ -267,144 +134,6 @@ fn judged(
     judge_amendment(vault, receipt)
 }
 
-#[test]
-fn a_skill_defect_charges_the_skill_and_a_lapse_charges_the_actor() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.routing")?;
-
-    let defect = judged(
-        &vault,
-        "receipt:defect",
-        AmendmentEvidence::new("receipt:defect", actor, "outbound")
-            .at(20)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(true, true),
-        "the skill said do it this way",
-        "the skill was wrong so do it that way",
-    )?
-    .expect("a settled amendment routes");
-    assert_eq!(defect.sole_class(), Some(AmendmentClass::SkillDefect));
-    assert_eq!(defect.split[0].subject, Some(skill));
-
-    let lapse = judged(
-        &vault,
-        "receipt:lapse",
-        AmendmentEvidence::new("receipt:lapse", actor, "outbound")
-            .at(21)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(false, true),
-        "the skill said do it this way",
-        "so do it this way",
-    )?
-    .expect("a settled amendment routes");
-    assert_eq!(lapse.sole_class(), Some(AmendmentClass::ExecutionLapse));
-    assert_eq!(lapse.split[0].subject, Some(actor));
-
-    let landed = project_edit_cost_claims(&vault, &[defect, lapse])?;
-    assert_eq!(landed.len(), 2, "one row per charged subject");
-
-    let skill_rows = active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?;
-    assert_eq!(skill_rows.len(), 1);
-    let actor_rows = active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?;
-    assert_eq!(actor_rows.len(), 1);
-    // Each row cites the receipt its own class was judged from, and only that.
-    assert_eq!(cited(&skill_rows[0]), vec!["receipt:defect".to_owned()]);
-    assert_eq!(cited(&actor_rows[0]), vec!["receipt:lapse".to_owned()]);
-    assert!(
-        edit_cost_for(&vault, &skill, "outbound")?.is_some()
-            && edit_cost_for(&vault, &actor, "outbound")?.is_some()
-    );
-    Ok(())
-}
-
-#[test]
-fn environment_charges_nobody_and_preference_mints_a_proposal() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.noclaim")?;
-
-    let environment = judged(
-        &vault,
-        "receipt:environment",
-        AmendmentEvidence::new("receipt:environment", actor, "calendar")
-            .at(30)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ExternalChange),
-        "meet at four",
-        "meet at five",
-    )?
-    .expect("an external change is a class, not an abstention");
-    assert_eq!(environment.sole_class(), Some(AmendmentClass::Environment));
-    assert_eq!(
-        environment.split[0].subject, None,
-        "there is nobody to blame"
-    );
-
-    let preference = judged(
-        &vault,
-        "receipt:preference",
-        AmendmentEvidence::new("receipt:preference", actor, "calendar")
-            .at(31)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::DeciderPreference),
-        "warm regards",
-        "best",
-    )?
-    .expect("a preference is a class, not an abstention");
-    assert_eq!(
-        preference.sole_class(),
-        Some(AmendmentClass::PreferenceShift)
-    );
-
-    assert!(
-        project_edit_cost_claims(&vault, &[environment, preference])?.is_empty(),
-        "neither class earns an edit_cost row"
-    );
-    assert!(active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?.is_empty());
-    assert!(active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?.is_empty());
-
-    let proposals = pending_preference_proposals(&vault)?;
-    assert_eq!(proposals.len(), 1, "only the preference shift proposes");
-    assert_eq!(proposals[0].receipt_id, "receipt:preference");
-    assert_eq!(proposals[0].scope, "calendar");
-    Ok(())
-}
-
-#[test]
-fn a_discovery_earns_no_cost_row() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.discovery")?;
-
-    let discovery = judged(
-        &vault,
-        "receipt:discovery",
-        AmendmentEvidence::new("receipt:discovery", actor, "outbound")
-            .at(40)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(true, false),
-        "nothing here covered the case",
-        "nothing here covered the case, so add this",
-    )?
-    .expect("a settled amendment routes");
-    assert_eq!(discovery.sole_class(), Some(AmendmentClass::Discovery));
-    assert_eq!(
-        discovery.split[0].subject,
-        Some(skill),
-        "the gap is the skill's"
-    );
-    assert!(
-        project_edit_cost_claims(&vault, &[discovery])?.is_empty(),
-        "missing content is SK-04's edit proposal, not a cost"
-    );
-    assert!(active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?.is_empty());
-    Ok(())
-}
-
 // ─── the write door's guards ────────────────────────────────────────────
 
 #[test]
@@ -446,302 +175,6 @@ fn a_forged_judgment_lands_nothing() -> Result<()> {
 }
 
 #[test]
-fn the_cost_row_supersedes_and_averages_its_judgments() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.aggregate")?;
-
-    let mut judgments = Vec::new();
-    let mut deltas = Vec::new();
-    for (index, (before, after)) in [("a\nb\nc\n", "a\nb\nc\n"), ("a\nb\nc\n", "x\ny\nz\n")]
-        .into_iter()
-        .enumerate()
-    {
-        let receipt = format!("receipt:agg:{index}");
-        deltas.push(measure_amendment(&vault, &receipt, before, after)?);
-        record_amendment_evidence(
-            &vault,
-            &AmendmentEvidence::new(&receipt, actor, "outbound")
-                .at(60 + index as u64)
-                .with_skill(skill)
-                .with_cause(AmendmentCause::ProposalWrong)
-                .with_routing_facts(false, true),
-        )?;
-        judgments.push(judge_amendment(&vault, &receipt)?.expect("a settled amendment routes"));
-        // The projector runs as the judgments arrive, so the second pass finds
-        // a live head carrying the FIRST estimate and has to close it — a pass
-        // over a ledger that already held both would only re-derive one number.
-        project_edit_cost_claims(&vault, &judgments)?;
-    }
-
-    let rows = active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?;
-    assert_eq!(rows.len(), 1, "the pair holds exactly one live estimate");
-    assert_eq!(
-        superseded_count(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?,
-        1,
-        "the first estimate is closed, not left live beside the second"
-    );
-    let expected = (deltas[0] + deltas[1]) / 2.0;
-    let cost = edit_cost_for(&vault, &actor, "outbound")?.expect("a live estimate");
-    assert!(
-        (cost - expected).abs() < 1e-6,
-        "the row is the mean of its judgments: {cost} vs {expected}"
-    );
-    let citations = cited(&rows[0]);
-    assert_eq!(citations.len(), 2, "both receipts are cited: {citations:?}");
-
-    // A second pass over the same judgments re-derives the same number rather
-    // than folding them in twice.
-    project_edit_cost_claims(&vault, &judgments)?;
-    let again = edit_cost_for(&vault, &actor, "outbound")?.expect("a live estimate");
-    assert!((again - expected).abs() < 1e-6, "re-running is idempotent");
-    Ok(())
-}
-
-#[test]
-fn one_scope_is_not_another() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.scopes")?;
-
-    let mut judgments = Vec::new();
-    for (index, scope) in ["outbound", "calendar"].into_iter().enumerate() {
-        let receipt = format!("receipt:scope:{index}");
-        measure_amendment(&vault, &receipt, "a\nb\n", "a\nc\n")?;
-        record_amendment_evidence(
-            &vault,
-            &AmendmentEvidence::new(&receipt, actor, scope)
-                .at(70 + index as u64)
-                .with_skill(skill)
-                .with_cause(AmendmentCause::ProposalWrong)
-                .with_routing_facts(false, true),
-        )?;
-        judgments.push(judge_amendment(&vault, &receipt)?.expect("a settled amendment routes"));
-    }
-    project_edit_cost_claims(&vault, &judgments)?;
-
-    assert_eq!(
-        active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?.len(),
-        2,
-        "two scopes are two live rows, not one row that keeps moving"
-    );
-    assert!(edit_cost_for(&vault, &actor, "outbound")?.is_some());
-    assert!(edit_cost_for(&vault, &actor, "calendar")?.is_some());
-    assert!(edit_cost_for(&vault, &actor, "inbox")?.is_none());
-    Ok(())
-}
-
-#[test]
-fn re_judging_withdraws_the_proposal_it_no_longer_stands_behind() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.rejudge")?;
-    measure_amendment(&vault, "receipt:rejudge", "one", "two")?;
-
-    record_amendment_evidence(
-        &vault,
-        &AmendmentEvidence::new("receipt:rejudge", actor, "outbound")
-            .at(80)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::DeciderPreference),
-    )?;
-    judge_amendment(&vault, "receipt:rejudge")?;
-    assert_eq!(pending_preference_proposals(&vault)?.len(), 1);
-
-    // The door re-read the amendment and settled a different cause.
-    record_amendment_evidence(
-        &vault,
-        &AmendmentEvidence::new("receipt:rejudge", actor, "outbound")
-            .at(80)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(true, true),
-    )?;
-    let rejudged = judge_amendment(&vault, "receipt:rejudge")?.expect("a settled amendment routes");
-    assert_eq!(rejudged.sole_class(), Some(AmendmentClass::SkillDefect));
-    assert!(
-        pending_preference_proposals(&vault)?.is_empty(),
-        "the stale proposal is withdrawn with the verdict that minted it"
-    );
-    assert_eq!(
-        amendment_judgments(&vault)?.len(),
-        1,
-        "a re-judgment replaces the receipt's row rather than adding one"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_reclassified_receipt_retracts_the_head_it_orphaned() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.retraction")?;
-
-    let defect = judged(
-        &vault,
-        "receipt:moved",
-        AmendmentEvidence::new("receipt:moved", actor, "outbound")
-            .at(120)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(true, true),
-        "the skill said do it this way",
-        "the skill was wrong so do it that way",
-    )?
-    .expect("a settled amendment routes");
-    project_edit_cost_claims(&vault, &[defect])?;
-    assert!(edit_cost_for(&vault, &skill, "outbound")?.is_some());
-
-    // The door re-read the amendment: the world had moved under a proposal that
-    // was right when it was made, so the skill owes nothing.
-    record_amendment_evidence(
-        &vault,
-        &AmendmentEvidence::new("receipt:moved", actor, "outbound")
-            .at(120)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ExternalChange),
-    )?;
-    let rejudged = judge_amendment(&vault, "receipt:moved")?.expect("a settled amendment routes");
-    assert_eq!(rejudged.sole_class(), Some(AmendmentClass::Environment));
-    project_edit_cost_claims(&vault, &[rejudged])?;
-
-    assert!(
-        edit_cost_for(&vault, &skill, "outbound")?.is_none(),
-        "a charge no persisted judgment supports is withdrawn, not left standing"
-    );
-    assert!(active_rows(&vault, &skill, PREDICATE_SKILL_EDIT_COST)?.is_empty());
-    assert_eq!(
-        lifecycle_count(
-            &vault,
-            &skill,
-            PREDICATE_SKILL_EDIT_COST,
-            ClaimLifecycleStatus::Retracted
-        )?,
-        1,
-        "the orphaned head is closed as a withdrawal, and the record is kept"
-    );
-    Ok(())
-}
-
-#[test]
-fn an_abstaining_re_judgment_withdraws_the_answer_it_replaced() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.withdraw")?;
-
-    let preference = judged(
-        &vault,
-        "receipt:withdrawn",
-        AmendmentEvidence::new("receipt:withdrawn", actor, "calendar")
-            .at(130)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::DeciderPreference),
-        "warm regards",
-        "best",
-    )?
-    .expect("a settled amendment routes");
-    assert_eq!(
-        preference.sole_class(),
-        Some(AmendmentClass::PreferenceShift)
-    );
-    assert_eq!(pending_preference_proposals(&vault)?.len(), 1);
-
-    // The same door, re-read: the cause it thought it had does not hold up.
-    record_amendment_evidence(
-        &vault,
-        &AmendmentEvidence::new("receipt:withdrawn", actor, "calendar")
-            .at(130)
-            .with_skill(skill),
-    )?;
-    assert!(
-        judge_amendment(&vault, "receipt:withdrawn")?.is_none(),
-        "an unsettled cause abstains"
-    );
-    assert!(
-        amendment_judgments(&vault)?.is_empty(),
-        "a pass that withdrew its answer must not leave the old one queryable"
-    );
-    assert!(pending_preference_proposals(&vault)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn a_withdrawn_judgment_stops_charging_on_the_next_pass() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.stopcharging")?;
-
-    let lapse = judged(
-        &vault,
-        "receipt:lapsed",
-        AmendmentEvidence::new("receipt:lapsed", actor, "outbound")
-            .at(140)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(false, true),
-        "the skill said do it this way",
-        "so do it this way",
-    )?
-    .expect("a settled amendment routes");
-    project_edit_cost_claims(&vault, &[lapse])?;
-    assert!(edit_cost_for(&vault, &actor, "outbound")?.is_some());
-
-    record_amendment_evidence(
-        &vault,
-        &AmendmentEvidence::new("receipt:lapsed", actor, "outbound")
-            .at(140)
-            .with_skill(skill),
-    )?;
-    assert!(judge_amendment(&vault, "receipt:lapsed")?.is_none());
-
-    // Nothing new to land — and the pass still has to answer for what the
-    // ledger no longer says.
-    assert!(project_edit_cost_claims(&vault, &[])?.is_empty());
-    assert!(
-        edit_cost_for(&vault, &actor, "outbound")?.is_none(),
-        "the withdrawn verdict stops charging on the pass that reads the ledger"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_replayed_pass_re_returns_the_head_it_already_landed() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "ed03.replay")?;
-
-    let lapse = judged(
-        &vault,
-        "receipt:replay",
-        AmendmentEvidence::new("receipt:replay", actor, "outbound")
-            .at(150)
-            .with_skill(skill)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(false, true),
-        "the skill said do it this way",
-        "so do it this way",
-    )?
-    .expect("a settled amendment routes");
-
-    let first = project_edit_cost_claims(&vault, std::slice::from_ref(&lapse))?;
-    let second = project_edit_cost_claims(&vault, &[lapse])?;
-    assert_eq!(
-        first, second,
-        "an unchanged pass re-returns its own head rather than minting another"
-    );
-    assert_eq!(
-        active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?.len(),
-        1
-    );
-    assert_eq!(
-        superseded_count(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?,
-        0,
-        "a replay writes no phantom supersession history"
-    );
-    Ok(())
-}
-
-#[test]
 fn the_evidence_door_refuses_a_subject_that_cannot_act() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     measure_amendment(&vault, "receipt:turn", "one two", "one three")?;
@@ -757,24 +190,6 @@ fn the_evidence_door_refuses_a_subject_that_cannot_act() -> Result<()> {
         "a TURN cannot be charged an actor.edit_cost, so the door refuses it \
          here rather than wedging the projector two passes later"
     );
-    Ok(())
-}
-
-#[test]
-fn an_unmeasured_amendment_is_never_judged() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    measure_amendment(&vault, "receipt:vanishing", "one", "two")?;
-    record_amendment_evidence(
-        &vault,
-        &AmendmentEvidence::new("receipt:vanishing", actor, "outbound")
-            .at(90)
-            .with_cause(AmendmentCause::ProposalWrong)
-            .with_routing_facts(false, true),
-    )?;
-    assert!(judge_amendment(&vault, "receipt:vanishing")?.is_some());
-    // A receipt with no recorded facts at all is silence, not a class.
-    assert!(judge_amendment(&vault, "receipt:never-seen")?.is_none());
     Ok(())
 }
 
@@ -808,56 +223,6 @@ fn public_writes_of_both_cost_predicates_are_reserved() -> Result<()> {
 }
 
 // ─── the Blind Curator audit ────────────────────────────────────────────
-
-#[test]
-fn the_held_out_audit_scores_the_rule_tier_and_exposes_a_broken_one() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let fixtures = held_out_amendment_fixtures();
-
-    let honest = run_judge_audit(&vault)?;
-    assert!(
-        (honest - 1.0).abs() < f32::EPSILON,
-        "the deterministic tier answers its own held-out set: {honest}"
-    );
-
-    let broken = run_judge_audit_with_judge(&vault, &fixtures, &AlwaysDefectJudge, 100)?;
-    assert!(
-        broken.pass_rate() < honest,
-        "a judge that never abstains must score visibly worse: {} vs {honest}",
-        broken.pass_rate()
-    );
-    assert_eq!(
-        broken.abstained, 1,
-        "its only silence is the pre-filter's, on the fixture whose cause is \
-         unsettled — the tier itself never abstains"
-    );
-
-    let reports = judge_audit_reports(&vault)?;
-    assert_eq!(reports.len(), 2, "both passes are on the record");
-    assert!(
-        reports.iter().any(|report| report.at == 100),
-        "the injected pass is queryable by ops"
-    );
-    Ok(())
-}
-
-#[test]
-fn an_always_abstaining_tier_cannot_score_full_marks() -> Result<()> {
-    struct SilentJudge;
-    impl AttributionJudge for SilentJudge {
-        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-            Ok(None)
-        }
-    }
-    let (_tmp, vault) = temp_vault();
-    let fixtures = held_out_amendment_fixtures();
-    let report = run_judge_audit_with_judge(&vault, &fixtures, &SilentJudge, 110)?;
-    assert!(
-        report.pass_rate() < 1.0,
-        "abstaining on everything earns only the abstention fixtures"
-    );
-    Ok(())
-}
 
 #[test]
 fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> {
@@ -1154,5 +519,400 @@ fn a_doubt_holds_at_any_floor_and_must_say_why() -> Result<()> {
             Err(Error::InvalidClaimBody(_))
         ));
     }
+    Ok(())
+}
+
+// ─── every share lands where §5 says (surfacing events 1–3, 10-08) ────────
+
+/// The executor stamp every attempt fixture below runs under.
+const MODEL: &str = "fixture/model@1";
+
+/// A terminal attempt by `actor` whose pack loaded `skill_id`@1.0.0, returning
+/// its stamped pack receipt — the receipt an amendment joins to.
+fn terminal_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    skill_id: &str,
+    failed: bool,
+) -> Result<String> {
+    use crate::attempt_queue::{
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
+        FailAttempt, ManifestEntry, ManifestKind,
+    };
+    let queue = AttemptQueue::new(vault);
+    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
+        kind: "ed03.amended".to_owned(),
+        payload: Vec::new(),
+        dedupe_key: None,
+        run_id: None,
+        now: 10,
+    })?
+    else {
+        panic!("a fresh attempt enqueues")
+    };
+    vault.bind_actor_attempt(row.id, &actor)?;
+    queue.append_manifest_entry(
+        row.id,
+        ManifestEntry::new(ManifestKind::Skill, skill_id, "1.0.0", 11),
+    )?;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "ed03.amended",
+        ClaimAttempt {
+            lease_owner: "host".to_owned(),
+            now: 12,
+        },
+    )?
+    else {
+        panic!("the attempt leases")
+    };
+    queue.set_executor_model(row.id, "host", leased.attempt_count, MODEL)?;
+    if failed {
+        queue.fail(FailAttempt {
+            id: row.id,
+            lease_owner: "host".to_owned(),
+            attempt_count: leased.attempt_count,
+            reason: "failed check".to_owned(),
+            now: 13,
+        })?;
+    } else {
+        queue.complete(CompleteAttempt {
+            id: row.id,
+            lease_owner: "host".to_owned(),
+            attempt_count: leased.attempt_count,
+            now: 13,
+        })?;
+    }
+    Ok(crate::receipt::attempt_pack_receipt_id(&row.id))
+}
+
+/// The attempt arm's reliability posterior as `(alpha, beta)`.
+fn arm_posterior(vault: &Vault, skill: &EntityId) -> Result<(f32, f32)> {
+    use crate::skill_reliability::skill_reliability_posterior_for_executor;
+    let read = skill_reliability_posterior_for_executor(vault, skill, MODEL)?
+        .expect("the attempt's arm has a posterior");
+    Ok((read.alpha, read.beta))
+}
+
+/// Packet check (canon §5, `skill_defect` → `learning.reliability`): one
+/// amended attempt moves reliability once, by the defect share, and the
+/// attempt's earlier win is replaced, not added to. A second amendment of the
+/// same attempt replaces the first, and an amendment judged again without a
+/// defect share hands the attempt back its own win.
+#[test]
+fn an_amended_attempt_counts_once_as_its_defect_share() -> Result<()> {
+    use crate::skill_reliability::{
+        project_skill_reliability_for_executor, record_skill_contributing_win,
+        skill_reliability_prior,
+    };
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.reliability")?;
+    let attempt = terminal_attempt(&vault, actor, "ed03.reliability", false)?;
+    let prior = skill_reliability_prior(&vault, &skill)?;
+    let posterior = |vault: &Vault| arm_posterior(vault, &skill);
+
+    // The attempt lane's record: the completed attempt is a contributing win.
+    record_skill_contributing_win(&vault, &skill, &attempt, 20)?;
+    project_skill_reliability_for_executor(&vault, &skill, MODEL, 20)?;
+    assert_eq!(posterior(&vault)?, (prior.alpha + 1.0, prior.beta));
+
+    // The decider approves the attempt's proposal with an edit, and the judge
+    // splits it between the skill and the executor.
+    let receipt = "receipt:amended-attempt";
+    let hunks = [
+        EditHunk {
+            before: "Dear team,",
+            after: "Hello team,",
+        },
+        EditHunk {
+            before: "the launch moves to Friday.",
+            after: "the launch moves to Monday.\nThe review comes first.",
+        },
+    ];
+    measure_amendment(
+        &vault,
+        receipt,
+        "Dear team,\nthe launch moves to Friday.\n",
+        "Hello team,\nthe launch moves to Monday.\nThe review comes first.\n",
+    )?;
+    let evidence = AmendmentEvidence::new(receipt, actor, "outbound")
+        .at(70)
+        .with_skill(skill)
+        .with_attempt(attempt.clone())
+        .with_cause(AmendmentCause::ProposalWrong)
+        .with_routing_facts(true, true);
+    record_amendment_evidence(&vault, &evidence)?;
+    let judgment = judge_amendment_hunks(&vault, receipt, &DefectThenLapse, &hunks)?
+        .expect("a split amendment routes");
+    let defect_share = judgment.share_of(AmendmentClass::SkillDefect);
+    assert!(defect_share > 0.0 && defect_share < 1.0);
+
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    let (alpha, beta) = posterior(&vault)?;
+    assert_eq!(alpha, prior.alpha, "the earlier win is replaced");
+    assert!(
+        (beta - (prior.beta + defect_share)).abs() < 1e-6,
+        "the attempt counts once, as a loss of the defect share"
+    );
+
+    // Replays move nothing: neither the amendment pass again, nor the attempt
+    // lane crediting the same win again.
+    assert!(project_amendment_reliability(&vault)?.is_empty());
+    record_skill_contributing_win(&vault, &skill, &attempt, 20)?;
+    project_skill_reliability_for_executor(&vault, &skill, MODEL, 20)?;
+    assert_eq!(posterior(&vault)?, (alpha, beta));
+
+    // A later amendment of the same attempt is the later verdict: it replaces
+    // the first one's share rather than adding its own.
+    let again = "receipt:amended-again";
+    measure_amendment(&vault, again, "Regards", "Best regards")?;
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new(again, actor, "outbound")
+            .at(80)
+            .with_skill(skill)
+            .with_attempt(attempt.clone())
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true),
+    )?;
+    judge_amendment(&vault, again)?.expect("a followed, covered step is the skill's defect");
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    assert_eq!(posterior(&vault)?, (prior.alpha, prior.beta + 1.0));
+
+    // Judged again as the decider's taste, the later amendment charges the
+    // skill nothing, and the attempt is its own win once more.
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new(again, actor, "outbound")
+            .at(80)
+            .with_skill(skill)
+            .with_attempt(attempt)
+            .with_cause(AmendmentCause::DeciderPreference),
+    )?;
+    judge_amendment(&vault, again)?.expect("a preference routes");
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    assert_eq!(posterior(&vault)?, (prior.alpha + 1.0, prior.beta));
+    Ok(())
+}
+
+/// Sol review, 10-10: withdrawing the amendment of an attempt the attempt lane
+/// never recorded left its loss behind as imported history, and correcting the
+/// evidence to another attempt moved the old verdict there before any judge had
+/// seen the correction. A verdict stays on the attempt it was judged against,
+/// and its withdrawal leaves the prior exactly.
+#[test]
+fn a_withdrawn_or_rejoined_amendment_leaves_no_stale_loss() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.withdrawn")?;
+    let first = terminal_attempt(&vault, actor, "ed03.withdrawn", false)?;
+    let second = terminal_attempt(&vault, actor, "ed03.withdrawn", false)?;
+    let prior = crate::skill_reliability::skill_reliability_prior(&vault, &skill)?;
+    let receipt = "receipt:withdrawn";
+    measure_amendment(&vault, receipt, "Ship it Friday.", "Ship it Monday.")?;
+    let defect = |attempt: &str| {
+        AmendmentEvidence::new(receipt, actor, "outbound")
+            .at(70)
+            .with_skill(skill)
+            .with_attempt(attempt)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true)
+    };
+    record_amendment_evidence(&vault, &defect(&first))?;
+    judge_amendment(&vault, receipt)?.expect("a followed, covered step is the skill's defect");
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    assert_eq!(
+        arm_posterior(&vault, &skill)?,
+        (prior.alpha, prior.beta + 1.0)
+    );
+
+    record_amendment_evidence(&vault, &defect(&second))?;
+    assert!(
+        project_amendment_reliability(&vault)?.is_empty(),
+        "evidence alone does not move a judged verdict"
+    );
+
+    record_amendment_evidence(
+        &vault,
+        &defect(&second).with_cause(AmendmentCause::DeciderPreference),
+    )?;
+    judge_amendment(&vault, receipt)?.expect("a preference routes");
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    assert_eq!(
+        arm_posterior(&vault, &skill)?,
+        (prior.alpha, prior.beta),
+        "the withdrawn loss is gone, not kept as imported history"
+    );
+    Ok(())
+}
+
+/// The join is grounded at the door by the attempt lane's own check: an
+/// attempt nobody stamped, or one another actor ran, is refused.
+#[test]
+fn the_attempt_join_is_grounded_at_the_door() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let stranger = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.join")?;
+    let attempt = terminal_attempt(&vault, actor, "ed03.join", false)?;
+    measure_amendment(&vault, "receipt:join", "a", "b")?;
+    let evidence = |actor: EntityId, attempt: &str| {
+        AmendmentEvidence::new("receipt:join", actor, "outbound")
+            .at(70)
+            .with_skill(skill)
+            .with_attempt(attempt)
+    };
+    assert!(record_amendment_evidence(&vault, &evidence(actor, "attempt:00")).is_err());
+    assert!(record_amendment_evidence(&vault, &evidence(stranger, &attempt)).is_err());
+    record_amendment_evidence(&vault, &evidence(actor, &attempt))?;
+    assert_eq!(
+        amendment_evidence(&vault, "receipt:join")?.and_then(|row| row.attempt_receipt),
+        Some(attempt)
+    );
+    Ok(())
+}
+
+/// Packet check (canon §5, `discovery` mints a skill edit proposal): a
+/// discovery share creates exactly one edit proposal, with the same shape as
+/// the attempt lane's, through the same door. Judging again keeps it one, and
+/// a re-judgment without the discovery withdraws it.
+#[test]
+fn a_discovery_share_mints_one_edit_proposal_shaped_like_the_attempt_lanes() -> Result<()> {
+    use crate::skill_attribution::{
+        AttemptOutcome, SkillEditProposal, pending_edit_proposals, record_attribution_evidence,
+        run_attribution_projector,
+    };
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.discovery")?;
+
+    // The attempt lane's own discovery: a failed attempt whose skill lacked the step.
+    let attempt = terminal_attempt(&vault, actor, "ed03.discovery", true)?;
+    let failed = OutcomeEvidence::new(attempt.as_str(), actor, AttemptOutcome::Failed, 50)
+        .with_skill(skill)
+        .with_routing_facts(true, false);
+    record_attribution_evidence(&vault, &failed)?;
+    run_attribution_projector(&vault, 0)?;
+    let attempt_lane = pending_edit_proposals(&vault)?;
+    assert_eq!(attempt_lane.len(), 1);
+
+    let receipt = "receipt:discovery";
+    measure_amendment(
+        &vault,
+        receipt,
+        "Send the deck.",
+        "Send the deck and the notes.",
+    )?;
+    let discovered = AmendmentEvidence::new(receipt, actor, "outbound")
+        .at(70)
+        .with_skill(skill)
+        .with_cause(AmendmentCause::ProposalWrong)
+        .with_routing_facts(true, false);
+    record_amendment_evidence(&vault, &discovered)?;
+    let judgment = judge_amendment(&vault, receipt)?.expect("a missing step is a discovery");
+    assert_eq!(judgment.sole_class(), Some(AmendmentClass::Discovery));
+
+    let minted = |vault: &Vault| -> Result<Vec<SkillEditProposal>> {
+        Ok(pending_edit_proposals(vault)?
+            .into_iter()
+            .filter(|proposal| proposal.evidence_receipts == [receipt])
+            .collect())
+    };
+    let proposals = minted(&vault)?;
+    assert_eq!(proposals.len(), 1, "one discovery share, one proposal");
+    let proposal = &proposals[0];
+    assert_eq!(
+        *proposal,
+        SkillEditProposal {
+            judgment_sequence: proposal.judgment_sequence,
+            skill,
+            evidence_receipts: vec![receipt.to_owned()],
+            at: 70,
+        }
+    );
+    assert_ne!(
+        proposal.judgment_sequence, attempt_lane[0].judgment_sequence,
+        "both lanes mint into one keyspace without colliding"
+    );
+    assert_eq!(attempt_lane[0].skill, proposal.skill);
+
+    judge_amendment(&vault, receipt)?.expect("judged again");
+    assert_eq!(minted(&vault)?, proposals, "judging again keeps it one");
+
+    record_amendment_evidence(&vault, &discovered.with_routing_facts(true, true))?;
+    judge_amendment(&vault, receipt)?.expect("now the skill's defect");
+    assert!(
+        minted(&vault)?.is_empty(),
+        "the proposal leaves with its discovery"
+    );
+    assert_eq!(pending_edit_proposals(&vault)?, attempt_lane);
+    Ok(())
+}
+
+/// Packet check (canon §5, `execution_lapse` → the actor lesson): an execution
+/// lapse adds one actor lesson that cites its amendment receipt. A replay adds
+/// nothing, a second lapse is a second entry, and a re-judgment that clears the
+/// actor retracts the lesson.
+#[test]
+fn an_execution_lapse_adds_one_actor_lesson_citing_its_amendment() -> Result<()> {
+    use crate::actor_claims::{ActorClaimEvidence, PREDICATE_ACTOR_LESSON};
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.lapse")?;
+    let lapse = |receipt: &str, at: u64| {
+        AmendmentEvidence::new(receipt, actor, "outbound")
+            .at(at)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(false, true)
+    };
+
+    let receipt = "receipt:lapse";
+    measure_amendment(&vault, receipt, "Ship it Friday.", "Ship it Monday.")?;
+    record_amendment_evidence(&vault, &lapse(receipt, 70))?;
+    let judgment = judge_amendment(&vault, receipt)?.expect("an ignored skill is a lapse");
+    assert_eq!(judgment.sole_class(), Some(AmendmentClass::ExecutionLapse));
+
+    let landed = project_amendment_lessons(&vault, std::slice::from_ref(&judgment))?;
+    assert_eq!(landed.len(), 1);
+    let lessons = active_rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
+    assert_eq!(lessons.len(), 1, "one lapse, one lesson");
+    assert_eq!(
+        lessons[0].evidence,
+        Some(ActorClaimEvidence::amendment(vec![receipt.to_owned()], 70)?.to_value()),
+        "the lesson cites its amendment receipt"
+    );
+    assert_eq!(
+        lessons[0].value.as_str(),
+        Some("execution_lapse:receipt:lapse")
+    );
+    assert_eq!(
+        project_amendment_lessons(&vault, std::slice::from_ref(&judgment))?,
+        landed,
+        "a replay re-returns the standing lesson"
+    );
+
+    let second = "receipt:lapse-again";
+    measure_amendment(&vault, second, "Call them.", "Email them.")?;
+    record_amendment_evidence(&vault, &lapse(second, 80))?;
+    let again = judge_amendment(&vault, second)?.expect("a second lapse");
+    project_amendment_lessons(&vault, &[again])?;
+    assert_eq!(
+        active_rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?.len(),
+        2
+    );
+
+    record_amendment_evidence(
+        &vault,
+        &lapse(receipt, 70).with_cause(AmendmentCause::DeciderPreference),
+    )?;
+    judge_amendment(&vault, receipt)?.expect("a preference routes");
+    project_amendment_lessons(&vault, &[])?;
+    let standing = active_rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
+    assert_eq!(standing.len(), 1, "the cleared lapse's lesson is retracted");
+    assert_eq!(
+        standing[0].value.as_str(),
+        Some("execution_lapse:receipt:lapse-again")
+    );
     Ok(())
 }

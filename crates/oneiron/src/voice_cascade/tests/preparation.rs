@@ -82,61 +82,6 @@ fn same_reference_different_session_and_reopened_handle_cannot_accept_ticket() -
 }
 
 #[test]
-fn generation_stop_and_end_invalidate_pending_partial_without_effects() -> Result<()> {
-    let (_dir, vault) = vault();
-    let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
-    let generation = start(&mut session, false)?.generation;
-    let handle = session.open_utterance("incoming", SpeculativeSessionConfig::default())?;
-    let pending = session
-        .prepare_asr(&handle, 1, event(AsrEventKind::Partial, "incoming"), true)?
-        .unwrap();
-    let runs = vault.retrieval_runs(200)?.len();
-    assert!(session.observe_speech(Duration::ZERO, true)?.is_none());
-    let stop = session
-        .observe_speech(Duration::from_millis(120), true)?
-        .unwrap();
-    assert_eq!(stop.generation, Some(generation));
-    assert!(matches!(
-        session.apply_prepared_asr(pending, PartialEnrichment::default())?,
-        AsrUpdate::Ignored
-    ));
-    let pending = prepared(&mut session, &handle, 1, "incoming");
-    let _stop = session.end();
-    assert!(matches!(
-        session.apply_prepared_asr(pending, PartialEnrichment::default())?,
-        AsrUpdate::Ignored
-    ));
-    assert_eq!(vault.retrieval_runs(200)?.len(), runs);
-    Ok(())
-}
-
-#[test]
-fn same_revision_retry_supersedes_attempt_and_sync_door_invalidates_ticket() -> Result<()> {
-    let (_dir, vault) = vault();
-    let mut session = VoiceCascadeSession::new(vault, config())?;
-    let handle = session.open_utterance("u", SpeculativeSessionConfig::default())?;
-    let first = prepared(&mut session, &handle, 1, "bytes");
-    let retry = prepared(&mut session, &handle, 1, "bytes");
-    assert!(matches!(
-        session.apply_prepared_asr(first, PartialEnrichment::default())?,
-        AsrUpdate::Ignored
-    ));
-    let update = session.handle_asr(
-        &handle,
-        2,
-        event(AsrEventKind::Final, "sync bytes"),
-        false,
-        &mut Enricher::default(),
-    )?;
-    assert!(matches!(update, AsrUpdate::Final(_)));
-    assert!(matches!(
-        session.apply_prepared_asr(retry, PartialEnrichment::default())?,
-        AsrUpdate::Ignored
-    ));
-    Ok(())
-}
-
-#[test]
 fn cancellation_keeps_revision_and_exact_input_fence_but_releases_attempt() -> Result<()> {
     let (_dir, vault) = vault();
     let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;

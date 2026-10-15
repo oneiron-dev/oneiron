@@ -112,7 +112,7 @@ impl Vault {
         turns: GoalInterviewTurns,
         now: u64,
     ) -> Result<EntityId> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let attempt = AttemptQueue::new(self)
                 .get_in_txn(txn, attempt)?

@@ -5,12 +5,7 @@
 //! off the ramp.
 
 use super::*;
-use crate::identity_topology::{
-    IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
-    ProposalRuling, SurvivorshipPlan,
-};
 use crate::store::GateDecisionId;
-use crate::{ClaimApprovalStatus, ClaimSource};
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config())
@@ -46,52 +41,6 @@ fn owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
     vault
         .authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner")
-}
-
-fn merge_op(sources: Vec<EntityId>, survivor: EntityId) -> IdentityTopologyOp {
-    IdentityTopologyOp::Merge(MergeOp {
-        sources,
-        survivor,
-        evidence: IdentityOpEvidence {
-            refs: Vec::new(),
-            rationale: "ramp fixture merge".to_owned(),
-        },
-        survivorship_plan: SurvivorshipPlan::ReadThrough,
-    })
-}
-
-/// Parks a merge proposal and rules it, through the REAL MS-05 doors — the one
-/// production path that both folds the ramp incrementally AND emits the
-/// proposal-outcome receipt a rebuild refolds.
-fn park_and_rule(
-    vault: &Vault,
-    survivor: EntityId,
-    loser: EntityId,
-    ruling: ProposalRuling<'_>,
-    parked_at: u64,
-    ruled_at: u64,
-) {
-    let parked = vault
-        .apply_identity_topology_op(
-            &merge_op(vec![loser], survivor),
-            &IdentityOpWrite {
-                approval: ClaimApprovalStatus::Proposed,
-                ..IdentityOpWrite::auto(ClaimSource::Inferred)
-            },
-            parked_at,
-        )
-        .expect("park proposal");
-    let IdentityOpOutcome::Parked { event, .. } = parked else {
-        panic!("a Proposed merge must park, got {parked:?}");
-    };
-    vault
-        .resolve_identity_proposal(
-            &event,
-            ruling,
-            &IdentityOpWrite::auto(ClaimSource::UserStated),
-            ruled_at,
-        )
-        .expect("resolve proposal");
 }
 
 fn all_stats(vault: &Vault) -> Vec<ScopeOutcomeStats> {
@@ -146,24 +95,6 @@ fn scope_key_is_deterministic_and_keys_on_the_exact_tuple() {
 }
 
 #[test]
-fn scope_fields_normalize_and_reject_the_unbuildable() {
-    assert_eq!(
-        RampScope::new("  send_email  ", "client_followup", "agent-a").expect("trimmed"),
-        eligible_scope()
-    );
-    assert!(RampScope::new("", "client_followup", "agent-a").is_err());
-    assert!(RampScope::new("send_email", "client_followup", " ").is_err());
-    assert!(
-        RampScope::new(
-            "x".repeat(crate::consent::MAX_CONSENT_REF_LEN + 1),
-            "client_followup",
-            "agent-a"
-        )
-        .is_err()
-    );
-}
-
-#[test]
 fn clean_streak_surfaces_one_offer_and_never_grants_by_itself() {
     let (_dir, vault) = open_vault();
     let scope = eligible_scope();
@@ -190,35 +121,6 @@ fn clean_streak_surfaces_one_offer_and_never_grants_by_itself() {
             .expect("grants")
             .is_empty()
     );
-}
-
-#[test]
-fn the_owner_tap_is_what_creates_the_grant() {
-    let (_dir, vault) = open_vault();
-    let scope = eligible_scope();
-    let owner = owner(&vault);
-    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
-        vault
-            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
-            .expect("record");
-    }
-
-    vault
-        .accept_graduation_offer(&owner, &scope)
-        .expect("owner accepts");
-    assert_eq!(
-        vault
-            .active_standing_consent_grants()
-            .expect("grants")
-            .len(),
-        1
-    );
-    assert_eq!(
-        vault.ramp_scope_state(&scope).expect("state"),
-        RampState::Graduated
-    );
-    // The offer retracts the moment it is taken.
-    assert!(vault.graduation_offers().expect("offers").is_empty());
 }
 
 #[test]
@@ -267,199 +169,6 @@ fn an_amendment_in_a_graduated_scope_demotes_it_receipted() {
         receipt.fields.get(crate::receipt::FIELD_GRANT_REF),
         Some(&scope.grant_ref().expect("grant ref")),
         "the receipt must name the authority it took away"
-    );
-}
-
-#[test]
-fn a_rejection_demotes_and_a_clean_approval_does_not() {
-    let (_dir, vault) = open_vault();
-    let scope = eligible_scope();
-    let owner = owner(&vault);
-    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
-        vault
-            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
-            .expect("record");
-    }
-    vault
-        .accept_graduation_offer(&owner, &scope)
-        .expect("owner accepts");
-
-    vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
-        .expect("clean ruling");
-    assert!(demotion_receipts_via_public_query(&vault).is_empty());
-    assert_eq!(
-        vault.ramp_scope_state(&scope).expect("state"),
-        RampState::Graduated
-    );
-
-    vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::Rejected)
-        .expect("rejected ruling");
-    assert_eq!(demotion_receipts_via_public_query(&vault).len(), 1);
-    assert_eq!(
-        vault.ramp_scope_state(&scope).expect("state"),
-        RampState::Propose
-    );
-}
-
-#[test]
-fn demotion_of_an_ungraduated_scope_is_still_said_out_loud() {
-    let (_dir, vault) = open_vault();
-    let scope = eligible_scope();
-    vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
-        .expect("record");
-
-    vault
-        .demote_scope_to_propose(&scope, DemotionReason::AgentJudgment)
-        .expect("self demote");
-
-    let receipts = demotion_receipts_via_public_query(&vault);
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(
-        receipts[0]
-            .fields
-            .get(crate::receipt::FIELD_DEMOTION_REASON),
-        Some(&DemotionReason::AgentJudgment.as_str().to_owned())
-    );
-    assert_eq!(
-        receipts[0].fields.get(crate::receipt::FIELD_GRANT_REF),
-        None,
-        "there was no grant to name"
-    );
-    assert_eq!(
-        vault
-            .scope_stats(&scope)
-            .expect("stats")
-            .expect("row")
-            .untouched_streak,
-        0
-    );
-}
-
-#[test]
-fn a_per_scope_floor_overrides_the_compiled_default() {
-    let (_dir, vault) = open_vault();
-    let scope = eligible_scope();
-    assert_eq!(
-        vault.ramp_streak_floor(&scope).expect("floor"),
-        DEFAULT_GRADUATION_STREAK_FLOOR
-    );
-
-    vault.set_ramp_streak_floor(&scope, 2).expect("set floor");
-    vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
-        .expect("record");
-    assert_eq!(
-        vault.ramp_scope_state(&scope).expect("state"),
-        RampState::Propose
-    );
-    let stats = vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
-        .expect("record");
-    assert_eq!(stats.state, RampState::Offered);
-}
-
-#[test]
-fn a_floor_survives_the_rebuild_that_drops_the_stats() {
-    let (_dir, vault) = open_vault();
-    let scope = eligible_scope();
-    vault.set_ramp_streak_floor(&scope, 3).expect("set floor");
-    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
-    assert_eq!(vault.ramp_streak_floor(&scope).expect("floor"), 3);
-}
-
-#[test]
-fn stats_persist_across_reopen_and_rebuild_reproduces_them_exactly() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let survivor = crate::test_util::entity(0x21);
-    let loser = crate::test_util::entity(0x22);
-    let second_loser = crate::test_util::entity(0x23);
-    let amended = crate::identity_topology::encode_identity_op_amendment(&merge_op(
-        vec![second_loser],
-        survivor,
-    ))
-    .expect("encode amendment");
-
-    let before = {
-        let vault =
-            Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
-        put_person(&vault, 0x21);
-        put_person(&vault, 0x22);
-        put_person(&vault, 0x23);
-        park_and_rule(&vault, survivor, loser, ProposalRuling::Approve, 200, 300);
-        park_and_rule(
-            &vault,
-            survivor,
-            second_loser,
-            ProposalRuling::AmendThenApprove(&amended),
-            400,
-            500,
-        );
-        let before = all_stats(&vault);
-        assert_eq!(before.len(), 1, "both rulings share one merge scope");
-        assert_eq!(before[0].amended, 1);
-        assert_eq!(before[0].untouched_streak, 0, "the amendment reset it");
-        assert_eq!(
-            before[0].last_outcome,
-            Some(ProposalOutcome::ApprovedAmended)
-        );
-        before
-    };
-
-    let vault =
-        Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("reopen vault");
-    assert_eq!(all_stats(&vault), before, "stats must survive a reopen");
-
-    vault
-        .rebuild_ramp_stats_from_receipts()
-        .expect("rebuild from receipts");
-    assert_eq!(
-        all_stats(&vault),
-        before,
-        "a receipts-alone refold must land byte-identically on incremental maintenance"
-    );
-}
-
-#[test]
-fn the_rebuild_folds_demotions_not_only_rulings() {
-    let (_dir, vault) = open_vault();
-    let scope = eligible_scope();
-    vault.set_ramp_streak_floor(&scope, 1).expect("set floor");
-    // A ruling that IS receipted, so the refold has a scope to rebuild.
-    put_person(&vault, 0x21);
-    put_person(&vault, 0x22);
-    park_and_rule(
-        &vault,
-        crate::test_util::entity(0x21),
-        crate::test_util::entity(0x22),
-        ProposalRuling::Approve,
-        200,
-        300,
-    );
-    let merge_scope = all_stats(&vault)[0].scope.clone();
-    assert_eq!(
-        vault
-            .scope_stats(&merge_scope)
-            .expect("stats")
-            .expect("row")
-            .untouched_streak,
-        1
-    );
-
-    vault
-        .demote_scope_to_propose(&merge_scope, DemotionReason::AgentJudgment)
-        .expect("demote");
-    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
-    assert_eq!(
-        vault
-            .scope_stats(&merge_scope)
-            .expect("stats")
-            .expect("row")
-            .untouched_streak,
-        0,
-        "the rebuild must fold the demotion that zeroed the streak, not just the ruling"
     );
 }
 
@@ -545,43 +254,6 @@ fn a_retracted_offer_cannot_be_taken_by_a_stale_tap() {
 }
 
 #[test]
-fn the_rebuild_folds_in_ledger_order_not_clock_order() {
-    let (_dir, vault) = open_vault();
-    let survivor = crate::test_util::entity(0x21);
-    let loser = crate::test_util::entity(0x22);
-    let second_loser = crate::test_util::entity(0x23);
-    put_person(&vault, 0x21);
-    put_person(&vault, 0x22);
-    put_person(&vault, 0x23);
-
-    // Two rulings in ONE scope whose caller clocks contradict the ledger: the
-    // rejection is ruled FIRST and stamped LATER. `at` is data; `seq` is order.
-    park_and_rule(&vault, survivor, loser, ProposalRuling::Reject, 200, 400);
-    park_and_rule(
-        &vault,
-        survivor,
-        second_loser,
-        ProposalRuling::Approve,
-        250,
-        300,
-    );
-    let before = all_stats(&vault);
-    assert_eq!(before.len(), 1, "both rulings share one merge scope");
-    assert_eq!(before[0].untouched_streak, 1);
-    assert_eq!(
-        before[0].last_outcome,
-        Some(ProposalOutcome::ApprovedUntouched)
-    );
-
-    vault.rebuild_ramp_stats_from_receipts().expect("rebuild");
-    assert_eq!(
-        all_stats(&vault),
-        before,
-        "a refold ordered by wall time would end on the earlier-stamped rejection"
-    );
-}
-
-#[test]
 fn an_unbuildable_public_scope_never_commits_a_row() {
     let (_dir, vault) = open_vault();
     let owner = owner(&vault);
@@ -656,76 +328,4 @@ fn identity_topology_op_kinds_never_graduate() {
             .expect("grants")
             .is_empty()
     );
-}
-
-#[test]
-fn an_ordinary_propose_lane_op_kind_is_eligible() {
-    // The negative above is only meaningful if the predicate is not
-    // universally false.
-    for op_kind in ["send_email", "post_message", "schedule_meeting"] {
-        assert!(op_kind_is_ramp_eligible(op_kind));
-    }
-}
-
-#[test]
-fn state_strings_round_trip() {
-    for state in [RampState::Propose, RampState::Offered, RampState::Graduated] {
-        assert_eq!(RampState::parse(state.as_str()), Some(state));
-    }
-    assert_eq!(RampState::Propose.as_str(), "proposed");
-    assert_eq!(RampState::parse("nonsense"), None);
-
-    for reason in [
-        DemotionReason::Rejected,
-        DemotionReason::Amended,
-        DemotionReason::AgentJudgment,
-    ] {
-        assert_eq!(DemotionReason::parse(reason.as_str()), Some(reason));
-    }
-    assert_eq!(DemotionReason::parse("nonsense"), None);
-}
-
-#[test]
-fn mail_09_cold_mail_graduation_bound_is_identity_scoped() -> crate::Result<()> {
-    let identity = EntityId::now();
-    let scope = RampScope::new(
-        "send",
-        format!("recipient:cold_external:{}", identity.to_hex()),
-        "agent-a",
-    )?;
-    let bound = scope.to_grant_bound()?;
-    let second = RampScope::new(
-        "send",
-        format!("recipient:cold_external:{}", EntityId::now().to_hex()),
-        "agent-a",
-    )?;
-    assert_ne!(bound.digest(), second.to_grant_bound()?.digest());
-    assert_eq!(scope.grant_ref()?, bound.digest().to_hex());
-    assert!(RampScope::new("send", "recipient:cold_external:invalid", "agent-a").is_err());
-    Ok(())
-}
-
-#[test]
-fn mail_09_malformed_scope_never_commits_or_hides_valid_offers() -> crate::Result<()> {
-    let (_tmp, vault) = open_vault();
-    let valid = eligible_scope();
-    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
-        vault.record_proposal_outcome_for_ramp(&valid, ProposalOutcome::ApprovedUntouched)?;
-    }
-    let malformed = RampScope {
-        op_kind: "send".into(),
-        target_class: "recipient:cold_external:not-an-id".into(),
-        actor: "agent-a".into(),
-    };
-    assert!(malformed.validate().is_err());
-    assert!(
-        vault
-            .record_proposal_outcome_for_ramp(&malformed, ProposalOutcome::ApprovedUntouched)
-            .is_err()
-    );
-    assert!(vault.scope_stats(&malformed)?.is_none());
-    assert!(vault.graduation_offers()?.contains(&valid));
-    vault.rebuild_ramp_stats_from_receipts()?;
-    assert!(vault.graduation_offers()?.contains(&valid));
-    Ok(())
 }

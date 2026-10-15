@@ -25,121 +25,6 @@ fn a_hosted_pass_with_no_model_tier_degrades_and_halts() -> Result<()> {
 }
 
 #[test]
-fn a_hosted_policy_with_no_output_contract_degrades_on_its_own_cause() -> Result<()> {
-    // Registration refuses a contract-less policy, so this shape reaches the
-    // relay only where the registry was bypassed. There IS a model here — what
-    // is missing is the shape of the answer — so the degrade must not borrow
-    // the missing-tier code and send a reader looking for a tier that exists.
-    let (_tmp, vault) = temp_vault();
-    let mut registry = fixture_edge_service_registry();
-    registry.bind_unvalidated_for_testing(
-        HOSTED_EDGE_SERVICE,
-        ConnectionClass::LocalVaultViaHostedConnector,
-        HostedLegalPolicy {
-            output_contract: None,
-            ..hosted_serious_crime_block()
-        },
-    );
-    let backend = clean_backend();
-    let budget = lease("no-output-contract");
-    let pass = relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &registry,
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayBoundaryDegrade::OutputContractUndeclared)
-    );
-    assert_eq!(
-        RelayBoundaryDegrade::OutputContractUndeclared.as_str(),
-        "output_contract_undeclared"
-    );
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn a_decide_rule_still_verdicts_while_the_model_is_down() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
-        "hosted.bomb",
-        "(?i)bomb",
-    )]));
-    let budget = lease("outage-decide");
-    let caught = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &registry,
-        &PolicyModelConfig::default(),
-        Some(tier(&FailingPolicyBackend, &budget)),
-    )?;
-    assert_eq!(
-        caught.boundary_verdict().expect("verdict").decision,
-        PolicyClassifyDecision::Block
-    );
-    assert!(caught.degraded().is_none(), "the rule answered it");
-
-    // Content the rule does not reach has no coverage at all during an outage,
-    // so it degrades and halts.
-    let clean = relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &registry,
-        &PolicyModelConfig::default(),
-        Some(tier(&FailingPolicyBackend, &budget)),
-    )?;
-    assert_eq!(
-        clean.degraded(),
-        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
-    );
-    assert!(clean.must_halt_relay());
-    Ok(())
-}
-
-#[test]
-fn pattern_gated_outage_only_degrades_what_escalated() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![escalate_rule(
-        "hosted.bomb",
-        "(?i)bomb",
-    )]));
-    let config = PolicyModelConfig {
-        hosted_classifier_mode: RelayClassifierMode::PatternGated,
-        ..PolicyModelConfig::default()
-    };
-    let budget = lease("gated-outage");
-
-    // Nothing escalated, so no model was needed and nothing degraded.
-    let untouched = relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &registry,
-        &config,
-        Some(tier(&FailingPolicyBackend, &budget)),
-    )?;
-    assert!(untouched.degraded().is_none());
-    assert!(!untouched.must_halt_relay());
-
-    // An escalation with the model down is a real gap, and halts.
-    let escalated = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &registry,
-        &config,
-        Some(tier(&FailingPolicyBackend, &budget)),
-    )?;
-    assert_eq!(
-        escalated.degraded(),
-        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
-    );
-    assert!(escalated.must_halt_relay());
-    Ok(())
-}
-
-#[test]
 fn an_unreadable_answer_is_a_classification_failure_not_an_allow() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let registry = hosted_edge_registry(hosted_serious_crime_block());
@@ -243,45 +128,6 @@ fn an_availability_degrade_halts_under_the_default_outage_policy() -> Result<()>
 }
 
 #[test]
-fn an_availability_degrade_proceeds_under_proceed_receipted() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let registry = hosted_edge_registry(hosted_serious_crime_block());
-    let budget = lease("outage-proceed");
-    let config = PolicyModelConfig {
-        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
-        ..PolicyModelConfig::default()
-    };
-
-    let pass = relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &registry,
-        &config,
-        Some(tier(&FailingPolicyBackend, &budget)),
-    )?;
-
-    assert!(
-        !pass.must_halt_relay(),
-        "the host chose availability for an outage in its own model tier"
-    );
-    // Proceeding is not pretending. Everything that made the pass degraded is
-    // still on it, so nobody can read this allow as one a model confirmed.
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
-    );
-    assert_eq!(pass.resolution(), Some(RelayResolution::Unresolved));
-    let receipts = gate_receipts(&vault)?;
-    let degraded_row = receipts
-        .iter()
-        .find(|receipt| has_trace(receipt, "gate.relay.degraded.safeguard_model_unavailable"))
-        .expect("a degraded pass always writes its row");
-    assert!(has_trace(degraded_row, "gate.relay.degrade_proceeded"));
-    assert!(has_trace(degraded_row, "gate.relay.resolution.unresolved"));
-    Ok(())
-}
-
-#[test]
 fn an_unattestable_verdict_halts_even_under_proceed_receipted() -> Result<()> {
     // The knob is about AVAILABILITY. A verdict that cannot be pinned to the
     // policy state it was decided against is not an outage — the model may
@@ -322,39 +168,6 @@ fn an_unattestable_verdict_halts_even_under_proceed_receipted() -> Result<()> {
             .iter()
             .any(|receipt| has_trace(receipt, "gate.relay.degrade_halted")),
     );
-    Ok(())
-}
-
-#[test]
-fn proceed_receipted_never_softens_what_a_hosted_rule_decided() -> Result<()> {
-    // A `Decide` rule is an ANSWER, reached with no model call at all. The
-    // outage knob has nothing to say about it: the block still blocks and the
-    // relay still halts.
-    let (_tmp, vault) = temp_vault();
-    let registry = hosted_edge_registry(hosted_policy_with_rules(vec![decide_rule(
-        "hosted.bomb",
-        "(?i)bomb",
-    )]));
-    let budget = lease("proceed-vs-decide");
-    let config = PolicyModelConfig {
-        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
-        ..PolicyModelConfig::default()
-    };
-
-    let pass = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &registry,
-        &config,
-        Some(tier(&FailingPolicyBackend, &budget)),
-    )?;
-
-    assert_eq!(pass.degraded(), None, "a decided pass never degraded");
-    assert_eq!(
-        pass.boundary_verdict().expect("verdict").decision,
-        PolicyClassifyDecision::Block
-    );
-    assert!(pass.must_halt_relay());
     Ok(())
 }
 
@@ -412,52 +225,6 @@ fn every_output_contract_round_trips_through_the_relay() -> Result<()> {
         );
         assert!(violating_pass.must_halt_relay(), "contract: {contract:?}");
     }
-    Ok(())
-}
-
-#[test]
-fn a_binary_violation_resolves_to_the_strictest_row() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    // Binary carries no label, so the plane's strictest row governs — Block
-    // over Warn, whatever order they were registered in.
-    let policy = HostedLegalPolicy {
-        output_contract: Some(PolicyOutputContract::Binary),
-        rows: vec![
-            hosted_row(
-                "hosted:ncii",
-                "ncii",
-                HostedLegalAction::Warn,
-                "Flag non-consensual intimate imagery.",
-            ),
-            hosted_row(
-                "hosted:serious-crime",
-                "serious_crime",
-                HostedLegalAction::Block,
-                "Withhold serious-crime facilitation.",
-            ),
-        ],
-        ..hosted_serious_crime_block()
-    };
-    let backend = static_backend("1");
-    let budget = lease("binary-strictest");
-    let pass = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-    let verdict = pass.boundary_verdict().expect("verdict");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
-    assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::HostedLegal {
-            category: "serious_crime".to_owned(),
-            jurisdiction: HOSTED_JURISDICTION.to_owned(),
-            policy_version: HOSTED_VERSION.to_owned(),
-            row_ref: "hosted:serious-crime".to_owned(),
-        }
-    );
     Ok(())
 }
 

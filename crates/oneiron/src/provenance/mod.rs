@@ -49,8 +49,17 @@
 //! # Lifecycle (retract + supersede, contracts.ts `retractionRules` + D14)
 //!
 //! A provenance Claim is **LIVE** iff its wrapping Claim's `life` status is
-//! `active`. Closed Claims (`superseded` / `retracted`) are never deleted —
-//! they stay readable as history.
+//! `active` and it is not dependency-stale. Closed Claims (`superseded` /
+//! `retracted`) are never deleted — they stay readable as history.
+//!
+//! * **STALE** — erasing a source an active Claim cites marks it stale in the
+//!   erasing transaction (the ports dependency index). Its support is
+//!   withdrawn: every cohort counts it as retracted, never live, and the
+//!   stale door re-derives the edge's flags at once — from the remaining live
+//!   WINNER, else the retracted stamp. The edge itself is kept. A replayed
+//!   image of the edge (sync rematerialization, an edge delta) never
+//!   outranks this: when the edge has local wrappers and none is live, the
+//!   replay arm restores the retracted stamp in the replay's own transaction.
 //!
 //! * **SUPERSEDE** — "a newer edge.provenance Claim … takes precedence; the
 //!   prior Claim gets valid_to set (closed, not deleted). Confidence breaks
@@ -136,9 +145,16 @@ mod archive;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
 mod derived_attachment;
+pub(crate) use derived_attachment::support_project;
 mod edge_ref;
 mod entity_ref_wire;
 mod imported;
+mod invalidation;
+#[cfg(feature = "sync")]
+pub(crate) use invalidation::holds_withdrawn_image;
+pub(crate) use invalidation::{
+    image_needs_cohort_check, refresh_stale_wrapper_in_txn, withdraw_image_support_in_txn,
+};
 mod lifecycle;
 pub mod made_by;
 mod queries;
@@ -193,6 +209,6 @@ use self::lifecycle::closed_claim_put_payload;
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimSubject, encode_claim_body};
 #[cfg(test)]
-use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind};
+use crate::edge::{EdgeActorClass, EdgeKind};
 #[cfg(test)]
 use crate::temporal::TimeRange;

@@ -2,92 +2,6 @@
 
 use super::*;
 
-/// RT-05 (ONE-1687): a pending epoch-summary keyframe is embeddable work, and
-/// what the embedder receives is the summary's TEXT — not the MessagePack
-/// record whose framing keys carry no retrievable meaning.
-#[test]
-fn a_pending_epoch_summary_offers_its_text_to_the_embedder() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let id = entity_id(0x51);
-    let body =
-        crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
-            v: crate::compaction::EPOCH_SUMMARY_BODY_VERSION,
-            session: entity_id(0x52).to_hex(),
-            epoch: 1,
-            turn_start: 1,
-            turn_end: 3,
-            level: crate::compaction::EPOCH_SUMMARY_LEVEL,
-            text: "the epoch prose".to_owned(),
-            actor: entity_id(0x53).to_hex(),
-        })?;
-
-    vault
-        .batch()
-        .put(
-            &id,
-            crate::registry::ENTITY_TYPE_SUMMARY,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &body,
-        )
-        .commit()?;
-    vault.with_write_txn(|wtxn| {
-        vault.store.mark_pending_embedding(wtxn, &id, &body)?;
-        Ok(())
-    })?;
-
-    vault.with_write_txn(|wtxn| {
-        let input = pending_input_in_txn(&vault, &*wtxn, &id)?
-            .expect("a marked epoch summary is embeddable work");
-        assert_eq!(
-            input.payload,
-            PendingEmbeddingPayload::SummaryText("the epoch prose".to_owned()),
-            "the embedder receives the summary text"
-        );
-        Ok(())
-    })?;
-    Ok(())
-}
-
-/// Control: an ordinary witness SUMMARY shares the type byte but is not an
-/// epoch-summary record. It stays SKIPPED — the same `None` this arm returned
-/// for every SUMMARY before RT-05 — rather than failing the reconcile pass.
-#[test]
-fn a_marked_summary_that_is_not_an_epoch_record_stays_skipped() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let id = entity_id(0x54);
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &Value::Map(vec![(Value::from("kind"), Value::from("witness"))]),
-    )
-    .expect("encode a non-epoch summary body");
-
-    vault
-        .batch()
-        .put(
-            &id,
-            crate::registry::ENTITY_TYPE_SUMMARY,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &body,
-        )
-        .commit()?;
-    vault.with_write_txn(|wtxn| {
-        vault.store.mark_pending_embedding(wtxn, &id, &body)?;
-        Ok(())
-    })?;
-
-    vault.with_write_txn(|wtxn| {
-        assert!(
-            pending_input_in_txn(&vault, &*wtxn, &id)?.is_none(),
-            "a SUMMARY that is not an epoch-summary record is skipped, not failed"
-        );
-        Ok(())
-    })?;
-    Ok(())
-}
-
 struct SummaryBackend;
 
 impl crate::compaction::CompactionBackend for SummaryBackend {
@@ -102,9 +16,14 @@ impl crate::compaction::CompactionBackend for SummaryBackend {
     fn compact(
         &self,
         _request: &crate::compaction::CompactionRequest,
-    ) -> Result<crate::compaction::CompactionProduct> {
+        _retry: Option<crate::compaction::CompactionCheck>,
+    ) -> std::result::Result<
+        crate::compaction::CompactionProduct,
+        crate::compaction::CompactionRefusal,
+    > {
         Ok(crate::compaction::CompactionProduct {
             summary_text: "the native epoch prose".to_owned(),
+            finish: crate::FinishReason::Stop,
             latency: std::time::Duration::from_millis(1),
         })
     }
@@ -147,13 +66,15 @@ fn mint_pending_summary(vault: &Vault) -> Result<EntityId> {
             tokens: 3,
         }],
     )?;
-    let product = driver.backend().compact(&request)?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let plan = driver.integrate(
         vault,
         &session,
         crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent),
-        &request,
-        product,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
         &[],
     )?;
     Ok(plan.summary_id)
@@ -166,7 +87,9 @@ fn read_payload_text(payload: &PendingEmbeddingPayload) -> Result<String> {
             let claim = crate::claim::decode_claim_body(bytes, true)?;
             Ok(claim.value.as_str().expect("fixture claim text").to_owned())
         }
-        PendingEmbeddingPayload::SummaryText(text) => Ok(text.clone()),
+        PendingEmbeddingPayload::SummaryText(text) | PendingEmbeddingPayload::TurnText(text) => {
+            Ok(text.clone())
+        }
     }
 }
 
@@ -211,6 +134,7 @@ impl Embedder for TypedEmbedder {
                         assert_eq!(text, "the native epoch prose");
                         vec![0.0, 1.0, 0.0, 0.0]
                     }
+                    PendingEmbeddingPayload::TurnText(_) => unreachable!("this vault has no turn"),
                 };
                 self.seen.lock().unwrap().push(input.clone());
                 Ok(vector)
@@ -235,6 +159,7 @@ impl EgressPredicate for TypedEgress {
         match &input.payload {
             PendingEmbeddingPayload::ClaimBody(_) => EgressDecision::Allow,
             PendingEmbeddingPayload::SummaryText(_) => self.summary_decision,
+            PendingEmbeddingPayload::TurnText(_) => unreachable!("this vault has no turn"),
         }
     }
 }
@@ -324,5 +249,28 @@ fn real_claim_and_minted_summary_reconcile_through_typed_embedder_and_egress() -
         );
         assert_eq!(reconciler.reconcile_once_at(20)?.leased, 0);
     }
+    Ok(())
+}
+
+/// agent-runtime-v1 §d7: an epoch summary withdrawn by an erasure stays out
+/// of the embedder, through a refill of the embedding space too.
+#[test]
+fn a_withdrawn_epoch_summary_is_never_queued_again() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let summary = mint_pending_summary(&vault)?;
+    assert!(pending_token(&vault, &summary)?.is_some());
+    // The TURN the summary was written from.
+    assert!(vault.delete_entity(&entity_id(0x72))?);
+    assert!(pending_token(&vault, &summary)?.is_none(), "withdrawn");
+    let model = vault.config.embedding_model.clone().expect("model");
+    vault.with_write_txn(|wtxn| {
+        vault
+            .swap_embedding_space_in_txn(wtxn, &model, None, true)
+            .map(drop)
+    })?;
+    assert!(
+        pending_token(&vault, &summary)?.is_none(),
+        "a refill does not queue it again"
+    );
     Ok(())
 }

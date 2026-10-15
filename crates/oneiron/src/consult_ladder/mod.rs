@@ -44,5 +44,3 @@ mod tests;
 // exactly as it did before.
 #[cfg(test)]
 use crate::entity_id::EntityId;
-#[cfg(test)]
-use crate::task_verb::TaskAssignee;

@@ -29,6 +29,13 @@ impl Memory<'_> {
             Ok(EncoderInput {
                 turn: turn_id.to_hex(),
                 messages,
+                context: Vec::new(),
+                language: None,
+                // The side the witnessed messages' authors name, as the
+                // witness stores them.
+                speaker: crate::tagging::turn_role(
+                    turn.messages.iter().map(|message| message.author.as_str()),
+                ),
             })
         })();
         let input = match input_result {
@@ -37,6 +44,9 @@ impl Memory<'_> {
                 let input = EncoderInput {
                     turn: witness.turn_short_id.clone(),
                     messages: Vec::new(),
+                    context: Vec::new(),
+                    language: None,
+                    speaker: None,
                 };
                 return Ok(WitnessWithShadow {
                     witness,
@@ -83,18 +93,58 @@ impl Memory<'_> {
         })
     }
 }
-pub(super) fn hash_input(input: &EncoderInput) -> String {
+/// The input digest: the turn, then each message's id, length and text. A
+/// window folds in after them only when it holds a turn, so a turn read
+/// alone digests as it always has; a NUL cannot begin a message id, so the
+/// window never reads as one more message. A language, then the turns'
+/// speaker roles, fold in last and only when the input carries them, so an
+/// input without them digests as it did before they existed.
+pub(crate) fn hash_input(input: &EncoderInput) -> String {
     let mut hash = Sha256::new();
     hash.update(input.turn.as_bytes());
-    for message in &input.messages {
+    let message = |hash: &mut Sha256, message: &EncoderMessage| {
         hash.update(message.id.as_bytes());
         hash.update((message.text.len() as u64).to_le_bytes());
         hash.update(message.text.as_bytes());
+    };
+    for each in &input.messages {
+        message(&mut hash, each);
+    }
+    if !input.context.is_empty() {
+        hash.update(b"\0context");
+        hash.update((input.context.len() as u64).to_le_bytes());
+        for turn in &input.context {
+            hash.update(turn.turn.as_bytes());
+            hash.update((turn.messages.len() as u64).to_le_bytes());
+            for each in &turn.messages {
+                message(&mut hash, each);
+            }
+        }
+    }
+    if let Some(language) = &input.language {
+        hash.update(b"\0language");
+        hash.update((language.len() as u64).to_le_bytes());
+        hash.update(language.as_bytes());
+    }
+    let roles = std::iter::once(input.speaker).chain(input.context.iter().map(|turn| turn.speaker));
+    if roles.clone().any(|role| role.is_some()) {
+        // The current turn's role, then each context turn's in order.
+        hash.update(b"\0speaker");
+        for role in roles {
+            hash.update(match role {
+                None => b"-",
+                Some(SpeakerRole::User) => b"A",
+                Some(SpeakerRole::Companion) => b"B",
+            });
+        }
     }
     format!("{:x}", hash.finalize())
 }
 fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static str> {
-    if output.spans.len() > 4096 || output.links.len() > 4096 || output.vad.validate().is_err() {
+    if output.spans.len() > 4096
+        || output.links.len() > 4096
+        || output.vad.is_some_and(|vad| vad.validate().is_err())
+    {
         return Err("invalid_encoder_output");
     }
     for span in &output.spans {
@@ -113,14 +163,6 @@ fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static
             return Err("invalid_ner_span");
         }
     }
-    let mut linked = std::collections::BTreeSet::new();
-    for link in &output.links {
-        if link.span >= output.spans.len()
-            || link.antecedent >= link.span
-            || !linked.insert(link.span)
-        {
-            return Err("invalid_coreference_link");
-        }
-    }
-    Ok(())
+    crate::tagging::check_span_order(output).map_err(|_| "invalid_ner_span")?;
+    crate::tagging::check_links(input, output).map_err(|_| "invalid_coreference_link")
 }

@@ -273,16 +273,29 @@ pub fn recover_vault_window(
             let target = crate::EntityId::from_bytes(edge.target)?;
             let kind = crate::EdgeKind::try_from_u8(edge.kind)
                 .ok_or_else(|| invalid("edge kind materialization"))?;
-            if crate::ports::EdgeStoreStaging::port_edge_encoded(
+            let stored = crate::ports::EdgeStoreStaging::port_edge_encoded(
                 &vault.store,
                 &txn,
                 &source,
                 kind,
                 &target,
-            )?
-            .as_deref()
-                != Some(edge.value.as_slice())
-            {
+            )?;
+            // Local invalidation outranks the image's support stamp: the
+            // replay lands it retracted where every local wrapper withdrew.
+            let landed = match stored.as_deref() {
+                Some(stored) => {
+                    stored == edge.value.as_slice()
+                        || crate::provenance::holds_withdrawn_image(
+                            &vault.store,
+                            &txn,
+                            &crate::provenance::EdgeRef::new(source, kind, target),
+                            &edge.value,
+                            stored,
+                        )?
+                }
+                None => false,
+            };
+            if !landed {
                 return Err(invalid("edge materialization incomplete"));
             }
         }

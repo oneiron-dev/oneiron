@@ -39,7 +39,10 @@ pub(crate) use self::consent::{
     supersede_party_opt_out_head_in_txn,
 };
 pub use self::parties::resolve_or_create_comm_party;
-pub(crate) use self::parties::{resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn};
+pub(crate) use self::parties::{
+    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
+    resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
+};
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,
@@ -371,8 +374,6 @@ use self::{claims::*, consent::*, parties::*, projection_writes::*, projector::*
 #[cfg(test)]
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 #[cfg(test)]
-use crate::claim::ClaimSource;
-#[cfg(test)]
 use crate::edge::{EdgeActorClass, EdgeKind};
 #[cfg(test)]
 use crate::error::{Error, Result};
@@ -382,8 +383,6 @@ use crate::vault::entity_id_from_type_index_key;
 use crate::write_envelope::WriteActor;
 #[cfg(test)]
 use rmpv::Value;
-#[cfg(test)]
-use std::collections::BTreeSet;
 
 pub(crate) use thread_membership::active_thread_refs_in_txn;
 

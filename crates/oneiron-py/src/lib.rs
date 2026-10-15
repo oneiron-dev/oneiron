@@ -161,6 +161,9 @@ impl NativeClient {
         path: Option<std::path::PathBuf>,
         dimensions: Option<usize>,
     ) -> PyResult<Self> {
+        // Crash output never carries world text: the engine's hook goes in before
+        // any vault opens (owner ruling 2026-10-14, fix 6).
+        oneiron::panic_report::install_panic_hook();
         let options = oneiron_remote::OpenOptions { dimensions };
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
@@ -190,6 +193,14 @@ impl NativeClient {
     fn as_actor(&self, py: Python<'_>, actor_key: String) -> PyResult<Self> {
         let inner = py
             .detach(|| self.inner.as_actor(&actor_key))
+            .map_err(raise)?;
+        Ok(Self { inner })
+    }
+
+    /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
+    fn in_room_turn(&self, py: Python<'_>, room_ref: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| self.inner.in_room_turn(&room_ref))
             .map_err(raise)?;
         Ok(Self { inner })
     }
@@ -239,15 +250,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None))]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per SDK argument of the verb"
+    )]
     fn recall(
-        &self,
-        py: Python<'_>,
+        slf: PyRef<'_, Self>,
         query: String,
         effort: Option<&str>,
         scope_json: Option<&str>,
         limit: Option<usize>,
         format: Option<String>,
+        as_of: Option<u64>,
+        deadline_ms: Option<u64>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -255,10 +271,20 @@ impl NativeClient {
             None => oneiron::memory::RecallScope::default(),
         };
         let limit = limit.unwrap_or(10);
+
+        let inner = &slf.inner;
+        let py = slf.py();
         let output = py
             .detach(|| {
-                self.inner
-                    .recall(&query, effort, &scope_json, limit, format.as_deref())
+                inner.recall(
+                    &query,
+                    effort,
+                    &scope_json,
+                    limit,
+                    format.as_deref(),
+                    as_of,
+                    deadline_ms,
+                )
             })
             .map_err(raise)?;
         encode_recall(&output)

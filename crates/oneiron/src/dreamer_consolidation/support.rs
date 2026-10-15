@@ -6,9 +6,12 @@ use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-/// Domain for phase-2 candidate-bucket hashes (pinned, design D6). The
-/// phase-1 partition hash keeps this domain unchanged (DESIGN-PIN A2).
-pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
+/// Domain for phase-2 candidate-bucket hashes (pinned, design D6). v2 added
+/// the project axis to the bucket key.
+pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v2";
+/// Domain for the phase-1 partition hash: the v1 bucket domain, unchanged
+/// (DESIGN-PIN A2). Partition hashes key stored cursors and queue rows.
+pub const DREAMER_PARTITION_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
 /// Domain for swarm evidence content hashes (pinned, design D10).
@@ -24,6 +27,10 @@ pub const DREAMER_GAP_SCAN_ATTEMPT_TYPE: &str = "dreamer.reflection.gap_scan";
 /// gap scan, not a new queue kind and not a new wake mechanism. The pass rides
 /// the landed SessionEnd wake, whose `input` names the ended sitting.
 pub const DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE: &str = "dreamer.edit_distance.substitution_mine";
+/// `DreamerAttemptPayload.attempt_type` for a declared scope summary: a
+/// caller named the scope, and the Dreamer writes the body (ARCH-0006a).
+/// A payload discriminator on the Micro consolidation queue.
+pub const DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE: &str = "dreamer.scope_summary";
 /// Documented OPT-IN turn-body key naming the WORLD entity this turn's
 /// content belongs to (16-byte MessagePack binary; ILD D4 opt-in precedent).
 pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";
@@ -64,6 +71,8 @@ pub(super) const KEY_DECAYED: &str = "decayed";
 pub(super) const KEY_CONVERSATION: &str = "conversation_ref";
 pub(super) const KEY_WORLD: &str = "world_ref";
 pub(super) const KEY_FACET: &str = "facet_ref";
+/// Candidate scope-map key the write envelope stamps into `scopeProjectId`.
+pub(super) const SCOPE_PROJECT_KEY: &str = "scopeProjectId";
 pub(super) const KEY_WATERMARK: &str = "watermark";
 pub(super) const KEY_TURNS: &str = "turns";
 

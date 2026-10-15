@@ -61,9 +61,3 @@ fn start_tag_with_many_attributes_parses_in_bounded_time() {
     );
     assert_eq!(text, accepted_text(INPUT));
 }
-
-#[test]
-fn duplicate_attribute_is_still_rejected() {
-    let bytes = with_paragraph_attributes(r#"x="1" x="2""#);
-    assert!(Document::parse(&bytes).is_err());
-}

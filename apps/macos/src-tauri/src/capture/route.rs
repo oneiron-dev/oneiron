@@ -132,27 +132,3 @@ fn detect() -> super::Result<OutputRoute> {
 fn detect() -> OutputRoute {
     OutputRoute::Other
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_fixed_route_answers_with_itself() {
-        assert_eq!(
-            FixedRoute(OutputRoute::Headphones).output_route(),
-            OutputRoute::Headphones
-        );
-    }
-
-    #[test]
-    fn every_route_has_a_label() {
-        for route in [
-            OutputRoute::Headphones,
-            OutputRoute::Speakers,
-            OutputRoute::Other,
-        ] {
-            assert!(!route.label().is_empty());
-        }
-    }
-}

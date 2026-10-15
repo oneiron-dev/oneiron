@@ -78,6 +78,11 @@ pub(super) fn pair_access_in(
         {
             continue;
         }
+        // A deleted consent is no consent, even while an unapplied delete
+        // leaves its body stored.
+        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            continue;
+        }
         left_granted |= grant.principal_ref == left_author;
         right_granted |= grant.principal_ref == right_author;
         if left_granted && right_granted {

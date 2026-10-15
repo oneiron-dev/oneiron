@@ -24,9 +24,9 @@ class AgentSdkProjectionTests(unittest.TestCase):
         spec.loader.exec_module(generator)
         server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
         handlers = server.split("async fn ")[1:]
-        self.assertTrue(any("sdk::invoke(" in handler for handler in handlers))
+        self.assertTrue(any("facade_invoke(" in handler for handler in handlers))
         for handler in handlers:
-            if "sdk::invoke(" in handler:
+            if "facade_invoke(" in handler:
                 self.assertNotIn("sdk::validate_input(", handler, handler.split("(", 1)[0])
         # describe uses facade_input instead of invoke; it still needs admission.
         self.assertIn('sdk::validate_input("describe", &value)?;', server)
@@ -43,11 +43,11 @@ class AgentSdkProjectionTests(unittest.TestCase):
         self.assertIn("auth.verified_slip()", handler)
         self.assertIn("export_with_verified_owner", handler)
         self.assertIn("export_with_verified_host_owner", handler)
-        self.assertNotIn('sdk::invoke(', handler)
+        self.assertNotIn('facade_invoke(', handler)
         row["admission"].pop("owner_grade")
         server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
         handler = server.split("async fn export(", 1)[1].split("async fn ", 1)[0]
-        self.assertIn('sdk::invoke(', handler)
+        self.assertIn('facade_invoke(', handler)
         self.assertNotIn('auth.is_owner_grade()', handler)
 
     def test_manifest_removal_suppresses_facade_bindings(self):

@@ -1,10 +1,6 @@
 //! Transaction-local visibility ledger for canonical and composed session views.
 use super::{DeletionState, TombstoneStoreRead};
-use crate::{
-    EntityId, Vault,
-    error::{Error, Result},
-    store::ManifestDbs,
-};
+use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
 impl<T: ManifestDbs> TombstoneStoreRead for T {
     fn port_tombstone_records<'a>(
@@ -37,67 +33,46 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
             .sync_state()
             .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
             .is_some();
-        let deleted = archived
-            || self
-                .sync_state()
-                .get(txn, crate::deletion::local_hard_delete_key(id).as_str())?
-                .is_some()
-            || self
-                .vault_meta()
-                .get(txn, &super::integrity::tombstone_key(id))?
-                .is_some();
         let stale = super::integrity::stale_in_txn(self, txn, id)?;
-        if deleted {
-            return Ok(DeletionState {
-                archived,
-                deleted,
-                stale,
-            });
-        }
-        let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
-            return Ok(DeletionState {
-                archived,
-                deleted,
-                stale,
-            });
-        };
-        let h = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        let window = crate::deletion::window_label_from_timestamp(h.learned_at);
-        let key = crate::deletion::pending_tombstone_key(&window, id);
-        if self.sync_state().get(txn, &key)?.is_some() {
-            return Ok(DeletionState {
-                archived,
-                deleted: true,
-                stale,
-            });
-        }
-        #[cfg(feature = "sync")]
-        let deleted = {
-            use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_map_contains_id,
-            };
-            let key = format!("d:w:{window}");
-            if let Some(snapshot) = self.sync_state().get(txn, &key)? {
-                let doc = doc_from_snapshot(&snapshot)?;
-                for entry in self
-                    .sync_state()
-                    .prefix_iter(txn, &format!("u:w:{window}:"))?
-                {
-                    let (_, update) = entry?;
-                    import_doc(&doc, &update)?;
-                }
-                tombstone_map_contains_id(&doc.get_map("tombstones"), id)
-            } else {
-                false
-            }
-        };
+        let deleted = archived || removed_in_txn(self, txn, id)?;
         Ok(DeletionState {
             archived,
             deleted,
             stale,
         })
     }
+}
+
+/// Whether something other than an archive deletes the row `id`. An archive
+/// is a local visibility marker that keeps the row whole; this is the rest of
+/// [`DeletionState::deleted`].
+pub(crate) fn removed_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let raw = dbs.entities().get(txn, id.as_bytes())?;
+    // Every answer is an indexed marker; no window document is decoded.
+    // The row's own deletion, applied here or accepted and awaiting its
+    // retry, is its `df:` fence (or `dt:` once hard), whatever the payload
+    // length or a window's mutable tombstone map say.
+    Ok(
+        crate::deletion::row_deletion_marked(dbs, txn, id, raw.as_deref())?
+            || dbs
+                .vault_meta()
+                .get(txn, &super::integrity::tombstone_key(id))?
+                .is_some()
+            || match raw {
+                // A local delete whose publication is pending.
+                Some(raw) => {
+                    let window = crate::deletion::deletion_window_for_row(dbs, txn, id, &raw)?;
+                    dbs.sync_state()
+                        .get(txn, &crate::deletion::pending_tombstone_key(&window, id))?
+                        .is_some()
+                }
+                None => false,
+            },
+    )
 }
 impl TombstoneStoreRead for Vault {
     fn port_tombstone_records<'a>(

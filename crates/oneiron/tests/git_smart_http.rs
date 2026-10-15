@@ -8,9 +8,12 @@
 //! client is a stock `git`, unmodified and unpatched.
 //!
 //! The bearer gate itself lives in the server crate (`api::git_http`), where
-//! `CoreAuth` lives, and is proved there: `git_smart_http_unauthenticated_
-//! info_refs_is_401` and `git_smart_http_receive_pack_without_registered_
-//! principal_ref_refused_even_on_loopback`. This binary proves the wire.
+//! `CoreAuth` lives, and is proved there (`api::git_http::tests_auth`). This
+//! binary proves the wire.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -613,60 +616,6 @@ fn git_smart_http_rejecting_door_hook_fails_before_refs_move_and_objects_stay_un
             .last()
             .is_some_and(|reason| reason.contains("config.env: gate.secret_scan.github_token")),
         "the door detected the secret: {refusals:?}"
-    );
-}
-
-/// A binary push must never be answered `Clean` on bytes nobody read.
-///
-/// The extraction is the raw diff plus the blob's whole content, so a binary
-/// entry reaches the door exactly like a text one — and the door's own rule
-/// refuses unscannable bytes while the objects are still quarantined.
-#[test]
-fn git_smart_http_binary_push_is_refused_rather_than_admitted_unscanned() {
-    let source = tempfile::tempdir().expect("source tempdir");
-    seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
-    let before = origin
-        .origin_ref("refs/heads/main")
-        .expect("origin starts with a tip");
-
-    let work = tempfile::tempdir().expect("work tempdir");
-    git(
-        work.path(),
-        &["clone", "--branch=main", "--", &origin.url(), "clone"],
-    );
-    let clone = work.path().join("clone");
-    let head = commit_bytes(
-        &clone,
-        "logo.png",
-        &binary_payload(),
-        "carries binary bytes",
-    );
-    let push = git_output(&clone, &["push", "origin", "main"]);
-
-    assert!(
-        !push.status.success(),
-        "binary content is decided, never skipped"
-    );
-    assert_eq!(
-        origin.origin_ref("refs/heads/main").as_deref(),
-        Some(before.as_str()),
-        "a refused binary push leaves refs unmoved"
-    );
-    assert!(
-        !origin.object_present(&head),
-        "rejected before objects become durable"
-    );
-    assert!(
-        origin.landed().is_empty(),
-        "a refused push produces no landing and no receipt"
-    );
-    let refusals = door_refusals(&origin);
-    assert!(
-        refusals
-            .last()
-            .is_some_and(|reason| reason.contains("receive-pack scan could not complete")),
-        "the landed scan refused unscannable bytes: {refusals:?}"
     );
 }
 

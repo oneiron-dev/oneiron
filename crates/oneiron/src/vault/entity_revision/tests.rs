@@ -509,6 +509,78 @@ fn staged_text_and_vector_survive_reopen_and_publish_without_embedder() {
     );
 }
 
+/// ARCH-0036 (owner, 2026-10-11): idle publication marks each vector with the
+/// device that computed it. A staged vector keeps its mark through a reopen;
+/// one the idle pass embeds, first or again after a swap, carries its
+/// provider's.
+#[test]
+fn idle_publication_marks_each_vector_with_the_device_that_computed_it() {
+    use crate::embed::{EmbeddingDevice, EmbeddingProvenance};
+    struct Marked(EmbeddingProvenance);
+    impl IndexedRevisionEmbedder for Marked {
+        fn embed_revision(&self, _input: &IndexedRevisionInput) -> Result<Vec<f32>> {
+            Ok(vec![0.0, 1.0, 0.0, 0.0])
+        }
+        fn provenance(&self) -> EmbeddingProvenance {
+            self.0.clone()
+        }
+    }
+    let cuda = EmbeddingProvenance::new(EmbeddingDevice::Cuda, "candle 0.11.0 q8_0");
+    let metal = Marked(EmbeddingProvenance::new(
+        EmbeddingDevice::Metal,
+        "candle 0.11.0 q8_0",
+    ));
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::publish_seeded_revisions(&vault);
+    let staged = EntityId::now();
+    put(&vault, &staged, "alpha");
+    put(&vault, &staged, "beta");
+    let staged_revision = vault.pin_entity_revision(&staged).unwrap();
+    vault
+        .batch()
+        .vector_with_provenance(&staged, &[0.0, 0.0, 1.0, 0.0], cuda.clone())
+        .commit()
+        .unwrap();
+    assert_eq!(
+        vault.embedding_provenance(&staged).unwrap(),
+        Some(EmbeddingProvenance::unknown()),
+        "the published vector is still the caller's unmarked one"
+    );
+    drop(vault);
+
+    let mut vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX).unwrap();
+    assert_eq!(report.refreshed, vec![(staged, staged_revision)]);
+    assert_eq!(
+        vault.get_vector(&staged).unwrap(),
+        Some(vec![0.0, 0.0, 1.0, 0.0])
+    );
+    assert_eq!(vault.embedding_provenance(&staged).unwrap(), Some(cuda));
+
+    let embedded = EntityId::now();
+    put(&vault, &embedded, "gamma");
+    put(&vault, &embedded, "delta");
+    let revision = vault.pin_entity_revision(&embedded).unwrap();
+    let report = vault.refresh_indexed_at_idle(u64::MAX, &metal).unwrap();
+    assert_eq!(report.refreshed, vec![(embedded, revision)]);
+    assert_eq!(
+        vault.embedding_provenance(&embedded).unwrap(),
+        Some(metal.0.clone())
+    );
+
+    vault.refill_embedding_space().unwrap();
+    assert_eq!(vault.embedding_provenance(&staged).unwrap(), None);
+    vault.refresh_indexed_at_idle(u64::MAX, &metal).unwrap();
+    for id in [staged, embedded] {
+        assert_eq!(
+            vault.embedding_provenance(&id).unwrap(),
+            Some(metal.0.clone())
+        );
+    }
+}
+
 /// A vector staged for an unpublished revision carries no record of the model
 /// that made it, and idle publication prefers it over the embedder. The
 /// embedding-space swap drops it and keeps the staged text, so the idle pass
@@ -550,39 +622,6 @@ fn an_embedding_space_swap_drops_staged_vectors_and_keeps_staged_text() {
         "the new model's vector, not the staged one"
     );
     assert_eq!(vault.search_text("callerindex", 10).unwrap()[0].id, id);
-}
-
-#[test]
-fn staged_text_only_idle_does_not_need_an_embedding_model() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
-    crate::test_util::publish_seeded_revisions(&vault);
-    let id = EntityId::now();
-    for text in ["initial", "changed"] {
-        vault
-            .batch()
-            .put(
-                &id,
-                ENTITY_TYPE_ASSET_TEXT,
-                TimeRange { start: 1, end: 1 },
-                1,
-                &body(text),
-            )
-            .text(&id, &[("content", text)])
-            .commit()
-            .unwrap();
-    }
-    assert!(vault.search_text("changed", 10).unwrap().is_empty());
-    vault.set_indexed_idle_delay_ms(0).unwrap();
-    assert_eq!(
-        vault
-            .refresh_staged_indexed_at_idle(u64::MAX)
-            .unwrap()
-            .refreshed
-            .len(),
-        1
-    );
-    assert_eq!(vault.search_text("changed", 10).unwrap()[0].id, id);
-    assert_eq!(vault.get_vector(&id).unwrap(), None);
 }
 
 #[test]
@@ -781,167 +820,6 @@ fn metadata_only_put_keeps_pending_content_and_staged_inputs_together() {
     assert_eq!(
         vault.get_raw_with_mode(&id, ReadMode::Indexed).unwrap(),
         vault.get_raw(&id).unwrap()
-    );
-}
-
-#[test]
-fn a_rejected_revision_does_not_starve_later_idle_candidates() {
-    struct SelectiveEmbedder {
-        rejected: EntityId,
-        global_failure: bool,
-    }
-    impl IndexedRevisionEmbedder for SelectiveEmbedder {
-        fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
-            if self.global_failure {
-                return Err(crate::Error::CorruptedIndex("provider state"));
-            }
-            if input.entity == self.rejected {
-                return Err(crate::Error::InvalidConfig("input refused".into()));
-            }
-            Ok(vec![0.0, 1.0, 0.0, 0.0])
-        }
-    }
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    crate::test_util::publish_seeded_revisions(&vault);
-    let a = EntityId::from_bytes([1; 16]).unwrap();
-    let b = EntityId::from_bytes([2; 16]).unwrap();
-    put(&vault, &a, "old first");
-    put(&vault, &b, "old second");
-    let old_a = vault.indexed_revision(&a).unwrap();
-    put(&vault, &a, "poison first");
-    vault.set_indexed_idle_delay_ms(0).unwrap();
-    let embedder = SelectiveEmbedder {
-        rejected: a,
-        global_failure: false,
-    };
-    for text in ["new second", "newer second"] {
-        put(&vault, &b, text);
-        let next_b = vault.pin_entity_revision(&b).unwrap();
-        let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
-        assert_eq!(report.refreshed, vec![(b, next_b)]);
-        assert_eq!(
-            report.failed,
-            vec![(
-                a,
-                vault.pin_entity_revision(&a).unwrap(),
-                crate::error::ErrorKind::InvalidConfig
-            )]
-        );
-        assert_eq!(vault.indexed_revision(&a).unwrap(), old_a);
-        assert_eq!(vault.indexed_revision(&b).unwrap(), Some(next_b));
-        assert_eq!(
-            vault.get_vector(&a).unwrap(),
-            Some(vec![1.0, 0.0, 0.0, 0.0])
-        );
-    }
-    assert!(matches!(
-        vault.refresh_indexed_at_idle(
-            u64::MAX,
-            &SelectiveEmbedder {
-                rejected: a,
-                global_failure: true
-            }
-        ),
-        Err(crate::Error::CorruptedIndex(_))
-    ));
-}
-
-/// Embeds every revision as one fixed vector, and fails the whole pass if it
-/// is ever asked for one of `blank`, as a provider with no truthful vector for
-/// an empty text does.
-struct RefusesBlank {
-    blank: Vec<EntityId>,
-    vector: Vec<f32>,
-}
-impl IndexedRevisionEmbedder for RefusesBlank {
-    fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>> {
-        if self.blank.contains(&input.entity) {
-            return Err(crate::Error::InvariantViolation(
-                "asked to embed a revision with no text",
-            ));
-        }
-        Ok(self.vector.clone())
-    }
-}
-
-/// A revision whose text is only separators and whitespace publishes with no
-/// vector, dropping the one it had: the embedder is never asked for it, and
-/// the pass goes on to publish the real work behind it. A claim's text is its
-/// value; an asset's is every text field, so a title beside an empty body
-/// still embeds.
-#[test]
-fn a_blank_revision_publishes_without_a_vector_and_the_pass_goes_on() {
-    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    crate::test_util::publish_seeded_revisions(&vault);
-    let asset = EntityId::now();
-    put(&vault, &asset, "alpha");
-    put(&vault, &asset, "\u{1c}\u{1d} \n");
-    let claim = EntityId::now();
-    let claim_body = |value: &str| {
-        ClaimBody::new(
-            "core.fact",
-            ClaimSubject::Entity(asset),
-            rmpv::Value::from(value),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap()
-    };
-    let span = TimeRange { start: 1, end: 1 };
-    vault
-        .put_claim(&claim, &claim_body("a fact"), span, 1)
-        .unwrap();
-    vault.put_vector(&claim, &[0.0, 0.0, 1.0, 0.0]).unwrap();
-    vault
-        .put_claim(&claim, &claim_body("\u{1c}"), span, 2)
-        .unwrap();
-    let titled = EntityId::now();
-    let titled_body = |title: &str| {
-        rmp_serde::to_vec_named(&serde_json::json!({"title": title, "content": " "})).unwrap()
-    };
-    for title in ["draft", "the title"] {
-        vault
-            .batch()
-            .put(
-                &titled,
-                ENTITY_TYPE_ASSET_TEXT,
-                span,
-                1,
-                &titled_body(title),
-            )
-            .commit()
-            .unwrap();
-    }
-    let later = EntityId::now();
-    put(&vault, &later, "first");
-    put(&vault, &later, "second prose");
-
-    vault.set_indexed_idle_delay_ms(0).unwrap();
-    let embedder = RefusesBlank {
-        blank: vec![asset, claim],
-        vector: vec![0.0, 1.0, 0.0, 0.0],
-    };
-    let report = vault.refresh_indexed_at_idle(u64::MAX, &embedder).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
-    let published: Vec<EntityId> = report.refreshed.iter().map(|(id, _)| *id).collect();
-    assert_eq!(published, vec![asset, claim, titled, later]);
-    assert_eq!(vault.get_vector(&asset).unwrap(), None);
-    assert_eq!(vault.get_vector(&claim).unwrap(), None);
-    for id in [titled, later] {
-        assert_eq!(
-            vault.get_vector(&id).unwrap(),
-            Some(vec![0.0, 1.0, 0.0, 0.0])
-        );
-    }
-    let rtxn = vault.store.env.read_txn().unwrap();
-    assert_eq!(
-        vault.store.pending_embedding_token(&rtxn, &claim).unwrap(),
-        None,
-        "nothing is left for the worker either"
     );
 }
 

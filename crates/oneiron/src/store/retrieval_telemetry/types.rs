@@ -190,12 +190,15 @@ pub struct RetrievalTraceStageRecord {
     pub candidates: Vec<RetrievalScoreBreakdown>,
 }
 
-/// SHA-256 replay key for a content-addressed [`RetrievalTrace`].
+/// Keyed replay key for a content-addressed [`RetrievalTrace`].
 ///
-/// The hash is stored as the raw 32-byte digest, not hex. It is computed by
-/// the retrieval pipeline with the same domain-separated SHA-256 style as the
-/// gate policy frontier hash: length-prefixed UTF-8 strings/bytes, little-endian
-/// integers, one-byte booleans, and IEEE-754 `to_bits()` bytes for floats.
+/// The hash is stored as the raw 32-byte digest, not hex. The retrieval
+/// pipeline digests its inputs with the same domain-separated SHA-256 style as
+/// the gate policy frontier hash: length-prefixed UTF-8 strings/bytes,
+/// little-endian integers, one-byte booleans, and IEEE-754 `to_bits()` bytes
+/// for floats. It then keys that digest with BLAKE3 under the vault's own
+/// random key, so equal inputs give equal hashes on one vault only, and a
+/// reader of the telemetry cannot test a guessed query against it.
 pub type RetrievalTraceForkHash = [u8; 32];
 
 /// Opt-in per-stage retrieval trace.
@@ -224,6 +227,11 @@ pub struct RetrievalTrace {
     pub reranked: RetrievalTraceStageRecord,
     #[serde(rename = "final")]
     pub final_stage: RetrievalTraceStageRecord,
+    /// How many of each ranked channel's best scores set its fusion scale
+    /// (`fusion::FUSION_LIST_LENGTH` when the run was traced). Traces from
+    /// before it decode as 0, unknown.
+    #[serde(default)]
+    pub fusion_list_length: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -237,8 +245,6 @@ pub struct RetrievalRunRecord {
     pub state: super::state::RetrievalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_inputs: Option<super::state::RetrievalReplayInputs>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pack_output: Option<super::state::RetrievalPackOutput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<super::state::RetrievalTurn>,
     pub signals: Vec<RetrievalSignal>,
@@ -271,7 +277,6 @@ pub(crate) struct RetrievalRunFinalize<'a> {
     pub(crate) claims_suppressed: usize,
     pub(crate) surfaced_result_ids: &'a [[u8; 16]],
     pub(crate) empty_reason: Option<String>,
-    pub(crate) pack_output: Option<super::state::RetrievalPackOutput>,
     pub(crate) pack_config: Option<serde_json::Value>,
 }
 
@@ -302,7 +307,6 @@ impl RetrievalRunRecord {
             result_ids,
             state: super::state::RetrievalState::one_shot(&score_breakdown),
             replay_inputs: None,
-            pack_output: None,
             turn: None,
             score_breakdown,
             total_in_scope,

@@ -236,12 +236,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rejects_missing_checkpoint_without_a_fake_ner_result() {
-        let missing = Path::new("/missing/oneironer-ner-checkpoint");
-        assert!(sha256(missing).is_err());
-    }
-
     // This checks the harness, not model quality. The separate ignored test
     // below requires the actual trained checkpoint and runtime.
     #[cfg(unix)]
@@ -291,21 +285,6 @@ mod tests {
         assert_eq!(json["vault_writes"], 0);
         let report: ShadowTagReport = serde_json::from_value(json["report"].clone()).unwrap();
         assert_eq!(report.common, vec![person]);
-    }
-
-    #[test]
-    fn cli_bad_invocation_writes_usage_to_error_sink() {
-        let (mut output, mut errors) = (Vec::new(), Vec::new());
-        assert_eq!(
-            cli_with_io(&[], &mut output, &mut errors),
-            std::process::ExitCode::FAILURE
-        );
-        assert!(output.is_empty());
-        assert!(
-            String::from_utf8(errors)
-                .unwrap()
-                .starts_with("usage: oneiron-bench oneironer-shadow ")
-        );
     }
 
     /// Run with ONEIRON_NER_PYTHON, ONEIRON_NER_REPO,

@@ -102,6 +102,38 @@ pub(super) const DOOR_WINDOW_POLL: Duration = Duration::from_millis(2);
 /// closed. A push whose door window cannot complete is refused, never admitted.
 pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long an exchange may move no byte, in either direction, before its
+/// backend is killed: the door window's family. A transfer that keeps moving,
+/// however slowly, is never cut.
+pub const SERVE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The name git gives a receive-pack's object quarantine, under the objects
+/// directory, ahead of its random suffix (`tmp-objdir.c`).
+pub(super) const SERVE_QUARANTINE_PREFIX: &str = "tmp_objdir-incoming-";
+
+/// How long a backend whose output has ended may take to exit before it is
+/// killed and reaped.
+pub(super) const SERVE_REAP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The most blob bytes one push may hand the door to scan, across the tip
+/// diffs and the history walk together. The door reads every framed byte into
+/// memory, so a push past this is refused whole by the hook rather than scanned
+/// in part; a long history still lands when pushed in smaller parts.
+pub(super) const DOOR_MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The most lines those blobs may split into, across both streams, each
+/// record counting as one line at least. The door holds each line and each
+/// record as its own allocation, so the byte cap alone bounds no memory: 256
+/// MiB of bare newlines is 268 million lines, and an empty blob under many
+/// paths costs no content byte at all. Lines and records are counted before
+/// any is allocated, and past this the window is refused whole.
+pub(super) const DOOR_MAX_SCAN_LINES: usize = 4 * 1024 * 1024;
+
+/// The most bytes both framed streams may hold, record headers included: the
+/// scan cap's content bytes and as much again for the headers that name them.
+/// Checked as the streams are read, before either is parsed.
+pub(super) const DOOR_MAX_FRAMED_BYTES: u64 = 2 * DOOR_MAX_SCAN_BYTES;
+
 /// The verdict line the vetted hook accepts as an admission.
 pub(super) const DOOR_VERDICT_OK: &str = "ok";
 
@@ -119,6 +151,14 @@ pub(super) fn serve_failed(reason: impl Into<String>) -> Error {
     Error::Code(CodeError::GitHttpServeFailed {
         reason: reason.into(),
     })
+}
+
+pub(super) fn serve_idle() -> Error {
+    Error::Code(CodeError::GitHttpExchangeIdle)
+}
+
+pub(super) fn repository_busy() -> Error {
+    Error::Code(CodeError::GitHttpRepositoryBusy)
 }
 
 /// Carries a door refusal out through the crate error surface without ever

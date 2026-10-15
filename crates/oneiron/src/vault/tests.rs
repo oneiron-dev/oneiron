@@ -25,6 +25,9 @@ fn test_config() -> VaultConfig {
         fast_dims: None,
         embedding_model: Some("test/model@v1".to_owned()),
         embedding_transform: None,
+        vector_evidence: crate::config::VectorEvidenceFloors::default(),
+        call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+        tagging: None,
         max_readers: 16,
         hnsw: HnswConfig {
             m_max_0: 64,

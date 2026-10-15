@@ -294,7 +294,7 @@ fn answer_unit(
     // A second, transaction-local authority check closes the race between
     // the preflight and this write. A missing/changed source is an abstention,
     // but provider and write-gate failures remain typed failures.
-    let record = vault.with_write_txn(|txn| {
+    let record = vault.with_write_txn_grouped(|txn| {
         let scoped = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?);
         if !scoped
             .graph_ask_neighbors_in_txn(

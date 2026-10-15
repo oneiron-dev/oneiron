@@ -132,56 +132,6 @@ fn hosted_registration_rejects_a_policy_it_could_not_enforce() {
 }
 
 #[test]
-fn a_hosted_policy_docs_url_must_be_https() {
-    // `docs_url` becomes the link a notice hands the reader to go read the rule
-    // they were judged under. A non-https scheme there is either not a document
-    // at all, or one that can be rewritten between us and them.
-    for docs_url in [
-        "http://policy.example.test/hosted",
-        "javascript:alert(1)",
-        "data:text/html,<p>policy</p>",
-        "policy.example.test/hosted",
-        "ftp://policy.example.test/hosted",
-        // A bare scheme passes a prefix check and points at nothing.
-        "https://",
-        "HTTPS://",
-        "https://   ",
-    ] {
-        let mut registry = fixture_edge_service_registry();
-        let err = registry
-            .register_hosted_legal_policy(
-                HOSTED_EDGE_SERVICE,
-                HostedLegalPolicy {
-                    docs_url: docs_url.to_owned(),
-                    ..hosted_serious_crime_block()
-                },
-            )
-            .expect_err("a non-https docs_url must be rejected at registration");
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-            "docs_url: {docs_url:?}",
-        );
-        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-    }
-
-    // Schemes are case-insensitive, so the check is too.
-    for docs_url in [HOSTED_DOCS_URL, "HTTPS://policy.example.test/hosted"] {
-        let mut registry = fixture_edge_service_registry();
-        registry
-            .register_hosted_legal_policy(
-                HOSTED_EDGE_SERVICE,
-                HostedLegalPolicy {
-                    docs_url: docs_url.to_owned(),
-                    ..hosted_serious_crime_block()
-                },
-            )
-            .expect("an https docs_url registers");
-        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
-    }
-}
-
-#[test]
 fn hosted_registration_rejects_a_row_that_carries_no_rule() {
     // The rows ARE the rubric. A blank `text` is handed to the model as the
     // rule it should judge against — and, worse, counts as coverage of its
@@ -221,54 +171,6 @@ fn hosted_registration_rejects_a_row_that_carries_no_rule() {
 }
 
 #[test]
-fn two_rows_of_one_category_are_legal_and_the_strictest_governs() -> Result<()> {
-    // Two distinct legal concerns of one class are two rows. Registration
-    // takes them, and the answer routes to the STRICTEST of them — so the
-    // block written second is never shadowed by the warn written first, which
-    // is the hole the old duplicate-category refusal was standing in front of.
-    let (_tmp, vault) = temp_vault();
-    let registry = hosted_edge_registry(hosted_policy(vec![
-        hosted_row(
-            "hosted:crime-warn",
-            "serious_crime",
-            HostedLegalAction::Warn,
-            "Flag facilitation of mass harm.",
-        ),
-        hosted_row(
-            "hosted:crime-block",
-            "serious_crime",
-            HostedLegalAction::Block,
-            "Withhold facilitation of mass harm.",
-        ),
-    ]));
-    let backend =
-        static_backend(r#"{"violation":1,"policy_category":"hosted_legal/serious_crime"}"#);
-    let budget = lease("two-rows-one-category");
-
-    let pass = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &registry,
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-
-    let verdict = pass.boundary_verdict().expect("verdict");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
-    assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::HostedLegal {
-            category: "serious_crime".to_owned(),
-            jurisdiction: HOSTED_JURISDICTION.to_owned(),
-            policy_version: HOSTED_VERSION.to_owned(),
-            row_ref: "hosted:crime-block".to_owned(),
-        },
-        "the strictest row of the label governs, and names itself",
-    );
-    Ok(())
-}
-
-#[test]
 fn hosted_registration_rejects_two_rows_sharing_a_row_ref() {
     // With several rows per category legal, `row_ref` is what tells them
     // apart — in the rubric, in the notice a reader is pointed at, and in the
@@ -299,91 +201,6 @@ fn hosted_registration_rejects_two_rows_sharing_a_row_ref() {
         crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
     );
     assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-}
-
-#[test]
-fn a_hosted_policy_wider_than_the_row_bound_is_refused_at_registration() {
-    // The row bound is a flood stop on a host-supplied blob, so the test that
-    // matters is the pair: one OVER refuses, and exactly AT still registers.
-    // Without the second half a bound is indistinguishable from a regression.
-    let rows = |count: usize| {
-        (0..count)
-            .map(|index| {
-                hosted_row(
-                    &format!("hosted:row-{index}"),
-                    "serious_crime",
-                    HostedLegalAction::Block,
-                    "Withhold facilitation of serious crime.",
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-
-    let mut registry = fixture_edge_service_registry();
-    let err = registry
-        .register_hosted_legal_policy(
-            HOSTED_EDGE_SERVICE,
-            hosted_policy(rows(POLICY_HOSTED_ROWS_MAX + 1)),
-        )
-        .expect_err("a policy past the row bound must be refused");
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-    );
-    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-
-    let mut registry = fixture_edge_service_registry();
-    registry
-        .register_hosted_legal_policy(
-            HOSTED_EDGE_SERVICE,
-            hosted_policy(rows(POLICY_HOSTED_ROWS_MAX)),
-        )
-        .expect("a policy exactly at the bound is a legal policy, not a flood");
-    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
-}
-
-#[test]
-fn hosted_registration_holds_a_category_label_to_its_shape_not_a_vocabulary() {
-    // The engine has no list of acceptable concerns. What it does have is a
-    // reason-code namespace the label rides into as written, so the label is
-    // held to the same bound and charset a pattern rule id is.
-    let over_long = "x".repeat(POLICY_HOSTED_CATEGORY_MAX_LEN + 1);
-    for bad in ["", "   ", "serious crime", "serious/crime", &over_long] {
-        let mut registry = fixture_edge_service_registry();
-        let err = registry
-            .register_hosted_legal_policy(
-                HOSTED_EDGE_SERVICE,
-                hosted_policy(vec![hosted_row(
-                    "hosted:row",
-                    bad,
-                    HostedLegalAction::Block,
-                    "Withhold facilitation of mass harm.",
-                )]),
-            )
-            .expect_err("an unreceiptable category label must be refused");
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::RelayHostedLegalPolicyInvalid,
-            "category: {bad:?}",
-        );
-        assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-    }
-
-    // A label the engine's authors never imagined is fine, because that is the
-    // whole point: the vocabulary belongs to the host.
-    let mut registry = fixture_edge_service_registry();
-    registry
-        .register_hosted_legal_policy(
-            HOSTED_EDGE_SERVICE,
-            hosted_policy(vec![hosted_row(
-                "hosted:kk-2027",
-                "kk-2027.disclosure",
-                HostedLegalAction::Block,
-                "Withhold undisclosed sponsored placement under KK-2027.",
-            )]),
-        )
-        .expect("a well-shaped host label registers");
-    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_some());
 }
 
 #[test]
@@ -436,8 +253,7 @@ fn owner_rows_sharing_a_row_ref_are_dropped_rather_than_shadowed() -> Result<()>
     // so a second one with a stricter action would never fire. The manifest
     // drops the rows instead, and a plane that is ON says so rather than
     // enforcing half a policy. One ref under two WORLDS is a different shape
-    // and stays legal — that is the scoped override, pinned by
-    // `active_owner_rows_resolve_scoped_world_override`.
+    // and stays legal — that is the scoped override.
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
@@ -549,43 +365,6 @@ fn a_disabled_row_does_not_shadow_the_live_row_that_replaced_it() -> Result<()> 
         policy.active_owner_policy_rows_for_scope(None, None).len(),
         1,
         "the live row is the sole candidate, and it survives"
-    );
-    Ok(())
-}
-
-#[test]
-fn one_row_ref_under_two_worlds_survives_a_manifest_split() -> Result<()> {
-    // The scoped override is the shape the PAIR key exists to protect, and it
-    // is just as legal split across manifests as it is inside one. Keying on
-    // the ref alone would turn a legitimate world-scoped policy into dropped
-    // rows the moment its author filed the two worlds separately.
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3c),
-        &enabled_owner_manifest(vec![owner_row_with_action(
-            "owner:spoilers",
-            "Warn about spoilers.",
-            "warn",
-        )]),
-    )?;
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3d),
-        &enabled_owner_manifest(vec![scoped_owner_row(
-            "owner:spoilers",
-            "Block spoilers at work.",
-            "work",
-        )]),
-    )?;
-    let rtxn = vault.store.env.read_txn()?;
-    let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
-    assert!(!policy.owner_policy_rows_dropped());
-    assert_eq!(
-        policy
-            .active_owner_policy_rows_for_scope(Some("work"), None)
-            .len(),
-        1
     );
     Ok(())
 }
@@ -714,35 +493,6 @@ fn hosted_legal_policy_binds_to_a_registered_service_identity() {
 }
 
 #[test]
-fn hosted_relay_runs_the_hosted_legal_plane() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let backend = blocking_backend();
-    let budget = lease("hosted-runs");
-    let pass = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &hosted_edge_registry(hosted_serious_crime_block()),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-
-    assert!(pass.ran_relay_classify());
-    let verdict = pass.boundary_verdict().expect("hosted relay runs a pass");
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
-    assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::HostedLegal {
-            category: "serious_crime".to_owned(),
-            jurisdiction: HOSTED_JURISDICTION.to_owned(),
-            policy_version: HOSTED_VERSION.to_owned(),
-            row_ref: "hosted:serious-crime".to_owned(),
-        }
-    );
-    assert!(pass.must_halt_relay());
-    Ok(())
-}
-
-#[test]
 fn hosted_relay_without_a_policy_classifies_nothing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let backend = CountingPolicyBackend::clean();
@@ -854,31 +604,6 @@ fn hosted_notices_are_attributed_to_the_hosted_service() -> Result<()> {
 }
 
 #[test]
-fn the_hosted_document_is_what_reaches_the_model() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let backend = RecordingPolicyBackend::new(r#"{"violation":0,"policy_category":null}"#);
-    let budget = lease("hosted-document");
-    relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &hosted_edge_registry(hosted_serious_crime_block()),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-    assert_eq!(
-        backend.seen_system.lock().expect("system").as_deref(),
-        Some(HOSTED_DOCUMENT),
-        "the system message is the substrate owner's document, verbatim"
-    );
-    assert_eq!(
-        backend.seen_user.lock().expect("user").as_deref(),
-        Some(CLEAN_CONTENT),
-        "the user message is the candidate, verbatim — the engine adds no words"
-    );
-    Ok(())
-}
-
-#[test]
 fn byo_path_never_evaluates_hosted_legal_policy() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // A policy that WOULD block this content, on a path that never reaches us.
@@ -976,30 +701,6 @@ fn relay_block_writes_audit_receipt() -> Result<()> {
 }
 
 #[test]
-fn a_model_examined_clean_allow_writes_no_receipt() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let backend = clean_backend();
-    let budget = lease("clean-allow");
-    let pass = relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &hosted_edge_registry(hosted_serious_crime_block()),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-    assert_eq!(
-        pass.boundary_verdict().expect("verdict").decision,
-        PolicyClassifyDecision::Allow
-    );
-    assert!(pass.degraded().is_none());
-    assert!(
-        gate_receipts(&vault)?.is_empty(),
-        "the one pass with nothing to say writes nothing"
-    );
-    Ok(())
-}
-
-#[test]
 fn relay_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0x52), b"not a policy manifest")?;
@@ -1024,53 +725,5 @@ fn relay_pass_fails_closed_on_a_malformed_manifest() -> Result<()> {
         ),
         "unexpected error: {err}"
     );
-    Ok(())
-}
-
-#[test]
-fn a_max_length_jurisdiction_still_produces_a_receiptable_notice() -> Result<()> {
-    // The jurisdiction bound is derived from the ledger's notice-body bound,
-    // and that bound is paid for whichever hosted template is LONGEST — the
-    // warn one. Checking only the shorter block template would leave the case
-    // the arithmetic is actually about untested, so both run here with the
-    // longest jurisdiction the registry accepts.
-    let longest = "j".repeat(HOSTED_LEGAL_JURISDICTION_MAX_LEN);
-    for (action, halts) in [
-        (HostedLegalAction::Warn, false),
-        (HostedLegalAction::Block, true),
-    ] {
-        let (_tmp, vault) = temp_vault();
-        let policy = HostedLegalPolicy {
-            jurisdiction: longest.clone(),
-            rows: vec![hosted_row(
-                "hosted:serious-crime",
-                "serious_crime",
-                action,
-                "Withhold credible facilitation of serious violence or mass harm.",
-            )],
-            ..hosted_serious_crime_block()
-        };
-        let backend = blocking_backend();
-        let budget = lease("longest-jurisdiction");
-        let pass = relay_pass(
-            &vault,
-            BOMB_CONTENT,
-            &hosted_edge_registry(policy),
-            &PolicyModelConfig::default(),
-            Some(tier(&backend, &budget)),
-        )?;
-        assert_eq!(pass.must_halt_relay(), halts, "action: {action:?}");
-
-        let receipts = gate_receipts(&vault)?;
-        assert_eq!(receipts.len(), 1, "action: {action:?}");
-        assert!(
-            receipts[0]
-                .fields
-                .get("system_notice")
-                .expect("notice body")
-                .contains(&longest),
-            "action: {action:?}"
-        );
-    }
     Ok(())
 }

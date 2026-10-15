@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{LazyLock, Mutex};
 
@@ -50,17 +50,22 @@ pub(crate) struct TestHooks {
     /// The staged-foreign-import seams; see [`StagedImportHooks`].
     #[cfg(feature = "sync")]
     pub(crate) staged_import: StagedImportHooks,
-    /// How many times the outbound intent ledger has forced an environment
-    /// sync on this vault. The durability fence is what the count proves, so
-    /// the reader wants an exact delta and now gets one.
-    force_sync_calls: AtomicUsize,
     /// One-shot failure after a durable fallback is saved, before policy resolution.
     fail_next_dreamer_failure_policy_read: AtomicBool,
+    /// One-shot storage failure in the next transaction that settles a
+    /// tagging marker the worker already claimed.
+    fail_next_tagging_settlement: AtomicBool,
+    /// One-shot boundary in a tagging claim, the moment its write transaction
+    /// is open and before it stamps the lease.
+    after_tagging_claim_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One-shot Dreamer boundary after a fallback passed read-side policy but
     /// before the PERSON writer opens its transaction.
     before_dreamer_person_mint: Mutex<Option<BeforeDreamerPersonMintHook>>,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot: the next retrieval cancels its deadline once its text stage
+    /// has run, as if the answer fell due right there.
+    pub(crate) cancel_deadline_after_retrieval_text: AtomicBool,
     /// One vault-owned rendezvous after a graph ask's last read preflight,
     /// before it acquires the write transaction.
     after_graph_ask_preflight: Mutex<Option<GraphAskPreflightHook>>,
@@ -68,6 +73,14 @@ pub(crate) struct TestHooks {
     pub(crate) before_codebase_ingest_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// One vault-scoped pause before correction obtains its write lock.
     before_weave_correction_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot boundary in a run's speech into a stretch, once every check
+    /// it makes outside its write transaction has run and before it asks for
+    /// the writer.
+    pub(crate) before_run_speech_writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// One-shot boundary in a save of a stretch's talk, once its plans are
+    /// cut and the snapshot dropped, still holding the session state, before
+    /// it asks for the writer.
+    pub(crate) after_save_plan: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
@@ -121,6 +134,34 @@ impl TestHooks {
     pub(crate) fn take_fail_next_dreamer_failure_policy_read(&self) -> bool {
         self.fail_next_dreamer_failure_policy_read
             .swap(false, Ordering::AcqRel)
+    }
+
+    pub(crate) fn arm_fail_next_tagging_settlement(&self) {
+        self.fail_next_tagging_settlement
+            .store(true, Ordering::Release);
+    }
+
+    pub(crate) fn take_fail_next_tagging_settlement(&self) -> bool {
+        self.fail_next_tagging_settlement
+            .swap(false, Ordering::AcqRel)
+    }
+
+    pub(crate) fn install_after_tagging_claim_writer(&self, hook: impl FnOnce() + Send + 'static) {
+        *self
+            .after_tagging_claim_writer
+            .lock()
+            .expect("tagging claim hook lock") = Some(Box::new(hook));
+    }
+
+    pub(crate) fn run_after_tagging_claim_writer(&self) {
+        let hook = self
+            .after_tagging_claim_writer
+            .lock()
+            .expect("tagging claim hook lock")
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     pub(crate) fn install_graph_ask_preflight(
@@ -215,16 +256,6 @@ impl TestHooks {
             // so the deleter's scope probe is provably ordered before the erase.
             let _ = sender.send(());
         }
-    }
-
-    /// Records one forced environment sync on this vault.
-    pub(crate) fn note_force_sync(&self) {
-        self.force_sync_calls.fetch_add(1, Ordering::SeqCst);
-    }
-
-    /// Forced environment syncs this vault has performed.
-    pub(crate) fn force_sync_calls(&self) -> usize {
-        self.force_sync_calls.load(Ordering::SeqCst)
     }
 }
 

@@ -402,7 +402,7 @@ impl Vault {
             return Err(invalid());
         }
         let bytes = serde_json::to_vec(&WireSchedule::from_row(row)).map_err(|_| invalid())?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             super::weave_report::validate_weave_recipe(&policy, &reader, &row.recipe)?;
@@ -654,7 +654,7 @@ impl ScopedRead<'_> {
         ]
         .concat();
         before_commit()?;
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self.vault, txn)?;
             }

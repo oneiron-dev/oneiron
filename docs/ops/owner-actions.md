@@ -20,12 +20,27 @@ oneiron doctor /path/to/vault            # add --config FILE if it is not the XD
 |---|---|
 | `location.vault` | The vault directory, absolute. |
 | `location.disk_bytes`, `location.disk` | Space the vault directory takes on disk. |
-| `location.backups` | Backup directory, how many backups, the newest one, the schedule (`every_hours`, `keep`). |
+| `location.backups` | Backup directory, how many backups, the newest one, the schedule (`every_hours`, `keep`), and `restores`: every restore this vault came from, oldest first (`checkpoint_id`, `restored_at`, `reason`). |
 | `location.last_export` | The latest recorded export receipt: when, format, size, who. Writing the receipt is best effort, so an export can succeed without a new one. |
 | `location.secret_scan` | `on` or `off`. |
 
 While `serve` holds the vault, `doctor` still prints the path, size and backups, and says to ask
-the server for the rest: `GET /v1/owner/status` returns the same `location` object.
+the server for the rest: `GET /v1/owner/status` returns the same `location` object. A serve
+setting that does not resolve never hides where the vault is: `doctor` reports the vault and
+lists the problem under `config_errors`.
+
+Both also print an `embedder` section, which keeps three things apart:
+
+| Field | Meaning |
+|---|---|
+| `embedder.configured` | What `[embedder]` asks for: provider, `model_id`, `dimensions`, and a local model's `device` as written (`auto` resolves at load) and `quant`. Absent when no provider is configured. |
+| `embedder.persisted` | What the vault pins: the `model_id` its vectors came from and their `dimensions`. |
+| `embedder.loaded` | The model a running server loaded on this machine, checked and admitted by the vault: `repo`, `revision`, `dimensions` (the width its module chain was checked to give), `device` (`cpu`, `metal` or `cuda`, never `auto`), `quant`, and `artifacts`: `pinned_digests` (each file's size and sha256 at the pinned revision), `unpinned` or `model_dir` (an operator's directory, read as found). Absent for an endpoint provider, whose model runs elsewhere. |
+| `embedder.dense`, `embedder.reason` | Whether dense recall runs: `ready`; `loading` (it runs on its sparse signals until the model is admitted); `refused`, with the reason the last load or admission failed (the server tries again); `not_configured`; or, from `doctor`, `not_observed`. |
+
+`doctor` loads no model, so it never reports one as loaded: its `dense` is `not_observed`. The
+running server's `GET /v1/owner/status` is what says which model serves, and `serve` logs the same
+facts once the vault admits the model (`embedder model loaded and admitted`).
 
 ## Back up
 
@@ -37,10 +52,15 @@ oneiron backup --dir DIR --keep 14
 
 A backup is the engine's checkpoint image: the vault's own records, without indexes. A
 restore rebuilds the indexes, and vectors are re-embedded by the next `serve` that has an
-embedder. Files are named `<vault-name>-<path hash>-<UTC time>-<id>.oneiron-backup`. The path
-hash keeps two vaults that share one backup directory from listing or pruning each other's
-files. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
-is written under a hidden partial name and renamed into place only once complete.
+embedder. Files are named `<vault-name>-<path hash>-<sequence>-<UTC time>-<id>.oneiron-backup`.
+The path hash keeps two vaults that share one backup directory from listing or pruning each
+other's files. Each backup takes the next sequence number, and retention keeps the highest
+numbers, so a clock that steps back never makes a new backup look oldest, and the backup just
+taken is never the one pruned. A backup named before sequences (no `<sequence>` field) lists as
+older than every numbered one. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
+is written under a hidden partial name and renamed into place only once complete. Backups are
+not encrypted yet and include device key material, so keep `--dir` on a local disk, not a synced
+or cloud folder (see *Limits*).
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -71,7 +91,7 @@ A rehearsal restores the backup into a scratch directory, opens it through every
 verifies its gate receipts against the vault's current key custody, and reports:
 `checkpoint_id`, `kinds` (live entities by kind), `entities`, `text_documents`,
 `pending_embeddings`, `verified`. The live vault is never opened, so a rehearsal is safe while
-`serve` runs. `--scratch DIR` names a new directory the rehearsal creates and keeps, with the
+`serve` runs; on the server, retention waits until the rehearsal has read its backup. `--scratch DIR` names a new directory the rehearsal creates and keeps, with the
 copy in `DIR/vault`; without it the copy goes in a new temp directory that is deleted
 afterwards. A failed rehearsal removes what it created. On a running server:
 `POST /v1/owner/backups/rehearse` with `{}` (the newest backup) or `{"file": "<name>"}`.
@@ -84,16 +104,43 @@ oneiron restore FILE
 ```
 
 A restore brings back your **content** as it stood at the backup: notes, claims,
-conversations, tasks, files and receipts. It keeps the vault's **current authority**
-(ARCH-0038, RD-20): its authority log (root, devices and keys, paired slips, revocations), device
-identity and leases, freshness pins and clocks, gate-decision key custody, and one-shot
-approvals. A slip revoked after the backup stays revoked. A device added after the backup keeps
-working. An approval spent after the backup stays spent.
+conversations, tasks, files and receipts. It keeps the vault's **current authority, consent and
+policy** (ARCH-0038, RD-20). Every kind of stored row has one restore class in the engine, and
+a row nobody classed is never restored silently. What stays as it is now:
+
+- the authority log (root, devices and keys, paired slips, revocations), device identity and
+  leases, freshness pins and clocks, gate-decision key custody, and one-shot approvals;
+- policy switches and their receipts: the secret scan, manifest trust and quarantine, the
+  policy change ledger and notification rules, model and routing settings, and your `settings`
+  dials;
+- consent: voice consent and its withdrawals, consent-graduation rulings and thresholds, and
+  widening requests. Material erased by a withdrawal (voice prints, samples, reference packs)
+  stays erased;
+- erasure fences, legal holds and key-retirement intents;
+- the record of acts that already left the vault: sends and their dedupe ledgers, exports,
+  secret materializations and usage events. A send is never made twice.
+
+A slip revoked after the backup stays revoked. A device added after the backup keeps working.
+An approval spent after the backup stays spent. A secret scan switched on after the backup stays
+on.
 
 The restored copy is built beside the vault, then swapped into place in one atomic step while
 the restore holds both vaults, so a server starting meanwhile can open neither half-way. Your
-previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. To undo,
-stop the server and swap the directories back. If the directory cannot be synced after the swap,
+previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. It still
+binds the gate-decision key custody the restored vault keeps, so it is archived: it opens and
+reads, but refuses every write, erase and key retirement, which would otherwise reach the
+restored vault's keys. A restore that stops part-way through the swap (a crash, a power cut)
+leaves the same rule: whichever vault sits at the vault's path is the live one, and the other
+opens archived. To use the archived vault again, activate it:
+
+```sh
+oneiron restore --activate /path/to/vault.pre-restore-<UTC time>
+```
+
+Activation gives it key custody of its own beside it, holding only the keys still live in the
+restored vault's custody, the way a rehearsal's copy gets its own; from then on it is a side
+vault you can serve from its own path (`--vault-path`), and an erase in either vault never
+reaches the other's keys. If the directory cannot be synced after the swap,
 the restore still reports success, with a `durability_warning` that names the previous vault:
 the swap is done, but a crash before the disk flushes may undo it.
 
@@ -102,9 +149,18 @@ A restore refuses, and changes nothing, when:
 - the vault is in use (stop `serve`);
 - the backup belongs to another vault (each vault has its own store id, minted at its first
   open);
-- grants, policy, consent grants, secret custody, connector keys, channel identities, outbound
-  grants or machine identities changed since the backup, since restoring them would roll a
-  permission back. Rehearse with `--scratch` to read the old content beside the vault instead;
+- something that holds authority together with content changed since the backup, since
+  restoring it would roll a permission back: grants, policy manifests, standing consent grants,
+  secret custody, connector keys, channel identities, outbound grants (using one is not a
+  change), machine identities, published artifacts; for a room, skill, agent, contact, claim or
+  task the backup holds: room roles and membership (who is in a room, their role, how far back
+  they read), a skill quarantine, an agent switched off or narrowed, a contact revoked, opted
+  out, rebound to another party or marked as first met in public (a contact first met in public
+  since the backup also refuses), a recipient's observed jurisdiction that moved, a
+  relationship membership retracted, a task cancelled, reassigned or its ask class narrowed; or
+  an e-sign ceremony the backup holds (a signature, rejection or void since). The refusal names
+  what moved. Content edits do not block the restore, and a room, document or claim created
+  after the backup is simply not in the restored vault. Rehearse with `--scratch` to read the old content beside the vault instead;
 - the restored vault would make someone an owner or member who is not one now: a person
   deleted, merged away or removed from a shared vault since the backup does not get their
   authority back;
@@ -112,6 +168,50 @@ A restore refuses, and changes nothing, when:
   destroyed key back. Take a new backup after an erase.
 
 The restore runs from the CLI only, because the server cannot swap out the vault it is serving.
+
+## Agents refused after the host clock ran ahead
+
+Each agent request carries a holder proof signed with the agent's clock time, and the vault
+takes it only within 60 seconds of its proof clock. That clock follows this host's clock but
+never runs back, so a replayed proof cannot get in. If the host clock jumps ahead while an
+agent calls (a bad NTP answer, a VM restored with the wrong time) and is then set back, the
+proof clock stays ahead. Every agent then gets 401 until the host clock catches up, and a
+restart does not help. You can tell this 401 from a bad credential: its message says
+`proof_clock_ahead` and names the command below, and the server log gives both clocks.
+
+```sh
+# stop `oneiron serve` first
+oneiron recover-clock
+```
+
+It moves the proof clock back to this host's clock and prints where it stood, where it stands
+now, and the gap in seconds:
+
+```json
+{
+  "old_floor": "2027-10-11T07:02:11.000Z",
+  "new_floor": "2026-10-11T07:05:40.000Z",
+  "gap_secs": 31535791,
+  "not_before": "2026-10-11T07:05:40.000Z"
+}
+```
+
+No proof signed before `not_before` gets in again. The vault also keeps the nonce of every
+proof it admitted while the clock was ahead, so none of those can be replayed either. Start
+`oneiron serve` again, and agents get in with their next request. Only the proof clock moves.
+The clock that stamps what the vault records stays where the jump left it until the host clock
+catches up, so anything recorded meanwhile carries that later time.
+
+It refuses, and changes nothing, when:
+
+- the vault is in use (stop `serve`);
+- the proof clock is not ahead of this host's clock: there is nothing to recover;
+- the host clock stayed ahead for more than a day while agents connected, or agents connected
+  while it was ahead under a version without `recover-clock` (it kept a nonce for a minute).
+  The vault keeps a proof's nonce for a day, so it no longer remembers every proof from that
+  time. It must keep refusing every proof signed up to the time the refusal names, which is
+  still ahead of the host clock, so lowering its clock would not let agents in. They get in
+  again once the host clock reaches the proof clock.
 
 ## Export
 
@@ -140,6 +240,10 @@ way. Each change is receipted with its revision, the owner who made it and the p
 setting. Only a live owner of the vault can switch it.
 
 ## Approve an import in one act
+
+To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
+`oneiron import <source> <path>`: see [Import your history](import-history.md). The batch
+below is for claims that already exist as a batch.
 
 An import batch is a JSON file:
 
@@ -181,11 +285,164 @@ oneiron runs approve RUN_ID --bundle <bundle id from show>
 oneiron runs decline RUN_ID --bundle <bundle id from show>
 ```
 
-The bundle id binds exactly the proposals you reviewed. If the run changed since, the action is
-refused (409) and you review again. Approve lands every proposal as approved; decline closes
+The bundle id binds exactly the proposals you reviewed: `show` and the route read the proposals
+and compute the id in one read. Values, predicates, run ids and labels are shown through the same
+credential redaction as serve and export, even with the secret scan off; the stored proposal is
+unchanged. Each run also has a `run_ref`, which `show`, `approve` and `decline` take as
+`--ref RUN_REF` (and the routes as `run_ref`) in place of the run id. A run id is any text, so the
+two are separate fields and one is never read as the other. If the run changed
+since, the action is refused (409) and you review again. Approve lands every proposal as approved; decline closes
 every one as rejected. Either way one receipt represents the run. Routes: `GET
-/v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…`, `POST /v1/owner/runs/approve` or
-`/decline` with `{"run_id": "…", "bundle_id": "…"}`.
+/v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
+`/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
+
+## Review cleanup
+
+The cleanup job files away husks: a person an extraction minted and never learned anything
+about, a summary with nothing left in it. Its only verb is archive, and an archived record comes
+back whole. While its integrity checks are open (ARCH-0066), the job only proposes: nothing is
+archived until you accept, and the engine refuses the automatic posture.
+
+- `GET /v1/owner/cleanup`: the posture, the done-task retention in days (`0` turns that arm
+  off), the open proposals with what accepting would archive, the digests of what was
+  archived, and everything still archived: records (`"kind": "record"`) and finished queue
+  attempts (`"kind": "completed_attempt"`), in one list.
+- `POST /v1/owner/cleanup/accept` or `/reject` with `{"proposal": "<id>"}`. Accept archives the
+  candidates that are still empty and records one digest; a proposal already answered is a 409.
+- `POST /v1/owner/cleanup/restore` with `{"entity": "<id>", "kind": "<kind>"}`, both copied
+  from that list, brings back the item: a record (`kind` may be left out for one), or an
+  attempt, which returns to the queue listing. An item that is not archived is a 409.
+- `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
+  `auto_with_digest` is refused (409) while the integrity checks are open.
+
+## Export a persona card
+
+A persona card (OF-325, mode A) is a shareable summary of one person: an identity line, key
+relationships, and the strongest claims, each with its sources. `GET
+/v1/owner/persona?subject=<person id>` compiles it and returns its rows and a `stamp`. Claims
+about other people start struck. `POST /v1/owner/persona/export` with `{"subject": "…",
+"stamp": "…", "strike": ["<row id>"], "unstrike": ["<row id>"]}` returns the card as
+MemoryPack-lite JSON and markdown and records the export. If the card changed after your
+preview, the export is refused (409) and you preview again. A handed copy is a copy: to stop
+sharing, do not issue another.
+
+## Off-record sessions
+
+An off-record session (ARCH-0052) keeps its turns in memory, out of the vault, its indexes, sync
+and exports, until you save a turn or close the session. Close drops every turn you did not
+save. An anonymous session keeps nothing at all and cannot be saved or put on record.
+
+- `POST /v1/owner/off-record` with `{"session_ref": "…", "mode": "off_record" | "anonymous",
+  "backend": "local" | "remote_provider"}` starts one. `GET /v1/owner/off-record?session_ref=…`
+  reads it.
+- `POST /v1/owner/off-record/witness` with `{"session_ref": "…", "turn": {…}}` writes a turn
+  into it; the turn has the shape `POST /v1/core/facade/witness` takes.
+- `POST /v1/owner/off-record/promote` with `{"session_ref": "…", "turn": "<turn id>"}` saves one
+  turn through the ordinary write door.
+- `POST /v1/owner/off-record/save` with `{"session_ref": "…"}` saves every turn nobody saved yet,
+  in one transaction.
+- `POST /v1/owner/off-record/mode` with `"on_record"` saves later turns as ordinary memory;
+  `"off_record"` goes back.
+- `POST /v1/owner/off-record/close` ends it.
+
+The session lives in the server process: a restart ends it, and only saved turns remain. These
+routes keep no wire receipt (the per-route and per-caller call counts other routes keep), so
+nothing records that a session ran.
+
+### Everyone in a room (ARCH-0052 D5, the notice model)
+
+A stretch can also run in a room, a conversation whose members are everyone in it. Each person
+or agent acts with their own slip (`principal_ref` and `actor_class`), under the scopes they
+already hold.
+
+- `POST /v1/core/off-record/start` with `{"room": "<conversation id>", "session_ref": "…",
+  "backend": "local" | "remote_provider"}`: any person on the room's roster starts one.
+- `POST /v1/core/off-record/witness` with `{"room": "…", "session_ref": "…", "turn": {…}}`: a
+  member speaks into it. Leave each message's `id` out: the stretch gives every message its own,
+  and a turn that names one is refused (400) while the stretch is off record.
+- `POST /v1/core/off-record/save` with `{"room": "…", "session_ref": "…"}`: a person keeps the
+  whole talk in their own vault. Only a live owner of this vault saves here; anyone else is
+  refused, and nothing is written. If an ordinary write has since put a message at the order of
+  one said into a turn this stretch saved, the save keeps nothing and answers 409 (`conflict`,
+  naming the turn); the talk stays in the room until it closes, and an export still takes it.
+- `POST /v1/core/off-record/export` with `{"room": "…", "session_ref": "…"}` (`core:read`): any
+  person in the room takes an export file of the turns their membership lets them see. It writes
+  no vault.
+- `POST /v1/core/off-record/suggest-save` with `{"room": "…", "session_ref": "…"}`: an agent
+  suggests a save. It saves nothing.
+- `GET /v1/core/off-record?room=…&session_ref=…` reads the stretch and the notices from the
+  times your membership shows you.
+
+Each room names its own stretches, so the same `session_ref` may run in two rooms. Your own
+routes above address a room's stretch as `room:<conversation id>:<session_ref>`, and only while
+you are on that room's roster; a name you pick for `POST /v1/owner/off-record` may not start
+with `room:`.
+
+Every save, export and suggestion posts a notice to the room (`saved_talk`, `saved_turn`,
+`saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. A save
+that finds nothing new to keep posts one too. Your own `promote` and `mode` above post one too
+when the stretch runs in a room. A 1:1 with your own companion posts none: a stretch you start
+with `POST /v1/owner/off-record` has no room, and a room that holds only you and this vault's own
+agents has nobody else to tell. Someone outside the room gets the same 404 as for a stretch that
+does not exist.
+
+A save keeps what the room showed you, as an export does: the visible messages of the turns your
+membership shows you. An agent's hidden messages (its own reasoning) and turn summaries stay out.
+
+Putting a room on record saves into your vault only while you are in the room and own the vault
+on a live credential. Each later turn checks that again. Once you leave, or lose the vault or
+the credential, saving stops: the stretch goes back off record and the room hears
+`saving_stopped`. A turn caught in that moment is refused with `409`, and nothing of it is kept;
+say it again to keep it off record.
+
+## Read the vault as files
+
+`GET /v1/owner/graph-fs?path=/entities` reads the vault as a read-only tree (OF-355): `/worlds`,
+`/entities`, `/claims` (by time and by id) and `/backlinks`. `op` is `ls` (default), `cat`,
+`head` (`lines`), `wc`, `find` (`newer_than`), `grep` (`pattern`, `recursive`) or `readlink`.
+Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. Every
+page that a limit cut hands out a cursor, so only the last page has none: `find` walks depth first
+through every page of every directory, `grep` and `head` resume inside a file, and a line longer
+than a page continues on the next one, cut on a character boundary. A listing's or search's cursor
+is sealed: it names no row, and it works only for you, on that path with those parameters, until
+the server restarts (then list again). Reads go through your own scoped read, so scopes excluded
+from you are absent. Sealed secret custody is never part of the tree: walks pass over it, and a
+direct read of it is refused. `output` comes with its `encoding`: `utf8` for text, or `base64`
+for bytes that are not text, such as a MessagePack body. `cat` pages a text body on character
+boundaries, so decoding each page by its own `encoding` and joining them gives the stored bytes.
+
+## Send feedback
+
+Configure where feedback goes:
+
+```toml
+[feedback]
+destination = "collector"     # ONEIRON_FEEDBACK_DESTINATION: cloud, collector or github_issue
+endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on loopback
+```
+
+The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
+/v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
+`feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
+names this bundle going to this destination on your approval, and `previewed_at`. `POST
+/v1/owner/feedback/send` with the same body plus those three fields sends that bundle once to
+that destination: repeating the request is the same send, a changed destination or bundle, or
+another owner's preview, is refused (409), and a preview older than an hour is refused. Two
+owners sending the same bundle are two sends. The send is an ordinary outbound effect: until the vault's policy grants
+`external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
+leaves. A bundle carries no vault text. A written note is refused until the engine redacts notes
+in the vault (OF-420).
+
+## Saved queries after a pack update
+
+When a new source of an installed pack is activated, the saved queries that read a predicate it
+dropped or remapped go through the repair ladder in the same transaction (ARCH-0059 §4). A
+rename in the pack's migration map migrates the query; an equivalent rewrite migrates it with a
+notice; a rewrite that changes meaning waits as a proposal; a predicate with no rewrite pauses
+the query with its error. A map names a move between two versions, so a source changed under the
+same version applies none, and no rewrite lands on a predicate the update drops.
+`GET /v1/owner/pack-drift` lists what the ladder did, query by query;
+a paused query shows its error on the query itself.
 
 ## Calling the owner routes
 
@@ -193,7 +450,12 @@ Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live
 the vault. That is the slip the first-owner link from `oneiron token bootstrap` redeems to.
 Other credentials get the same 403: another person, an agent-class slip, a slip narrowed to
 some verbs, or the host root. Managed vaults are owned through their supervisor, and these
-routes refuse there. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
+routes refuse there. Each act rechecks the slip and your ownership in the transaction that
+commits it, so a request still queued when its slip is revoked changes nothing; an off-record
+witness and promote recheck it where the turn lands. A feedback send rechecks it
+where the send is admitted, so a send whose slip is revoked while it waits admits nothing and
+never reaches the destination. Entering, flipping and closing a room keep no row of their own
+to recheck in, so they recheck the slip when they start. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
 `ONEIRON_BINDING_KEY`:
 
 ```sh
@@ -213,5 +475,6 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups are not encrypted beyond your filesystem. Keep the backup directory on a disk you
-  trust.
+- Backups are not encrypted yet, and they include device key material. Keep `--dir` (and
+  `[backup] dir`) on a local disk, not a synced or cloud folder. Encryption comes with the vault
+  cipher work.

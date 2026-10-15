@@ -86,9 +86,11 @@ impl SyncTransportCredential {
     }
 
     /// Proves the slip on a WebSocket upgrade with a fresh holder signature.
-    /// Each upgrade has its own nonce, so a proof cannot be replayed.
+    /// Each upgrade has its own nonce, so a proof cannot be replayed. An
+    /// enrolled install also names its machine, signed over the same proof.
     pub(in crate::sync) fn sign_upgrade(
         &self,
+        vault: &crate::Vault,
         timestamp: u64,
         request: &mut tokio_tungstenite::tungstenite::handshake::client::Request,
     ) -> Result<(), &'static str> {
@@ -126,6 +128,15 @@ impl SyncTransportCredential {
                 .parse()
                 .map_err(|_| "Sync transport proof is not a valid header")?,
         );
+        // A machine that cannot name itself syncs as an unknown destination.
+        if let Ok(Some((machine, proof))) =
+            vault.machine_connection_proof(&self.token, timestamp, &nonce)
+            && let Ok(value) = crate::authority::machine_proof_header_value(machine, &proof).parse()
+        {
+            request
+                .headers_mut()
+                .insert(crate::authority::MACHINE_PROOF_HEADER, value);
+        }
         Ok(())
     }
 }
@@ -221,13 +232,6 @@ pub(super) const KEY_ROOT_DOC: &str = "d:root";
 /// test-side literal pins the row key independently of that module.
 #[cfg(test)]
 pub(super) const KEY_CLIENT_ID: &str = "m:client_id";
-
-/// Last successful sync timestamp (u64 LE, 8 bytes).
-///
-/// Production goes through the typed `LAST_SYNC` table
-/// (`crate::sync::window_rows`); this stays only for this module's tests.
-#[cfg(test)]
-pub(super) const KEY_LAST_SYNC: &str = "m:last_sync";
 
 /// `svf:*` byte meaning "the persisted `sv:*` reflects the full doc state".
 pub(super) const SVF_FRESH: u8 = 1;

@@ -35,7 +35,8 @@ impl ConsolidationPartitionPlan {
     }
 
     /// Bind a queued branch to the caller's exact scope. Project and relationship
-    /// slice its resources; project never changes the consolidation identity.
+    /// slice its resources; project never changes the partition identity. Each
+    /// candidate still carries its sources' project in its claim identity.
     pub fn scoped_input(&self, scope: &Scope) -> Result<Value> {
         if scope.world != self.key.world_ref || scope.facet != self.key.facet_ref {
             return Err(invalid_consolidation(
@@ -210,7 +211,7 @@ pub(super) fn pin_execution_scope(
     attempt: crate::attempt_queue::AttemptId,
     requested: Option<&Scope>,
 ) -> Result<Option<Scope>> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let stored = SELECTION_SCOPE
             .get(&vault.store, txn, attempt.as_bytes())?
             .flatten();

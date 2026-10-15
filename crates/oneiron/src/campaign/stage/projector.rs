@@ -114,7 +114,7 @@ pub(super) fn project_stage_transition(
     let recorded_at = input.value.recorded_at;
     match mode {
         PromotionMode::Propose => {
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 require_current_stage_head(vault, wtxn, input)?;
                 vault.put_claim_in_txn(wtxn, &new_id, &body, at(recorded_at), recorded_at)?;
                 Ok(())
@@ -124,7 +124,7 @@ pub(super) fn project_stage_transition(
             })
         }
         PromotionMode::Auto => {
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 vault.put_claim_in_txn(wtxn, &new_id, &body, at(recorded_at), recorded_at)?;
                 supersede_crm_stage_in_txn(
                     vault,

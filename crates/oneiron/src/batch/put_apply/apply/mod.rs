@@ -12,9 +12,9 @@ use super::{
     delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
     stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
-    validate_local_agent_definition_create, validate_local_skill_create,
-    validate_replicated_authority_log_for_local_vault, validate_skill_body_overwrite,
-    validate_task_checkin_immutable,
+    validate_immutable_task_record, validate_local_agent_definition_create,
+    validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
+    validate_skill_body_overwrite,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
@@ -27,6 +27,7 @@ use crate::registry::{
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::secret_custody::plan_replicated_name_index;
+use crate::side_table::HexId;
 use crate::skill_hub::validate_refinement_admission;
 use crate::store::Store;
 
@@ -131,7 +132,21 @@ pub(in crate::batch) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
-    validate_refinement_admission(store, wtxn, &id, entity_type, data, refinement_admission)?;
+    // A provisional entity's id is held for its confirmation, on the same
+    // choke point, so no local claim candidate lands under it either. A
+    // replicated row takes the id at the pre-write site below.
+    if !replicated {
+        crate::tagging::refuse_held_id_in_txn(store, wtxn, &id)?;
+    }
+    validate_refinement_admission(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        refinement_admission,
+        transition,
+    )?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
@@ -159,7 +174,7 @@ pub(in crate::batch) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
-        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
         {
             crate::blob_artifact::esign::reject_event_delete(store, wtxn, &id)?;
@@ -170,7 +185,8 @@ pub(in crate::batch) fn apply_put(
                     "esign events require the local authenticated organ",
                 ));
             }
-            if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+            if let Some(prior) =
+                crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
                 && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
             {
                 return Err(Error::InvalidClaimBody("esign events are append-only"));
@@ -182,7 +198,7 @@ pub(in crate::batch) fn apply_put(
         if is_lexical_query_hint_claim {
             super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
         }
-        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             && crate::batch::EntityMetadataHeader::parse(&prior)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
             && crate::claim::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
@@ -237,7 +253,7 @@ pub(in crate::batch) fn apply_put(
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
-            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data)?;
+            validate_replicated_authority_log_for_local_vault(store, wtxn, &id, data, posture)?;
         } else {
             crate::authority::validate_authority_log_entry_body_bytes(data)?;
         }
@@ -348,6 +364,21 @@ pub(in crate::batch) fn apply_put(
     // between here and the write is LOCAL-class (storage/overflow), which
     // aborts the whole batch instead of committing — so it cannot strand this
     // mutation either.
+    // Delete wins over a peer: no replicated put brings back a row this vault
+    // deleted, whatever the window's tombstone map now says. Checked once the
+    // body has passed its own validation, so a refused body still reports its
+    // own error. The refusal is local-class: the batch aborts, and nothing
+    // staged above survives it. A delete-protected record is never deleted, so
+    // a fence planted at its id before it arrived refuses nothing.
+    if replicated
+        && !crate::registry::is_delete_protected_engine_record(entity_type)
+        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+    {
+        return Err(Error::InvariantViolation(
+            "a replicated put cannot restore an entity deleted here",
+        ));
+    }
     let evicted_shell_sources = if authority_dominates_key_squatter {
         evict_authority_log_store_key_squatter(store, wtxn, &id)?
     } else {
@@ -431,7 +462,9 @@ pub(in crate::batch) fn apply_put(
     // the ONE-1604-D1 eviction above takes, and for the same reason: the arm
     // that decides holds a read borrow of `wtxn`.
     let mut optimizer_birth_marker = None;
-    if let Some(old_record) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)? {
+    if let Some(old_record) =
+        crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
+    {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         previous_skill_record =
             super::put_entity_update::decode_previous_skill_record(old_type, &old_record)?;
@@ -457,6 +490,9 @@ pub(in crate::batch) fn apply_put(
             && (withdrawn_claim
                 || replicated
                 || (!options.indexing.later_text_op_covers
+                    // A custody body is never decoded here; its string
+                    // fields made the answer true before.
+                    && entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY
                     && !crate::vault::entity_revision::storage_manages_text(
                         store, wtxn, &id, data,
                     )?));
@@ -487,7 +523,7 @@ pub(in crate::batch) fn apply_put(
             )));
         }
         if old_type == ENTITY_TYPE_TASK {
-            validate_task_checkin_immutable(
+            validate_immutable_task_record(
                 &old_record,
                 old_occurred,
                 old_learned,
@@ -603,7 +639,14 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    // Past every check that can reject this row remotely: a replicated row
+    // under a provisional id retires the local provisional entity only when
+    // it lands (see `release_held_id_in_txn`).
+    if replicated {
+        crate::tagging::release_held_id_in_txn(store, wtxn, &id)?;
+    }
     crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
+    crate::ports::keep_worlds_of_unmade_epoch_in_txn(store, wtxn, &id, entity_type, data)?;
 
     // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it
     // marks, so a rolled-back create leaves no marker and a committed one can
@@ -645,6 +688,17 @@ pub(in crate::batch) fn apply_put(
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
+    // A local put over an erased row is a sanctioned recreation: the row it
+    // writes is live, so the fence goes in the same commit. A row that still
+    // has its body is fenced by an accepted delete awaiting its retry, and a
+    // local edit does not withdraw that delete.
+    if !replicated
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
+            .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
+    {
+        crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(id))?;
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::skill_hub::stage_refinement_origin(

@@ -26,10 +26,17 @@
 //! * `swarm` — seeded one-vault, in-process write/recall/mixed agent curve.
 //! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
 //!   paired full/resumed PPR measurements and receipt-derived regression floors.
+//! * `load` — the shipped server binary under synthetic load: facade ingest,
+//!   recall per grade and agent count, fairness and memory, as one JSON result
+//!   (`docs/ops/load-bench.md`).
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary only ships the bench skeleton,
 //! cheap in-workspace checks, and the ONE-1311 trace export seam.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a benchmark driver, outside the server, starts its own processes"
+)]
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -41,6 +48,7 @@ mod beam;
 mod eval;
 mod fleet;
 mod interface_bench;
+mod load;
 mod oneironer_shadow;
 mod perf;
 mod retrieval_trace_export;
@@ -50,6 +58,9 @@ mod teacher_probe;
 mod vector;
 
 fn main() -> ExitCode {
+    // Crash output never carries world text: the engine's hook goes in before
+    // any vault opens (owner ruling 2026-10-14, fix 6).
+    oneiron::panic_report::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [] => {
@@ -83,6 +94,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "teacher-probe" => teacher_probe::run(rest),
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
+        [cmd, rest @ ..] if cmd == "load" => load::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -152,6 +164,11 @@ fn print_help() {
                                        --out APPROVED.json\n\
                                        score pinned CoNLL BIO spans before releasing a teacher pin\n\
           fleet --help                authenticated fleet load and PPR pair receipts\n\
+          load run --server BIN --work DIR --out FILE.json\n\
+                                       the shipped server under synthetic load:\n\
+                                       ingest, recall per grade x agents, fairness,\n\
+                                       memory (docs/ops/load-bench.md)\n\
+          load compare A.json B.json  markdown table of two load results\n\
           swarm --matrix              three seeded trials each of write, recall,\n\
                                        mixed at 1/10/100/300 agents; JSONL\n\
           swarm --mode write|recall|mixed --agents 1|10|100|300\n\

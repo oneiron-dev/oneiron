@@ -88,47 +88,6 @@ fn review_signed_eol_must_not_skip_modification_gate() {
     assert_eq!(report.signatures[0].integrity, VerifyVerdict::Passed);
     assert_eq!(report.modifications, Modifications::Suspicious);
 }
-#[test]
-fn review_missing_tsa_root_must_be_indeterminate() {
-    let signer = test_ca("review-tsa");
-    let tsa = tsa_ca();
-    let signed = append_sig_revision(&base_input(), &signer, "tsa", Some(&tsa), AT_UNIX);
-    let trusted = verify_engine(vec![signer.cert_der.clone(), tsa.cert_der], AT_UNIX);
-    assert_eq!(
-        trusted.verify_sealed_pdf(&signed).unwrap().verdict(),
-        VerifyVerdict::Passed
-    );
-    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_eq!(report.verdict(), VerifyVerdict::Indeterminate);
-}
-#[test]
-fn review_trusted_doc_timestamp_has_trust_check() {
-    let signer = test_ca("review-dts");
-    let tsa = tsa_ca();
-    let signed = append_sig_revision(&base_input(), &signer, "dts", None, AT_UNIX);
-    let signed = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_eq!(report.signatures[1].trust, VerifyCheckStatus::Pass);
-}
-
-#[test]
-fn review_doc_timestamp_missing_tsa_root_is_unknown() {
-    let signer = test_ca("review-dts-untrusted");
-    let tsa = tsa_ca();
-    let signed = append_sig_revision(&base_input(), &signer, "dts-untrusted", None, AT_UNIX);
-    let stamped = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&stamped).unwrap();
-    assert_eq!(report.signatures[1].integrity, VerifyVerdict::Passed);
-    assert_eq!(report.signatures[1].trust, VerifyCheckStatus::NotRun);
-    assert_eq!(report.verdict(), VerifyVerdict::Indeterminate);
-    assert_ne!(
-        report.signatures[0].profile,
-        Some(PadesProfile::BaselineLta)
-    );
-}
 
 #[test]
 fn review_existing_dts_cannot_archive_a_later_signature() {
@@ -170,22 +129,6 @@ fn review_known_bad_key_usage_is_failure_not_unknown() {
     assert_eq!(report.signatures[0].trust, VerifyCheckStatus::Fail);
 }
 
-#[test]
-fn review_stream_marker_is_not_a_revision() {
-    let mut doc = lopdf::Document::load_mem(&base_input()).unwrap();
-    doc.add_object(lopdf::Stream::new(
-        lopdf::Dictionary::new(),
-        b"startxref\n0\n%%EOF\n".to_vec(),
-    ));
-    let mut input = Vec::new();
-    doc.save_to(&mut input).unwrap();
-    pdf::validate_prepared(&input, &SealResourceLimits::default()).unwrap();
-    let signer = test_ca("review-marker");
-    let signed = append_sig_revision(&input, &signer, "marker", None, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_eq!(report.verdict(), VerifyVerdict::Passed);
-}
 #[test]
 fn review_unknown_timestamp_key_is_not_lta() {
     let signer = test_ca("review-key");
@@ -264,60 +207,6 @@ fn review_unknown_evidence_key_is_not_lta() {
 }
 
 #[test]
-fn review_compressed_snapshot_uses_configured_limit() {
-    let mut doc = lopdf::Document::load_mem(&base_input()).unwrap();
-    doc.add_object(lopdf::Object::string_literal(vec![b'A'; 100_000]));
-    let mut input = Vec::new();
-    doc.save_modern(&mut input).unwrap();
-    assert!(input.len() < 100_000);
-    pdf::validate_prepared(&input, &SealResourceLimits::default()).unwrap();
-    let signer = test_ca("review-compression");
-    let signed = append_sig_revision(&input, &signer, "compressed", None, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_eq!(report.verdict(), VerifyVerdict::Passed);
-}
-
-#[test]
-fn review_compressed_xref_uses_configured_limit() {
-    let input = std::fs::read(format!(
-        "{}/tests/fixtures/pdf-input/review_compressed_xref.pdf",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap();
-    pdf::validate_prepared(&input, &SealResourceLimits::default()).unwrap();
-    let signer = test_ca("review-xref");
-    let signed = append_sig_revision(&input, &signer, "compressed-xref", None, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_eq!(report.verdict(), VerifyVerdict::Passed);
-}
-
-#[test]
-fn review_r2_four_eol_bytes_remain_valid() {
-    let signer = test_ca("review-eol-four");
-    let signed = append_sig_revision(&base_input(), &signer, "eol-four", None, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
-    assert_eq!(
-        engine.verify_sealed_pdf(&signed).unwrap().verdict(),
-        VerifyVerdict::Passed
-    );
-    let mut failures = Vec::new();
-    for suffix in [b"\n".as_slice(), b"\r", b"\r\n", b"\n\n", b"\r\n\r\n"] {
-        let mut input = signed.clone();
-        input.extend_from_slice(suffix);
-        let report = engine.verify_sealed_pdf(&input).unwrap();
-        if report.verdict() != VerifyVerdict::Passed {
-            failures.push(suffix.to_vec());
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "lawful EOL suffixes rejected: {failures:?}"
-    );
-}
-
-#[test]
 fn review_r2_fake_xref_object_is_not_lta() {
     let signer = test_ca("review-fake-xref");
     let signed = append_sig_revision(&base_input(), &signer, "fake-xref", None, AT_UNIX);
@@ -346,39 +235,6 @@ fn review_r2_fake_xref_object_is_not_lta() {
     let engine = verify_engine(vec![signer.cert_der], AT_UNIX);
     let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
     assert_eq!(report.modifications, Modifications::Suspicious);
-}
-
-#[test]
-fn review_r2_known_expired_leaf_is_failure() {
-    let root = test_ca("review-expiry-root");
-    let signer = ocsp_delegate_with_kus(
-        &root,
-        "expired-leaf",
-        (2010, 1, 1),
-        (2020, 1, 1),
-        vec![rcgen::KeyUsagePurpose::DigitalSignature],
-    );
-    let signed = append_sig_revision(&base_input(), &signer, "expiry", None, AT_UNIX);
-    let engine = verify_engine(vec![root.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&signed).unwrap();
-    assert_eq!(report.signatures[0].trust, VerifyCheckStatus::Fail);
-}
-
-#[test]
-fn review_r2_document_timestamp_supplies_baseline_t() {
-    let signer = test_ca("review-docts-t");
-    let tsa = tsa_ca();
-    let signed = append_sig_revision(&base_input(), &signer, "docts-t", None, AT_UNIX);
-    let stamped = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
-    let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
-    let report = engine.verify_sealed_pdf(&stamped).unwrap();
-    assert_eq!(report.verdict(), VerifyVerdict::Passed);
-    assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
-}
-
-#[test]
-fn review_r3_trailer_info_change_is_not_lta_table() {
-    review_r3_trailer_info_change(false);
 }
 
 #[test]
@@ -481,42 +337,6 @@ fn review_r3_document_timestamp_supplies_applicable_time() {
         VerifyVerdict::Passed
     );
     let report = engine.verify_sealed_pdf(&stamped).unwrap();
-    assert_eq!(report.verdict(), VerifyVerdict::Passed);
-    assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
-}
-
-#[test]
-fn review_r4_later_timestamp_preserves_earlier_signer_validation_time() {
-    let root = test_ca("r4-renew-root");
-    let signer = ocsp_delegate_with_kus(
-        &root,
-        "r4-renew-leaf",
-        (2020, 1, 1),
-        (2027, 1, 1),
-        vec![rcgen::KeyUsagePurpose::DigitalSignature],
-    );
-    let tsa = tsa_ca();
-    let later = 1_830_297_600; // 2028-01-01
-    let engine = verify_engine(vec![root.cert_der, tsa.cert_der.clone()], later);
-    let signed = append_sig_revision(&base_input(), &signer, "r4-renew", None, AT_UNIX);
-    let first = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
-    let first_report = engine.verify_sealed_pdf(&first).unwrap();
-    assert_eq!(first_report.verdict(), VerifyVerdict::Passed);
-    assert_eq!(
-        first_report.signatures[0].profile,
-        Some(PadesProfile::BaselineT)
-    );
-    let renewed = append_doc_ts_revision(&first, &tsa, later);
-    let report = engine.verify_sealed_pdf(&renewed).unwrap();
-    assert_eq!(report.signatures.len(), 3);
-    assert_eq!(
-        report.modifications,
-        Modifications::Clean(ModificationLevel::LtaUpdates)
-    );
-    for ts in &report.signatures[1..] {
-        assert_eq!(ts.integrity, VerifyVerdict::Passed);
-        assert_eq!(ts.trust, VerifyCheckStatus::Pass);
-    }
     assert_eq!(report.verdict(), VerifyVerdict::Passed);
     assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
 }

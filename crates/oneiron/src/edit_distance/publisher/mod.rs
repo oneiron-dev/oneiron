@@ -88,14 +88,6 @@ mod tests;
 // module through `use super::*`: the publisher-internal items the tests name
 // bare. After the directory split the seam re-imports them so `tests.rs`
 // resolves exactly as it did before.
-#[cfg(test)]
-use self::signature_store::SIGNATURE;
-#[cfg(test)]
-use crate::identity_topology::ProposalOutcome;
-#[cfg(test)]
-use crate::receipt::ReceiptRecord;
-#[cfg(test)]
-use crate::skill_attribution::AttributionVerdict;
 #[cfg(feature = "sync")]
 #[cfg(test)]
 use crate::write_envelope::WriteActor;

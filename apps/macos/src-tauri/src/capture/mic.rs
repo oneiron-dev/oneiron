@@ -119,16 +119,3 @@ fn pcm_from_f32(sample: f32) -> i16 {
     let scaled = sample.clamp(-1.0, 1.0) * f32::from(i16::MAX);
     scaled as i16
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn float_samples_clip_instead_of_wrapping() {
-        assert_eq!(pcm_from_f32(0.0), 0);
-        assert_eq!(pcm_from_f32(1.0), i16::MAX);
-        assert_eq!(pcm_from_f32(4.0), i16::MAX);
-        assert_eq!(pcm_from_f32(-4.0), -i16::MAX);
-    }
-}

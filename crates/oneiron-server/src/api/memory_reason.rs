@@ -45,8 +45,6 @@ use oneiron::retrieval_depth::{
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use oneiron::{Effort, EntityId};
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use serde_json::json;
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
 
@@ -305,7 +303,7 @@ pub(crate) fn depth_search_error(error: oneiron::Error) -> ApiError {
     match error.kind() {
         oneiron::ErrorKind::InvalidConfig => ApiError::bad_request(error.to_string(), None),
         _ => {
-            tracing::error!(error = %error, "depth-dialed search failed");
+            tracing::error!(kind = ?error.kind(), "depth-dialed search failed");
             ApiError::internal_server_error("depth-dialed search failed")
         }
     }
@@ -682,7 +680,7 @@ fn compose_read(
     let composed = composed
         .and_then(|composed| composed.enforce_token_budget(Some(token_budget)))
         .map_err(|failure| {
-            tracing::error!(error = %failure.error, "memory reason composition failed");
+            tracing::error!(kind = ?failure.error.kind(), "memory reason composition failed");
             ApiError::internal_server_error("memory reason composition failed")
         })?;
     let tokens_used = composed.tokens_used;

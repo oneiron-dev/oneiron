@@ -1,212 +1,95 @@
-//! Unit tests for wire mapping, classification, options round-trip, and accumulator abort behavior.
+//! The adapter under a run admission's gate: its preflight refuses what its
+//! send would, before the call's permit starts.
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 
-use super::*;
-
+use oneiron::llm::run_admission::{
+    BudgetLine, CallOutcome, KeyCustody, LeaseUnit, MemoryReceipts, OfferBinding, OfferRoute,
+    Payer, RunAdmission, RunCall, RunDeclaration, RunDenied, RunEvent,
+};
+use oneiron::llm::{
+    CallClass, CallEnvelope, CallPurpose, ModelTierRef, ResponseFormat, SingleSend, TierPrecedence,
+};
 use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, DeterministicFallback, ModelLocality, ModelTierRef,
-    TierPrecedence,
+    BudgetLease, ContentPart, FatalLlmError, LlmBackend, LlmCatalogEntry, LlmError, LlmMessage,
+    LlmMessageRole, LlmRequest, ModelId, ModelLocality,
+};
+use serde_json::json;
+
+use super::{
+    OpenAiCompatBackend, OpenAiCompatConfig, OpenAiCompatFuture, OpenAiCompatHttpRequest,
+    OpenAiCompatHttpResponse, OpenAiCompatProviderStream, OpenAiCompatTransport,
+    OpenAiCompatTransportError,
 };
 
-#[test]
-fn status_code_table_maps_to_typed_errors() {
-    let headers = BTreeMap::from([("retry-after".to_owned(), "12".to_owned())]);
-    let body = json!({ "error": { "message": "rate limit" } });
+const MODEL: &str = "fake/teacher@v1";
 
-    assert!(matches!(
-        classify_openai_status(429, &headers, &body),
-        LlmError::Retryable(RetryableLlmError::RateLimited {
-            retry_after: Some(12)
+/// A transport that answers every request once and counts what it sent.
+struct OneShot {
+    sent: Arc<Mutex<u32>>,
+}
+
+impl SingleSend for OneShot {}
+
+impl OpenAiCompatTransport for OneShot {
+    fn execute<'a>(
+        &'a self,
+        _request: OpenAiCompatHttpRequest,
+        _lease: &'a BudgetLease,
+    ) -> OpenAiCompatFuture<'a> {
+        *self.sent.lock().expect("sent") += 1;
+        Box::pin(async {
+            Ok(OpenAiCompatHttpResponse {
+                status: 200,
+                headers: BTreeMap::new(),
+                body: json!({
+                    "choices": [{
+                        "message": { "role": "assistant", "content": "ok" },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": { "prompt_tokens": 3, "completion_tokens": 1 }
+                }),
+            })
         })
-    ));
-    assert!(matches!(
-        classify_openai_status(500, &BTreeMap::new(), &body),
-        LlmError::Retryable(RetryableLlmError::ServerError)
-    ));
-    assert!(matches!(
-        classify_openai_status(408, &BTreeMap::new(), &body),
-        LlmError::Retryable(RetryableLlmError::Timeout)
-    ));
-    assert!(matches!(
-        classify_openai_status(401, &BTreeMap::new(), &body),
-        LlmError::Fatal(FatalLlmError::Auth)
-    ));
-    assert!(matches!(
-        classify_openai_status(400, &BTreeMap::new(), &body),
-        LlmError::Fatal(FatalLlmError::InvalidRequest)
-    ));
-    assert!(matches!(
-        classify_openai_status(
-            400,
-            &BTreeMap::new(),
-            &json!({ "error": { "code": "content_filter" } })
-        ),
-        LlmError::Fatal(FatalLlmError::ContentFiltered)
-    ));
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: OpenAiCompatHttpRequest,
+        _lease: &'a BudgetLease,
+    ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
+        Err(OpenAiCompatTransportError::Connection)
+    }
 }
 
-#[test]
-fn unsupported_capability_is_typed() {
-    let catalog = catalog_with([LlmCapability::JsonResponse]);
-    let config = OpenAiCompatConfig::new(catalog);
-    let mut request = sample_request();
-    request.tools = vec![LlmToolSpec {
-        name: "route".to_owned(),
-        description: "Route a call".to_owned(),
-        input_schema: json!({ "type": "object" }),
-    }];
-
-    let error = build_openai_chat_request(&config, &request, false).unwrap_err();
-    assert!(matches!(
-        error,
-        LlmError::Fatal(FatalLlmError::Unsupported(UnsupportedCapability {
-            capability: LlmCapability::ToolCalling,
-            ..
-        }))
-    ));
+fn ready<F: Future>(future: F) -> F::Output {
+    match std::pin::pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("the fake transport answers at once"),
+    }
 }
 
-#[test]
-fn provider_options_parse_typed_fields_and_preserve_raw_escape_hatch() {
-    let options = OpenAiProviderOptions::from_namespaced_value(&json!({
-        "parallel_tool_calls": false,
-        "reasoning": { "effort": "medium", "summary": "auto" },
-        "vendor_extension": { "mode": "strict" }
-    }))
-    .unwrap();
-
-    assert_eq!(options.parallel_tool_calls, Some(false));
-    assert_eq!(
-        options
-            .reasoning
-            .as_ref()
-            .and_then(|reasoning| reasoning.effort.as_deref()),
-        Some("medium")
-    );
-    assert_eq!(
-        options.raw.get("vendor_extension"),
-        Some(&json!({ "mode": "strict" }))
-    );
-
-    let wire = options.to_wire_fields();
-    assert_eq!(wire.get("parallel_tool_calls"), Some(&json!(false)));
-    assert_eq!(
-        wire.get("vendor_extension"),
-        Some(&json!({ "mode": "strict" }))
-    );
-}
-
-#[test]
-fn pinned_seat_effort_wins_over_raw_provider_controls_on_wire() {
-    let config = OpenAiCompatConfig::new(catalog_with([
-        LlmCapability::JsonResponse,
-        LlmCapability::Reasoning,
-    ]));
-    let mut request = sample_request();
-    request
-        .params
-        .insert("reasoning_effort".into(), json!("high"));
-    request
-        .params
-        .insert("reasoning".into(), json!({"effort":"high"}));
-    request.provider_options.insert(
-        "openai".into(),
-        json!({
-            "reasoning_effort": "xhigh", "reasoning": {"effort":"high", "summary":"auto"},
-            "parallel_tool_calls": false
-        }),
-    );
-    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::Low);
-    let wire = build_openai_chat_request(&config, &request, false).unwrap();
-    assert_eq!(wire.body["reasoning_effort"], json!("low"));
-    assert_eq!(wire.body["reasoning"], json!({"summary":"auto"}));
-    assert_eq!(wire.body["parallel_tool_calls"], json!(false));
-
-    // None is a PIN too: stale raw controls must not turn reasoning back on.
-    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::None);
-    let config = OpenAiCompatConfig::new(catalog_with([LlmCapability::JsonResponse]));
-    let wire = build_openai_chat_request(&config, &request, false).unwrap();
-    assert!(wire.body.get("reasoning_effort").is_none());
-    assert!(wire.body.get("reasoning").is_none());
-}
-
-#[test]
-fn abort_retains_partial_text_and_settles_usage() {
-    let mut accumulator = OpenAiCompatStreamAccumulator::new();
-    let events = accumulator
-        .push_chunk(json!({
-            "choices": [{
-                "delta": { "content": "help" },
-                "finish_reason": null
-            }]
-        }))
-        .unwrap();
-    assert!(matches!(
-        events.first(),
-        Some(LlmStreamEvent::TextStart { .. })
-    ));
-
-    let usage = LlmUsage {
-        input: LlmInputUsage {
-            total: 7,
-            cache_read: 2,
-            cache_write: 0,
-        },
-        output: LlmOutputUsage {
-            total: 3,
-            text: 3,
-            reasoning: 0,
-        },
-        raw_provider: json!({ "prompt_tokens": 7, "completion_tokens": 3 }),
+fn request() -> LlmRequest {
+    let purpose = CallPurpose::Other {
+        name: "teacher".to_owned(),
     };
-    let abort_events = accumulator.abort_with_usage(usage.clone());
-    let done = abort_events
-        .iter()
-        .find_map(|event| match event {
-            LlmStreamEvent::Done {
-                message,
-                usage,
-                finish_reason,
-            } => Some((message, usage, finish_reason)),
-            _ => None,
-        })
-        .expect("abort should settle with Done");
-
-    assert_eq!(
-        done.0.content,
-        vec![ContentPart::Text {
-            text: "help".to_owned()
-        }]
-    );
-    assert_eq!(*done.1, usage);
-    assert_eq!(*done.2, FinishReason::Cancelled);
-}
-
-fn sample_request() -> LlmRequest {
     LlmRequest {
-        model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
+        model: ModelId::new(MODEL).expect("model"),
         envelope: CallEnvelope {
             seat_effort: None,
-            scope: oneiron::llm::Scope::default(),
-            purpose: CallPurpose::AnswerGen,
-            class: CallClass::Durable {
-                fallback: DeterministicFallback {
-                    name: "fallback".to_owned(),
-                    config: None,
-                },
-            },
-            tier: TierPrecedence::for_purpose(
-                &CallPurpose::AnswerGen,
-                ModelTierRef("standard".into()),
-            ),
-            response_format: ResponseFormat::Json {
-                schema: json!({ "type": "object" }),
-            },
+            scope: Default::default(),
+            tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("teacher".to_owned())),
+            purpose,
+            class: CallClass::BestEffort,
+            response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
-                text: "hello".to_owned(),
+                text: "label this pair".to_owned(),
             }],
         }],
         tools: Vec::new(),
@@ -215,386 +98,118 @@ fn sample_request() -> LlmRequest {
     }
 }
 
-fn catalog_with(capabilities: impl IntoIterator<Item = LlmCapability>) -> LlmCatalogEntry {
-    LlmCatalogEntry {
-        model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
-        display_name: "GPT 4.1".to_owned(),
+#[test]
+fn an_option_the_adapter_rejects_is_refused_before_the_permit_starts() {
+    let sent = Arc::new(Mutex::new(0));
+    let entry = LlmCatalogEntry {
+        model: ModelId::new(MODEL).expect("model"),
+        display_name: "teacher".to_owned(),
         locality: ModelLocality::ThirdParty,
-        context_window_tokens: 1_000_000,
-        max_output_tokens: Some(32_000),
+        context_window_tokens: 8_192,
+        max_output_tokens: None,
         cost: None,
-        capabilities: capabilities.into_iter().collect(),
+        capabilities: Vec::new(),
         metadata: BTreeMap::new(),
-    }
-}
-
-#[test]
-fn interleaved_reasoning_and_tools_reconstruct_executable_message() {
-    let mut stream = OpenAiCompatStreamAccumulator::new();
-    let mut events = stream.push_chunk(json!({"choices":[{"delta":{"reasoning_content":"plan", "content":"look", "tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"{\"n\":"}}]}}]})).unwrap();
-    events.extend(stream.push_chunk(json!({"choices":[{"delta":{"content":" up", "tool_calls":[{"index":0,"function":{"arguments":"4}"}}]},"finish_reason":"tool_calls"}]})).unwrap());
-    events.extend(stream.finish_eof().unwrap());
-    assert_eq!(
-        &events[..events.len() - 1],
-        &[
-            LlmStreamEvent::TextStart {
-                part_id: "text-0".into()
-            },
-            LlmStreamEvent::TextDelta {
-                part_id: "text-0".into(),
-                text: "look".into()
-            },
-            LlmStreamEvent::ReasoningStart {
-                part_id: "reasoning-0".into(),
-                signature: None
-            },
-            LlmStreamEvent::ReasoningDelta {
-                part_id: "reasoning-0".into(),
-                text: "plan".into()
-            },
-            LlmStreamEvent::ToolCallStart {
-                part_id: "tool-0".into(),
-                call_id: "call-1".into(),
-                name: "double".into()
-            },
-            LlmStreamEvent::ToolCallDelta {
-                part_id: "tool-0".into(),
-                input_fragment: "{\"n\":".into()
-            },
-            LlmStreamEvent::TextDelta {
-                part_id: "text-0".into(),
-                text: " up".into()
-            },
-            LlmStreamEvent::ToolCallDelta {
-                part_id: "tool-0".into(),
-                input_fragment: "4}".into()
-            },
-            LlmStreamEvent::TextEnd {
-                part_id: "text-0".into()
-            },
-            LlmStreamEvent::ReasoningEnd {
-                part_id: "reasoning-0".into()
-            },
-            LlmStreamEvent::ToolCallEnd {
-                part_id: "tool-0".into(),
-                call_id: "call-1".into(),
-                name: "double".into(),
-                input: json!({"n":4})
-            },
-        ]
-    );
-    let LlmStreamEvent::Done { message, .. } = events.last().unwrap() else {
-        panic!("missing terminal")
     };
-    assert_eq!(
-        message.content,
-        vec![
-            ContentPart::Text {
-                text: "look up".into()
-            },
-            ContentPart::Reasoning {
-                text: "plan".into(),
-                signature: None
-            },
-            ContentPart::ToolCall {
-                call_id: "call-1".into(),
-                name: "double".into(),
-                input: json!({"n":4})
-            }
-        ]
-    );
-    let ContentPart::ToolCall { name, input, .. } = &message.content[2] else {
-        panic!("tool missing")
-    };
-    let result = match name.as_str() {
-        "double" => input["n"].as_i64().unwrap() * 2,
-        _ => panic!("unknown tool"),
-    };
-    assert_eq!(result, 8);
-}
-
-#[test]
-fn malformed_tool_json_is_rejected_only_at_end_and_cancel_never_executes_it() {
-    let mut stream = OpenAiCompatStreamAccumulator::new();
-    stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":"{"}}]}}]})).unwrap();
-    let mut cancelled = stream.clone();
-    assert!(matches!(
-        stream.push_chunk(json!({"choices":[{"finish_reason":"tool_calls"}],"usage":{}})),
-        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    let backend = Arc::new(OpenAiCompatBackend::new(
+        OpenAiCompatConfig::from_catalog([entry]),
+        OneShot {
+            sent: Arc::clone(&sent),
+        },
     ));
-    let events = cancelled.abort_with_usage(LlmUsage::zero());
-    assert!(
-        matches!(&events[0], LlmStreamEvent::Done { message, finish_reason: FinishReason::Cancelled, .. } if message.content.is_empty())
-    );
-}
-
-#[test]
-fn terminal_waits_for_trailing_usage_chunk() {
-    let mut stream = OpenAiCompatStreamAccumulator::new();
-    let events = stream
-        .push_chunk(json!({"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}))
-        .unwrap();
-    assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, LlmStreamEvent::Done { .. }))
-    );
-    let terminal = stream
-        .push_chunk(json!({"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}))
-        .unwrap();
-    assert!(
-        matches!(terminal.last(),Some(LlmStreamEvent::Done{usage,..})if usage.input.total==7 && usage.output.total==3)
-    );
-}
-
-#[test]
-fn header_only_tool_is_not_silently_lost_at_terminal() {
-    let mut stream = OpenAiCompatStreamAccumulator::new();
-    stream.push_chunk(json!({"choices":[{"delta":{"content":"working", "tool_calls":[{"index":0,"id":"call","function":{"name":"double"}}]}}]})).unwrap();
-    assert!(matches!(
-        stream.push_chunk(json!({"choices":[{"finish_reason":"tool_calls"}],"usage":{}})),
-        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
-    ));
-}
-
-#[test]
-fn parallel_tool_fragments_keep_distinct_call_ids_and_inputs() {
-    let mut stream = OpenAiCompatStreamAccumulator::new();
-    let mut events = stream
-        .push_chunk(json!({"choices":[{"delta":{"tool_calls":[
-            {"index":0,"id":"a","function":{"name":"double","arguments":"{\"n\":"}},
-            {"index":1,"id":"b","function":{"name":"double","arguments":"{\"n\":"}}
-        ]}}]}))
-        .unwrap();
-    events.extend(
-        stream
-            .push_chunk(json!({"choices":[{"delta":{"tool_calls":[
-        {"index":1,"function":{"arguments":"5}"}},
-        {"index":0,"function":{"arguments":"4}"}}
-    ]},"finish_reason":"tool_calls"}],"usage":{}}))
-            .unwrap(),
-    );
-    for (part, call, value) in [("tool-0", "a", 4), ("tool-1", "b", 5)] {
-        let start = events.iter().position(|e| matches!(e, LlmStreamEvent::ToolCallStart { part_id, call_id, .. } if part_id == part && call_id == call)).unwrap();
-        let end = events.iter().position(|e| matches!(e, LlmStreamEvent::ToolCallEnd { part_id, call_id, input, .. } if part_id == part && call_id == call && input == &json!({"n": value}))).unwrap();
-        assert!(start < end);
-        let fragments: String = events[start + 1..end]
-            .iter()
-            .filter_map(|e| match e {
-                LlmStreamEvent::ToolCallDelta {
-                    part_id,
-                    input_fragment,
-                } if part_id == part => Some(input_fragment.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&fragments).unwrap(),
-            json!({"n":value})
-        );
-    }
-    let LlmStreamEvent::Done { message, .. } = events.last().unwrap() else {
-        panic!("terminal")
+    let receipts = Arc::new(MemoryReceipts::default());
+    let line = BudgetLine {
+        limit_units: 20,
+        reserve_units: 6,
+        unit: LeaseUnit::tokens(),
     };
-    assert_eq!(
-        message.content,
-        vec![
-            ContentPart::ToolCall {
-                call_id: "a".into(),
-                name: "double".into(),
-                input: json!({"n":4})
-            },
-            ContentPart::ToolCall {
-                call_id: "b".into(),
-                name: "double".into(),
-                input: json!({"n":5})
-            },
-        ]
+    let run = RunAdmission::new(
+        "run-1",
+        RunDeclaration::undeclared(line),
+        None,
+        receipts.clone(),
     );
-}
-
-#[test]
-fn repeated_tool_headers_are_idempotent_after_fragmented_header() {
-    let mut stream = OpenAiCompatStreamAccumulator::new();
-    let mut events = stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-","function":{"name":"dou"}}]}}]})).unwrap();
-    events.extend(stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"1","function":{"name":"ble","arguments":"{\"n\":"}}]}}]})).unwrap());
-    events.extend(stream.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"4}"}}]},"finish_reason":"tool_calls"}],"usage":{}})).unwrap());
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| matches!(e, LlmStreamEvent::ToolCallStart { .. }))
-            .count(),
-        1
-    );
-    assert!(
-        matches!(events.last(), Some(LlmStreamEvent::Done { message, .. }) if message.content == vec![ContentPart::ToolCall { call_id: "call-1".into(), name: "double".into(), input: json!({"n":4}) }])
-    );
-
-    let mut mismatch = OpenAiCompatStreamAccumulator::new();
-    mismatch.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"{"}}]}}]})).unwrap();
-    assert!(matches!(mismatch.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"double","arguments":"}"}}]}}]})), Err(LlmError::Fatal(FatalLlmError::InvalidRequest))));
-}
-
-fn routed_seat(effort: oneiron::llm::ReasoningEffort) -> oneiron::llm::routing::RoutedSeat {
-    oneiron::llm::routing::RoutedSeat {
-        id: "pinned".into(),
-        role: "writer".into(),
-        model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
-        wire: oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
+    let offer = OfferBinding {
+        offer: "teacher@model.test".to_owned(),
+        model: ModelId::new(MODEL).expect("model"),
+        route: OfferRoute::new("openai", "https://model.test").expect("route"),
         locality: ModelLocality::ThirdParty,
-        effort,
-        tier: ModelTierRef("cheap".into()),
-        inference_overrides: BTreeMap::from([("temperature".into(), json!(0.2))]),
-        receipt: "pinned fixture".into(),
-    }
-}
-
-#[test]
-fn routed_seat_refuses_provider_options_that_shadow_wire_effort_and_temperature() {
-    let seat = routed_seat(oneiron::llm::ReasoningEffort::Low);
-    let config = OpenAiCompatConfig::new(catalog_with([
-        LlmCapability::JsonResponse,
-        LlmCapability::Reasoning,
-    ]));
-    for provider in [
-        json!({"reasoning_effort":"high","temperature":0.9}),
-        json!({"reasoning":{"effort":"high"}}),
-        json!({"temperature":0.9}),
-    ] {
-        let mut request = sample_request();
-        request.provider_options.insert("openai".into(), provider);
-        assert!(seat.bind(&mut request).is_err());
-    }
-    let mut request = sample_request();
-    request.params.insert("temperature".into(), json!(0.9));
-    request
-        .params
-        .insert("reasoning_effort".into(), json!("high"));
-    seat.bind(&mut request).unwrap();
-    let wire = build_openai_chat_request(&config, &request, false).unwrap();
-    assert_eq!(wire.body["temperature"], json!(0.2));
-    assert_eq!(wire.body["reasoning_effort"], json!("low"));
-    assert_eq!(wire.body["model"], json!("gpt-4.1"));
-}
-
-#[test]
-fn none_effort_seat_admits_a_real_non_reasoning_adapter_request() {
-    let seat = routed_seat(oneiron::llm::ReasoningEffort::None);
-    let config = OpenAiCompatConfig::new(catalog_with([LlmCapability::JsonResponse]));
-    let mut request = sample_request();
-    request
-        .params
-        .insert("reasoning_effort".into(), json!("high"));
-    seat.bind(&mut request).unwrap();
-    let wire = build_openai_chat_request(&config, &request, false).unwrap();
-    assert_eq!(seat.effort, oneiron::llm::ReasoningEffort::None);
-    assert!(wire.body.get("reasoning_effort").is_none());
-    assert_eq!(wire.body["temperature"], json!(0.2));
-}
-
-#[test]
-fn schema_verdict_replaces_generating_seat_effort_on_final_openai_wire() {
-    use oneiron::llm::ReasoningEffort;
-    use oneiron::llm::registry::ModelWireFormat;
-    use oneiron::llm::routing::{
-        DescriptionJudge, DescriptionJudgment, DescriptionPolicy,
-        ModelDescription as RoutedDescription, OwnerModelLine, SeatBirth, SeatSettings,
-        VerdictPayload,
+        payer: Payer::CustomerKey,
+        credential_binding: Some("customer-key-1".to_owned()),
+        catalog_revision: None,
+        custody: KeyCustody::T0,
+        rates: Vec::new(),
     };
-    struct Judge;
-    impl DescriptionJudge for Judge {
-        fn judge(&self, _: &str, _: &ModelId, _: &str, _: ReasoningEffort) -> DescriptionJudgment {
-            DescriptionJudgment {
-                fitness: 1,
-                reason: "matched task".into(),
-            }
-        }
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
-    let old = sample_request().model;
-    let verdict = ModelId::new("openai/verdict@r2").unwrap();
-    let row = |model: ModelId, effort_ladder| RoutedDescription {
-        owner: Some(OwnerModelLine {
-            model: model.clone(),
-            text: "can judge a current task".into(),
-            expected_quality: 750_000,
-        }),
-        model,
-        wire: ModelWireFormat::OpenaiCompat,
-        locality: ModelLocality::ThirdParty,
-        public_benchmark: None,
-        vendor: None,
-        effort_ladder,
-    };
-    vault
-        .set_description_policy(&DescriptionPolicy {
-            models: vec![
-                row(old.clone(), vec![ReasoningEffort::Low]),
-                row(
-                    verdict.clone(),
-                    vec![ReasoningEffort::None, ReasoningEffort::High],
-                ),
-            ],
-            contradiction_margin_millionths: 50_000,
-            vault_effort: None,
-            purpose_effort: BTreeMap::new(),
-            global_effort: None,
+    let gated = run.gate(backend, &offer);
+    let mut bad = request();
+    bad.provider_options.insert(
+        "openai".to_owned(),
+        json!({ "parallel_tool_calls": "not-a-boolean" }),
+    );
+    let permit = run
+        .admit(RunCall {
+            selector: None,
+            request: &bad,
+            offer: &offer,
         })
-        .unwrap();
-    let seat = vault
-        .route_seat(
-            SeatBirth {
-                id: "generating",
-                role: "writer",
-                task: "initial generation",
-                purpose: &CallPurpose::AnswerGen,
-                settings: &SeatSettings {
-                    allowed_models: Some(vec![old]),
-                    ..SeatSettings::default()
-                },
-                tier: &sample_request().envelope.tier,
-            },
-            &Judge,
-        )
-        .unwrap();
-    for effort in [ReasoningEffort::High, ReasoningEffort::None] {
-        let mut input = sample_request();
-        seat.bind(&mut input).unwrap();
-        assert_eq!(input.envelope.seat_effort, Some(ReasoningEffort::Low));
-        let routed = vault
-            .routed_verdict_request(
-                "schema verdict",
-                &Judge,
-                &SeatSettings {
-                    allowed_models: Some(vec![verdict.clone()]),
-                    effort: Some(effort),
-                    ..SeatSettings::default()
-                },
-                input,
-                VerdictPayload {
-                    instructions: Some("current verdict".into()),
-                    input: vec![ContentPart::Text {
-                        text: "current evidence".into(),
-                    }],
-                },
-            )
-            .unwrap();
-        assert_eq!(routed.envelope.seat_effort, Some(effort));
-        let mut catalog = catalog_with([LlmCapability::JsonResponse, LlmCapability::Reasoning]);
-        catalog.model = verdict.clone();
-        let wire =
-            build_openai_chat_request(&OpenAiCompatConfig::new(catalog), &routed, false).unwrap();
-        assert_eq!(wire.body["model"], json!("verdict"));
-        assert_eq!(
-            wire.body["messages"][1]["content"],
-            json!("current evidence")
-        );
-        match effort {
-            ReasoningEffort::High => assert_eq!(wire.body["reasoning_effort"], json!("high")),
-            ReasoningEffort::None => assert!(wire.body.get("reasoning_effort").is_none()),
-            _ => unreachable!(),
+        .expect("permit");
+    assert_eq!(
+        ready(gated.generate(bad, permit.lease())).map(|_| ()),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    );
+    assert_eq!(*sent.lock().expect("sent"), 0);
+    assert!(receipts.rows().iter().any(|row| matches!(
+        row.event,
+        RunEvent::Denied {
+            reason: RunDenied::BackendRefused,
+            ..
         }
-        assert_eq!(seat.effort, ReasoningEffort::Low);
+    )));
+    // Unstarted, the permit still carries a call the adapter accepts.
+    let response = ready(gated.generate(request(), permit.lease())).expect("answer");
+    permit
+        .settle(CallOutcome::Answered(&response.usage))
+        .expect("settle");
+    assert_eq!(*sent.lock().expect("sent"), 1);
+    assert_eq!((run.read().used_units, run.read().reserved_units), (4, 0));
+}
+
+/// A seat's level reaches an own server where llama.cpp reads it per request
+/// (`reasoning_effort`, `chat_template_kwargs`, `reasoning_budget_tokens`; an
+/// exllamav3 server renders only the template arguments). A hosted API takes
+/// the effort alone: it refuses request fields it does not know.
+#[test]
+fn an_own_server_gets_the_level_in_its_template_with_the_budget_and_a_hosted_api_the_effort_alone()
+{
+    for locality in [ModelLocality::OwnServer, ModelLocality::ThirdParty] {
+        let config = OpenAiCompatConfig::from_catalog([LlmCatalogEntry {
+            model: ModelId::new(MODEL).expect("model"),
+            display_name: "teacher".to_owned(),
+            locality,
+            context_window_tokens: 8_192,
+            max_output_tokens: None,
+            cost: None,
+            capabilities: vec![oneiron::LlmCapability::Reasoning],
+            metadata: BTreeMap::new(),
+        }]);
+        let mut call = request();
+        call.envelope.locality = locality;
+        call.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::Medium);
+        call.params
+            .insert(oneiron::llm::REASONING_BUDGET_PARAM.into(), json!(4_096));
+        let body = super::build_openai_chat_request(&config, &call, false)
+            .expect("request")
+            .body;
+        assert_eq!(body["reasoning_effort"], "medium", "{body}");
+        if locality == ModelLocality::OwnServer {
+            assert_eq!(
+                body["chat_template_kwargs"],
+                json!({"reasoning_effort": "medium"})
+            );
+            assert_eq!(body["reasoning_budget_tokens"], 4_096);
+        } else {
+            assert_eq!(body.get("chat_template_kwargs"), None, "{body}");
+            assert_eq!(body.get("reasoning_budget_tokens"), None, "{body}");
+        }
     }
 }

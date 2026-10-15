@@ -72,7 +72,9 @@ impl AttemptQueue<'_> {
 
     /// Counts the retries that precede `id` by walking its `retry_of` lineage.
     ///
-    /// A first try is depth 0 and every `retry_of` hop adds one. [`Self::retry`]
+    /// A first try is depth 0 and every `retry_of` hop adds one, as does each
+    /// try a compaction deleted from the lineage, which the row behind it
+    /// counts ([`AttemptRecord::folded_retries`]). [`Self::retry`]
     /// mints a NEW row whose `attempt_count` restarts at zero, so the lineage
     /// is the only honest logical retry counter: a caller spacing retries must
     /// read the depth here rather than infer one from a per-row lease counter.
@@ -95,9 +97,19 @@ impl AttemptQueue<'_> {
     /// chains.
     pub fn retry_chain_depth(&self, id: AttemptId) -> Result<u32> {
         let rtxn = self.store.env.read_txn()?;
+        self.retry_chain_depth_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::retry_chain_depth`] inside the caller's transaction.
+    pub(crate) fn retry_chain_depth_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<u32> {
         let mut visited = HashSet::from([id]);
-        let mut child = self.retry_chain_record_in_txn(&rtxn, id)?;
-        let mut depth = 0_u32;
+        let mut child = self.retry_chain_record_in_txn(rtxn, id)?;
+        // Every row counts the tries a compaction deleted behind it.
+        let mut depth = child.folded_retries;
         while let Some(parent_id) = child.retry_of {
             // A revisit is a CYCLE before it is anything else: a row already on
             // the walk trivially matches itself on identity, so the field
@@ -107,19 +119,21 @@ impl AttemptQueue<'_> {
                     ERR_RETRY_CHAIN_CYCLE,
                 )));
             }
-            let parent = self.retry_chain_record_in_txn(&rtxn, parent_id)?;
+            let parent = self.retry_chain_record_in_txn(rtxn, parent_id)?;
             if !retries_the_same_attempt(&child, &parent) {
                 return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                     ERR_RETRY_CHAIN_MISMATCH,
                 )));
             }
-            depth = depth.saturating_add(1);
+            depth = depth
+                .saturating_add(1)
+                .saturating_add(parent.folded_retries);
             if depth >= RETRY_CHAIN_DEPTH_LIMIT {
                 return Ok(RETRY_CHAIN_DEPTH_LIMIT);
             }
             child = parent;
         }
-        Ok(depth)
+        Ok(depth.min(RETRY_CHAIN_DEPTH_LIMIT))
     }
 
     /// One row of the lineage walk: it must exist, or the chain is broken.
@@ -127,7 +141,7 @@ impl AttemptQueue<'_> {
     /// Yields the whole decoded record, not just its link, so the hop that
     /// follows can check parent-child identity within the same one read and
     /// one decode this walk already spends per visited row.
-    fn retry_chain_record_in_txn(
+    pub(super) fn retry_chain_record_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: AttemptId,
@@ -195,14 +209,27 @@ impl AttemptQueue<'_> {
     }
 
     /// Complete kind view for a projection that must not silently truncate.
+    ///
+    /// `max_scanned` caps the rows the view reads, all of them counted. It
+    /// reads only its kind's side of the owner-retained boundary
+    /// ([`crate::attempt_queue::OWNER_RETAINED_ID_PREFIX`]), so a tagging
+    /// backlog of any size never costs another kind's view a row.
     pub(crate) fn list_kind_bounded(
         &self,
         kind: &str,
         max_scanned: usize,
     ) -> Result<Vec<AttemptRecord>> {
+        use std::ops::Bound;
         let txn = self.store.env.read_txn()?;
+        let boundary = &crate::attempt_queue::OWNER_RETAINED_RANGE_START[..];
+        let retained = crate::attempt_queue::owner_retained_kind(kind);
+        let range: (Bound<&[u8]>, Bound<&[u8]>) = if retained {
+            (Bound::Included(boundary), Bound::Unbounded)
+        } else {
+            (Bound::Unbounded, Bound::Excluded(boundary))
+        };
         let mut records = Vec::new();
-        for (scanned, row) in self.store.attempt_records.iter(&txn)?.enumerate() {
+        for (scanned, row) in self.store.attempt_records.range(&txn, &range)?.enumerate() {
             if scanned >= max_scanned {
                 return Err(Error::IndexOverflow("attempt kind projection"));
             }
@@ -247,14 +274,24 @@ impl AttemptQueue<'_> {
     /// authoritative, write-serialized dedupe check on a miss.
     pub(crate) fn pending_dedupe(&self, kind: &str, key: &str) -> Result<Option<AttemptRecord>> {
         let txn = self.store.env.read_txn()?;
+        self.pending_dedupe_in_txn(&txn, kind, key)
+    }
+
+    /// [`Self::pending_dedupe`] inside the caller's transaction.
+    pub(crate) fn pending_dedupe_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        key: &str,
+    ) -> Result<Option<AttemptRecord>> {
         let keys = DedupeIndexKeys::new(kind, None, key);
         if let Some(row) =
-            self.read_existing_dedupe_in_read_txn(&txn, &keys.primary, kind, None, key)?
+            self.read_existing_dedupe_in_read_txn(txn, &keys.primary, kind, None, key)?
         {
             return Ok(Some(row));
         }
         self.read_existing_dedupe_in_read_txn(
-            &txn,
+            txn,
             &legacy_dedupe_index_key(kind, key),
             kind,
             None,
@@ -467,7 +504,7 @@ impl AttemptQueue<'_> {
 /// event/manifest/cancel logs are all EXPECTED to diverge between a finalized
 /// source and its fresh successor, which is why the link cannot be checked by
 /// record equality.
-fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
+pub(super) fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
     child.kind == parent.kind
         && child.payload == parent.payload
         && child.task_ref == parent.task_ref

@@ -72,6 +72,9 @@ side_tables! {
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;
     /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
     NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named;
+    /// Durable receipt that a later save copied one off-record message into a turn its stretch had
+    /// already promoted. Key: id16 (the message).
+    OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;
     /// Durable retry receipt recording the outcome of promoting one off-record turn into base
     /// storage. Key: id16.
     OFF_RECORD_PROMOTE_RECEIPT: VaultMeta b"offrecord_promote:v0:" Named;
@@ -200,6 +203,9 @@ side_tables! {
     /// Receipt of one owner change to the secret-scan switch, in revision order. Key: u64be
     /// revision.
     OWNER_POLICY_SECRET_SCAN_RECEIPT: VaultMeta b"owner_policy:secret_scan:receipt:v1:" Named;
+    /// Receipt of one owner change to a world's privacy settings on this machine, in revision
+    /// order. Key: u64be revision.
+    OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -237,6 +243,8 @@ side_tables! {
     PORTS_STALE: VaultMeta b"ports:stale:v1:" Raw;
     /// Deletion-intent tombstone. Key: id16.
     PORTS_TOMBSTONE: VaultMeta b"ports:tombstone:v1:" Raw;
+    /// Worlds a deletion withdrew an epoch summary for: unknown flag + id16s. Key: id16.
+    PORTS_WITHDRAWN: VaultMeta b"ports:withdrawn:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
     /// Local admission marker of one goal claim: `[1]` + body hash32 (sealed), `[2]` + project id16
@@ -378,6 +386,10 @@ side_tables! {
     RETRIEVAL_TRACE_FORK_INDEX: VaultMeta b"retr_trace_fork:v0:" Raw;
     /// Retrieval runs by turn. Key: id16 + u64be + id16.
     RETRIEVAL_TURN_INDEX: VaultMeta b"retr_turn:v1:" Raw;
+    /// Random 32-byte key over every stored retrieval-trace fork hash, minted at the store's first
+    /// open. Outside the `retr_` telemetry families, so no telemetry read, purge or export reaches it;
+    /// node-local, never synced, and a runtime row no checkpoint image carries. Key: ().
+    RETRIEVAL_TRACE_KEY_LOCAL: VaultMeta b"retrieval_trace_key:local:v1" Raw;
     /// Blake3 stamp of a written claim body, used to detect a review verdict claim edited outside its
     /// producer. Key: id16.
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;

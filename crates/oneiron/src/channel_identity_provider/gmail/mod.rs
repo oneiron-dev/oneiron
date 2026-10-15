@@ -465,7 +465,7 @@ impl GmailDelegatedAdapter {
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("gmail inbox poll config did not encode: {err}"))
         })?;
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             crate::ports::JobQueue::port_job_enqueue(
                 vault,
                 txn,

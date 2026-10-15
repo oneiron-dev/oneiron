@@ -3,9 +3,12 @@
 
 use super::super::support::*;
 use super::super::*;
-use super::base::{BaseGuards, BaseSink};
-use super::codec::{encode_witness_turn_body, incoming_turn_speaker, session_short_ref_string};
-use super::session::OverlaySink;
+use super::base::{BaseGuards, BaseSink, HeldTags};
+use super::codec::{
+    ImportStamp, encode_imported_turn_body, encode_witness_turn_body, import_stamp,
+    incoming_turn_speaker, session_short_ref_string,
+};
+use super::session::{Admit, OverlaySink};
 use super::validation::{
     validate_existing_witness_message, validate_existing_witness_message_orders,
     validate_existing_witness_turn,
@@ -23,7 +26,7 @@ use crate::gate::{
     resolve_policy_manifest,
 };
 use crate::off_record::OffRecordSession;
-use crate::ports::EntityRecord;
+use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute, TxnSegmentGuard};
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
@@ -45,7 +48,29 @@ pub(super) enum WitnessTarget<'a, 'v> {
     Session {
         session: &'a OffRecordSession<'v>,
         summary: Option<&'a str>,
+        admit: Option<Admit<'a>>,
+        /// The room whose roster admits speech into its overlay.
+        rostered: Option<EntityId>,
     },
+    /// Durable base, for a turn of an imported transcript (ARCH-0027).
+    Imported { stamp: &'a ImportedTurnStamp },
+    /// Durable base, for a turn whose tags its importer already holds.
+    Held { held: HeldTags<'a> },
+}
+
+/// What an imported transcript turn carries that a witnessed one does not: the
+/// source it came from, when it was imported, when each message occurred, and
+/// the body its conversation is minted with. The source's speaker wrote these
+/// words, so the landing stamps no `AuthoredBy` edge and no PERSON byline. Its
+/// rows are learned at the import time and occurred when the source says, so
+/// the Dreamer sees them as new evidence about the past.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImportedTurnStamp {
+    pub(crate) source: &'static str,
+    pub(crate) imported_at: u64,
+    pub(crate) conversation_body: Vec<u8>,
+    /// Unix seconds per message, in the turn's message order.
+    pub(crate) message_occurred: Vec<u64>,
 }
 
 /// Who holds the door, and which turn-id capability they carry.
@@ -72,6 +97,8 @@ enum Landing<'a, 'v> {
     Base {
         route: Option<&'a SessionWriteRoute>,
         continuation: Option<EntityId>,
+        imported: Option<&'a ImportedTurnStamp>,
+        held: Option<HeldTags<'a>>,
     },
     Overlay {
         session: &'a OffRecordSession<'v>,
@@ -85,6 +112,9 @@ enum Landing<'a, 'v> {
 pub(super) struct PlannedMessage<'t> {
     pub(super) message: &'t WitnessMessage,
     pub(super) id: EntityId,
+    /// When this message occurred: the turn's time, or for an imported
+    /// message the time its source recorded for it.
+    pub(super) occurred: TimeRange,
     envelope: WitnessMessageEnvelope<'t>,
     body: Vec<u8>,
 }
@@ -109,6 +139,8 @@ pub(super) struct WitnessPlan<'t> {
     /// The call's one non-system speaker; `None` is system interleave only.
     speaker: Option<&'static str>,
     pub(super) messages: Vec<PlannedMessage<'t>>,
+    /// Set for a turn of an imported transcript.
+    pub(super) imported: Option<ImportedTurnStamp>,
 }
 
 impl WitnessPlan<'_> {
@@ -150,7 +182,7 @@ enum WitnessSink<'a, 'v> {
 }
 
 enum Landed {
-    Base,
+    Base(WitnessReceipt),
     HardDeleted(EntityId),
     Overlay {
         segment: TxnSegmentGuard,
@@ -165,10 +197,11 @@ impl Memory<'_> {
     ///
     /// Order, for both landings: request shape, target resolution, the plan
     /// (containers, speaker, message ids and bodies), the landing's pre-write
-    /// state, `before_txn`, then ONE write transaction that runs the landing's
-    /// guards, the erased-PERSON refusal, the ceiling door on every envelope,
-    /// the create-or-verify checks, the landing's staging, `effect`, and the
-    /// route revalidation.
+    /// state, `before_txn`, then ONE write transaction that runs a session
+    /// door's [`Admit`], the actor checks, the landing's guards, the
+    /// erased-PERSON refusal, the ceiling door on every envelope, the
+    /// create-or-verify checks, the landing's staging and receipt, `effect`,
+    /// and the route revalidation.
     ///
     /// `before_txn` runs in the window between the ADVISORY container
     /// create-or-get and the transaction, which is the race the in-transaction
@@ -179,6 +212,33 @@ impl Memory<'_> {
     /// receipt.
     pub(super) fn run_witness(
         &self,
+        turn: &WitnessTurn,
+        target: WitnessTarget<'_, '_>,
+        door: WitnessDoor,
+        before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness_as(
+            crate::store::Callback::Audited,
+            turn,
+            target,
+            door,
+            before_txn,
+            prepare,
+            effect,
+        )
+    }
+
+    /// [`Self::run_witness`] through the write door `callback` names: an
+    /// `effect` that runs host code is [`crate::store::Callback::Opaque`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the write door joins the witness program's inputs"
+    )]
+    pub(super) fn run_witness_as(
+        &self,
+        callback: crate::store::Callback,
         turn: &WitnessTurn,
         target: WitnessTarget<'_, '_>,
         door: WitnessDoor,
@@ -197,14 +257,72 @@ impl Memory<'_> {
             .into());
         }
         distinct_message_orders(&turn.messages)?;
+        // Generated code speaks as the companion: a person's word or the
+        // engine's system voice needs an origin a guest cannot assert.
+        if self.writes_generated()
+            && turn
+                .messages
+                .iter()
+                .any(|message| message.author != WitnessAuthor::Companion)
+        {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot author a user or system message",
+                &["Witness generated text as the companion."],
+            ));
+        }
         let session_route;
+        let mut on_record_session = None;
+        // A room on record's saver, checked again where the turn lands.
+        let mut saver = None;
+        let mut admit = None;
+        let mut room_speech = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
                 route,
                 continuation: None,
+                imported: None,
+                held: None,
             },
-            WitnessTarget::Session { session, summary } => {
-                session_route = session.write_route()?;
+            WitnessTarget::Held { held } => Landing::Base {
+                route: None,
+                continuation: None,
+                imported: None,
+                held: Some(held),
+            },
+            WitnessTarget::Imported { stamp } => {
+                if turn
+                    .messages
+                    .iter()
+                    .any(|message| message.author == WitnessAuthor::System)
+                {
+                    // A source's system prompt is the source's, never the
+                    // engine's own voice.
+                    return Err(MemoryError::bad_request(
+                        "an imported turn carries no system rows",
+                    ));
+                }
+                if stamp.message_occurred.len() != turn.messages.len() {
+                    return Err(MemoryError::bad_request(
+                        "an imported turn carries one source time per message",
+                    ));
+                }
+                Landing::Base {
+                    route: None,
+                    continuation: None,
+                    imported: Some(stamp),
+                    held: None,
+                }
+            }
+            WitnessTarget::Session {
+                session,
+                summary,
+                admit: session_admit,
+                rostered,
+            } => {
+                on_record_session = Some(session);
+                admit = session_admit;
+                (session_route, saver) = session.landing_route()?;
                 // WitnessReceipt promises materialized turns and messages.
                 // Anonymous sessions cannot fulfill that promise, so refuse
                 // before shell reservation, transaction acquisition, or policy
@@ -221,8 +339,11 @@ impl Memory<'_> {
                     Landing::Base {
                         route: Some(&session_route),
                         continuation: Some(session.on_record_continuation_shell()?),
+                        imported: None,
+                        held: None,
                     }
                 } else {
+                    room_speech = rostered.map(|room| (session, room));
                     Landing::Overlay {
                         session,
                         route: &session_route,
@@ -232,7 +353,11 @@ impl Memory<'_> {
             }
         };
 
-        let plan = self.plan_witness(turn, &landing, door)?;
+        let plan = self.plan_witness(turn, &landing, door, admit)?;
+        let held = match &landing {
+            Landing::Base { held, .. } => *held,
+            Landing::Overlay { .. } => None,
+        };
         let sink = match landing {
             Landing::Base { route, .. } => WitnessSink::Base(self.base_sink(&plan, route)?),
             Landing::Overlay {
@@ -243,7 +368,7 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let landed = self.with_verified_actor_write_txn(|wtxn| {
+        let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
@@ -257,7 +382,8 @@ impl Memory<'_> {
                         } => {
                             mint_conversation = absent;
                             leader_project = project;
-                            person_author
+                            // The importer is not the author of the source's words.
+                            person_author.filter(|_| plan.imported.is_none())
                         }
                     };
                     self.admit_witness_in_txn(&plan, &self.vault.store, wtxn, person_author)?
@@ -267,20 +393,46 @@ impl Memory<'_> {
                 // overlay segment installs, and a divergent body or parent
                 // leaves no journal or index delta.
                 WitnessSink::Overlay(overlay) => {
-                    let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
-                    super::reject_erased_person_in_txn(
-                        self.vault,
-                        wtxn,
-                        plan.conversation_id,
-                        person_author,
-                    )?;
+                    let rostered = room_speech.is_some();
+                    let person_author =
+                        self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
                     self.admit_witness_in_txn(&plan, &overlay.read_view()?, wtxn, person_author)?
                 }
             };
             let landed = match &sink {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(&plan, &admission, base, mint_conversation, wtxn)?;
-                    Landed::Base
+                    // The outbox rule (write-path hub; ARCH-0036): a turn that
+                    // gained text owes the vault's tagger a pass, and its
+                    // embedder a vector of the new text (ARCH-0004), committed
+                    // with the turn. An exact retry stages nothing and owes
+                    // nothing.
+                    if matches!(admission.turn, AdmittedTurn::Mint { .. })
+                        || admission.has_new_messages()
+                    {
+                        crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                    }
+                    // Held tags settle the marker just committed, in this
+                    // write, so no worker ever claims it. Their spans index
+                    // the messages as sent.
+                    if let Some(held) = held {
+                        let sent: Vec<_> = plan
+                            .messages
+                            .iter()
+                            .map(|planned| (planned.id, planned.message.content.as_str()))
+                            .collect();
+                        held.outcome
+                            .set(Some(crate::tagging::settle_held_tags_in_txn(
+                                self.vault,
+                                wtxn,
+                                &plan.turn_id,
+                                held.tags,
+                                Some(&sent),
+                            )?));
+                    }
+                    // Read here: a body put after this commit is not its receipt.
+                    Landed::Base(self.base_receipt_in_txn(&plan, wtxn)?)
                 }
                 WitnessSink::Overlay(overlay) => {
                     let (segment, aliases) =
@@ -320,6 +472,11 @@ impl Memory<'_> {
             if let WitnessSink::Base(base) = &sink
                 && let Some(route) = base.route
             {
+                // A room on record saves into its saver's vault only while
+                // they hold it in the room, whoever speaks (ARCH-0052 D5).
+                if let Some(saver) = &saver {
+                    saver.in_txn(wtxn)?;
+                }
                 route.revalidate()?;
             }
             Ok(landed)
@@ -327,7 +484,21 @@ impl Memory<'_> {
 
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
-            Landed::Base => self.base_receipt(&plan),
+            Landed::Base(receipt) => {
+                // A room on record took this turn into base; a copy of the
+                // talk reads its messages there.
+                if let Some(session) = on_record_session {
+                    let messages: Vec<(EntityId, u64, &[u8])> = plan
+                        .messages
+                        .iter()
+                        .map(|planned| {
+                            (planned.id, planned.occurred.start, planned.body.as_slice())
+                        })
+                        .collect();
+                    session.note_on_record_messages(plan.turn_id, &messages);
+                }
+                Ok(receipt)
+            }
             Landed::Overlay { segment, aliases } => {
                 // The overlay segment and the base txn commit together: the
                 // segment applies staged rows only now, so a failure anywhere
@@ -346,10 +517,11 @@ impl Memory<'_> {
         turn: &'t WitnessTurn,
         landing: &Landing<'_, '_>,
         door: WitnessDoor,
+        admit: Option<Admit<'_>>,
     ) -> MemoryResult<WitnessPlan<'t>> {
         let ((conversation_id, conversation_is_new), (turn_id, turn_is_new)) = match landing {
             Landing::Base { continuation, .. } => {
-                self.resolve_base_containers(turn, *continuation, door)?
+                self.resolve_base_containers(turn, *continuation, door, admit)?
             }
             // The room's one shell; the TURN is fresh, or the host's
             // deterministic id, create-or-verified in the transaction.
@@ -379,32 +551,51 @@ impl Memory<'_> {
             ));
         }
 
+        let imported = match landing {
+            Landing::Base { imported, .. } => imported.cloned(),
+            Landing::Overlay { .. } => None,
+        };
         let mut messages = Vec::with_capacity(turn.messages.len());
-        for message in &turn.messages {
+        for (position, message) in turn.messages.iter().enumerate() {
             let id = id_from_optional_hex(self.vault, message.id.as_deref())?;
             let envelope = witness_message_envelope(message);
             let body = envelope.encode_body()?;
+            let at = imported
+                .as_ref()
+                .and_then(|stamp| stamp.message_occurred.get(position).copied())
+                .unwrap_or(turn.occurred_at);
             messages.push(PlannedMessage {
                 message,
                 id,
+                occurred: TimeRange { start: at, end: at },
                 envelope,
                 body,
             });
         }
+        // A witnessed row is learned as it occurs; an imported one when it is
+        // imported, whatever clock its source kept.
+        let learned_at = imported
+            .as_ref()
+            .map_or(turn.occurred_at, |stamp| stamp.imported_at);
+        let conversation_body = match &imported {
+            Some(stamp) => stamp.conversation_body.clone(),
+            None => encode_rmpv(&Value::Map(Vec::new()))?,
+        };
         Ok(WitnessPlan {
             turn,
             occurred: TimeRange {
                 start: turn.occurred_at,
                 end: turn.occurred_at,
             },
-            learned_at: turn.occurred_at,
+            learned_at,
             conversation_id,
             conversation_is_new,
-            conversation_body: encode_rmpv(&Value::Map(Vec::new()))?,
+            conversation_body,
             turn_id,
             turn_is_new,
             speaker,
             messages,
+            imported,
         })
     }
 
@@ -454,6 +645,13 @@ impl Memory<'_> {
             plan.speaker,
             person_author,
         )?;
+        validate_container_provenance(
+            dbs,
+            wtxn,
+            plan.imported.as_ref().map(|stamp| stamp.source),
+            &plan.conversation_id,
+            existing_turn.as_ref(),
+        )?;
         // Expected present and gone (a concurrent delete). Recreating it here
         // would silently mint the turn the caller asked to append to.
         if existing_turn.is_none() && !plan.turn_is_new {
@@ -463,6 +661,8 @@ impl Memory<'_> {
         }
         let mut message_exists = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
+            let attributed =
+                plan.imported.is_none() && planned.message.author != WitnessAuthor::System;
             message_exists.push(validate_existing_witness_message(
                 dbs,
                 wtxn,
@@ -470,8 +670,7 @@ impl Memory<'_> {
                 &planned.body,
                 &plan.turn_id,
                 &plan.conversation_id,
-                planned.message.author,
-                &self.actor,
+                attributed.then_some(self.actor),
             )?);
         }
         let turn = match existing_turn {
@@ -501,7 +700,10 @@ impl Memory<'_> {
             // the turn's role.
             None => match plan.speaker {
                 Some(speaker) => AdmittedTurn::Mint {
-                    body: encode_witness_turn_body(speaker, person_author)?,
+                    body: match &plan.imported {
+                        Some(stamp) => encode_imported_turn_body(speaker, stamp.source)?,
+                        None => encode_witness_turn_body(speaker, person_author)?,
+                    },
                 },
                 None => {
                     return Err(MemoryError::bad_request(
@@ -516,6 +718,43 @@ impl Memory<'_> {
             message_exists,
         })
     }
+}
+
+/// Imported and witnessed speech never share a container. An imported turn
+/// lands only in a conversation and a turn of its own source: their ids derive
+/// from public source ids, so a plain writer could claim one first, and
+/// imported rows appended there would read as live words. A witnessed turn
+/// never lands in an imported conversation or turn, where the Dreamer would
+/// read live words as imported evidence. `source` is the landing's import
+/// source, `None` for a witnessed turn.
+fn validate_container_provenance(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    source: Option<&str>,
+    conversation_id: &EntityId,
+    existing_turn: Option<&EntityRecord>,
+) -> MemoryResult<()> {
+    let expected = source.map_or(ImportStamp::Live, |source| {
+        ImportStamp::Imported(source.to_owned())
+    });
+    let matches = |body: &[u8]| import_stamp(body) == expected;
+    let refusal = |container: &str| {
+        MemoryError::bad_request(match source {
+            Some(_) => {
+                format!("an imported turn joins only a {container} imported from the same source")
+            }
+            None => format!("a witnessed turn does not join an imported {container}"),
+        })
+    };
+    if let Some(conversation) = dbs.port_entity_record(txn, conversation_id)?
+        && !matches(&conversation.body)
+    {
+        return Err(refusal("conversation"));
+    }
+    if existing_turn.is_some_and(|turn| !matches(&turn.body)) {
+        return Err(refusal("turn"));
+    }
+    Ok(())
 }
 
 /// A receipt type is host-owned, not an extra vocabulary choice for callers.

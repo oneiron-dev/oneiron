@@ -139,11 +139,6 @@ For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.m
 matching path under `crates/oneiron/`. Read only matching rows or a narrow line range;
 do not load large crate maps (especially `docs/codemap/oneiron.md`) whole.
 
-The generator and verification CLI have dependency-free fixture tests (no Cargo builds):
-
-    python3 -m unittest discover -s scripts/tests -p test_codemap.py -v
-    python3 -m unittest discover -s scripts/tests -p test_verify.py -v
-
 Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present):
 
     rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files

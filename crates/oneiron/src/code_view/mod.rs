@@ -139,7 +139,7 @@ impl<'a> CodeViewSet<'a> {
             fork_hash: mount.snapshot().fork_hash,
             files,
         };
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             VIEW_RECEIPTS.put(&self.vault.store, txn, &view_id, &receipt)?;
             Ok(())
         })?;
@@ -228,7 +228,7 @@ impl<'a> CodeViewSet<'a> {
             }
         }
         let outcome = serde_json::json!({"hit":leg.receipt.cache_hit,"producer":leg.receipt.producer_ref,"action":leg.cached.action_key.to_hex()});
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             VIEW_BUILD_OUTCOMES.put(
                 &self.vault.store,
                 txn,

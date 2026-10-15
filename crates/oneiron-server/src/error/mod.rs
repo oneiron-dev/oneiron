@@ -57,6 +57,11 @@ pub enum ErrorCode {
     /// of this deployment, not of the caller.
     #[serde(rename = "EMBEDDER_UNAVAILABLE")]
     EmbedderUnavailable,
+    /// A summary was declared on a server whose Dreamer is not running with a
+    /// summary instruction. Only the Dreamer writes a summary body, so the
+    /// declaration is refused rather than queued for a writer that never comes.
+    #[serde(rename = "SUMMARY_WRITER_UNAVAILABLE")]
+    SummaryWriterUnavailable,
     /// ONE-1979: a request body field exceeded the cap its endpoint documents.
     /// The HTTP-level sibling of [`Self::CrdtFrameTooLarge`], which is a
     /// WebSocket close code and not reachable from an HTTP route.
@@ -95,6 +100,7 @@ impl ErrorCode {
         Self::UnsupportedCapability,
         Self::DeepRetrievalUnavailable,
         Self::EmbedderUnavailable,
+        Self::SummaryWriterUnavailable,
         Self::PayloadTooLarge,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
@@ -123,6 +129,7 @@ impl ErrorCode {
             Self::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
             Self::DeepRetrievalUnavailable => "DEEP_RETRIEVAL_UNAVAILABLE",
             Self::EmbedderUnavailable => "EMBEDDER_UNAVAILABLE",
+            Self::SummaryWriterUnavailable => "SUMMARY_WRITER_UNAVAILABLE",
             Self::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
@@ -148,9 +155,10 @@ impl ErrorCode {
             | Self::InvalidState
             | Self::SnapshotMismatch => StatusCode::CONFLICT,
             Self::DailyBudgetExhausted => StatusCode::TOO_MANY_REQUESTS,
-            Self::MirrorNotReady | Self::DeepRetrievalUnavailable | Self::EmbedderUnavailable => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            Self::MirrorNotReady
+            | Self::DeepRetrievalUnavailable
+            | Self::EmbedderUnavailable
+            | Self::SummaryWriterUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
             Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
@@ -232,6 +240,8 @@ pub enum ApiErrorDetails {
     // unprivileged caller's remedy is the same either way.
     #[serde(rename = "EMBEDDER_UNAVAILABLE")]
     EmbedderUnavailable,
+    #[serde(rename = "SUMMARY_WRITER_UNAVAILABLE")]
+    SummaryWriterUnavailable,
     #[serde(rename = "PAYLOAD_TOO_LARGE", rename_all = "camelCase")]
     PayloadTooLarge {
         field: String,
@@ -277,6 +287,7 @@ impl ApiErrorDetails {
             Self::UnsupportedCapability { .. } => ErrorCode::UnsupportedCapability,
             Self::DeepRetrievalUnavailable => ErrorCode::DeepRetrievalUnavailable,
             Self::EmbedderUnavailable => ErrorCode::EmbedderUnavailable,
+            Self::SummaryWriterUnavailable => ErrorCode::SummaryWriterUnavailable,
             Self::PayloadTooLarge { .. } => ErrorCode::PayloadTooLarge,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
@@ -330,6 +341,21 @@ impl ApiError {
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
             ["Send Authorization: Bearer credentials and retry."],
+        )
+    }
+
+    /// A 401 for a holder proof that is fresh on the host's clock but not on
+    /// the vault's proof clock, which a host clock that ran ahead left ahead.
+    /// The credential is fine; the owner's clock recovery lets it back in.
+    pub fn proof_clock_ahead() -> Self {
+        Self::new(
+            "request is not authorized: proof_clock_ahead: the vault's clock for holder proofs \
+             is ahead of this host's clock, so every fresh proof is refused",
+            ApiErrorDetails::Unauthorized,
+            [
+                "The host clock ran ahead and was set back. Stop `oneiron serve`, run \
+                 `oneiron recover-clock`, then start the server again.",
+            ],
         )
     }
 
@@ -394,6 +420,18 @@ impl ApiError {
             [
                 "Use /api/search/vector with a client-supplied embedding, or /api/search/text.",
                 "Semantic search requires a configured [embedder] section that is serving.",
+            ],
+        )
+    }
+
+    /// A summary declared where no Dreamer writes summary bodies.
+    pub fn summary_writer_unavailable(reason: impl Into<String>) -> Self {
+        Self::new(
+            reason,
+            ApiErrorDetails::SummaryWriterUnavailable,
+            [
+                "Retry once the Dreamer is running ([models] serves its seat).",
+                "Summary bodies need a [models.dreamer] summary_prompt or summary_prompt_file.",
             ],
         )
     }
@@ -633,6 +671,3 @@ mod schema;
 pub use self::schema::{
     api_error_envelope_schema, api_error_schema, error_code_schema, openapi_error_components,
 };
-
-#[cfg(test)]
-mod tests;

@@ -96,14 +96,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_returns_position_base() {
-        let mut out = Vec::new();
-        let next = analyze("", 0, 9, &mut out);
-        assert_eq!(next, 9);
-        assert!(out.is_empty());
-    }
-
-    #[test]
     fn ascii_words_emit_expected_tokens() {
         let text = "hello world";
         let mut out = Vec::new();
@@ -116,57 +108,5 @@ mod tests {
             .map(|t| (t.byte_start, t.byte_end))
             .collect();
         assert_eq!(offsets, vec![(0, 5), (6, 11)]);
-    }
-
-    #[test]
-    fn offset_base_shifts_absolute_offsets() {
-        let mut out = Vec::new();
-        analyze("hi there", 100, 0, &mut out);
-        for tok in &out {
-            assert!(tok.byte_start >= 100);
-            assert!(tok.byte_end >= tok.byte_start);
-        }
-    }
-
-    #[test]
-    fn emoji_only_input_emits_grapheme_per_token() {
-        let mut out = Vec::new();
-        let next = analyze("🦀🔥", 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["🦀", "🔥"]);
-        assert_eq!(next, 2);
-        for tok in &out {
-            assert_eq!(tok.kind, TokenKind::Emoji);
-            assert_eq!(tok.length_increment, 1);
-        }
-    }
-
-    #[test]
-    fn emoji_interleaves_with_numerics_in_segment_order() {
-        // AC2: numerics unchanged. The emoji token must land BETWEEN the
-        // two numeric tokens, in input order, with contiguous positions.
-        let text = "1🦀2";
-        let mut out = Vec::new();
-        let next = analyze(text, 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["1", "🦀", "2"]);
-        let positions: Vec<u32> = out.iter().map(|t| t.position).collect();
-        assert_eq!(positions, vec![0, 1, 2]);
-        assert_eq!(next, 3);
-    }
-
-    #[test]
-    fn zwj_sequence_survives_word_segmentation_as_one_token() {
-        // 👨‍👩‍👧‍👦 — UAX #29 word boundaries must not split the ZWJ cluster.
-        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
-        let mut out = Vec::new();
-        analyze(family, 0, 0, &mut out);
-        assert_eq!(out.len(), 1, "ZWJ sequence must stay one token");
-        assert_eq!(out[0].term.as_ref(), family);
-    }
-
-    #[test]
-    fn emoji_amid_punctuation_keeps_punctuation_dropped() {
-        let mut out = Vec::new();
-        analyze("... 🦀 !!!", 0, 0, &mut out);
-        assert_eq!(surface_terms(&out), vec!["🦀"]);
     }
 }

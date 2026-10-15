@@ -348,6 +348,9 @@ pub struct NapiRecallScope {
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
+    /// Registry kinds to return; unset returns every kind but
+    /// conversations, sessions, facets and worlds.
+    pub kinds: Option<Vec<String>>,
 }
 
 /// One BM25 hit (engine index scores).
@@ -394,7 +397,8 @@ pub struct NapiNeighborHit {
 pub struct NapiMemoryProvenance {
     /// Claim source string, or `record` for structural records.
     pub source: String,
-    /// This revision plus superseded ancestors.
+    /// This revision plus superseded ancestors; a TURN's also names the
+    /// messages its text is read from.
     pub source_revision_ids: Vec<String>,
     /// Evidence TURN ids.
     pub evidence_turn_ids: Vec<String>,
@@ -403,8 +407,10 @@ pub struct NapiMemoryProvenance {
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
-    /// Short ref, hydratable via `hydrate`.
+    /// Short ref, hydratable via `hydrate`; never revision-qualified.
     pub short_id: String,
+    /// The revision the item was read at; `shortId@sourceRevisionRef` hydrates it.
+    pub source_revision_ref: Option<String>,
     /// Registry kind string.
     pub kind: String,
     /// Predicate (claims only).
@@ -423,6 +429,20 @@ pub struct NapiMemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
+    /// For a TURN item, the messages whose words the query matched, best first.
+    pub cited_messages: Vec<NapiCitedMessage>,
+    /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
+    /// the reader may read that conversation.
+    pub conversation_id: Option<String>,
+}
+
+/// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
+#[napi(object)]
+pub struct NapiCitedMessage {
+    /// The message's short ref, the one its witness receipt returned.
+    pub short_id: String,
+    /// The message's text.
+    pub value_text: String,
 }
 
 /// Scope honesty (S6).
@@ -445,6 +465,21 @@ pub struct NapiRetrievalMeta {
     pub deep_pending: Option<bool>,
     /// Retrieval ended before all requested stages completed.
     pub partial: bool,
+    /// Time phrases read from the query and what recall did with each.
+    pub temporal_hints: Vec<NapiTemporalHint>,
+}
+
+/// One time phrase read from a recall query.
+#[napi(object)]
+pub struct NapiTemporalHint {
+    /// The phrase, lowercased with punctuation dropped.
+    pub phrase: String,
+    /// `used` narrowed the window; `unresolved` and `future` were skipped.
+    pub status: String,
+    /// Inclusive Unix-second start, when the phrase resolved.
+    pub start: Option<i64>,
+    /// Inclusive Unix-second end, when the phrase resolved.
+    pub end: Option<i64>,
 }
 
 /// The S6 memory pack (`packVersion: 1`).

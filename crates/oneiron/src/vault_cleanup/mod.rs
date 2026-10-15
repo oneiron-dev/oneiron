@@ -84,6 +84,7 @@ use crate::error::{Error, Result};
 
 mod cleanup_types;
 mod codec_receipts;
+mod owner_doors;
 mod person_provenance;
 mod proposals_archive;
 mod retention;
@@ -110,6 +111,7 @@ pub use self::tripwire::{
     run_vault_cleanup, scan_cleanup_candidates, set_cleanup_posture, zero_live_members,
 };
 
+pub(crate) use self::cleanup_types::MAX_CLEANUP_SCAN_ROWS;
 pub(crate) use self::codec_receipts::cleanup_receipts;
 pub(crate) use self::tripwire::zero_live_members_in_txn;
 pub(crate) use visibility::is_archived_in_txn;
@@ -117,8 +119,7 @@ pub(crate) use visibility::is_archived_in_txn;
 use self::cleanup_types::{
     DIGEST_ROW_LABEL, DIGEST_SCHEMA_VERSION, KEY_ARCHIVED, KEY_AT, KEY_ATTEMPT, KEY_CANDIDATES,
     KEY_CREATED_AT, KEY_DECISION, KEY_ENTITY, KEY_KIND, KEY_POSTURE, KEY_PROPOSAL,
-    KEY_SCHEMA_VERSION, KEY_SKIPPED, MAX_CLEANUP_SCAN_ROWS, PROPOSAL_ROW_LABEL,
-    PROPOSAL_SCHEMA_VERSION,
+    KEY_SCHEMA_VERSION, KEY_SKIPPED, PROPOSAL_ROW_LABEL, PROPOSAL_SCHEMA_VERSION,
 };
 use self::codec_receipts::{
     decode_proposal, decode_row, encode_row, field, fresh_row_id, id_list, id_value_list,
@@ -149,7 +150,7 @@ use crate::deletion::{ARCHIVE_TOMBSTONE_PREFIX, DeleteReason, TombstoneReason};
 #[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 #[cfg(test)]
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
 #[cfg(test)]
@@ -161,4 +162,6 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
-pub(crate) use attempt_retention::{attempt_is_archived, restore_task_attempts};
+pub(crate) use attempt_retention::{
+    attempt_is_archived, forget_archived_attempt_in_txn, restore_task_attempts,
+};

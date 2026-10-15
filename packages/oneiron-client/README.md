@@ -34,7 +34,7 @@ cannot run TypeScript should take the curl lane (`oneiron api …` or plain
 import { HttpBaseClient } from "@oneiron/client";
 
 const client = new HttpBaseClient({
-  baseUrl: "http://127.0.0.1:3000",
+  baseUrl: "http://127.0.0.1:9090",
   secret: process.env.ONEIRON_SECRET, // placeholder credential from the environment
 });
 
@@ -76,10 +76,6 @@ Three consumers share one wire contract; two of them share this artifact.
 2. **Native TypeScript worker** — imports `HttpBaseClient` from this package.
 3. **npm-capable external agent** — installs the published package and imports
    it through the same public `exports` map.
-
-`tests/consumers.test.ts` proves consumers 2 and 3 resolve the same package root
-and the same `HttpBaseClient` implementation: one artifact, not a fork per
-consumer.
 
 ## Development
 

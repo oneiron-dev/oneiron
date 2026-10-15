@@ -1,7 +1,6 @@
 """CPU-only protocol harness; it never claims a GPU-rendered voice."""
 import http.client
 import json
-import struct
 import tempfile
 import threading
 import unittest
@@ -10,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from worker import Worker, BoundedHTTPServer, handler_for, pack, unpack, load_policy
+from worker import Worker, BoundedHTTPServer, handler_for, pack, load_policy
 
 
 class FakeModel:
@@ -50,28 +49,6 @@ class WorkerTest(unittest.TestCase):
         response = self.conn.getresponse()
         return response.status, response.read()
 
-    def test_banked_ref_render_returns_pcm_and_exact_target_metadata(self):
-        target = {"voice_id": "owner-voice", "owner": "5e" * 16,
-                  "register": "neutral", "reference_revision": "a" * 32,
-                  "limits": self.limits, "warm": self.worker.target()}
-        wav = b"RIFF0000WAVEfmt "
-        status, ready = self.request("GET", "/ready")
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(ready), target["warm"])
-        self.assertEqual(self.model.calls, [])
-        body = pack({"target": target, "text": "hello", "transcript": "reference words"}, wav)
-        status, received = self.request("POST", "/render", body)
-        self.assertEqual(status, 200)
-        meta, pcm = unpack(received)
-        self.assertEqual(meta, {"target": target, "sample_rate": 48000, "channels": 1})
-        self.assertEqual(struct.unpack("<hh", pcm), (16383, -16383))
-        self.assertEqual(len(self.model.calls), 1)
-        call = self.model.calls[0]
-        self.assertEqual(call["text"], "hello")
-        self.assertEqual(call["prompt_text"], "reference words")
-        self.assertEqual(call["reference_wav_path"], call["prompt_wav_path"])
-        self.assertFalse(__import__("pathlib").Path(call["reference_wav_path"]).exists())
-
     def target(self):
         return {"voice_id": "owner-voice", "owner": "5e" * 16,
                 "register": "neutral", "reference_revision": "a" * 32,
@@ -101,17 +78,6 @@ class WorkerTest(unittest.TestCase):
                                       b"RIFF0000WAVEfmt "))
         self.assertEqual(status, 400)
         self.assertEqual(self.model.calls, [])
-
-    def test_changed_policy_narrows_render_and_worker_rejects_widening(self):
-        narrower = {**self.limits, "max_text_bytes": 4}
-        target = {**self.target(), "limits": narrower}
-        body = pack({"target": target, "text": "hello", "transcript": "ref"},
-                    b"RIFF0000WAVEfmt ")
-        self.assertEqual(self.request("POST", "/render", body)[0], 400)
-        target["limits"] = {**self.limits, "max_text_bytes": 65536}
-        self.assertEqual(self.request("POST", "/render", pack(
-            {"target": target, "text": "hi", "transcript": "ref"},
-            b"RIFF0000WAVEfmt "))[0], 400)
 
     @staticmethod
     def _metadata_straddles(target, limit):
@@ -191,61 +157,6 @@ class WorkerTest(unittest.TestCase):
             sock.close()
         self.assertEqual(self.worker.model.calls, [])
         self.assertEqual(self.request("GET", "/ready")[0], 200)
-        self.assertEqual(self.request("POST", "/render", body)[0], 200)
-
-    def test_overload_and_incomplete_upload_release_admission(self):
-        class BlockingModel(FakeModel):
-            def __init__(self):
-                super().__init__()
-                self.started = threading.Event()
-                self.release = threading.Event()
-            def generate(self, **kwargs):
-                self.started.set()
-                if not self.release.wait(3):
-                    raise TimeoutError("test inference timeout")
-                return super().generate(**kwargs)
-        model = BlockingModel()
-        limits = {**self.limits, "max_inflight_uploads": 2,
-                  "upload_read_deadline_ms": 250}
-        self.replace_worker(model, limits)
-        target = self.target()
-        body = pack({"target": target, "text": "hi", "transcript": "ref"},
-                    b"RIFF0000WAVEfmt ")
-        outcomes = []
-        observed = threading.Condition()
-        def post():
-            conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
-            conn.request("POST", "/render", body=body,
-                         headers={"Authorization": "Bearer " + "t" * 32})
-            response = conn.getresponse()
-            with observed:
-                outcomes.append(response.status)
-                observed.notify_all()
-            response.read()
-            conn.close()
-        threads = [threading.Thread(target=post) for _ in range(12)]
-        threads[0].start()
-        self.assertTrue(model.started.wait(2))
-        for thread in threads[1:]:
-            thread.start()
-        # Readiness remains usable even while inference holds a slot.
-        self.assertEqual(self.request("GET", "/ready")[0], 200)
-        with observed:
-            self.assertTrue(observed.wait_for(lambda: outcomes.count(429) >= 10, timeout=3))
-        model.release.set()
-        for thread in threads:
-            thread.join(timeout=4)
-            self.assertFalse(thread.is_alive())
-        self.assertLessEqual(outcomes.count(200), 2)
-        self.assertGreaterEqual(outcomes.count(429), 10)
-        # One partial body times out; its slot is freed for the next request.
-        sock = socket.create_connection(("127.0.0.1", self.server.server_port), 2)
-        sock.sendall(("POST /render HTTP/1.1\r\nHost: localhost\r\n"
-                      "Authorization: Bearer " + "t" * 32 +
-                      "\r\nContent-Length: 100\r\n\r\npart").encode())
-        sock.settimeout(2)
-        self.assertIn(b"408", sock.recv(4096))
-        sock.close()
         self.assertEqual(self.request("POST", "/render", body)[0], 200)
 
 

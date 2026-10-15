@@ -117,7 +117,7 @@ impl Vault {
         let payload = series_payload(record)?;
         let candidate = commitment_claim_candidate(record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             self.batch_in()
                 .claim_candidate(id, candidate, envelope, valid_time, learned_at)
                 .apply(wtxn)?;
@@ -155,7 +155,7 @@ impl Vault {
         let payload = series_payload(new_record)?;
         let candidate = commitment_claim_candidate(new_record)?
             .with_validity(Some(valid_time.start), Some(valid_time.end));
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             self.batch_in()
                 .claim_candidate(new_id, candidate, envelope, valid_time, learned_at)
                 .apply(wtxn)?;
@@ -190,7 +190,7 @@ impl Vault {
         &self,
         now: u64,
     ) -> ScheduleResult<CommitmentProjectionReport> {
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             let due = self.store.commitment_due_entries_through_in_txn(
                 &*wtxn,
                 now,
@@ -230,7 +230,7 @@ impl Vault {
         envelope: &WriteEnvelope,
         closed_at: u64,
     ) -> ScheduleResult<Vec<EntityId>> {
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             let Some(closed) = self.closed_instance_in_txn(&*wtxn, instance_ref, outcome)? else {
                 // Either the claim is gone (rows outliving it is exactly the
                 // crash this repairs) or it is not a CMT-2 instance at all.

@@ -30,6 +30,29 @@ fn permit_room_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {
     permit_room_reads_with_types(vault, actors, None)
 }
 
+/// One unrestricted-scope `core:read` row per actor, each limited to the
+/// entity kinds given beside it.
+fn permit_reads_by_actor(vault: &Vault, rows: &[(EntityId, &[u8])]) -> Result<()> {
+    let bytes = crate::gate::default_policy_manifest().unwrap();
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("policy");
+    manifest["scoped_grants"] = rows
+        .iter()
+        .map(|(actor, types)| {
+            serde_json::json!({
+                "actor_ref": actor.to_hex(), "effector": "core:read",
+                "scope": serde_json::to_value(crate::federation::scope_codec::read_preset()).unwrap(),
+                "receipt_required": false,
+                "selectors": {"entity_types": types},
+            })
+        })
+        .collect();
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).expect("encode policy"),
+    )
+}
+
 fn permit_room_reads_with_types(
     vault: &Vault,
     actors: &[EntityId],
@@ -83,6 +106,7 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     // The ordinary Conversation ledger is not the PROJECT roster source.
     assert!(vault.members(room)?.is_empty());
     vault.bind_room_handle(room, "@companion", a)?;
+    permit_room_reads(&vault, &[owner, a, b])?;
     let user = vault.memory(owner, EdgeActorClass::Human);
     let first = vault.memory(a, EdgeActorClass::Agent);
     let other = vault.memory(b, EdgeActorClass::Agent);
@@ -138,6 +162,235 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     Ok(())
 }
 
+/// Greptile on #1312: membership is no read grant. A member whose own
+/// `core:read` grant leaves TURN out reads no room turn, and while it sits in
+/// the room a turn another member runs there shows none either: a room turn
+/// reads only what every member may read. Granting it TURN brings the
+/// history back.
+#[test]
+fn room_history_needs_the_readers_own_grant() -> Result<()> {
+    use crate::registry::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
+        ENTITY_TYPE_TURN,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    let agent = EntityId::now();
+    for actor in [leader, agent] {
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"room participant",
+        )?;
+    }
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1)?;
+    // The leader is the vault's owner and the agent's contact clears
+    // everything, so only grants decide what the room reads. Binding roots
+    // the vault, so it follows the project's implicit birth.
+    crate::test_util::clear_test_contact(&vault, agent);
+    vault
+        .ensure_host_root_slip(&crate::test_util::test_host_issuer())
+        .expect("host root");
+    crate::test_util::bind_test_owner(&vault, leader);
+    let room = EntityId::from_hex(&spec.home_room)?;
+    let every_kind = [
+        ENTITY_TYPE_CONVERSATION,
+        ENTITY_TYPE_TURN,
+        ENTITY_TYPE_MESSAGE,
+        ENTITY_TYPE_CLAIM,
+        ENTITY_TYPE_PERSON,
+    ];
+    let grant = |agent_kinds: &[u8]| {
+        permit_reads_by_actor(&vault, &[(leader, &every_kind[..]), (agent, agent_kinds)])
+    };
+    grant(&[
+        ENTITY_TYPE_CONVERSATION,
+        ENTITY_TYPE_MESSAGE,
+        ENTITY_TYPE_CLAIM,
+        ENTITY_TYPE_PERSON,
+    ])?;
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    host.rooms_speak(&turn(
+        room,
+        EntityId::now(),
+        WitnessAuthor::User,
+        serde_json::json!({}),
+        2,
+    ))
+    .expect("speak");
+    let peer = vault.memory(agent, EdgeActorClass::Agent);
+    assert!(peer.rooms_messages(room).expect("peer history").is_empty());
+    assert!(peer.room_head(room).expect("peer head").is_none());
+    let in_room = host.for_room_turn(room).expect("open room turn");
+    assert!(in_room.rooms_messages().expect("turn history").is_empty());
+    assert_eq!(host.rooms_messages(room).expect("own history").len(), 1);
+    grant(&every_kind)?;
+    // The turn is back. A message id rides with it only when the read admits
+    // that message too: the agent's own read here, and inside the turn every
+    // member's.
+    let rows = peer.rooms_messages(room).expect("peer history");
+    assert_eq!(rows.len(), 1);
+    for id in &rows[0].message_ids {
+        assert!(peer.get_entity(id).expect("message read").value.is_some());
+    }
+    assert_eq!(in_room.rooms_messages().expect("turn history").len(), 1);
+    Ok(())
+}
+
+/// A reader whose credential names a thread's replies but not its root
+/// still reads the room's other threads: the cut chain drops out of the
+/// thread fold instead of failing it.
+#[test]
+fn a_thread_cut_by_the_readers_credential_leaves_the_rest_readable() -> Result<()> {
+    use crate::authority::{HostSlipIssuer, SlipCaveat};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    vault.put_entity(
+        &leader,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room leader",
+    )?;
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    vault.put_project(project, &spec, 1)?;
+    let room = EntityId::from_hex(&spec.home_room)?;
+    // One trunk turn with two threads. The cut thread's root is answered by
+    // a reply, which a nested reply answers in turn.
+    let trunk = EntityId::now();
+    let cut_root = EntityId::now();
+    let reply = EntityId::now();
+    let nested = EntityId::now();
+    let other_root = EntityId::now();
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            cut_root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+        (
+            reply,
+            serde_json::json!({"room_reply_to": cut_root.to_hex()}),
+            4,
+        ),
+        (
+            nested,
+            serde_json::json!({"room_reply_to": reply.to_hex()}),
+            5,
+        ),
+        (
+            other_root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            6,
+        ),
+    ] {
+        host.rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .expect("speak");
+    }
+    // The leader's credential names every turn but the cut thread's root.
+    let issuer = HostSlipIssuer::from_secret(b"room thread cut")?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(leader.as_bytes()).as_bytes();
+    claims.holder_ref = leader.to_hex();
+    claims.actor_class = Some("human".into());
+    let mut slip = vault.mint_capability_slip(&issuer, claims)?;
+    issuer.attenuate(
+        &mut slip,
+        SlipCaveat {
+            records: Some(
+                [trunk, reply, nested, other_root]
+                    .iter()
+                    .map(EntityId::to_hex)
+                    .collect(),
+            ),
+            ..Default::default()
+        },
+    )?;
+    let binding = issuer.binding_proof(&slip, b"room read")?;
+    let proof =
+        vault.verify_capability_slip(&issuer.public_key(), &slip, b"room read", &binding)?;
+    let reader = vault
+        .memory(leader, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    assert!(
+        reader
+            .rooms_messages(room)
+            .expect("history")
+            .iter()
+            .any(|row| row.turn_id == trunk.to_hex()),
+        "the credential reads the room's turns"
+    );
+    assert_eq!(
+        reader.rooms_find_threads(room, None, 8).expect("threads"),
+        vec![other_root]
+    );
+    assert!(
+        reader
+            .rooms_get_thread(room, other_root)
+            .expect("thread")
+            .is_some()
+    );
+    reader.rooms_trunk(room, trunk).expect("trunk");
+    Ok(())
+}
+
+/// History is loaded only from a snapshot in which the reader still belongs
+/// to the room, so a turn posted after its removal never reaches it.
+#[test]
+fn a_removed_member_loads_no_later_history() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    let agent = EntityId::now();
+    for actor in [leader, agent] {
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"room participant",
+        )?;
+    }
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1)?;
+    let room = EntityId::from_hex(&spec.home_room)?;
+    permit_room_reads(&vault, &[leader, agent])?;
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    let peer = vault.memory(agent, EdgeActorClass::Agent);
+    let speak = |at| {
+        host.rooms_speak(&turn(
+            room,
+            EntityId::now(),
+            WitnessAuthor::User,
+            serde_json::json!({}),
+            at,
+        ))
+        .expect("speak")
+    };
+    speak(2);
+    assert_eq!(peer.history_after(room, None, 8).expect("history").len(), 1);
+    spec.roster.retain(|member| *member != agent.to_hex());
+    vault.put_project(project, &spec, 2)?;
+    speak(3);
+    assert!(peer.history_after(room, None, 8).is_err());
+    Ok(())
+}
+
 #[test]
 fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -159,6 +412,7 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let other_record = ProjectRecord::new(other_project, Some(root), root, owner)?;
     vault.put_project(other_project, &other_record, 1)?;
     let other_room = EntityId::from_hex(&other_record.home_room)?;
+    permit_room_reads(&vault, &[owner])?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
     vault.bind_room_handle(room, "@owner", owner)?;
     let mut turns = Vec::new();
@@ -413,6 +667,17 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
         }]
     );
     assert_eq!(folded.quiet.rows[0].result_header, Some(result));
+    // Read directly, the trunk and its header are the owner's own read. A
+    // room turn holds them to P7 under its members' clearances as well, and
+    // neither member here is anyone the vault knows: public only.
+    assert!(
+        human
+            .for_room_turn(room)
+            .unwrap()
+            .memory()
+            .rooms_trunk(room, trunk)
+            .is_err()
+    );
     // A TASK-only grant must not reveal the referenced TURN or its header.
     permit_room_reads_with_types(
         &vault,
@@ -587,6 +852,111 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
             .headers
             .contains(&trunk_view.headers[0])
     );
+    Ok(())
+}
+
+/// Sol R7 F4: a room thread's rows and counts are derived from the TASKs on
+/// the thread and the results they delivered. Each projection lists those
+/// rows among the rows its answer was derived from, so a host judges the
+/// answer by them again before it leaves this device (DEC-0005).
+#[test]
+fn room_projections_list_the_tasks_and_results_they_count() -> Result<()> {
+    use crate::task_verb::{
+        TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = EntityId::now();
+    let agent = EntityId::from_bytes([0xE1; 16])?;
+    for actor in [owner, agent] {
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"room member",
+        )?;
+    }
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    )
+    .unwrap();
+    record.roster.push(agent.to_hex());
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, agent])?;
+    let worker = vault.memory(agent, EdgeActorClass::Agent);
+    let (trunk, root) = (EntityId::now(), EntityId::now());
+    let human = vault.memory(owner, EdgeActorClass::Human);
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+    ] {
+        human
+            .rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .unwrap();
+    }
+    let spec = TaskCreateSpec::new(
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("thread_ref"),
+            rmpv::Value::from(root.to_hex()),
+        )]),
+        None,
+        None,
+        Some(4),
+    )
+    .with_assignee(TaskAssignee::Dreamer);
+    let task = worker.tasks_create(&spec).unwrap().task_ref.unwrap();
+    let policy = RoomThreadPolicy {
+        now: 1_000_000,
+        fresh_for: 1,
+        rows_per_list: 4,
+        tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    let producers = crate::memory::ProducerRows::default();
+    let listing = vault
+        .memory(owner, EdgeActorClass::Human)
+        .listing_producers(&producers);
+    assert!(
+        listing
+            .rooms_render_threads(room, policy)
+            .unwrap()
+            .iter()
+            .any(|row| row.starts_with("threads active: 1"))
+    );
+    assert_eq!(producers.take(), vec![task]);
+    assert_eq!(
+        listing
+            .rooms_get_thread(room, root)
+            .unwrap()
+            .unwrap()
+            .open_tasks,
+        1
+    );
+    assert_eq!(producers.take(), vec![task]);
+
+    worker
+        .land_task_result(
+            task,
+            &TaskResultInput {
+                result_ref: trunk,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: 5,
+            },
+        )
+        .unwrap();
+    assert_eq!(listing.rooms_trunk(room, trunk).unwrap().headers.len(), 1);
+    assert_eq!(producers.take(), vec![task, trunk]);
     Ok(())
 }
 
@@ -791,6 +1161,134 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
     assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
     let due = projection.waiting.rows[0].waits[0].next_nudge.unwrap();
     assert!(due >= before + 30 && due <= crate::unix_seconds_now() + 30);
+    Ok(())
+}
+
+/// Wonder R10 F2: an ask's waits take their next notice from the ask's
+/// group, whose class comes from the TASK the ask names: a peer's from its
+/// ladder, a human's from the follow-up cursor that ladder set. A projection
+/// that shows the waits lists that TASK among the rows its answer was
+/// derived from, so a host judges the answer by it again before it leaves
+/// this device (DEC-0005). Wonder R11 F1, F2: once the TASK's world is
+/// device-local, a projection off this device, with or without a host to
+/// judge it, takes no notice from the ask; on this device it still does.
+#[test]
+fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
+    use crate::claim::CallerLocality;
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+        TaskAssignee, TaskCreateSpec,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let peer = EntityId::from_bytes([0xE2; 16])?;
+    let world = EntityId::now();
+    for (id, kind, body) in [
+        (peer, crate::registry::ENTITY_TYPE_PERSON, &b"room peer"[..]),
+        (world, crate::registry::ENTITY_TYPE_WORLD, b"world"),
+    ] {
+        vault.put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, body)?;
+    }
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    )
+    .unwrap();
+    record.roster.push(peer.to_hex());
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, peer])?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let (trunk, root) = (EntityId::now(), EntityId::now());
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+    ] {
+        memory
+            .rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .unwrap();
+    }
+    let class_task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("orchid errand"),
+            None,
+            None,
+            None,
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let before = crate::unix_seconds_now();
+    let mut members = Vec::new();
+    for (key, who) in [
+        ("peer", TaskAssignee::Peer { actor_ref: peer }),
+        ("human", TaskAssignee::Human { actor_ref: owner }),
+    ] {
+        let mut ask = TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Responder(who)),
+            TaskAskQuestion::new(ConsultPayloadRef::Turn(root)),
+            Some(before + 300),
+            TaskAskDefault::AskMe,
+        );
+        ask.intent_key = key.into();
+        ask.task_ref = Some(class_task);
+        ask.remind = Some(vec![30, 60]);
+        members.extend(memory.tasks_ask(&ask).unwrap().task_refs);
+    }
+    let policy = RoomThreadPolicy {
+        now: before + 100,
+        fresh_for: 1,
+        rows_per_list: 8,
+        tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    let notices = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let projection = vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .listing_producers(&producers)
+            .rooms_threads(room, policy)
+            .unwrap();
+        let mut notices = projection.waiting.rows[0]
+            .waits
+            .iter()
+            .map(|wait| (wait.kind, wait.next_nudge.is_some()))
+            .collect::<Vec<_>>();
+        notices.sort_by_key(|(kind, _)| *kind == RoomWaitKind::Ask);
+        (notices, producers.take())
+    };
+    let (portable, listed) = notices(CallerLocality::OffDevice);
+    assert_eq!(
+        portable,
+        vec![(RoomWaitKind::HumanTask, true), (RoomWaitKind::Ask, true)]
+    );
+    for row in members.iter().chain([&class_task]) {
+        assert!(listed.contains(row), "{listed:?}");
+    }
+
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    let (kept, listed) = notices(CallerLocality::OffDevice);
+    assert_eq!(
+        kept,
+        vec![(RoomWaitKind::HumanTask, false), (RoomWaitKind::Ask, false)]
+    );
+    assert!(!listed.contains(&class_task), "{listed:?}");
+    assert_eq!(notices(CallerLocality::OnDevice).0, portable);
     Ok(())
 }
 

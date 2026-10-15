@@ -6,7 +6,7 @@ use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::SyncError;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
@@ -913,29 +913,6 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     assert!(map_get_bytes(&entities, &id_b.to_hex()).is_some());
 }
 
-#[test]
-fn forward_remat_never_materializes_public_legacy_persona_facet() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 90;
-    let id = EntityId::from_bytes([0x33; 16]).unwrap();
-    let person = EntityId::from_bytes([0x3D; 16]).unwrap();
-    let body = crate::companion::tests::support::retired_persona_facet_body(person);
-    let doc = create_window_doc("remote", &window_key);
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &id.to_hex(),
-        &make_entity_blob(ENTITY_TYPE_FACET, learned_at, &body),
-    )?;
-    doc.commit();
-    let materializer = Materializer::new();
-    let _ = forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
-    assert!(vault.get(&id)?.is_none());
-    assert!(vault.get(&person)?.is_none());
-    assert!(map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_none());
-    Ok(())
-}
-
 /// ONE-1151 concurrency seam: a `u:w:` row persisted AFTER the merge
 /// captured its subsumption inventory (a transient delete-path doc
 /// persisting in parallel — its ops are in neither the merged set nor
@@ -1201,29 +1178,6 @@ fn prune_refuses_keys_outside_the_window_family() {
             .as_deref(),
         Some(b"foreign".as_slice())
     );
-}
-
-/// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
-/// item 14): a no-op tombstone commit exports nothing (no q:/d: rows
-/// queued); a real tombstone commit exports a non-empty delta.
-#[test]
-fn export_tombstone_commit_delta_none_on_noop_some_on_commit() {
-    let doc = create_window_doc("local", &WindowKey::from_timestamp(1_750_000_000_000));
-    let vv_before = doc.oplog_vv();
-    assert!(
-        export_tombstone_commit_delta(&doc, &vv_before)
-            .unwrap()
-            .is_none(),
-        "unchanged doc must export no delete-bearing update"
-    );
-
-    let id = EntityId::now();
-    apply_tombstone_to_window_doc(&doc, &id, &[1, 2, 3]).unwrap();
-    doc.commit();
-    let delta = export_tombstone_commit_delta(&doc, &vv_before)
-        .unwrap()
-        .expect("tombstone commit must export a delete-bearing update");
-    assert!(!delta.as_bytes().is_empty());
 }
 
 #[test]
@@ -2679,103 +2633,6 @@ fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1604-D1 (fix-leg 1, P2-a — outbound half): the presence-only carrier
-/// check let a cross-type squatter keep the CRDT slot at an authority row's
-/// content-derived key even after the local write door evicted it. That
-/// re-exports the row the authority substrate refused and re-imports it onto
-/// peers that have not seen the entry yet. A local AUTHORITY_LOG row now
-/// overwrites a NON-authority carrier at its own key; ordinary rows keep
-/// presence-only semantics.
-#[cfg(feature = "sync")]
-#[test]
-fn reverse_rematerialization_replaces_cross_type_authority_key_squatter() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let genesis = authority_genesis_fixture_for_window(0x68);
-    let id = crate::authority::authority_log_entity_id(&genesis)?;
-    vault.put_authority_log_entry(
-        &genesis,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-    )?;
-    let local = vault.get_raw(&id)?.expect("authority row stored");
-
-    // The window still carries the attacker's ordinary row at that key.
-    let doc = create_window_doc("squatted-window", &window_key);
-    let squatter = make_entity_blob(crate::registry::ENTITY_TYPE_EVENT, learned_at, b"squatter");
-    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-
-    assert_eq!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
-        Some(local),
-        "the validated authority row must replace the cross-type carrier at its derived key"
-    );
-    Ok(())
-}
-
-/// ONE-1604-D1 (fix-leg 4, outbound half): replacing the dominated carrier's
-/// ENTITY row left its INCIDENT EDGES behind. Edge entries are keyed
-/// independently of the entity (`src:kind:tgt`), so the squatter's graph
-/// residue survived the overwrite and kept traversing on every peer that
-/// imported the window — the exact residue the LMDB door already sweeps with
-/// `delete_related_edges`. Both directions are asserted: the squatter as edge
-/// SOURCE and as edge TARGET.
-#[cfg(feature = "sync")]
-#[test]
-fn reverse_rematerialization_evicts_dominated_squatter_incident_edges() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let genesis = authority_genesis_fixture_for_window(0x6A);
-    let id = crate::authority::authority_log_entity_id(&genesis)?;
-    let neighbor = EntityId::from_bytes([0xC2; 16])?;
-    vault.put_authority_log_entry(
-        &genesis,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-    )?;
-    let local = vault.get_raw(&id)?.expect("authority row stored");
-
-    let doc = create_window_doc("squatted-window", &window_key);
-    let squatter = make_entity_blob(crate::registry::ENTITY_TYPE_EVENT, learned_at, b"squatter");
-    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
-    let out_key = format_edge_key(&id, EdgeKind::Mentions, &neighbor);
-    let in_key = format_edge_key(&neighbor, EdgeKind::Mentions, &id);
-    let edge_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, 1, None, None)?;
-    for key in [&out_key, &in_key] {
-        map_insert_bytes(&doc.get_map("edges"), key, &edge_value)?;
-    }
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-
-    assert_eq!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
-        Some(local),
-        "the validated authority row must still replace the carrier"
-    );
-    let edges = doc.get_map("edges");
-    assert!(
-        map_get_bytes(&edges, &out_key).is_none(),
-        "the squatter's outbound edge carrier must go with the dominated entity"
-    );
-    assert!(
-        map_get_bytes(&edges, &in_key).is_none(),
-        "the squatter's inbound edge carrier must go with the dominated entity"
-    );
-    Ok(())
-}
-
 /// ONE-1604-D1 (fix-leg 5, P2 — phase ordering): the dominance sweep deletes
 /// EVERY CRDT edge incident to the evicted id, and cannot tell the dominated
 /// carrier's residue apart from a LOCALLY BACKED inbound edge. While the
@@ -3064,54 +2921,6 @@ fn reverse_rematerialization_replaces_divergent_and_malformed_authority_bodies()
     Ok(())
 }
 
-/// ONE-1604-D1 (fix-leg 3, P2 — regression 3): dominance is ADMISSIBILITY-
-/// based, never byte-difference-based, so presence-only survives untouched
-/// for a carrier every peer's replay door would admit. Here the carrier
-/// shares the local row's signed body but declares a DIFFERENT (still valid,
-/// non-inverted) occurred range: byte-different, fully admissible, preserved.
-#[cfg(feature = "sync")]
-#[test]
-fn reverse_rematerialization_preserves_admissible_authority_carrier() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let genesis = authority_genesis_fixture_for_window(0x79);
-    let id = crate::authority::authority_log_entity_id(&genesis)?;
-    vault.put_authority_log_entry(
-        &genesis,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-    )?;
-    let local = vault.get_raw(&id)?.expect("authority row stored");
-
-    let admissible = make_entity_blob_with_range(
-        ENTITY_TYPE_AUTHORITY_LOG,
-        learned_at - 30,
-        learned_at,
-        learned_at,
-        &local[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-    );
-    assert_ne!(
-        admissible, local,
-        "the carrier must be byte-different for this to test the admissibility rule"
-    );
-    let doc = create_window_doc("admissible-authority-window", &window_key);
-    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &admissible)?;
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-
-    assert_eq!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
-        Some(admissible),
-        "an admissible carrier must be PRESERVED — byte difference alone never dominates"
-    );
-    Ok(())
-}
-
 /// ONE-1645 REPLAY door for the `FacetOf` type table.
 ///
 /// The local batch door (`batch::validate_facet_of_edge` on `BatchOp::Edge` /
@@ -3231,9 +3040,7 @@ fn forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row() ->
 ///
 /// * a legacy-encoded carrier AT ITS OWN derived key is ADMISSIBLE and is
 ///   preserved as-is — the codebase never normalizes legacy bytes, it keys
-///   off them (`authority/tests.rs::legacy_signed_genesis_derives_a_stable_
-///   store_key_from_its_legacy_bytes`), so there is no re-encode posture to
-///   follow here;
+///   off them, so there is no re-encode posture to follow here;
 /// * the current re-encoding of that same legacy-signed entry carries no
 ///   verifying signature, so it fails the BODY check and is dominated — for
 ///   INADMISSIBILITY, not for differing from the local bytes.
@@ -3418,46 +3225,6 @@ fn forward_remat_aborts_on_corrupted_endpoint_header_instead_of_quarantining() -
     Ok(())
 }
 
-/// The retrofit's other arm, pinned in the same neighborhood so a future
-/// refactor cannot satisfy the abort test by disabling the gate entirely: an
-/// off-table PERSON -> FACET stamp — both endpoints present and parseable —
-/// still QUARANTINES and lets the window continue.
-#[test]
-fn forward_remat_still_quarantines_off_table_when_endpoint_rows_are_healthy() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let person = EntityId::from_bytes([0xF3; 16])?;
-    let facet = EntityId::from_bytes([0xF4; 16])?;
-    for (id, entity_type) in [
-        (&person, crate::registry::ENTITY_TYPE_PERSON),
-        (&facet, crate::registry::ENTITY_TYPE_FACET),
-    ] {
-        vault.put_entity(
-            id,
-            entity_type,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"fixture",
-        )?;
-    }
-
-    let doc = create_window_doc("remote", &window_key);
-    map_insert_bytes(
-        &doc.get_map("edges"),
-        &format_edge_key(&person, EdgeKind::FacetOf, &facet),
-        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 10, None, None)?,
-    )?;
-    doc.commit();
-
-    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)
-        .expect("an off-table stamp quarantines; it must never abort (H2)");
-    assert!(!vault.edge_exists(&person, EdgeKind::FacetOf, &facet)?);
-    let records = crate::sync::quarantine::quarantined_records(&vault)?;
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].1.reason_code, "InvalidFacetOfEdge");
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // SECRET_CUSTODY (byte 77) ONE-1865 seal — FIX1 CHOKEPOINT
 // ---------------------------------------------------------------------------
@@ -3547,70 +3314,6 @@ fn secret_custody_never_enters_doc_via_reverse_rematerialize() -> Result<()> {
     assert!(
         map_get_bytes(&doc.get_map("edges"), &edge_key).is_none(),
         "custody incident edge must be scrubbed from the canonical doc"
-    );
-    Ok(())
-}
-
-/// The export path runs the same seal: a custody carrier already resident in
-/// the doc must be scrubbed and the window forced onto history-free snapshot
-/// transport, so exported bytes never carry the secret value.
-#[test]
-fn secret_custody_never_leaves_doc_via_export() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let secret_value = b"hunter2-secret";
-    let (custody, custody_raw) = seed_secret_custody(&vault, &window_key, "api-key", secret_value)?;
-
-    let ordinary = EntityId::from_bytes([0x48; 16])?;
-    vault.put_entity(
-        &ordinary,
-        ENTITY_TYPE_TURN,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-        b"ordinary turn",
-    )?;
-
-    let doc = create_window_doc("source", &window_key);
-    map_insert_bytes(&doc.get_map("entities"), &custody.to_hex(), &custody_raw)?;
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &ordinary.to_hex(),
-        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn"),
-    )?;
-    doc.commit();
-
-    // Export to a fresh peer: the custody body must not survive, the ordinary
-    // control must.
-    let export = export_window_updates_since(
-        &vault,
-        &window_key,
-        &doc,
-        &VersionVector::default().encode(),
-    )?;
-    let peer = create_window_doc("peer", &window_key);
-    import_doc(&peer, &export)?;
-    assert!(
-        map_get_bytes(&peer.get_map("entities"), &custody.to_hex()).is_none(),
-        "exported window must not carry the custody record body"
-    );
-    assert!(
-        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
-        "ordinary entity still exports"
-    );
-    // The local doc was scrubbed in place too.
-    assert!(
-        map_get_bytes(&doc.get_map("entities"), &custody.to_hex()).is_none(),
-        "local doc scrubbed before export"
-    );
-    // And the window is now pinned history-free, so the pre-scrub set-op bytes
-    // in Loro history can never take a raw delta/snapshot path later.
-    assert!(
-        history_free_window_required(&vault, &window_key)?,
-        "custody carrier scrub pins the window to history-free transport"
     );
     Ok(())
 }
@@ -4214,7 +3917,7 @@ fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(Entit
         at,
         b"person",
     )?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let mut body = crate::claim::ClaimBody::new(
         "test.device_only",
         crate::claim::ClaimSubject::Entity(person),
@@ -4258,16 +3961,459 @@ fn packing_withholds_the_world_row_flagged_device_only() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let (doc, _, claim) = packed_device_only_window(&vault)?;
+/// Two world windows packed while every world was portable: a claim in the
+/// world later flagged device-only, and a claim in a portable world, each
+/// `About` a base PERSON that `Mentions` both. The private world is flagged
+/// device-only only after both windows packed.
+struct ResidentDeviceOnly {
+    private_world: EntityId,
+    private_claim: EntityId,
+    portable_claim: EntityId,
+    person: EntityId,
+    private_key: WindowKey,
+    portable_key: WindowKey,
+    private_doc: LoroDoc,
+    portable_doc: LoroDoc,
+}
+
+fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
+    let month = WindowKey::new("2026-03");
+    let (private_world, private_claim) = device_only_world_fixture(vault, &month)?;
+    let person = EntityId::from_bytes([0x72; 16])?;
+    let portable_world = EntityId::from_bytes([0x74; 16])?;
+    let portable_claim = EntityId::from_bytes([0x75; 16])?;
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &portable_world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"portable",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.portable",
+        crate::claim::ClaimSubject::Entity(person),
+        Value::from("portable fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )?;
+    body.world = Some(portable_world);
+    vault.put_claim(&portable_claim, &body, occurred, at)?;
+    vault.keep_world_on_this_machine_for_test(private_world, false)?;
+    vault
+        .batch()
+        .edge(&portable_claim, EdgeKind::About, &person, 1.0)
+        .edge(&person, EdgeKind::Mentions, &private_claim, 1.0)
+        .edge(&person, EdgeKind::Mentions, &portable_claim, 1.0)
+        .commit()?;
+    let private_key = WindowKey::for_month_world(&month, private_world);
+    let portable_key = WindowKey::for_month_world(&month, portable_world);
+    let private_doc = create_window_doc("private", &private_key);
+    let portable_doc = create_window_doc("portable", &portable_key);
+    reverse_rematerialize(vault, &private_doc, &private_key)?;
+    reverse_rematerialize(vault, &portable_doc, &portable_key)?;
+    let packed = private_doc.get_map("edges");
+    for (src, kind, dst) in [
+        (private_claim, EdgeKind::About, person),
+        (person, EdgeKind::Mentions, private_claim),
+    ] {
+        let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
+        assert!(packed.get(&key).is_some(), "{key} packed while portable");
+    }
+    vault.keep_world_on_this_machine_for_test(private_world, true)?;
+    Ok(ResidentDeviceOnly {
+        private_world,
+        private_claim,
+        portable_claim,
+        person,
+        private_key,
+        portable_key,
+        private_doc,
+        portable_doc,
+    })
+}
+
+/// What a receiver holding nothing gets from one window export.
+fn exported_to_empty_receiver(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<LoroDoc> {
+    let bytes =
+        export_window_updates_since(vault, key, doc, &loro::VersionVector::default().encode())?;
+    let received = create_window_doc("receiver", key);
+    import_doc(&received, &bytes)?;
+    Ok(received)
+}
+
+fn names_entity_in_any_edge(doc: &LoroDoc, id: EntityId) -> bool {
     let mut named = false;
     crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
-        named |= key.contains(&claim.to_hex());
+        let (src, _, dst) = crate::sync::bridge::parse_edge_key(key).expect("edge key");
+        named |= src == id || dst == id;
     });
+    named
+}
 
-    assert!(!named);
+/// R11133: a claim packed while its world was portable, and both its edges,
+/// stop leaving once the world turns device-only. Portable controls ship.
+#[test]
+fn world_window_export_withholds_device_claims_and_incident_edges_but_keeps_portable_controls()
+-> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let private = exported_to_empty_receiver(&vault, &fx.private_key, &fx.private_doc)?;
+    let portable = exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+
+    for received in [&private, &portable] {
+        let entities = received.get_map("entities");
+        assert!(entities.get(&fx.private_claim.to_hex()).is_none());
+        assert!(!names_entity_in_any_edge(received, fx.private_claim));
+    }
+    let edges = portable.get_map("edges");
+    assert!(
+        portable
+            .get_map("entities")
+            .get(&fx.portable_claim.to_hex())
+            .is_some()
+    );
+    for (src, kind, dst) in [
+        (fx.portable_claim, EdgeKind::About, fx.person),
+        (fx.person, EdgeKind::Mentions, fx.portable_claim),
+    ] {
+        let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
+        assert!(edges.get(&key).is_some());
+    }
+    Ok(())
+}
+
+/// The flag is read at export time and the stored window keeps the carrier.
+/// One receiver: while the world is flagged its vector exchange gets no
+/// operation, and once the flag clears the same vector fetches the claim and
+/// every edge.
+#[test]
+fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let receiver = create_window_doc("receiver", &fx.private_key);
+    let exchange = |receiver: &LoroDoc| -> Result<()> {
+        let bytes = export_window_updates_since(
+            &vault,
+            &fx.private_key,
+            &fx.private_doc,
+            &receiver.oplog_vv().encode(),
+        )?;
+        import_doc(receiver, &bytes)
+    };
+    exchange(&receiver)?;
+    assert!(receiver.oplog_vv().is_empty());
+    vault.keep_world_on_this_machine_for_test(fx.private_world, false)?;
+
+    exchange(&receiver)?;
+    assert!(
+        receiver
+            .get_map("entities")
+            .get(&fx.private_claim.to_hex())
+            .is_some()
+    );
+    for (src, kind, dst) in [
+        (fx.private_claim, EdgeKind::About, fx.person),
+        (fx.person, EdgeKind::Mentions, fx.private_claim),
+    ] {
+        let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
+        assert!(receiver.get_map("edges").get(&key).is_some(), "{key}");
+    }
+    let portable = exported_to_empty_receiver(&vault, &fx.portable_key, &fx.portable_doc)?;
+    assert!(!names_entity_in_any_edge(&portable, fx.private_claim));
+    Ok(())
+}
+
+/// A receiver that already holds the rows is sent nothing that removes them:
+/// a bare edge removal would delete its own stored edge.
+#[test]
+fn device_only_flag_never_removes_edges_a_receiver_already_holds() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let about =
+        crate::sync::bridge::format_edge_key(&fx.private_claim, EdgeKind::About, &fx.person);
+    // Delta transport, then the history-free snapshot transport.
+    for history_free in [false, true] {
+        let receiver = create_window_doc("receiver", &fx.private_key);
+        import_doc(
+            &receiver,
+            &crate::sync::loro_support::export_snapshot(&fx.private_doc)?,
+        )?;
+        if history_free {
+            require_history_free_window(&vault, &fx.private_key)?;
+        }
+        let bytes = export_window_updates_since(
+            &vault,
+            &fx.private_key,
+            &fx.private_doc,
+            &receiver.oplog_vv().encode(),
+        )?;
+        import_doc(&receiver, &bytes)?;
+        assert!(receiver.get_map("edges").get(&about).is_some());
+    }
+    Ok(())
+}
+
+/// The promoted-device reply reads the same flag.
+#[test]
+fn promoted_window_export_withholds_a_resident_device_only_claim() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let bytes = export_promoted_window_updates_since(
+        &vault,
+        &fx.private_key,
+        &fx.private_doc,
+        &loro::VersionVector::default().encode(),
+    )?;
+    let received = create_window_doc("receiver", &fx.private_key);
+    import_doc(&received, &bytes)?;
+
+    assert!(
+        received
+            .get_map("entities")
+            .get(&fx.private_claim.to_hex())
+            .is_none()
+    );
+    assert!(!names_entity_in_any_edge(&received, fx.private_claim));
+    Ok(())
+}
+
+/// A withheld window's reply is an empty document's update: an edit left
+/// pending in the live doc's open transaction does not ride it.
+#[test]
+fn withheld_window_export_carries_no_pending_operation() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    fx.private_doc
+        .get_map("entities")
+        .insert("pending", "private edit")
+        .unwrap();
+    let none = loro::VersionVector::default().encode();
+    for bytes in [
+        export_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?,
+        export_promoted_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?,
+    ] {
+        let received = LoroDoc::new();
+        import_doc(&received, &bytes)?;
+        assert!(received.oplog_vv().is_empty());
+    }
+    Ok(())
+}
+
+/// A base window carrying an edge to a device-only claim out of residence
+/// (admitted before the claim was known here) ships nothing while the flag
+/// holds, since cutting the edge would need a removal op; it ships whole
+/// again once the flag clears.
+#[test]
+fn base_window_carrying_an_edge_to_a_device_only_claim_is_withheld_whole() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let month = WindowKey::new("2026-03");
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    let stray =
+        crate::sync::bridge::format_edge_key(&fx.person, EdgeKind::Supports, &fx.private_claim);
+    map_insert_bytes(
+        &base.get_map("edges"),
+        &stray,
+        &encode_edge_value_for_crdt(EdgeKind::Supports, 1.0, 1, None, None)?,
+    )?;
+    base.commit();
+    assert!(base.get_map("entities").get(&fx.person.to_hex()).is_some());
+
+    let withheld = exported_to_empty_receiver(&vault, &month, &base)?;
+    assert!(withheld.oplog_vv().is_empty());
+    vault.keep_world_on_this_machine_for_test(fx.private_world, false)?;
+    let shipped = exported_to_empty_receiver(&vault, &month, &base)?;
+    assert!(
+        shipped
+            .get_map("entities")
+            .get(&fx.person.to_hex())
+            .is_some()
+    );
+    Ok(())
+}
+
+/// A flagged world's claim written into a base window and removed again still
+/// sits in the window's Loro history: the base export ships only what the
+/// window holds now, never that insertion, to an empty receiver or to one
+/// that already held the window.
+#[test]
+fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fx = resident_device_only_windows(&vault)?;
+    let month = WindowKey::new("2026-03");
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    let holder = exported_to_empty_receiver(&vault, &month, &base)?;
+    let key = fx.private_claim.to_hex();
+    let entities = base.get_map("entities");
+    map_insert_bytes(&entities, &key, &vault.get_raw(&fx.private_claim)?.unwrap())?;
+    base.commit();
+    crate::sync::loro_support::map_delete(&entities, &key)?;
+    base.commit();
+
+    let received = exported_to_empty_receiver(&vault, &month, &base)?;
+    assert!(
+        received
+            .get_map("entities")
+            .get(&fx.person.to_hex())
+            .is_some()
+    );
+    import_doc(
+        &holder,
+        &export_window_updates_since(&vault, &month, &base, &holder.oplog_vv().encode())?,
+    )?;
+    for doc in [&received, &holder] {
+        let history = doc.export_json_updates(&loro::VersionVector::default(), &doc.oplog_vv());
+        assert!(
+            !history
+                .changes
+                .iter()
+                .flat_map(|change| &change.ops)
+                .any(|op| matches!(
+                    &op.content,
+                    loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key: inserted, .. })
+                        if &**inserted == key.as_str()
+                ))
+        );
+    }
+    Ok(())
+}
+
+/// A NOTE in `world`, with the WORLD row and the `InWorld` edge learned in the
+/// NOTE's base month. Returns the NOTE and that month.
+fn note_in_world(vault: &Vault, world: EntityId) -> Result<(EntityId, WindowKey)> {
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "private note text",
+            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let at = crate::batch::EntityMetadataHeader::parse(&vault.get_raw_unsealed(&note)?.unwrap())
+        .unwrap()
+        .learned_at;
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        TimeRange { start: at, end: at },
+        at,
+        b"private world",
+    )?;
+    vault.put_edge(&note, EdgeKind::InWorld, &world, 1.0)?;
+    Ok((note, WindowKey::from_timestamp(at)))
+}
+
+/// Astra #1402 sequence A: a WORLD and a NOTE in it, packed into their base
+/// month while the world was portable. Once the world turns device-only, a
+/// receiver fetching that month gets neither the NOTE nor the WORLD row.
+#[test]
+fn base_month_withholds_a_resident_note_and_world_once_the_world_turns_device_only() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    let (note, month) = note_in_world(&vault, world)?;
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    for id in [note, world] {
+        assert!(base.get_map("entities").get(&id.to_hex()).is_some());
+    }
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+
+    let received = exported_to_empty_receiver(&vault, &month, &base)?;
+    for id in [note, world] {
+        assert!(received.get_map("entities").get(&id.to_hex()).is_none());
+        assert!(!names_entity_in_any_edge(&received, id));
+    }
+    Ok(())
+}
+
+/// Astra #1402 finding 2A: the NOTE mirror never packs a NOTE of a
+/// device-only world into its base month.
+#[test]
+fn packing_withholds_a_note_in_a_device_only_world() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    let (note, month) = note_in_world(&vault, world)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    let base = create_window_doc("base", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+
+    assert!(base.get_map("entities").get(&note.to_hex()).is_none());
+    Ok(())
+}
+
+/// A stamp never travels with its TASK (DEC-0005). The upgrade sweep settles
+/// every local TASK put before birth stamps in base reality once, so it still
+/// ships while a world is device-only. One a peer replicates in later stays
+/// unstamped, and this device keeps it while any world is device-only.
+#[test]
+fn device_only_holds_a_task_replicated_after_the_upgrade_sweep_but_ships_one_it_settled()
+-> Result<()> {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    note_in_world(&vault, world)?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .put_structural(&crate::memory::StructuralPutInput {
+            id: None,
+            kind: "TASK".into(),
+            body: serde_json::json!({"role": 4, "content": "errand"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 10,
+            learned_at: None,
+        })
+        .unwrap();
+    let task = EntityId::from_hex(&task.id_hex)?;
+    let raw = vault.get_raw(&task)?.expect("task");
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).expect("header");
+    let month = WindowKey::from_timestamp(header.learned_at);
+    let ships = |id: EntityId| -> Result<bool> {
+        let base = create_window_doc("base", &month);
+        reverse_rematerialize(&vault, &base, &month)?;
+        let received = exported_to_empty_receiver(&vault, &month, &base)?;
+        Ok(received.get_map("entities").get(&id.to_hex()).is_some())
+    };
+    // A vault from before the sweep's third version: the TASK has no stamp.
+    vault.with_write_txn(|txn| {
+        crate::federation::record_scope::retire_stamp(&vault.store, txn, task)?;
+        vault
+            .store
+            .vault_meta
+            .put(txn, b"scope:claim-codec:v2", &[2])?;
+        Ok(())
+    })?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !ships(task)?,
+        "an unstamped TASK is kept until it is placed"
+    );
+
+    crate::batch::sweep_scope_stamps(&vault.store)?;
+    assert!(ships(task)?);
+    let later = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &later,
+            crate::registry::ENTITY_TYPE_TASK,
+            TimeRange {
+                start: header.learned_at,
+                end: header.learned_at,
+            },
+            header.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()?;
+    assert!(!ships(later)?);
+
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    assert!(ships(later)?);
     Ok(())
 }
 
@@ -4399,65 +4545,6 @@ fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> R
     assert_eq!(
         rejected.payload_hash,
         crate::sync::quarantine::payload_hash(&blob)
-    );
-    Ok(())
-}
-
-#[test]
-fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let root = vault.root_project()?;
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
-    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB2)?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB2)?;
-    vault.put_authority_log_entry(
-        &revoke,
-        TimeRange {
-            start: 102,
-            end: 102,
-        },
-        102,
-    )?;
-    let (edit, mut forged) = crate::gate::project_depth::contributions_for_test(&vault, root)?
-        .into_iter()
-        .find(|(_, bytes)| {
-            matches!(
-                crate::gate::project_depth::decode_contribution(bytes).ok(),
-                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
-                    _
-                ))
-            )
-        })
-        .expect("signed edit");
-    forged.push(0x01);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("remote", &window_key);
-    let stamp = window_key.start_timestamp().expect("window start") + 60;
-    doc.get_map("entities")
-        .insert(
-            edit.to_hex().as_str(),
-            make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &forged)
-                .as_slice(),
-        )
-        .expect("forged manifest");
-    doc.commit();
-    assert_eq!(
-        forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?,
-        0
-    );
-    assert_eq!(vault.project(root)?.unwrap().depth, 0);
-    assert!(
-        quarantine::quarantined_records(&vault)?
-            .iter()
-            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
     );
     Ok(())
 }

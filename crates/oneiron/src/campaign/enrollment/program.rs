@@ -97,7 +97,7 @@ impl CampaignProgramStep {
 ///
 /// Storage errors propagate.
 pub fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         PROGRAM.put(
             &vault.store,
             wtxn,
@@ -127,7 +127,7 @@ pub fn campaign_program(vault: &Vault, program_ref: EntityId) -> Result<Option<C
 ///
 /// Storage errors propagate.
 pub fn put_campaign_program_step(vault: &Vault, step: &CampaignProgramStep) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         PROGRAM_STEP.put(
             &vault.store,
             wtxn,

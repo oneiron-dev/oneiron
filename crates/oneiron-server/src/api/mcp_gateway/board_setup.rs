@@ -1,8 +1,11 @@
 //! Board state, setup grammar, and page preflight.
 
+use super::device_release::{mcp_carrier_releases, mcp_release_result, mcp_snapshot_releases};
+use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
-    mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
+    mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_scoped_tasks_section,
+    mcp_text_content,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;
@@ -45,14 +48,20 @@ pub(super) enum McpCarrierPolicy {
 /// No branch hand-builds an envelope beside this one: after M1 there is no
 /// unlisted executor left that could.
 ///
-/// ONE-1704 B4: a world- or facet-NARROWED connection is delivered ZERO carrier
-/// frames here. The engine's router matches a carrier subscription by category
-/// and actor equality only, so two credentials for one actor with disjoint
-/// worlds or facets are eligible for the same events; until the router can
-/// filter those axes, the truthful delivery for a narrowed connection is none
-/// at all. This is a delivery ceiling, not a discard: the server takes no
-/// payload for such a connection, so nothing the engine queued is destroyed
-/// here. Vault-wide connections are untouched.
+/// ONE-1704 B4: a world- or facet-NARROWED connection, or one whose credential
+/// carries record-scope caveats, is delivered its own-task `tasks:` lines and
+/// nothing else. The board publisher admits each own-task event under that
+/// connection's own read of the TASK, projected through its world and facet
+/// ceiling (`mcp_stream_reads_task`), so two
+/// credentials for one actor with disjoint worlds or facets hear disjoint
+/// events. No other carrier row is projected through those ceilings, so none
+/// rides, and the rider never runs for such a connection. Its setup keyframe
+/// is still taken, so its carrier holds the epoch a delta rides at.
+///
+/// Every call binds this credential as the connection's reader, the one the
+/// board publisher admits own-task events under, and every queued TASK line
+/// is read again before it rides: a line whose TASK was erased, or that this
+/// credential may no longer read, is dropped.
 pub(super) async fn mcp_endpoint_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -61,10 +70,9 @@ pub(super) async fn mcp_endpoint_result(
     policy: McpCarrierPolicy,
 ) -> Value {
     let mut capabilities = Vec::new();
-    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
-        None
-    } else {
+    let carrier = {
         let mut registry = server.mcp_registry.lock().await;
+        registry.bind_stream_reader(actor);
         match policy {
             McpCarrierPolicy::Drain => registry.next_carrier_frame(&actor.stream_connection),
             McpCarrierPolicy::DrainWithCapabilities(hits) => {
@@ -80,16 +88,30 @@ pub(super) async fn mcp_endpoint_result(
             }
         }
     };
+    // A queued frame derived from a row a device-local world keeps now
+    // stays here.
+    let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &[]));
+    let carrier = carrier.and_then(|frame| mcp_live_task_lines(server, actor, frame));
     // Never turn lifecycle movement into a push. A narrowed connector never
     // reaches the rider and an empty queue remains empty.
-    let carrier = if carrier.is_some() {
+    let (carrier, rider_rows) = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope()
+    {
+        (carrier.and_then(mcp_own_task_lines), Vec::new())
+    } else if carrier.is_some() {
         let original = carrier.clone();
-        super::board_observations::ride(server, actor, carrier, &capabilities)
-            .await
-            .unwrap_or(original)
+        match super::board_observations::ride(server, actor, carrier, &capabilities).await {
+            Ok(Some((frame, rows))) => (Some(frame), rows),
+            Ok(None) => (None, Vec::new()),
+            Err(_) => (original, Vec::new()),
+        }
     } else {
-        None
+        (None, Vec::new())
     };
+    #[cfg(test)]
+    super::device_release::release_hook::run(server);
+    // Judged again once the call has nothing left to wait on, for every
+    // result: the rows it was derived from may all still leave this device.
+    let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &rider_rows));
     let mut result = json!({
         "content": mcp_negotiated_content(message.into(), &structured),
         "structuredContent": structured,
@@ -154,7 +176,11 @@ pub(super) struct McpBoardState {
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,
     pub(super) changes: oneiron::context_board::ChangedLine,
-    /// TASKS rows the credential's REQUESTED SCOPE ceiling removed.
+    /// Every row the sections and the changed line were derived from: what a
+    /// retained page of this board is judged by again at release.
+    pub(super) rows: Vec<oneiron::EntityId>,
+    /// TASKS rows the credential's REQUESTED SCOPE withheld inside its own
+    /// world and facet (`mcp_scoped_tasks_section`).
     scope_omitted: usize,
     /// TASKS rows the engine's own render row cap truncated away. A page
     /// WINDOW fact, kept apart from the scope fact above (ONE-1704 repair).
@@ -190,8 +216,11 @@ pub(super) async fn mcp_current_board(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
 ) -> Result<McpBoardState, McpGatewayError> {
-    let (observations, changes) = super::board_observations::state(server, actor).await?;
-    let (mut sections, omissions) = mcp_board_sections(server, actor)?;
+    let (observations, changes, board) = super::board_observations::state(server, actor).await?;
+    let mut rows = Vec::new();
+    let (mut sections, omissions) = mcp_board_sections(server, actor, &mut rows)?;
+    rows.extend(crate::device_local::changed_line_rows(&changes));
+    rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
         oneiron::context_board::SkillsSection::project(&[], &observations)
             .board_section()
@@ -199,7 +228,10 @@ pub(super) async fn mcp_current_board(
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
     let mut state_rows = mcp_board_state_rows(&sections);
-    state_rows.extend(changes.render());
+    // Own outcomes and connector changes are deliveries, not board state:
+    // the epoch hashes the line before they were fitted in, so acknowledging
+    // one never makes the epoch just returned stale.
+    state_rows.extend(board.render());
     let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
     let epoch = {
         let mut registry = server.mcp_registry.lock().await;
@@ -214,6 +246,7 @@ pub(super) async fn mcp_current_board(
         scope_label,
         epoch,
         changes,
+        rows,
         scope_omitted: omissions.scope_omitted,
         window_truncated: omissions.window_truncated,
         source_exhausted: omissions.source_exhausted,
@@ -269,28 +302,28 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 
 /// The board sections the primary keyframe renders over.
 ///
-/// TASKS comes from the section arm of the engine's own gated `describe`
-/// facade, NARROWED to this credential's world/facet ceiling before it ever
-/// reaches the renderer, so a board a narrow connector reads is never the
-/// actor-wide board. The pinned VERBS section restates the generated grammar
+/// TASKS comes from the rows of the engine's own gated `describe` facade,
+/// NARROWED to this credential's world/facet ceiling before they ever reach
+/// the renderer, so a board a narrow connector reads is never the actor-wide
+/// board. The pinned VERBS section restates the generated grammar
 /// as board state.
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
-    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
-    let oneiron::task_verb::TaskDescription::Section(tasks) =
-        facade.describe(None).map_err(mcp_facade_error)?
-    else {
-        return Err(McpGatewayError::new(
-            -32603,
-            "engine_error",
-            "describe without a task returned a card, not the TASKS section",
-        ));
-    };
-    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, tasks)?;
+    let rows = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality())
+    .describe_rows()
+    .map_err(mcp_facade_error)?;
+    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope
     // filtering above, and the two are carried separately from here on.
@@ -332,7 +365,7 @@ fn mcp_board_sections(
         )
         .map_err(mcp_board_frame_error)?,
     );
-    sections.extend(mcp_pack_sections(server, actor)?);
+    sections.extend(mcp_pack_sections(server, actor, served)?);
     Ok((sections, omissions))
 }
 
@@ -372,6 +405,7 @@ pub(super) fn mcp_visible_pack_inventory(
 fn mcp_pack_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<Vec<oneiron::context_board::BoardSection>, McpGatewayError> {
     use oneiron::context_board::{
         PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot, SectionId,
@@ -418,6 +452,7 @@ fn mcp_pack_sections(
             {
                 continue;
             }
+            served.push(id);
             rows.push(PluginSectionRow {
                 row_id: id.to_hex(),
                 cells: vec![
@@ -446,40 +481,11 @@ fn mcp_pack_sections(
         .collect())
 }
 
-/// Narrows one TASKS section to the credential's registered world/facet.
-///
-/// Every row passes the verified slip and registered world/facet checks,
-/// including slips whose record, kind, project or sensitivity bounds the old
-/// two-axis registry cannot express. The removed count states the omission.
-pub(super) fn mcp_scoped_tasks_section(
-    server: &Arc<SyncServer>,
-    actor: &McpResolvedActor,
-    section: oneiron::context_board::TasksSection,
-) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
-    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
-    let mut kept = Vec::with_capacity(section.rows.len());
-    let mut omitted = 0_usize;
-    for row in section.rows {
-        if mcp_scope_admits_row(&server.vault, actor, &scoped_read, &row.id)? {
-            kept.push(row);
-        } else {
-            omitted += 1;
-        }
-    }
-    Ok((
-        oneiron::context_board::TasksSection {
-            rows: kept,
-            overflow: section.overflow,
-        },
-        omitted,
-    ))
-}
-
 /// True when the registered scope covers the row this board id names.
 ///
 /// A row whose id is not an entity id cannot be proven in scope, so a narrowed
 /// credential does not see it: this fails closed.
-fn mcp_scope_admits_row(
+pub(super) fn mcp_scope_admits_row(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
@@ -589,10 +595,17 @@ pub(super) async fn mcp_preflight_page(
             cursor,
         )
         .map_err(mcp_page_cursor_error)?;
-    if state.snapshot.is_none() {
+    let Some(snapshot) = state.snapshot.as_ref() else {
         // Registry-only callers may mint an old position-only handle, but the
         // gateway cannot safely dispatch it: without the retained producer set
         // there is no exact continuation to return.
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        ));
+    };
+    // A retained page derived from a row a device-local world keeps now
+    // never leaves this device again: the caller starts over from page one.
+    if !mcp_snapshot_releases(server, actor, snapshot)? {
         return Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));
@@ -670,6 +683,7 @@ pub(crate) async fn execute_mcp_setup(
         true,
     )
     .await?;
+    let mut rider = None;
     let (mut structured, keyframe, health, snapshot, producer_epoch) = if let Some(continuation) =
         dispatch.continuation.as_ref()
     {
@@ -725,7 +739,9 @@ pub(crate) async fn execute_mcp_setup(
             source,
             health,
             keyframe: Some(keyframe.clone()),
+            rows: board.rows.clone(),
         };
+        rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };
     dispatch.producer_epoch = producer_epoch;
@@ -765,12 +781,21 @@ pub(crate) async fn execute_mcp_setup(
     } else {
         McpCarrierPolicy::FreshKeyframe(Some(keyframe))
     };
-    Ok(mcp_endpoint_result(
+    // Page one returns the keyframe it rendered, rider and connector state
+    // included; a continuation restates it and moves nothing.
+    if let Some((rider, epoch)) = &rider {
+        super::board_observations::delivered(server, actor, rider, true, *epoch).await;
+    }
+    #[cfg(test)]
+    super::device_release::release_hook::run(server);
+    let continued = dispatch.continuation.is_some();
+    let result = mcp_endpoint_result(
         server,
         actor,
         "board keyframe, verb grammar, and instructions returned",
         structured,
         carrier_policy,
     )
-    .await)
+    .await;
+    mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }

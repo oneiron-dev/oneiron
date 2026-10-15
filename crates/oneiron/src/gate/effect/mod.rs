@@ -6,7 +6,9 @@ pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,
     external_effect_consent_context, native_mail_cold_composed_effect,
 };
-use self::effect_contacts::hydrate_external_effect_contact;
+pub(crate) use self::effect_contacts::{
+    counterparty_send_override_in_txn, hydrate_external_effect_contact,
+};
 use self::effect_grants::{
     standing_outbound_grant_for_effect, touch_standing_outbound_grant_in_txn,
 };

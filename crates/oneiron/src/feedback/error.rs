@@ -159,31 +159,6 @@ pub(super) fn checked_token(
     bounded_bytes(label, value.len(), max_bytes)
 }
 
-/// A single-line, length-bounded sentence. Rejects multi-line text so a raw
-/// trace or a configuration dump cannot ride in as a "mechanism".
-pub(super) fn checked_sentence(
-    label: &str,
-    value: &str,
-    max_bytes: usize,
-) -> Result<(), FeedbackError> {
-    if value.trim().is_empty() {
-        return Err(FeedbackError::InvalidBundle(format!(
-            "{label} must not be blank"
-        )));
-    }
-    if value.trim() != value {
-        return Err(FeedbackError::InvalidBundle(format!(
-            "{label} must not carry leading or trailing whitespace"
-        )));
-    }
-    if value.chars().any(char::is_control) {
-        return Err(FeedbackError::InvalidBundle(format!(
-            "{label} must be a single line without control characters"
-        )));
-    }
-    bounded_bytes(label, value.len(), max_bytes)
-}
-
 /// Free text a person wrote. Newlines are allowed; other control characters
 /// and blank-only text are not.
 pub(super) fn checked_note(

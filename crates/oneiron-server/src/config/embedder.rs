@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::Args;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::embedder_shape::{
     EmbedderAttention, EmbedderOutputQuantization, parse_attention, parse_output_quantization,
@@ -33,7 +33,7 @@ pub const DEFAULT_DIMENSIONS: usize = 1024;
 
 const DEFAULT_BATCH_SIZE: usize = 32;
 const DEFAULT_LEASE_MS: u64 = 30_000;
-const DEFAULT_MAX_INPUT_TOKENS: usize = 4_096;
+pub(crate) const DEFAULT_MAX_INPUT_TOKENS: usize = 4_096;
 const DEFAULT_IDLE_INTERVAL_MS: u64 = 15_000;
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
@@ -77,7 +77,7 @@ impl FromStr for EmbedderProvider {
 }
 
 /// Weight precision the local provider loads at.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderQuant {
     /// Quantise every projection to Q8_0 at load. Runs on every device.

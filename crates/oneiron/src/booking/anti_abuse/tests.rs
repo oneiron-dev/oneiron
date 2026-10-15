@@ -1908,3 +1908,51 @@ fn concurrent_exact_quarantine_retries_share_one_token_and_receipt() {
         BookingQuarantineAdmission::RateLimited { .. }
     ));
 }
+
+/// SOL-9A-2-R2 F27: a quarantined submission leaves a review card for the
+/// owner; the rules that quarantined it are unchanged. A restore over the
+/// vault goes ahead past a submission quarantined since the backup.
+#[test]
+fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
+    let (_dir, vault) = open_vault();
+    let rows = vec![
+        seed_rule(&BookingAntiAbuseRule::EmailPromptToCorrect {
+            check_syntax: true,
+            check_mx: true,
+            check_disposable_domain: true,
+        }),
+        seed_rule(&BookingAntiAbuseRule::QuarantineBorderline),
+    ];
+    let mut facts = facts();
+    facts.email = Some(EmailValidationEvidence {
+        syntax_valid: true,
+        mx_present: Some(false),
+        disposable_domain: true,
+    });
+    vault
+        .put_entity(
+            &facts.page_ref,
+            crate::registry::ENTITY_TYPE_EVENT,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"booking page fixture",
+        )
+        .expect("page entity");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 1).expect("backup");
+
+    let BookingAbuseVerdict::Quarantine { reason } = evaluate_booking_request(&rows, &facts) else {
+        panic!("two live negatives route to quarantine");
+    };
+    quarantine_borderline_submission(&vault, &facts, &reason, 2).expect("quarantine");
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        crate::VaultConfig::default(),
+        &vault,
+        3,
+    )
+    .expect("a quarantined submission does not block the restore");
+    drop(restored);
+}

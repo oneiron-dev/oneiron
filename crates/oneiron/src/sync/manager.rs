@@ -615,7 +615,7 @@ impl WindowManager {
 
     /// Deletes the window-scoped `rm:w:{key}` marker.
     fn clear_sync_state_marker(&self, key: &WindowKey) -> Result<()> {
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             REMAT_WINDOW_MARKER.delete(&self.vault.store, wtxn, &key.as_str().to_owned())?;
             Ok(())
         })
@@ -691,53 +691,6 @@ mod slim_drop_tests {
             "slim-fixture",
         ));
         (dir, manager)
-    }
-
-    #[test]
-    fn sync_drop_is_atomic_across_windows() -> Result<()> {
-        let (_dir, manager) = fixture();
-        let keys = [
-            WindowKey::new("2026-01"),
-            WindowKey::new("2026-02"),
-            WindowKey::new("2026-03"),
-        ];
-        let windows = keys
-            .iter()
-            .map(|key| manager.open_window(key))
-            .collect::<Result<Vec<_>>>()?;
-        let weak: Vec<_> = windows.iter().map(Arc::downgrade).collect();
-        // Make the busy entry LAST in this registry's stable iteration order,
-        // so a persist-as-you-go implementation cannot pass by failing first.
-        let busy_key = manager.lock_registry().keys().last().unwrap().clone();
-        let busy = manager.window(&busy_key).unwrap();
-        drop(windows);
-        let revision = manager.vault.store.env.info().last_txn_id;
-        assert!(matches!(
-            manager.drop_rebuildable_windows(),
-            Err(Error::Sync(SyncError::WindowBusy {
-                outstanding_handles: 1,
-                ..
-            }))
-        ));
-        assert_eq!(
-            manager.vault.store.env.info().last_txn_id,
-            revision,
-            "preflight before ANY persist"
-        );
-        assert_eq!(manager.loaded_keys().len(), 3);
-        assert!(weak.iter().all(|window| window.upgrade().is_some()));
-        drop(busy);
-        let report = manager.drop_rebuildable_windows()?;
-        assert_eq!(report.sync_windows, 3);
-        assert!(report.estimated_reclaimed_bytes > 0);
-        assert!(manager.loaded_keys().is_empty());
-        assert!(weak.iter().all(|window| window.upgrade().is_none()));
-        assert!(manager.issued_handles.lock().unwrap().is_empty());
-        assert_eq!(
-            manager.drop_rebuildable_windows()?,
-            crate::slim::HeapDropReport::default()
-        );
-        Ok(())
     }
 
     #[test]

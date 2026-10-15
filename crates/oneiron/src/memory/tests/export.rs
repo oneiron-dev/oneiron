@@ -482,6 +482,83 @@ fn export_refuses_other_people_and_unleased_owner_handles() {
     );
 }
 
+/// engine-prs-13: a live full slip is not the Owner role. Its holder exports
+/// the whole vault only while it is an owner of this vault.
+#[test]
+fn a_live_full_slip_without_the_owner_role_does_not_export_the_vault() {
+    use crate::authority::HostSlipIssuer;
+    let (_dir, vault, _owner) = owner_vault();
+    let other = put_person(&vault, 41);
+    let issuer = HostSlipIssuer::from_secret(b"fixture-export-non-owner-root").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"full-vault-export-non-owner").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = other.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            b"export-non-owner-test",
+            &issuer
+                .binding_proof(&slip, b"export-non-owner-test")
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(proof.is_full_vault_owner_grade());
+    assert_eq!(
+        facade_for(&vault, other)
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+    assert!(vault.export_receipts().unwrap().is_empty());
+}
+
+/// A deleted owner exports nothing with the slip it still holds (Sol review
+/// 2). A plain delete keeps the PERSON shell and its Active lifecycle, so the
+/// live-owner check reads the deletion tombstone too.
+#[test]
+fn a_deleted_owner_does_not_export_the_vault_with_a_live_slip() {
+    use crate::authority::HostSlipIssuer;
+    let (_dir, vault, actor) = owner_vault();
+    let issuer = HostSlipIssuer::from_secret(b"fixture-export-deleted-owner-root").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"full-vault-export-deleted-owner").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = actor.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            b"export-deleted-owner-test",
+            &issuer
+                .binding_proof(&slip, b"export-deleted-owner-test")
+                .unwrap(),
+        )
+        .unwrap();
+    let memory = facade_for(&vault, actor);
+    assert!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .is_ok()
+    );
+    assert!(vault.delete_entity(&actor).unwrap());
+    assert_eq!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+}
+
 #[test]
 fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
     use crate::authority::HostSlipIssuer;
@@ -590,4 +667,480 @@ fn every_export_lands_a_receipt_and_a_refused_one_lands_none() {
         .export(&ExportOptions::default())
         .unwrap();
     assert_eq!(vault.export_receipts().unwrap().len(), 2);
+}
+
+/// The public BIP39 test vector, as a recovery phrase's words.
+const PHRASE: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+/// The phrase a word per 64-bit number, with two floats between its halves
+/// whose widths no JSON number keeps: read at either width alone, each float
+/// puts a non-list word into the run.
+fn phrase_in_numbers() -> Vec<Value> {
+    let mut items: Vec<Value> = PHRASE
+        .split(' ')
+        .map(|word| {
+            let mut padded = [b' '; 8];
+            padded[..word.len()].copy_from_slice(word.as_bytes());
+            Value::from(u64::from_be_bytes(padded))
+        })
+        .collect();
+    items.insert(6, Value::F32(f32::from_bits(0x4000_0208)));
+    items.insert(7, Value::F64(f64::from_bits(0x4088_0000_0000_0000)));
+    items
+}
+
+/// An owner vault whose write scan is off, as an owner may switch it.
+fn scan_off_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
+    let (dir, vault, owner) = owner_vault();
+    let id = crate::vault::embedded_owner_actor_id().unwrap();
+    let authenticated = vault
+        .authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())
+        .unwrap();
+    vault
+        .set_secret_scan_mode(
+            &authenticated,
+            crate::batch::secret_scan::SecretScanMode::Off,
+            10,
+        )
+        .unwrap();
+    (dir, vault, owner)
+}
+
+/// `value` stored as an ASSET body and as a claim's value, served back by
+/// `get_entity` and `claim_list`.
+fn served_both_ways(
+    vault: &crate::Vault,
+    owner: EntityId,
+    value: Value,
+    seed: u8,
+) -> [serde_json::Value; 2] {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &value).unwrap();
+    let asset = EntityId::now();
+    vault
+        .batch()
+        .put(&asset, ENTITY_TYPE_ASSET, test_time(5), 5, &body)
+        .commit()
+        .unwrap();
+    let subject = put_person(vault, seed);
+    let mut claim = crate::claim::ClaimBody::new(
+        "profile.note",
+        crate::claim::ClaimSubject::Entity(subject),
+        value,
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.source = Some(crate::claim::ClaimSource::UserStated);
+    vault
+        .put_claim(&EntityId::now(), &claim, test_time(6), 6)
+        .unwrap();
+
+    let memory = facade_for(vault, owner);
+    let asset = memory.get_entity(&asset.to_hex()).unwrap().value.unwrap();
+    let claims = memory
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .unwrap()
+        .value;
+    assert_eq!(claims.len(), 1);
+    [asset.body.unwrap_or_default(), claims[0].value.clone()]
+}
+
+#[test]
+fn memory_reads_read_messagepack_before_projecting_it() {
+    let (_dir, vault, owner) = scan_off_vault();
+    let value = Value::Array(phrase_in_numbers());
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &value).unwrap();
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_err());
+    for served in served_both_ways(&vault, owner, value, 0x6b) {
+        // Read back through MessagePack, as the projection was read from it.
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(
+            &mut bytes,
+            &serde_json::from_value::<Value>(served.clone()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("sausage"),
+            "{served}"
+        );
+    }
+}
+
+#[test]
+fn memory_reads_read_the_projection_they_serve() {
+    let (_dir, vault, owner) = scan_off_vault();
+    // Sol R8: a safe binary keeps the numbers' words apart until the
+    // projection nulls it; a line break, then the phrase whole under a
+    // credential name.
+    let mut items = phrase_in_numbers();
+    items.insert(6, Value::Binary(b"PROSE".to_vec()));
+    let value = Value::Array(vec![
+        Value::Array(items),
+        Value::from("\n"),
+        Value::Map(vec![(Value::from("password"), Value::from(PHRASE))]),
+    ]);
+    let sausage = u64::from_be_bytes(*b"sausage ").to_string();
+    for served in served_both_ways(&vault, owner, value, 0x6c) {
+        assert!(!served.to_string().contains(&sausage), "{served}");
+    }
+    // A body the write door accepts serves all but its credential field.
+    let accepted = Value::Map(vec![
+        (Value::from("title"), Value::from("kept words")),
+        (Value::from("password"), Value::from("changeme")),
+    ]);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &accepted).unwrap();
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
+    for served in served_both_ways(&vault, owner, accepted, 0x6d) {
+        assert_eq!(
+            served,
+            serde_json::json!({"title": "kept words", "password": "[redacted]"})
+        );
+    }
+}
+
+#[test]
+fn a_write_accepted_body_of_wide_floats_serves_its_numbers() {
+    // Sol R11: each word's first four letters as the bits of a float a single
+    // width holds exactly, stored wide, the rest of the word in byte-sized
+    // integers after it. Only the narrow width the floats never had spells
+    // the phrase.
+    let mut items = Vec::new();
+    for word in PHRASE.split(' ') {
+        let (head, rest) = word.as_bytes().split_at(4);
+        let bits = u32::from_be_bytes(head.try_into().unwrap());
+        items.push(Value::F64(f64::from(f32::from_bits(bits))));
+        items.extend(rest.iter().copied().map(Value::from));
+    }
+    let value = Value::Array(items);
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &value).unwrap();
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
+    let (_dir, vault, owner) = owner_vault();
+    let numbers = crate::companion::companion_value_to_json(&value);
+    for served in served_both_ways(&vault, owner, value, 0x6e) {
+        assert_eq!(served, numbers);
+    }
+    assert_eq!(crate::batch::export::redacted_memory_body(&body), numbers);
+    let asset = EntityId::now();
+    vault
+        .batch()
+        .put(&asset, ENTITY_TYPE_ASSET, test_time(7), 7, &body)
+        .commit()
+        .unwrap();
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[asset]).unwrap()).unwrap();
+    assert_eq!(bundle["entities"][0]["body"], numbers);
+    assert_eq!(bundle["manifest"]["secrets_nulled"]["payloads"], false);
+}
+
+/// `value` stored as an ASSET body.
+fn put_asset(vault: &crate::Vault, body: &[u8], at: u64) -> EntityId {
+    let asset = EntityId::now();
+    vault
+        .batch()
+        .put(&asset, ENTITY_TYPE_ASSET, test_time(at), at, body)
+        .commit()
+        .unwrap();
+    asset
+}
+
+fn encoded(value: &Value) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, value).unwrap();
+    body
+}
+
+#[test]
+fn the_chat_document_pack_withholds_a_body_the_write_door_refuses() {
+    let (_dir, vault, owner) = scan_off_vault();
+    // Sol R9: a word per field behind keys the Markdown and Plaintext rows
+    // leave out, and the phrase whole under a credential name, which a memory
+    // read redacts alone.
+    let mut fields: Vec<(Value, Value)> = PHRASE
+        .split(' ')
+        .enumerate()
+        .map(|(at, word)| {
+            (
+                Value::from(format!("PROSE{:02}", at + 1)),
+                Value::from(word),
+            )
+        })
+        .collect();
+    fields.push((Value::from("password"), Value::from(PHRASE)));
+    let refused = encoded(&Value::Map(fields));
+    let accepted = encoded(&Value::Map(vec![
+        (Value::from("title"), Value::from("kept asset words")),
+        (Value::from("password"), Value::from("changeme")),
+    ]));
+    assert!(crate::batch::secret_scan::scan_write_payload(&refused).is_err());
+    assert!(crate::batch::secret_scan::scan_write_payload(&accepted).is_ok());
+    let refused = put_asset(&vault, &refused, 8);
+    let accepted = put_asset(&vault, &accepted, 9);
+    let memory = facade_for(&vault, owner);
+    // A memory read stays surgical.
+    let surgical = memory.hydrate(&[refused.to_hex()]).unwrap().value;
+    assert_eq!(surgical[0].body.as_ref().unwrap()["PROSE06"], "sausage");
+    let chat = |document: EntityId, format: Option<&str>| {
+        memory
+            .chat(
+                "what does it say?",
+                ChatDepth::Light,
+                ChatOptions {
+                    scope: ChatScope::Documents {
+                        source_short_ids: vec![document.to_hex()],
+                    },
+                    limit: 10,
+                    format,
+                    lease: None,
+                    composer: None,
+                },
+            )
+            .unwrap()
+    };
+    for format in [Some("md"), Some("txt"), None] {
+        // The extractive answer is the rendered pack, or the item's text.
+        match chat(refused, format) {
+            ChatResponse::Answered {
+                answer, retrieval, ..
+            } => {
+                assert!(format.is_some(), "an item with no text answers nothing");
+                assert!(!answer.contains("sausage"), "{format:?}: {answer}");
+                assert!(!format!("{retrieval:?}").contains("sausage"), "{format:?}");
+            }
+            ChatResponse::Abstained { reason, .. } => {
+                assert_eq!(reason, ChatAbstentionReason::InsufficientEvidence);
+            }
+        }
+        let ChatResponse::Answered { answer, .. } = chat(accepted, format) else {
+            panic!("{format:?}: the accepted document answers");
+        };
+        assert!(answer.contains("kept asset words"), "{format:?}: {answer}");
+        assert!(!answer.contains("changeme"), "{format:?}: {answer}");
+    }
+}
+
+#[test]
+fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
+    // Slot test 2026-10-14: the public vector dotted is a valid predicate,
+    // and a reader that nulled it before the joint read served it whole.
+    let predicate = format!("profile.{}", PHRASE.replace(' ', "."));
+    let (_dir, vault, owner) = scan_off_vault();
+    let subject = put_person(&vault, 0x6f);
+    let memory = facade_for(&vault, owner);
+    let upsert = |predicate: &str, value: &str| {
+        memory.claim_upsert(&claim_input(
+            predicate,
+            &subject,
+            "user_stated",
+            serde_json::json!(value),
+        ))
+    };
+    let secret = upsert(&predicate, "lantern festival tickets").unwrap();
+    upsert("profile.city", "lantern harbour town").unwrap();
+    let listed = memory
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .unwrap()
+        .value;
+    let history = memory.claim_history(&secret.claim_short_id).unwrap().value;
+    // Recall finds a claim through the text its host indexes for it.
+    for view in &listed {
+        let id = EntityId::from_hex(&view.claim_ref).unwrap();
+        vault
+            .batch()
+            .text(&id, &[("body", "lantern")])
+            .commit()
+            .unwrap();
+    }
+    let recalled = memory
+        .recall(
+            "lantern",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    let recalled: Vec<_> = recalled
+        .items
+        .iter()
+        .filter(|item| item.kind == "CLAIM")
+        .map(|item| (item.predicate.clone().unwrap(), item.value_text.clone()))
+        .collect();
+    // Recall finds the claim the write door accepts, and withholds the other
+    // or serves it redacted.
+    assert!(
+        recalled
+            .iter()
+            .any(|(predicate, value)| predicate == "profile.city"
+                && value.contains("lantern harbour town")),
+        "{recalled:?}"
+    );
+    assert!(!format!("{recalled:?}").contains("sausage"), "{recalled:?}");
+    let served: Vec<_> = listed
+        .iter()
+        .chain(&history)
+        .map(|view| (view.predicate.clone(), view.value.to_string()))
+        .collect();
+    let predicates: std::collections::BTreeSet<_> = served
+        .iter()
+        .map(|(predicate, _)| predicate.as_str())
+        .collect();
+    assert_eq!(
+        predicates.into_iter().collect::<Vec<_>>(),
+        ["[redacted]", "profile.city"],
+        "{served:?}"
+    );
+    assert_eq!(listed.len(), 2);
+    assert!(!history.is_empty());
+    assert!(!format!("{served:?}").contains("sausage"), "{served:?}");
+    // A claim the write door accepts serves its value.
+    assert!(format!("{served:?}").contains("lantern harbour town"));
+
+    // With the scan on, the write door refuses the predicate.
+    let (_dir, vault, owner) = owner_vault();
+    let subject = put_person(&vault, 0x70);
+    let memory = facade_for(&vault, owner);
+    let refused = memory.claim_upsert(&claim_input(
+        &predicate,
+        &subject,
+        "user_stated",
+        serde_json::json!("lantern festival tickets"),
+    ));
+    assert!(
+        !matches!(&refused, Ok(receipt) if receipt.approval != "rejected"),
+        "{refused:?}"
+    );
+    let stored = memory
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .unwrap()
+        .value;
+    assert!(stored.is_empty(), "{stored:?}");
+}
+
+#[test]
+fn a_write_accepted_body_of_wide_integers_serves_its_numbers() {
+    // The phrase's letters after a string and a line break, each a
+    // byte-sized integer stored after a one-byte header: no run of stored
+    // bytes spells the phrase, and only a re-encoding at the narrowest width
+    // would. Stored at that width, it is a body the write door refuses.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
+    let body = |header: &[u8]| {
+        let mut body = vec![0xdc];
+        body.extend(u16::try_from(letters.len() + 1).unwrap().to_be_bytes());
+        body.push(0xa5);
+        body.extend_from_slice(b"notes");
+        for letter in &letters {
+            body.extend_from_slice(header);
+            body.push(*letter);
+        }
+        body
+    };
+    let (wide, narrow) = (body(&[0xcc]), body(&[]));
+    assert!(crate::batch::secret_scan::scan_write_payload(&wide).is_ok());
+    assert!(crate::batch::secret_scan::scan_write_payload(&narrow).is_err());
+    let numbers = crate::companion::companion_value_to_json(
+        &rmpv::decode::read_value(&mut &wide[..]).unwrap(),
+    );
+    let (_dir, vault, owner) = scan_off_vault();
+    let memory = facade_for(&vault, owner);
+    let bundle = |asset: EntityId| -> serde_json::Value {
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[asset]).unwrap()).unwrap()
+    };
+
+    let kept = put_asset(&vault, &wide, 10);
+    let view = memory.get_entity(&kept.to_hex()).unwrap().value.unwrap();
+    assert_eq!(view.body.unwrap(), numbers);
+    assert_eq!(crate::batch::export::redacted_memory_body(&wide), numbers);
+    assert_eq!(
+        crate::batch::export::redacted_memory_payload(wide.clone()).unwrap(),
+        wide
+    );
+    let exported = bundle(kept);
+    assert_eq!(exported["entities"][0]["body"], numbers);
+    assert_eq!(exported["manifest"]["secrets_nulled"]["payloads"], false);
+
+    // The same letters at the width the write door refuses stay withheld.
+    let withheld = put_asset(&vault, &narrow, 11);
+    let view = memory
+        .get_entity(&withheld.to_hex())
+        .unwrap()
+        .value
+        .unwrap();
+    assert_eq!(view.body.unwrap(), "[redacted]");
+    assert_eq!(
+        crate::batch::export::redacted_memory_body(&narrow),
+        "[redacted]"
+    );
+    assert_eq!(
+        crate::batch::export::redacted_memory_payload(narrow).unwrap(),
+        b"\xaa[redacted]"
+    );
+    let exported = bundle(withheld);
+    assert_eq!(exported["entities"][0]["body"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_repeated_key_is_read_in_the_bytes_of_the_value_it_keeps() {
+    // Sol and Wonder R1: a map that repeats a key serves its last value, and
+    // that value is read in its own stored bytes. Its first value holds the
+    // same letters narrow but one changed, so neither value spells the
+    // phrase; the last value's letters set at the first one's widths would.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
+    let array = |header: &[u8], letters: &[u8]| {
+        let mut array = vec![0xdc];
+        array.extend(u16::try_from(letters.len() + 1).unwrap().to_be_bytes());
+        array.push(0xa5);
+        array.extend_from_slice(b"notes");
+        for letter in letters {
+            array.extend_from_slice(header);
+            array.push(*letter);
+        }
+        array
+    };
+    let mut changed = letters.clone();
+    changed[1] = b'x';
+    let mut body = vec![0x82];
+    for value in [array(&[], &changed), array(&[0xcc], &letters)] {
+        body.push(0xa7);
+        body.extend_from_slice(b"letters");
+        body.extend(value);
+    }
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
+    let served = crate::companion::companion_value_to_json(
+        &rmpv::decode::read_value(&mut &body[..]).unwrap(),
+    );
+    assert_eq!(served["letters"][2], u64::from(letters[1]));
+    let (_dir, vault, owner) = scan_off_vault();
+    let memory = facade_for(&vault, owner);
+    let kept = put_asset(&vault, &body, 10);
+    let view = memory.get_entity(&kept.to_hex()).unwrap().value.unwrap();
+    assert_eq!(view.body.unwrap(), served);
+    assert_eq!(crate::batch::export::redacted_memory_body(&body), served);
+    assert_eq!(
+        crate::batch::export::redacted_memory_payload(body.clone()).unwrap(),
+        body
+    );
+    let exported: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[kept]).unwrap()).unwrap();
+    assert_eq!(exported["entities"][0]["body"], served);
 }

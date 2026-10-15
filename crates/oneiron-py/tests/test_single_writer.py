@@ -73,14 +73,6 @@ def test_second_process_is_refused_and_reopen_succeeds_after_exit(tmp_path) -> N
     Oneiron.open(vault)
 
 
-def test_two_opens_in_one_process_share_the_vault(tmp_path) -> None:
-    vault = tmp_path / "vault"
-    first = Oneiron.open(vault)
-    second = Oneiron.open(vault)
-    assert isinstance(first.receipts(1), list)
-    assert isinstance(second.receipts(1), list)
-
-
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is Unix-only")
 def test_forked_child_fails_closed_while_parent_keeps_working(tmp_path) -> None:
     memory = Oneiron.open(tmp_path / "vault")

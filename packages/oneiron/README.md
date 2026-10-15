@@ -242,6 +242,7 @@ you want to act as instead.
 | `Oneiron.connect(url, key)` | a remote handle |
 | `Oneiron.pair(link)` | `{ memory, credential }`: a remote handle and the credential to store |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
+| `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
 | `handle.witness(turn)` | `WitnessReceipt` |
 | `handle.claimUpsert(claim)` | `CommitReceipt` |
 | `handle.recall(query, opts?)` | `MemoryPack` |
@@ -250,8 +251,9 @@ you want to act as instead.
 `recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`, default
 `"medium"`), `scope` (`{ worldRef?, facet? }`), `limit` (default `10`) and
 `format` (`"json" | "yaml" | "toon" | "md" | "txt"`). `high`, `xhigh` and `max` need
-a budget lease and return `LEASE_REQUIRED` without one; this package neither mints
-nor simulates a lease.
+a budget lease this package never mints: an embedded client returns `LEASE_REQUIRED`;
+a remote one gets what the server serves (reranked on its `[models]` reranker, or
+unreranked and saying so).
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
 `occurredAt` stamps the current wall clock at the call boundary; supplying one

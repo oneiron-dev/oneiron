@@ -6,7 +6,7 @@ use crate::context_pack::{ContextPackBuilder, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 
 fn fixture() -> (tempfile::TempDir, Vault, EntityId) {
@@ -33,13 +33,13 @@ fn claim_with_text(
     vault: &Vault,
     id: EntityId,
     subject: EntityId,
-    value: &str,
+    value: impl Into<rmpv::Value>,
     text: &str,
 ) -> Result<()> {
     let body = ClaimBody::new(
         "profile.preference",
         ClaimSubject::Entity(subject),
-        rmpv::Value::from(value),
+        value.into(),
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
@@ -144,483 +144,6 @@ fn unchanged_evidence_reuses_render_and_only_new_query_items_enter_delta() -> Re
 }
 
 #[test]
-fn evidence_change_rerenders_and_erasure_releases_the_cached_body() -> Result<()> {
-    let (_dir, vault, subject) = fixture();
-    let id = crate::test_util::entity(0x31);
-    claim(&vault, id, subject, "old preference")?;
-    let first = assembly(&vault, subject).run()?.l2_base.unwrap();
-    claim(&vault, id, subject, "corrected preference")?;
-    let second = assembly(&vault, subject).run()?.l2_base.unwrap();
-    assert_ne!(first.content_hash, second.content_hash);
-    assert!(!Arc::ptr_eq(&first.body, &second.body));
-    assert_ne!(first.body, second.body);
-    let old_render = Arc::downgrade(&first.body);
-    let current_render = Arc::downgrade(&second.body);
-    drop(first);
-    drop(second);
-    assert!(current_render.upgrade().is_some());
-    assert!(
-        vault.delete_entity_with_options(
-            &id,
-            crate::deletion::DeleteEntityOptions { purge: true }
-        )?
-    );
-    assert!(old_render.upgrade().is_none());
-    assert!(current_render.upgrade().is_none());
-    assert!(assembly(&vault, subject).run()?.l2_base.is_none());
-    Ok(())
-}
-
-#[test]
-fn l2_respects_world_candidate_and_serialized_budgets() -> Result<()> {
-    let (_dir, vault, subject) = fixture();
-    let id = crate::test_util::entity(0x31);
-    claim(&vault, id, subject, "scoped preference")?;
-    let deny = |_: &crate::store::Store, _: &heed::RoTxn<'_>, _: &EntityId| Ok(false);
-    assert!(
-        assembly(&vault, subject)
-            .filter_candidates(&deny)
-            .run()?
-            .l2_base
-            .is_none()
-    );
-    assert!(matches!(
-        assembly(&vault, subject)
-            .world(crate::pipeline::WorldScope::ActiveSet)
-            .run(),
-        Err(crate::Error::InvalidConfig(_))
-    ));
-    let config = crate::serialize::SerializeConfig {
-        format: PackFormat::Json,
-        profile: crate::context_pack::FieldProfile::Standard,
-        budget: 8,
-        allocation: Default::default(),
-        include_stats: false,
-        merge_neighbors: true,
-        max_field_chars: 0,
-        max_item_tokens: 0,
-    };
-    let pack = assembly(&vault, subject).run()?;
-    let projected = crate::serialize::project_pack_for_json_response(pack, &config);
-    assert!(projected.l2_base.is_none());
-    let bytes = crate::serialize::serialize_pack(&projected, &config);
-    assert!(crate::tokenizer::count_context_pack_tokens(std::str::from_utf8(&bytes).unwrap()) <= 8);
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
-    ] {
-        let bytes = assembly(&vault, subject)
-            .format(format)
-            .token_budget(8)
-            .run_serialized()?;
-        assert!(
-            crate::tokenizer::count_context_pack_tokens(std::str::from_utf8(&bytes).unwrap()) <= 8
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn off_record_l2_renders_do_not_populate_the_vault_cache_or_telemetry() -> Result<()> {
-    let (_dir, vault, subject) = fixture();
-    claim(
-        &vault,
-        crate::test_util::entity(0x31),
-        subject,
-        "ephemeral preference",
-    )?;
-    let session = vault.off_record_session_vault().enter(
-        "l2-off-record",
-        crate::off_record::OffRecordBackendClass::Local,
-    )?;
-    let route = session.write_route()?;
-    let door = session.retrieval_telemetry(&route)?;
-    let summary = assembly(&vault, subject)
-        .in_session(&door)
-        .run()?
-        .l2_base
-        .unwrap();
-    let body = Arc::downgrade(&summary.body);
-    drop(summary);
-    assert!(body.upgrade().is_none());
-    assert!(vault.store.retrieval_runs(10)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn precommit_erase_snapshot_cannot_repopulate_the_cache() -> Result<()> {
-    let (_dir, vault, subject) = fixture();
-    let id = crate::test_util::entity(0x31);
-    claim(&vault, id, subject, "erase-race preference")?;
-    let first = assembly(&vault, subject).run()?.l2_base.unwrap();
-    let previous = Arc::downgrade(&first.body);
-    drop(first);
-    vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity(&vault.store, txn, &id)?;
-        assert!(previous.upgrade().is_none());
-        // A read snapshot opened before this writer commits still sees the
-        // old claim. It may render for that reader, but must not cache it.
-        let transient =
-            super::produce_l2_base(&vault, &vault.query(), &[subject], None, None, true)?.unwrap();
-        let render = Arc::downgrade(&transient.body);
-        drop(transient);
-        assert!(render.upgrade().is_none());
-        Ok(())
-    })?;
-    assert!(assembly(&vault, subject).run()?.l2_base.is_none());
-    Ok(())
-}
-
-#[test]
-fn changed_or_erased_evidence_refuses_an_earlier_prefix() -> Result<()> {
-    let (_dir, vault, subject) = fixture();
-    let id = crate::test_util::entity(0x31);
-    claim(&vault, id, subject, "before")?;
-    let old = assembly(&vault, subject).run()?.l2_base.unwrap();
-    claim(&vault, id, subject, "after")?;
-    let txn = vault.store.env.read_txn()?;
-    assert!(!super::revalidate_l2_base(
-        &vault,
-        &vault.query(),
-        &txn,
-        &old,
-        None,
-        None
-    )?);
-    drop(txn);
-    let current = assembly(&vault, subject).run()?.l2_base.unwrap();
-    vault.delete_entity_with_options(&id, crate::deletion::DeleteEntityOptions { purge: true })?;
-    let txn = vault.store.env.read_txn()?;
-    assert!(!super::revalidate_l2_base(
-        &vault,
-        &vault.query(),
-        &txn,
-        &current,
-        None,
-        None
-    )?);
-    Ok(())
-}
-
-#[test]
-fn hydration_rechecks_candidate_admission_without_changing_evidence() -> Result<()> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    let (_dir, vault, subject) = fixture();
-    let id = crate::test_util::entity(0x31);
-    claim(&vault, id, subject, "unchanged evidence")?;
-    let allowed = AtomicBool::new(true);
-    let admits = |_: &crate::store::Store, _: &heed::RoTxn<'_>, _: &EntityId| {
-        Ok(allowed.load(Ordering::SeqCst))
-    };
-    let pipeline = vault.query().filter_candidates(&admits);
-    let summary = super::produce_l2_base(&vault, &pipeline, &[subject], None, None, true)?.unwrap();
-    let txn = vault.store.env.read_txn()?;
-    assert!(super::revalidate_l2_base(
-        &vault, &pipeline, &txn, &summary, None, None
-    )?);
-    drop(txn);
-    allowed.store(false, Ordering::SeqCst);
-    let txn = vault.store.env.read_txn()?;
-    assert!(!super::revalidate_l2_base(
-        &vault, &pipeline, &txn, &summary, None, None
-    )?);
-    Ok(())
-}
-
-#[test]
-fn unchanged_evidence_expires_at_the_hydration_time() -> Result<()> {
-    let (_dir, vault, subject) = fixture();
-    let id = crate::test_util::entity(0x31);
-    claim(&vault, id, subject, "time-bounded evidence")?;
-    let mut body = vault.get_claim(&id)?.unwrap();
-    body.valid_to = Some(101);
-    vault.put_entity(
-        &id,
-        ENTITY_TYPE_CLAIM,
-        TimeRange { start: 1, end: 1 },
-        1,
-        &crate::claim::encode_claim_body(&body)?,
-    )?;
-    let summary = assembly(&vault, subject).run()?.l2_base.unwrap();
-    let txn = vault.store.env.read_txn()?;
-    assert!(super::revalidate_l2_base(
-        &vault,
-        &vault.query().with_temporal_now(100),
-        &txn,
-        &summary,
-        None,
-        None,
-    )?);
-    assert!(!super::revalidate_l2_base(
-        &vault,
-        &vault.query().with_temporal_now(101),
-        &txn,
-        &summary,
-        None,
-        None,
-    )?);
-    Ok(())
-}
-
-#[test]
-fn implicit_owner_subject_reuses_prefix_and_keeps_fresh_hits_in_delta() -> Result<()> {
-    let (_dir, vault, _) = fixture();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let id = crate::test_util::entity(0x51);
-    claim(&vault, id, owner, "owner preference")?;
-    let assemble = || {
-        vault
-            .context_pack()
-            .search_text("l2needle", 10)
-            .with_temporal_now(100)
-            .token_budget(0)
-            .max_field_chars(0)
-    };
-    let first = assemble().run()?;
-    let prefix = first.l2_base.as_ref().expect("implicit owner prefix");
-    assert_eq!(prefix.evidence_ids(), &[id]);
-    let again = assemble().run()?;
-    assert!(Arc::ptr_eq(&prefix.body, &again.l2_base.unwrap().body));
-    let before_bytes = assemble().run_serialized()?;
-    assert_eq!(before_bytes, assemble().run_serialized()?);
-    let before: serde_json::Value = serde_json::from_slice(&before_bytes).unwrap();
-    let fresh = crate::test_util::entity(0x52);
-    let fresh_body = rmp_serde::to_vec_named(&serde_json::json!({"txt": "new item"})).unwrap();
-    vault
-        .batch()
-        .put(
-            &fresh,
-            ENTITY_TYPE_TURN,
-            TimeRange { start: 2, end: 2 },
-            2,
-            &fresh_body,
-        )
-        .text(&fresh, &[("body", "l2needle")])
-        .commit()?;
-    let after = assemble().run()?;
-    assert!(Arc::ptr_eq(&prefix.body, &after.l2_base.unwrap().body));
-    assert!(after.results.iter().any(|row| row.id == fresh));
-    let later: serde_json::Value = serde_json::from_slice(&assemble().run_serialized()?).unwrap();
-    assert_eq!(before["l2_base"], later["l2_base"]);
-    assert_ne!(before["delta"], later["delta"]);
-    claim(&vault, id, owner, "changed preference")?;
-    let changed = assemble().run()?.l2_base.unwrap();
-    assert_ne!(prefix.content_hash, changed.content_hash);
-    assert!(!Arc::ptr_eq(&prefix.body, &changed.body));
-    Ok(())
-}
-
-#[test]
-fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() -> Result<()> {
-    use crate::claim::ScopedReadActorKey;
-    let (_dir, vault, unrelated) = fixture();
-    let person = crate::test_util::entity(0x64);
-
-    vault.put_entity(
-        &person,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"person",
-    )?;
-    let user_claim = crate::test_util::entity(0x67);
-    let second_user_claim = crate::test_util::entity(0x68);
-    let unrelated_claim = crate::test_util::entity(0x69);
-    claim(&vault, user_claim, person, "user")?;
-    claim(&vault, second_user_claim, person, "second user")?;
-
-    claim(&vault, unrelated_claim, unrelated, "other user")?;
-    crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex(), "reader"]);
-    let reader = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
-    let pack = vault
-        .context_pack()
-        .l2_summary_reader(&reader)
-        .search_text("l2needle", 10)
-        .with_temporal_now(100)
-        .token_budget(0)
-        .max_field_chars(0)
-        .run()?;
-    let prefix = pack.l2_base.expect("implicit personal prefix");
-    assert_eq!(prefix.evidence_ids(), &[user_claim, second_user_claim]);
-
-    assert!(!prefix.evidence_ids().contains(&unrelated_claim));
-    let delegated = vault.scoped_read(
-        ScopedReadActorKey::new("reader")
-            .unwrap()
-            .require_access_grants(Some(person)),
-    );
-    let pack = vault
-        .context_pack()
-        .l2_summary_reader(&delegated)
-        .search_text("l2needle", 10)
-        .with_temporal_now(100)
-        .run()?;
-    assert_eq!(
-        pack.l2_base.unwrap().evidence_ids(),
-        &[user_claim, second_user_claim]
-    );
-
-    let unbound = vault.scoped_read(
-        ScopedReadActorKey::new("reader")
-            .unwrap()
-            .require_access_grants(None),
-    );
-    assert!(
-        vault
-            .context_pack()
-            .l2_summary_reader(&unbound)
-            .run()?
-            .l2_base
-            .is_none()
-    );
-    let other = vault.scoped_read(ScopedReadActorKey::new(unrelated.to_hex()).unwrap());
-    let pack = vault
-        .context_pack()
-        .l2_summary_reader(&other)
-        .search_text("l2needle", 10)
-        .with_temporal_now(100)
-        .token_budget(0)
-        .max_field_chars(0)
-        .run()?;
-    assert_eq!(pack.l2_base.unwrap().evidence_ids(), &[unrelated_claim]);
-    Ok(())
-}
-
-#[test]
-fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
-    let (_dir, vault, _) = fixture();
-    let first_person = crate::test_util::entity(0x80);
-    vault.put_entity(
-        &first_person,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"person",
-    )?;
-    let subjects: Vec<_> = (0..9_u8)
-        .map(|n| crate::test_util::entity(0x80 + n))
-        .collect();
-    claim(&vault, crate::test_util::entity(0xA0), first_person, "one")?;
-
-    assert!(vault.context_pack().run()?.l2_base.is_none());
-    assert!(
-        vault
-            .context_pack()
-            .l2_summary_subjects(&[first_person])
-            .run()?
-            .l2_base
-            .is_some()
-    );
-    assert!(matches!(
-        vault.context_pack().l2_summary_subjects(&subjects).run(),
-        Err(crate::Error::InvalidConfig(_))
-    ));
-
-    let (_dir, vault, _) = fixture();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    for n in 0..257_u16 {
-        let mut bytes = [0x70; 16];
-        bytes[14] = (n >> 8) as u8;
-        bytes[15] = n as u8;
-        claim(
-            &vault,
-            EntityId::from_bytes(bytes)?,
-            owner,
-            "bounded evidence",
-        )?;
-    }
-    assert!(vault.context_pack().run()?.l2_base.is_none());
-    assert!(matches!(
-        vault.context_pack().l2_summary_subjects(&[owner]).run(),
-        Err(crate::Error::IndexOverflow(_))
-    ));
-    Ok(())
-}
-
-#[test]
-fn unscoped_owner_discovers_its_person_claims_not_a_strangers() -> Result<()> {
-    let (_dir, vault, stranger) = fixture();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let owner_claim = crate::test_util::entity(0xB4);
-    let stranger_claim = crate::test_util::entity(0xB5);
-    claim(&vault, owner_claim, owner, "owner identity")?;
-    claim(&vault, stranger_claim, stranger, "stranger identity")?;
-    let base = vault.context_pack().run()?.l2_base.expect("owner identity");
-
-    assert_eq!(base.evidence_ids(), &[owner_claim]);
-    assert!(!base.evidence_ids().contains(&stranger_claim));
-    Ok(())
-}
-
-#[test]
-fn implicit_base_field_cap_restores_the_ranked_claim_in_serialized_output() -> Result<()> {
-    let (_dir, vault, _) = fixture();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let id = crate::test_util::entity(0xC1);
-    claim(&vault, id, owner, &format!("visible{}", "x".repeat(501)))?;
-    let builder = || vault.context_pack().search_text("l2needle", 10);
-    let pack = builder().run()?;
-    assert!(pack.l2_base.is_some());
-    assert!(pack.results.iter().any(|row| row.id == id));
-    let projected = crate::serialize::project_pack_for_json_response(
-        pack,
-        &crate::serialize::SerializeConfig {
-            format: PackFormat::Json,
-            profile: crate::context_pack::FieldProfile::Standard,
-            budget: 4000,
-            allocation: Default::default(),
-            include_stats: false,
-            merge_neighbors: true,
-            max_field_chars: crate::context_pack::DEFAULT_MAX_FIELD_CHARS,
-            max_item_tokens: 0,
-        },
-    );
-    assert!(projected.l2_base.is_none());
-    assert!(projected.results.iter().any(|row| row.id == id));
-    let bytes = builder().run_serialized()?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(value.get("l2_base").is_none());
-    assert!(String::from_utf8_lossy(&bytes).contains("visible"));
-    Ok(())
-}
-
-#[test]
-fn implicit_base_shed_by_token_budget_restores_a_fitting_ranked_claim() -> Result<()> {
-    let (_dir, vault, _) = fixture();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let bulky = crate::test_util::entity(0xC2);
-    let matched = crate::test_util::entity(0xC3);
-    let large: String = (0..1200).map(|i| format!("{i:04x}")).collect();
-    claim_with_text(&vault, bulky, owner, &large, "other evidence")?;
-    claim(&vault, matched, owner, "budget-visible")?;
-    let pack = vault.context_pack().search_text("l2needle", 10).run()?;
-    assert_eq!(
-        pack.l2_base.as_ref().unwrap().evidence_ids(),
-        &[bulky, matched]
-    );
-    assert!(pack.results.iter().any(|row| row.id == matched));
-    let bytes = vault
-        .context_pack()
-        .search_text("l2needle", 10)
-        .max_field_chars(0)
-        .token_budget(350)
-        .run_serialized_with_stats()?
-        .value;
-    assert_eq!(
-        bytes.stats.items_dropped.reason,
-        crate::context_pack::PackItemAccountingReason::TokenBudget
-    );
-    let value: serde_json::Value = serde_json::from_slice(&bytes.bytes).unwrap();
-    assert!(value.get("l2_base").is_none());
-    assert!(String::from_utf8_lossy(&bytes.bytes).contains("budget-visible"));
-    Ok(())
-}
-
-#[test]
 fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<()> {
     let (_dir, vault, _) = fixture();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -710,85 +233,230 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
     Ok(())
 }
 
+/// The cache is the vault's and outlives any room. A pack that read a room
+/// computes its summary and keeps none, so the next pack on base renders its
+/// own, and base packs after it share that one.
 #[test]
-fn implicit_l2_preserves_provider_envelopes_and_ingest_roundtrip() -> Result<()> {
-    let (_dir, vault, _) = fixture();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
+fn a_pack_over_a_room_keeps_no_summary_in_the_vaults_cache() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
     claim(
         &vault,
-        crate::test_util::entity(0xC5),
-        owner,
-        "stable preference",
+        crate::test_util::entity(0x31),
+        subject,
+        "a preference",
     )?;
-    let fresh = crate::test_util::entity(0xC6);
-    let raw = rmp_serde::to_vec_named(&serde_json::json!({"txt":"fresh-delta"})).unwrap();
-    vault
-        .batch()
-        .put(
-            &fresh,
-            ENTITY_TYPE_TURN,
-            TimeRange { start: 2, end: 2 },
-            2,
-            &raw,
-        )
-        .text(&fresh, &[("body", "l2needle")])
-        .commit()?;
-    let summary = vault
-        .context_pack()
-        .search_text("l2needle", 10)
-        .run()?
-        .l2_base
-        .unwrap();
-    for (format, source, field) in [
-        (PackFormat::OpenaiCompat, "openai-compat", "messages"),
-        (
-            PackFormat::AnthropicMessages,
-            "anthropic-messages",
-            "messages",
-        ),
-        (PackFormat::Gemini, "gemini-api", "contents"),
-    ] {
-        let builder = || {
-            vault
-                .context_pack()
-                .search_text("l2needle", 10)
-                .format(format)
-                .token_budget(0)
-                .max_field_chars(0)
-        };
-        let wire = builder().run_serialized()?;
+    let session = vault.off_record_session_vault().enter(
+        "sess-l2-room",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let view = session.read_view()?;
+    let in_room = assembly(&vault, subject).reading(view.read()).run()?;
+    drop(view);
+    let on_base = assembly(&vault, subject).run()?;
+    let again = assembly(&vault, subject).run()?;
+    let body = |pack: &crate::context_pack::ContextPack| {
+        pack.l2_base
+            .as_ref()
+            .expect("the pack carries its summary")
+            .body
+            .clone()
+    };
+    assert!(
+        !Arc::ptr_eq(&body(&in_room), &body(&on_base)),
+        "the room's summary was not kept"
+    );
+    assert!(
+        Arc::ptr_eq(&body(&on_base), &body(&again)),
+        "a base pack keeps its own"
+    );
+    session.close()?;
+    Ok(())
+}
+
+/// The public BIP39 test vector, as a recovery phrase's words.
+const PHRASE: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+#[test]
+fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
+    let id = crate::vault::embedded_owner_actor_id()?;
+    let owner =
+        vault.authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 10)?;
+    let field = |key: String, value: &str| (rmpv::Value::from(key), rmpv::Value::from(value));
+    let words = PHRASE.split(' ').enumerate();
+    // Sol R8: a word per field and the phrase whole under a key the context
+    // handles drop; then a word per field behind keys that Markdown and
+    // Plaintext rows leave out, and the phrase whole under a credential name.
+    let mut handled: Vec<_> = words
+        .clone()
+        .map(|(at, word)| match at {
+            0..6 => field(format!("{:02}", at + 1), word),
+            _ => field(format!("~{:02}", at + 1), word),
+        })
+        .collect();
+    handled.insert(6, field("identity_key".into(), PHRASE));
+    let mut keyed: Vec<_> = words
+        .map(|(at, word)| field(format!("PROSE{:02}", at + 1), word))
+        .collect();
+    keyed.push(field("password".into(), PHRASE));
+    // Bodies the write door accepts: a credential field holding a stand-in
+    // the write door allows and every release door still clears.
+    let accepted = |title: &str| {
+        rmpv::Value::Map(vec![
+            field("title".into(), title),
+            field("password".into(), "changeme"),
+        ])
+    };
+    let assets = [
+        (rmpv::Value::Map(handled), true),
+        (rmpv::Value::Map(keyed.clone()), true),
+        (accepted("kept asset words"), false),
+    ];
+    for (at, (value, refused)) in (0x50..).zip(assets) {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &value).unwrap();
         assert_eq!(
-            wire,
-            builder().run_serialized()?,
-            "{format:?} must be stable"
+            crate::batch::secret_scan::scan_write_payload(&body).is_err(),
+            refused,
+            "{value}"
         );
-        let root: serde_json::Value = serde_json::from_slice(&wire).unwrap();
-        assert!(root.get("l2_base").is_none());
-        assert!(root.get("delta").is_none());
-        assert_eq!(root["secrets_nulled"], true);
-        let messages = root[field]
-            .as_array()
-            .expect("provider's native message array");
-        assert!(messages.len() >= 2, "{format:?} keeps the read-time delta");
-        let prefix = match format {
-            PackFormat::OpenaiCompat => messages[0]["content"].as_str().unwrap(),
-            PackFormat::AnthropicMessages => messages[0]["content"][0]["text"].as_str().unwrap(),
-            PackFormat::Gemini => messages[0]["parts"][0]["text"].as_str().unwrap(),
-            _ => unreachable!(),
-        };
-        let prefix: serde_json::Value = serde_json::from_str(prefix).unwrap();
-        assert_eq!(prefix["body"], summary.body.as_ref());
-        let normalized = crate::ingest::INGEST_SOURCE_REGISTRY
-            .normalize(source, &String::from_utf8(wire).unwrap())
-            .expect("provider ingest");
-        assert_eq!(normalized.records.len(), messages.len());
-        assert!(
-            normalized
-                .records
-                .iter()
-                .skip(1)
-                .any(|row| row.text.contains("fresh-delta"))
-        );
+        let asset = crate::test_util::entity(at);
+        vault
+            .batch()
+            .put(
+                &asset,
+                ENTITY_TYPE_ASSET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&asset, &[("body", "l2needle")])
+            .commit()?;
     }
+    let refused = crate::test_util::entity(0x61);
+    let kept = crate::test_util::entity(0x62);
+    claim_with_text(
+        &vault,
+        refused,
+        subject,
+        rmpv::Value::Map(keyed),
+        "l2needle",
+    )?;
+    claim_with_text(
+        &vault,
+        kept,
+        subject,
+        accepted("kept claim words"),
+        "l2needle",
+    )?;
+    let full = || {
+        assembly(&vault, subject)
+            .field_profile(crate::context_pack::FieldProfile::Full)
+            .max_item_tokens(0)
+    };
+
+    let pack = full().run()?;
+    let l2 = pack.l2_base.as_ref().expect("L2 prefix");
+    assert_eq!(l2.evidence_ids(), &[kept], "L2: {}", l2.body);
+    assert!(!l2.body.contains("sausage"), "L2: {}", l2.body);
+    assert!(!l2.body.contains("changeme"), "L2: {}", l2.body);
+    assert!(l2.body.contains("kept claim words"), "L2: {}", l2.body);
+    assert!(pack.results.iter().all(|row| row.id != refused));
+    for format in [
+        PackFormat::Json,
+        PackFormat::Yaml,
+        PackFormat::Toon,
+        PackFormat::Markdown,
+        PackFormat::Plaintext,
+        PackFormat::OpenaiCompat,
+        PackFormat::AnthropicMessages,
+        PackFormat::Gemini,
+    ] {
+        let text = String::from_utf8(full().format(format).run_serialized()?).unwrap();
+        assert!(!text.contains("sausage"), "{format:?}: {text}");
+        assert!(!text.contains("changeme"), "{format:?}: {text}");
+        assert!(text.contains("kept asset words"), "{format:?}: {text}");
+        assert!(text.contains("kept claim words"), "{format:?}: {text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_write_accepted_body_of_wide_numbers_hydrates_its_numbers() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
+    let id = crate::vault::embedded_owner_actor_id()?;
+    let owner =
+        vault.authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 10)?;
+    let encode = |value: &rmpv::Value| {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, value).unwrap();
+        bytes
+    };
+    // Sol R12-1: each word's first four letters as the bits of a float a
+    // single width holds exactly, stored wide, the rest of the word in
+    // byte-sized integers after it. Only the narrow width spells the phrase.
+    let mut measurements = Vec::new();
+    for word in PHRASE.split(' ') {
+        let (head, rest) = word.as_bytes().split_at(4);
+        let bits = u32::from_be_bytes(head.try_into().unwrap());
+        measurements.push(rmpv::Value::F64(f64::from(f32::from_bits(bits))));
+        measurements.extend(rest.iter().copied().map(rmpv::Value::from));
+    }
+    // The phrase's letters after a string and a line break, each stored
+    // after a one-byte header: only their narrowest re-encoding spells it.
+    // Stored at that width, the write door refuses them.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
+    let body = |header: &[u8]| {
+        let mut body = vec![0x82];
+        body.extend(encode(&"measurements".into()));
+        body.extend(encode(&rmpv::Value::Array(measurements.clone())));
+        body.extend(encode(&"letters".into()));
+        body.push(0xdc);
+        body.extend(u16::try_from(letters.len() + 1).unwrap().to_be_bytes());
+        body.extend(encode(&"notes".into()));
+        for letter in &letters {
+            body.extend_from_slice(header);
+            body.push(*letter);
+        }
+        body
+    };
+    let (wide, narrow) = (body(&[0xcc]), body(&[]));
+    assert!(crate::batch::secret_scan::scan_write_payload(&wide).is_ok());
+    assert!(crate::batch::secret_scan::scan_write_payload(&narrow).is_err());
+    for (at, body) in [(0x63, &wide), (0x64, &narrow)] {
+        let asset = crate::test_util::entity(at);
+        vault
+            .batch()
+            .put(
+                &asset,
+                ENTITY_TYPE_ASSET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .text(&asset, &[("body", "l2needle")])
+            .commit()?;
+    }
+    let json = |value: rmpv::Value| {
+        serde_json::to_string(&crate::context_pack::hydration::rmpv_to_json(&value)).unwrap()
+    };
+    let numbers = json(rmpv::Value::Array(measurements));
+    let mut letter_values = vec![rmpv::Value::from("notes")];
+    letter_values.extend(letters.iter().copied().map(rmpv::Value::from));
+    let letter_numbers = json(rmpv::Value::Array(letter_values));
+    let text = String::from_utf8(
+        assembly(&vault, subject)
+            .field_profile(crate::context_pack::FieldProfile::Full)
+            .max_item_tokens(0)
+            .format(PackFormat::Json)
+            .run_serialized()?,
+    )
+    .unwrap();
+    // Each number of the body the write door accepts, once: the one it
+    // refuses hydrates no field.
+    assert_eq!(text.matches(&numbers).count(), 1, "{text}");
+    assert_eq!(text.matches(&letter_numbers).count(), 1, "{text}");
     Ok(())
 }

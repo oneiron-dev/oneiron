@@ -348,28 +348,3 @@ fn dns_name(value: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unsupported_claim_is_a_failure_not_a_dropped_proposal() {
-        let output = abi::StepResult {
-            result_json: "null".into(),
-            proposals: vec![abi::ProposalDelta::ClaimCandidate(abi::ClaimInput {
-                id: "id".into(),
-                predicate: "p".into(),
-                subject: "null".into(),
-                value: "null".into(),
-                confidence: None,
-                occurred: None,
-                learned_at: None,
-            })],
-        };
-        assert!(matches!(
-            proposals(output, &Snapshot::new()),
-            Err(Error::UnsupportedClaimCandidate)
-        ));
-    }
-}

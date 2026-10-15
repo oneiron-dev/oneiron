@@ -28,7 +28,10 @@ use crate::store::Store;
 /// `set_edge_vad`). Layout dispatch is VALUE LENGTH (no tag byte; the
 /// read-back mirrors `restamp_edge_flags`). A plain put on a bare or absent
 /// edge is unchanged: absence of provenance is itself the anonymous
-/// representation.
+/// representation. The one exception is an absent edge whose local
+/// `edge.provenance` wrappers all withdrew its support: the batch's edge arm
+/// lands the put retracted, so an erasure or a RETRACT is never undone by
+/// deleting the edge and putting it back.
 pub(super) fn apply_edge(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

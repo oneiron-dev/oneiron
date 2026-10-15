@@ -3,9 +3,15 @@ use crate::error::{Error, Result};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The engine reads the clock inside the vault's write transaction, which may
+/// be one group commit shared with other writes. An implementation must only
+/// read time: it must not call into the vault or wait on anything a vault
+/// caller can hold while it writes, or the vault's writer deadlocks.
 pub trait Clock: Send + Sync {
     fn now_recorded_at(&self) -> u64;
 }
+/// The engine mints ids inside the vault's write transaction, under the same
+/// contract as [`Clock`]: an implementation must only mint ids.
 pub trait IdGen: Send + Sync {
     fn ulid(&self) -> [u8; 16];
 }
@@ -72,6 +78,27 @@ impl StoreClock {
         *floor = (*floor).max(persisted).max(self.source.now_recorded_at());
         Ok(*floor)
     }
+    /// [`Self::now_recorded_at`] without observing it: the floor stays where
+    /// the vault's writes put it, so a stamp read this way (a job row's) moves
+    /// no later write's clock, even after the source rolls back.
+    ///
+    /// The floor stays locked while the source is read, as in
+    /// [`Self::now_recorded_at`]: no other caller can observe the clock
+    /// between the two reads, so a peek never returns below a floor another
+    /// caller saw first.
+    pub(crate) fn peek_recorded_at(&self) -> u64 {
+        let floor = self
+            .floor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (*floor).max(self.source.now_recorded_at())
+    }
+    /// The source itself, held at no floor: the host's wall clock. For a
+    /// holder proof's signed time, and for a clock that keeps its own
+    /// committed floor; never a stamp on what the vault records.
+    pub(crate) fn wall_now(&self) -> u64 {
+        self.source.now_recorded_at()
+    }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
     pub fn now_recorded_at(&self) -> u64 {
@@ -127,6 +154,16 @@ impl crate::Vault {
     }
 }
 
+/// The stamp a job row takes in a write transaction: the clock floor the
+/// vault has committed (another handle on it may have raised it) or this
+/// store's clock if later, read without moving either floor.
+pub(crate) fn job_recorded_at_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<u64> {
+    Ok(authorization_floor_in_txn(store, txn)?.max(store.clock().peek_recorded_at()))
+}
+
 /// Read the already committed floor within the authorization snapshot.
 /// Callers must commit `Store::authorization_now` before opening that snapshot.
 pub(crate) fn authorization_floor_in_txn(
@@ -152,12 +189,7 @@ impl crate::store::Store {
         // Persist ONLY clock authority here: a read must not also commit the
         // floor of IDs allocated in RAM but not yet used by a mutation.
         let mut txn = self.env.write_txn()?;
-        let persisted = authorization_floor_in_txn(self, &txn)?;
-        let now = self.clock.observe_floor(persisted)?;
-        if now != persisted {
-            self.vault_meta
-                .put(&mut txn, CLOCK_FLOOR, &now.to_be_bytes())?;
-        }
+        let now = observe_clock_floor_in_txn(self, &mut txn)?;
         txn.commit()?;
         Ok(now)
     }
@@ -169,15 +201,36 @@ pub(crate) fn recorded_at_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
-    let persisted = match store.vault_meta().get(txn, CLOCK_FLOOR)? {
-        Some(bytes) => u64::from_be_bytes(
-            bytes
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("recorded clock floor"))?,
-        ),
-        None => 0,
-    };
+    persist_id_floor_in_txn(store, txn)?;
+    observe_clock_floor_in_txn(store, txn)
+}
+
+/// This store's clock, observed against the floor the vault has committed,
+/// with the observation persisted as the new floor in the caller's
+/// transaction. Only the clock floor: the id floor stays where the vault's
+/// mutations put it.
+pub(crate) fn observe_clock_floor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<u64> {
+    let persisted = authorization_floor_in_txn(store, txn)?;
+    let now = store.clock().observe_floor(persisted)?;
+    if now != persisted {
+        store
+            .vault_meta()
+            .put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
+    }
+    Ok(now)
+}
+
+/// Persists the floor of the ids this store has allocated, in the caller's
+/// transaction, and leaves the clock floor where it is: a write that keeps
+/// an allocated id in a row no mutation stamps still keeps that id from
+/// being allocated again after a reopen.
+pub(crate) fn persist_id_floor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
     let id_floor = match store.vault_meta().get(txn, ID_FLOOR)? {
         Some(bytes) => u128::from_be_bytes(
             bytes
@@ -193,11 +246,8 @@ pub(crate) fn recorded_at_in_txn(
             .vault_meta()
             .put(txn, ID_FLOOR, &observed_id_floor.to_be_bytes())?;
     }
-    let now = store.clock().observe_floor(persisted)?;
-    if now != persisted {
-        store
-            .vault_meta()
-            .put(txn, CLOCK_FLOOR, &now.to_be_bytes())?;
-    }
-    Ok(now)
+    Ok(())
 }
+
+#[cfg(test)]
+mod tests;

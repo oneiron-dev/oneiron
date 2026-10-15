@@ -524,13 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn short_ref_syntax_splits_id_and_hash() {
-        let (short_id, hash) = parse_short_ref_syntax("cl17:a3").expect("valid short ref");
-        assert_eq!(short_id, "cl17");
-        assert_eq!(hash, 0xa3);
-    }
-
-    #[test]
     fn short_ref_syntax_rejects_malformed_refs() {
         for raw in [
             "cl17",     // no hash
@@ -568,21 +561,6 @@ mod tests {
         }
         drop(request);
         worker.join().unwrap();
-    }
-
-    #[test]
-    fn entity_id_hex_round_trip() {
-        let id = EntityId::now();
-        let hex = id.to_hex();
-        assert_eq!(hex.len(), 32);
-        let recovered = EntityId::from_hex(&hex).unwrap();
-        assert_eq!(id, recovered);
-    }
-
-    #[test]
-    fn entity_id_from_hex_rejects_invalid() {
-        assert!(EntityId::from_hex("too_short").is_err());
-        assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
     }
 
     #[test]

@@ -11,11 +11,6 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value, json};
 
-#[cfg(test)]
-const ENTITY_SUMMARY_FIELDS: &[&str] = &["id", "kind", "label", "updatedAt"];
-#[cfg(test)]
-const ENTITY_FULL_META_FIELDS: &[&str] = &["id", "kind", "type", "label", "updatedAt"];
-
 /// Read projection requested by homogeneous CRUD read endpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, utoipa::ToSchema)]
 #[schema(rename_all = "lowercase")]
@@ -187,19 +182,6 @@ pub fn project_edge(edge: &EdgeInfo, view: View) -> Value {
                 );
             }
             Value::Object(object)
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn entity_projection_keys(entity_type: u8, view: View) -> Vec<&'static str> {
-    match view {
-        View::Summary => ENTITY_SUMMARY_FIELDS.to_vec(),
-        View::Standard => profile_fields(entity_type, view.field_profile()).to_vec(),
-        View::Full => {
-            let mut keys = ENTITY_FULL_META_FIELDS.to_vec();
-            keys.extend(profile_fields(entity_type, view.field_profile()));
-            keys
         }
     }
 }

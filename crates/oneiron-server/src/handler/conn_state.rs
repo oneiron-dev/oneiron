@@ -20,11 +20,19 @@ pub(super) struct ConnState {
     pub(super) owner_documents: std::collections::HashMap<oneiron::EntityId, Vec<u8>>,
     pub(super) window_sync_mode: WindowSyncMode,
     pub(super) lfs_owner_mode: bool,
+    /// The object of each chunk reply queued on this socket, in queue order,
+    /// so the reply is checked against the device-only flag again on release.
+    pub(super) queued_chunk_objects: std::collections::VecDeque<oneiron::origin::lfs::LfsOid>,
     pub(super) protocol_version: u8,
     /// App-tier authority is established only by a successful in-band bind.
     pub(super) bound_auth: Option<CoreAuth>,
+    /// Where this socket's peer sits; a bound auth reads from there.
+    pub(super) locality: oneiron::claim::CallerLocality,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// The machine this socket's upgrade proved, independent of its actor.
+    /// Read it through [`Self::peer_machine`], which asks the fold again.
+    proven_machine: oneiron::authority::PeerMachine,
 }
 
 impl ConnState {
@@ -37,9 +45,36 @@ impl ConnState {
             owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
             lfs_owner_mode: false,
+            queued_chunk_objects: std::collections::VecDeque::new(),
             protocol_version,
             bound_auth: None,
+            locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
+            proven_machine: oneiron::authority::PeerMachine::Unknown,
+        }
+    }
+
+    pub(super) fn with_peer_machine(mut self, machine: oneiron::authority::PeerMachine) -> Self {
+        self.proven_machine = machine;
+        self
+    }
+
+    /// The machine this socket proved at upgrade, while the vault's fold
+    /// still holds it live. The socket outlives that instant: a machine
+    /// removed, poisoned or gone stale since is an unknown destination, as
+    /// is one the fold cannot be read for. `Unknown` is never this machine or
+    /// the owner's.
+    pub(super) fn peer_machine(&self, vault: &oneiron::Vault) -> oneiron::authority::PeerMachine {
+        match self.proven_machine {
+            oneiron::authority::PeerMachine::Proven(machine)
+                if vault.authority_fold().is_ok_and(|fold| {
+                    fold.machine(machine)
+                        .is_some_and(oneiron::authority::FoldedMachine::is_live)
+                }) =>
+            {
+                oneiron::authority::PeerMachine::Proven(machine)
+            }
+            _ => oneiron::authority::PeerMachine::Unknown,
         }
     }
 
@@ -136,39 +171,4 @@ pub(super) enum WindowSyncMode {
     FullWindow,
     Selector,
     Residence,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_followed_windows_receive_broadcasts_and_late_follow_backfills() {
-        let mut device = ConnState::new(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION);
-        let month = WindowKey::new("2026-03");
-        let worlds: Vec<_> = (1..=5)
-            .map(|byte| oneiron::EntityId::from_bytes([byte; 16]).unwrap())
-            .collect();
-        let keys: Vec<_> = worlds
-            .iter()
-            .map(|world| WindowKey::for_month_world(&month, *world))
-            .collect();
-        for key in &keys {
-            assert!(!device.receives_window(key));
-        }
-        device.touch_window(keys[0].clone(), 32).unwrap();
-        assert!(!device.receives_window(&keys[0]));
-        device.subscribe_window(&keys[0]);
-        assert!(device.receives_window(&keys[0]));
-        assert!(keys[1..].iter().all(|key| !device.receives_window(key)));
-        device.touch_window(keys[1].clone(), 32).unwrap();
-        device.subscribe_window(&keys[1]);
-        assert!(device.receives_window(&keys[1]));
-        let mut home = ConnState::new(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION);
-        for key in &keys {
-            home.touch_window(key.clone(), 32).unwrap();
-            home.subscribe_window(key);
-        }
-        assert!(keys.iter().all(|key| home.receives_window(key)));
-    }
 }

@@ -3,8 +3,8 @@
 use super::bridge::{self, BRIDGE_ORIGIN};
 use super::egress::export_scrubbed_window_snapshot;
 use super::loro_support::{
-    doc_version_vector, export_updates_from, import_doc, map_delete, map_for_each_bytes,
-    map_insert_bytes, tombstone_values_for_id,
+    TombstoneIndex, doc_version_vector, export_updates_from, import_doc, map_delete,
+    map_for_each_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -38,21 +38,33 @@ use loro::{CommitOptions, LoroDoc};
 ///    deletes keep edge keys: the local shell keeps its live edges
 ///    (ARCH-0038 user_delete keeps the message shell).
 pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[u8]) -> Result<()> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    apply_tombstone_to_indexed_window_doc(doc, &tombstones, id, raw_value)
+}
+
+/// [`apply_tombstone_to_window_doc`] for a replay of many tombstones into one doc: `tombstones`
+/// indexes the doc's map once for the whole replay (H15), built after the replay's last import.
+pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
+    doc: &LoroDoc,
+    tombstones: &TombstoneIndex,
+    id: &EntityId,
+    raw_value: &[u8],
+) -> Result<()> {
     let incoming = decode_tombstone_value(raw_value);
     let hex_id = id.to_hex();
 
-    let tombstones = doc.get_map("tombstones");
     // Tombstone-aware read across EVERY hex-casing alias of the id: a
     // PRESENT non-Binary value reads as the empty slice, which decodes HARD
     // (fail closed) — a garbage tombstone must block a soft downgrade
     // exactly like a hard binary one, and a crafted UPPERCASE-key hard
     // tombstone must block it exactly like the canonical lowercase one.
-    let existing_hard = tombstone_values_for_id(&tombstones, id)
+    let existing_hard = tombstones
+        .values_for(id)
         .iter()
         .any(|existing| decode_tombstone_value(existing).is_hard());
     let downgrade_blocked = existing_hard && !incoming.is_hard();
     if !downgrade_blocked {
-        map_insert_bytes(&tombstones, &hex_id, raw_value)?;
+        map_insert_bytes(tombstones.map(), &hex_id, raw_value)?;
     }
 
     crate::sync::note::deleted(doc, id)?;
@@ -191,8 +203,9 @@ pub fn replay_pending_tombstones(
         .any(|(_, value)| decode_tombstone_value(value).is_hard());
 
     let vv_before = doc.oplog_vv();
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     for (key, value) in &markers {
-        apply_tombstone_to_window_doc(doc, &key.id, value)?;
+        apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
     // Bridge origin: local LMDB already reflects the delete (the marker was
     // written in the purge/scrub txn itself), so Observer B must not re-run
@@ -207,7 +220,7 @@ pub fn replay_pending_tombstones(
     // after CRDT commit + snapshot persistence succeed.
     let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;

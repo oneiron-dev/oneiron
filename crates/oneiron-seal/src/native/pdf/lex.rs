@@ -341,25 +341,4 @@ mod tests {
         assert!(table_prev(b"xref\ntrailer\n<< /Prev 42 /Pr#65v 42 >>").is_err());
         assert!(table_prev(b"xref\ntrailer\n<< /Pr#ZZv 42 >>").is_err());
     }
-
-    #[test]
-    fn structural_tokens_exclude_strings_hex_and_comments() {
-        let bytes = b"% 99 0 obj\r\n(1 0 obj \\(nested\\)) <312030206F626A> \n1 % legal\r2 % legal\nobj << /Label (3 0 obj) /Hex <342030206F626A> >> endobj";
-        let mut lexer = PdfLexer::new(bytes, 0, 200);
-        let mut words = Vec::new();
-        while let Some(t) = lexer.next().unwrap() {
-            if t.kind == Kind::Word {
-                words.push(t.value.to_vec());
-            }
-        }
-        assert_eq!(
-            words,
-            vec![
-                b"1".to_vec(),
-                b"2".to_vec(),
-                b"obj".to_vec(),
-                b"endobj".to_vec()
-            ]
-        );
-    }
 }

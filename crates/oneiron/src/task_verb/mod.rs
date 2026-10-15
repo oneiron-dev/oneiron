@@ -16,6 +16,8 @@ pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
 mod ask_types;
+mod board_task;
+pub(crate) use board_task::board_task_for_id;
 mod consts;
 mod consult_fanout_admission;
 mod consult_fanout_facade;
@@ -36,6 +38,7 @@ mod linear_store;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
+mod presence_pages;
 mod presence_scan;
 mod query_facade;
 mod rate_limit;
@@ -48,6 +51,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use wire_decode::{TaskBinding, task_binding};
 mod wire_encode;
 
 #[cfg(test)]
@@ -131,9 +135,6 @@ pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
 };
 
-#[cfg(test)]
-mod owner_index_tests;
-
 pub use symbol_lease::{SymbolLease, SymbolLeaseOutcome};
 pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
 
@@ -154,6 +155,7 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
+mod recall_door;
 pub mod sdk;
 
 #[cfg(test)]
@@ -168,7 +170,9 @@ pub(crate) use ask_option_link::{
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
 pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
-pub(crate) use ask_settlement::settle_ask_if_due;
+pub(crate) use ask_settlement::{
+    AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
+};
 
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 

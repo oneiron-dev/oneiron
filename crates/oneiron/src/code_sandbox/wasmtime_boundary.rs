@@ -174,10 +174,10 @@ fn link<H: bindings::GuestImports + 'static>(
                 wit,
                 |_cx: StoreContextMut<'_, RequestState<H>>, (schema, value): (String, String)| {
                     let verdict = serde_json::from_str(&schema)
-                        .map_err(|_| "invalid schema JSON".to_owned())
+                        .map_err(|_| "invalid_schema".to_owned())
                         .and_then(|schema| {
                             serde_json::from_str(&value)
-                                .map_err(|_| "invalid value JSON".to_owned())
+                                .map_err(|_| "invalid_value".to_owned())
                                 .map(|value| {
                                     crate::llm::validate_json_schema(&schema, &value).is_ok()
                                 })
@@ -185,12 +185,18 @@ fn link<H: bindings::GuestImports + 'static>(
                     Ok((verdict,))
                 },
             )?,
-            "self.memory.search" => unary!(root, wit, memory_search, SearchInput),
-            "self.memory.put_claim" => unary!(root, wit, memory_put_claim, ClaimInput),
-            "self.memory.supersede_claim" => {
-                unary!(root, wit, memory_supersede_claim, SupersedeInput);
-            }
-            "self.memory.put_edge" => unary!(root, wit, memory_put_edge, EdgeInput),
+            "self.verbs.names" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (): ()| {
+                    Ok((cx.data_mut().host.verb_names(),))
+                },
+            )?,
+            "self.verbs.call" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (verb, input): (String, String)| {
+                    Ok((cx.data_mut().host.verb_call(verb, input),))
+                },
+            )?,
             "self.report_blocked" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, RequestState<H>>,

@@ -11,7 +11,10 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::sync::ingest::{EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint};
+use crate::sync::ingest::{
+    EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, waits_for_sibling_row,
+};
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
 use crate::vault::ReadMode;
@@ -53,8 +56,8 @@ pub(super) fn materialize_entities_with_changes(
     window_key: &str,
     lease_vault_id: u64,
 ) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
-    let tombstones_map = doc.get_map("tombstones");
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map)
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
         .with_residence(Residence::Quarantine(doc));
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
@@ -63,15 +66,15 @@ pub(super) fn materialize_entities_with_changes(
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
-    let result = vault.with_write_txn(|wtxn| {
-        // One delta has no row order: an ask word or receipt must not reach
-        // its group check before a group or person carried by the same delta.
+    let result = vault.with_write_txn_grouped(|wtxn| {
+        // One delta has no row order: an ask word, receipt or project home room
+        // must not reach its sibling check before the row it names.
         let mut updates: Vec<_> = delta.updated.iter().collect();
-        updates.sort_by_key(|(_, value)| {
+        updates.sort_by_cached_key(|(_, value)| {
             matches!(
                 value,
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
-                    if crate::task_verb::waits_for_ask_group(blob)
+                    if waits_for_sibling_row(blob)
             )
         });
         for (key, new_val) in updates {
@@ -100,10 +103,16 @@ pub(super) fn materialize_entities_with_changes(
                         // The savepoint has no postcommit owner. Carry its
                         // claim change to the outer transaction's watch,
                         // which fires only after THAT commit.
-                        if EntityMetadataHeader::parse(blob)
-                            .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-                        {
-                            crate::batch::queue_proactivity_change(vault, wtxn);
+                        match EntityMetadataHeader::parse(blob).map(|h| h.entity_type) {
+                            Some(ENTITY_TYPE_CLAIM) => {
+                                crate::batch::queue_proactivity_change(vault, wtxn);
+                            }
+                            // A peer's consult or settlement reaches this
+                            // vault's board subscribers only after commit.
+                            Some(crate::registry::ENTITY_TYPE_TASK) => {
+                                crate::batch::queue_task_updates(vault, wtxn, [id]);
+                            }
+                            _ => {}
                         }
                         let revision =
                             revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live)?;
@@ -142,7 +151,7 @@ pub(super) fn materialize_entities_with_changes(
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
     {
         tracing::error!(
-            error = %e,
+            kind = ?e.kind(),
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after entity batch commit"
         );
@@ -216,7 +225,7 @@ pub(super) fn materialize_entities_with_changes(
             }
         }
         tracing::error!(
-            error = %e,
+            kind = ?e.kind(),
             window = %window_key,
             applied_ops = applied_ops.len(),
             marked,
@@ -261,7 +270,7 @@ pub(super) fn set_remat_marker_logged(vault: &Vault, window_key: &str, id: &Enti
             tracing::error!(
                 entity = %id.to_hex(),
                 window = %window_key,
-                error = %marker_err,
+                kind = ?marker_err.kind(),
                 "observer-b: CRITICAL — failed to set rm: marker after batch commit failure"
             );
             false

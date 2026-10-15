@@ -16,7 +16,7 @@ use super::types::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_custody::{CustodyTier, SecretCustodyFloor};
+use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
 
 use crate::vault::Vault;
 
@@ -65,6 +65,31 @@ impl Vault {
                 generation,
             }],
         })
+    }
+
+    /// Whether [`Vault::inject_secret_at_door`] would release `secret_ref` to
+    /// `effector` now: the same resolution, admission rule, custody floor,
+    /// door policy and read grant on the binding the value door resolves,
+    /// all read from the value-free admission projection. A host asks before
+    /// it starts a call that will need the value, so a call the door would
+    /// refuse is refused before it starts.
+    pub fn check_secret_at_door(&self, secret_ref: &str, effector: &str) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        let (_, rec) = read_record_for_ref_in_txn(&self.store, &txn, secret_ref)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
+        admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
+        crate::credential_door::admit_materialization_in_txn(&self.store, &txn, effector, None)?;
+        if rec
+            .binding_for(effector)
+            .is_some_and(SecretBinding::grants_read)
+        {
+            Ok(())
+        } else {
+            Err(Error::Secret(SecretError::SecretBindingDenied {
+                effector: effector.to_owned(),
+                secret_ref: rec.name,
+            }))
+        }
     }
 
     /// T1 lease materialization. Admits `T1Leased` under the one admission
@@ -205,9 +230,9 @@ impl Vault {
         // pins the lease to its path. A DIFFERENT declared path under the
         // same lease would overwrite the row and orphan the first plaintext
         // file beyond revoke/expiry — typed conflict; the caller mints a
-        // fresh lease for a new path. Same-path re-materialization
-        // (`replace`) is the S4 recovery flow and stays admitted.
-        let replace = match read_local_registration_in_txn(&self.store, &wtxn, lease_id)? {
+        // fresh lease for a new path. Same-path re-materialization is the S4
+        // recovery flow and stays admitted, into the registered file only.
+        let registered = match read_local_registration_in_txn(&self.store, &wtxn, lease_id)? {
             Some(stored) if stored.registration.path.as_path() != target_path => {
                 return Err(Error::Secret(SecretError::SecretLeasePathConflict {
                     lease_id: lease.lease_id,
@@ -215,18 +240,19 @@ impl Vault {
                     requested_path: target_path.display().to_string(),
                 }));
             }
-            Some(_) => true,
-            None => false,
+            Some(stored) => Some(stored.file_identity),
+            None => None,
         };
         let value = read_value_for_ref_in_txn(self, &wtxn, &id, &lease.binding_effector)?;
         // The file write lands before any row persists, under the T2
         // file-lifecycle policy (no-follow, no-clobber, owner-only before
-        // the first byte). The returned guard removes a file THIS attempt
-        // created fresh if the row write, the lease write, or the commit
-        // fails — nothing durable may point at a file the vault cannot
-        // clean, and no plaintext may sit untracked. A same-path replace is
-        // never the guard's to remove: the live row still covers it.
-        let guard = write_secret_file(target_path, &value, replace)?;
+        // the first byte, and a replace only into the registered file). The
+        // returned guard removes a file THIS attempt created fresh if the row
+        // write, the lease write, or the commit fails — nothing durable may
+        // point at a file the vault cannot clean, and no plaintext may sit
+        // untracked. A same-path replace is never the guard's to remove: the
+        // live row still covers it.
+        let guard = write_secret_file(target_path, &value, registered)?;
         let registration = LocalRegistration {
             lease_id: lease.lease_id,
             path: target_path.to_path_buf(),
@@ -238,6 +264,7 @@ impl Vault {
             &mut wtxn,
             &StoredLocalRegistration {
                 registration: registration.clone(),
+                file_identity: guard.identity(),
                 removal_error: None,
                 removal_attempted_at: None,
             },

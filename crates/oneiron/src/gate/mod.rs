@@ -16,6 +16,7 @@ mod carry_forward_policy;
 mod confirm;
 mod connector_admission;
 mod constants;
+pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
 mod default_manifest;
@@ -24,6 +25,7 @@ mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
 mod doors;
+mod dreamer_grant;
 mod dreamer_precommit;
 mod effect;
 pub(crate) mod fanout_policy;
@@ -35,13 +37,18 @@ pub(crate) mod mail_policy;
 mod operational_policy;
 mod owner_policy_mutation;
 mod pack_install_policy;
+mod policy_upgrade;
 pub(crate) mod policy_values;
+#[cfg(test)]
+pub(crate) use policy_upgrade::ConsentRegate;
+pub(crate) use policy_upgrade::readable;
 mod project_conversion;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
 mod tracker_limits;
+pub use self::dreamer_grant::DreamerWeaveReach;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
@@ -84,11 +91,10 @@ pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
-    FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_OWNER_POLICY_DOCUMENT_KEY,
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
-    POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY,
-    POLICY_ROW_WORLD_REF_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_ROW_ACTION_KEY,
+    POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY, POLICY_ROW_WORLD_REF_KEY,
 };
 pub(crate) use self::constants::{
     POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY, POLICY_CONSULT_FANOUT_CONTROLS_KEY,
@@ -103,20 +109,28 @@ pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReas
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 #[cfg(test)]
 pub(crate) use self::default_manifest::default_consult_fanout_approval_threshold;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use self::default_manifest::default_policy_manifest_with_scoped_grants;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_consult_fanout_policy, default_policy_manifest,
     default_policy_manifest_id, seeded_project_depth_default,
 };
-pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
 pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
+pub(crate) use self::definition_ceiling::{
+    agent_definition_ceiling_for_actor, definition_only_ceiling_for_actor,
+};
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, check_claim_policy_for_write,
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
-    check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
+    check_edge_provenance_claim_policy, check_reserved_claim_policy,
+    check_unattributed_claim_lineage, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
+};
+pub(crate) use self::foreign_agent::{
+    introduced_foreign_agents, resolve as resolve_foreign_agent_ceiling,
 };
 pub use self::pack_install_policy::PackInstallPolicyOverride;
 pub(crate) use self::pack_install_policy::{
@@ -131,12 +145,14 @@ use self::dreamer_precommit::{
 };
 pub(crate) use self::effect::{
     ApprovalContext, ExternalEffectGovernance, check_external_effect_policy,
-    check_external_effect_policy_pair, evaluate_external_effect_policy,
-    external_effect_approval_digest, native_mail_cold_approval_digest,
+    check_external_effect_policy_pair, counterparty_send_override_in_txn,
+    evaluate_external_effect_policy, external_effect_approval_digest,
+    hydrate_external_effect_contact, native_mail_cold_approval_digest,
     record_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
+    scoped_read_claim_allowed_with_scope, scoped_read_grant_reads_world,
     scoped_read_record_allowed,
 };
 pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
@@ -144,8 +160,6 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
-#[cfg(test)]
-pub(crate) use self::operational_policy::default_manifest_with_linear_sync_pages_for_test;
 pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
 };
@@ -158,10 +172,11 @@ pub(crate) use self::project_conversion::{
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
-    GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, PolicyManifestResolution,
-    ProjectWidenAskFallback, ResidenceOperationBudgetLimits, ResidenceOperationBudgetPrecedence,
-    ResidenceOperationBudgetRow, resolve_credential_lifetimes, resolve_gate_decision_retention,
-    resolve_policy_manifest, resolve_project_depth_max, retention_edit_target,
+    GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, ManifestDecodeMemo,
+    PolicyManifestResolution, ProjectWidenAskFallback, ResidenceOperationBudgetLimits,
+    ResidenceOperationBudgetPrecedence, ResidenceOperationBudgetRow, resolve_credential_lifetimes,
+    resolve_gate_decision_retention, resolve_policy_manifest, resolve_project_depth_max,
+    retention_edit_target,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
@@ -178,8 +193,8 @@ pub(crate) use self::voice_serving::VoiceServingLimits;
 pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
     MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
-    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageEnvelope,
-    check_witness_message_ceiling, validate_canonical_witness_message_body,
+    WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
+    WitnessMessageEnvelope, check_witness_message_ceiling, validate_canonical_witness_message_body,
     validate_replicated_witness_message_body,
 };
 
@@ -196,8 +211,6 @@ use self::constants::*;
 #[cfg(test)]
 use self::decision::*;
 #[cfg(test)]
-use self::decode::*;
-#[cfg(test)]
 use self::effect::*;
 #[cfg(test)]
 use self::grants::*;
@@ -207,8 +220,6 @@ use self::input::*;
 use self::resolution::*;
 #[cfg(test)]
 use crate::agent_def::AgentCeiling;
-#[cfg(test)]
-use crate::authority::CriticalWriteConfirmDisposition;
 #[cfg(test)]
 use crate::batch::EntityMetadataHeader;
 #[cfg(test)]
@@ -224,14 +235,7 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 #[cfg(test)]
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, CallPurpose};
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT;
-#[cfg(test)]
-use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST,
-};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
 #[cfg(test)]
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 #[cfg(test)]

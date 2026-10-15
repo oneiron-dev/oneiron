@@ -63,9 +63,14 @@ impl LlmCatalogEntry {
         self.capabilities.iter().any(|entry| entry == capability)
     }
 
-    /// Shared capability/locality admission for raw wire adapters.
+    /// Shared capability/locality admission for raw wire adapters. A request
+    /// that picks its model or route through a param or provider option is
+    /// refused: the request's model id and this row pick both.
     pub fn admit(&self, request: &super::LlmRequest, stream: bool) -> super::LlmResult<()> {
-        if self.model != request.model || self.locality != request.envelope.locality {
+        if self.model != request.model
+            || self.locality != request.envelope.locality
+            || request.route_selector_override().is_some()
+        {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         if stream {
@@ -127,3 +132,8 @@ pub enum ReasoningEffort {
     #[serde(rename = "xhigh")]
     XHigh,
 }
+
+/// The request param that carries a thinking budget, in tokens, beside a
+/// seat's effort pin. An OpenAI-compatible own server (llama.cpp) reads it
+/// per request; an adapter whose wire has no such field drops it.
+pub const REASONING_BUDGET_PARAM: &str = "reasoning_budget_tokens";

@@ -4,6 +4,8 @@
 //! repeated binary-value and encoding error handling in one place while all
 //! call sites still use native `LoroDoc` / `LoroMap` handles.
 
+use std::collections::HashMap;
+
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
 use crate::entity_id::EntityId;
@@ -46,9 +48,80 @@ fn map_contains_key(map: &LoroMap, key: &str) -> bool {
 /// closed); an absent key yields `None`. Entities/edges maps must keep
 /// using [`map_get_bytes`].
 fn map_get_tombstone_value(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
-    match map.get(key)? {
-        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
-        _ => Some(Vec::new()),
+    map.get(key).map(tombstone_value_bytes)
+}
+
+fn tombstone_value_bytes(value: ValueOrContainer) -> Vec<u8> {
+    match value {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => bytes.to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+/// The tombstones map read once for one sync pass (H15). The map is peer-sized: a pass that
+/// rescanned it for every entity and edge it checks does O(carriers × tombstones) work, so the
+/// index parses each key once when it is built.
+///
+/// Canonical lowercase keys are read live, so a tombstone this pass writes is seen at once. The
+/// case-shifted aliases are a snapshot: only an import writes or removes them (local doors write
+/// `to_hex` keys and never delete a tombstone), so build the index after the import a pass reads
+/// and never hold it across one. An import into a shared live document from another thread can
+/// still land mid-pass, as it could between any carrier's check and its write before: the
+/// replay of the tombstone it brings purges a carrier the pass admitted. Presence and values
+/// follow [`tombstone_map_contains_id`] and [`tombstone_values_for_id`] exactly.
+pub(crate) struct TombstoneIndex {
+    map: LoroMap,
+    /// The value of every non-canonical key that parses to an id, keyed by that id, in map
+    /// order and under the tombstone value rule.
+    aliases: HashMap<EntityId, Vec<Vec<u8>>>,
+}
+
+impl TombstoneIndex {
+    pub(crate) fn build(map: &LoroMap) -> Self {
+        let mut aliases = HashMap::<EntityId, Vec<Vec<u8>>>::new();
+        map.for_each(|key, value| {
+            // A key that parses is 32 hex digits: it is the canonical `to_hex` spelling unless a
+            // digit is uppercase.
+            if let Some(id) = parse_tombstone_key(key)
+                && key.bytes().any(|byte| byte.is_ascii_uppercase())
+            {
+                aliases
+                    .entry(id)
+                    .or_default()
+                    .push(tombstone_value_bytes(value));
+            }
+        });
+        Self {
+            map: map.clone(),
+            aliases,
+        }
+    }
+
+    /// The map this index reads.
+    pub(crate) fn map(&self) -> &LoroMap {
+        &self.map
+    }
+
+    /// Whether any key names `id`, under ANY value (fail closed).
+    pub(crate) fn contains(&self, id: &EntityId) -> bool {
+        map_contains_key(&self.map, &id.to_hex()) || self.aliases.contains_key(id)
+    }
+
+    /// Whether a non-canonical key names `id`.
+    pub(crate) fn has_alias(&self, id: &EntityId) -> bool {
+        self.aliases.contains_key(id)
+    }
+
+    /// The values of EVERY key naming `id`: the canonical key's first, then each alias's.
+    pub(crate) fn values_for(&self, id: &EntityId) -> Vec<Vec<u8>> {
+        let mut values = Vec::new();
+        if let Some(value) = map_get_tombstone_value(&self.map, &id.to_hex()) {
+            values.push(value);
+        }
+        if let Some(aliased) = self.aliases.get(id) {
+            values.extend(aliased.iter().cloned());
+        }
+        values
     }
 }
 
@@ -58,16 +131,16 @@ fn map_get_tombstone_value(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
 /// crafted UPPERCASE-hex tombstone key and a delete-wins gate would fail
 /// OPEN. Fast path: the canonical lowercase key. On miss: scan the map and
 /// treat ANY key that parses to the same `EntityId` as present (fail
-/// closed). The scan-on-miss is acceptable because tombstone maps are
-/// small — deletes are rare. Entities/edges maps must keep using the
-/// Binary-only helpers.
+/// closed). This scans the map on a miss: a pass that checks many ids
+/// shares one [`TombstoneIndex`] instead. Entities/edges maps must keep
+/// using the Binary-only helpers.
 pub(crate) fn tombstone_map_contains_id(map: &LoroMap, id: &EntityId) -> bool {
     if map_contains_key(map, &id.to_hex()) {
         return true;
     }
     let mut present = false;
     map.for_each(|key, _| {
-        if !present && EntityId::from_hex(key).is_ok_and(|parsed| parsed == *id) {
+        if !present && parse_tombstone_key(key).is_some_and(|parsed| parsed == *id) {
             present = true;
         }
     });
@@ -78,7 +151,7 @@ pub(crate) fn tombstone_map_contains_id(map: &LoroMap, id: &EntityId) -> bool {
 /// canonical lowercase key plus any case-shifted hex alias — each read
 /// under the tombstone value rule (Binary passes its bytes; a PRESENT
 /// non-Binary value yields the EMPTY vec, which decodes HARD downstream).
-/// Same small-map scan-on-alias rationale as [`tombstone_map_contains_id`].
+/// A single-shot read: a pass that checks many ids shares one [`TombstoneIndex`].
 pub(crate) fn tombstone_values_for_id(map: &LoroMap, id: &EntityId) -> Vec<Vec<u8>> {
     let canonical = id.to_hex();
     let mut values = Vec::new();
@@ -86,14 +159,24 @@ pub(crate) fn tombstone_values_for_id(map: &LoroMap, id: &EntityId) -> Vec<Vec<u
         values.push(value);
     }
     map.for_each(|key, value| {
-        if key != canonical && EntityId::from_hex(key).is_ok_and(|parsed| parsed == *id) {
-            values.push(match value {
-                ValueOrContainer::Value(LoroValue::Binary(bytes)) => bytes.to_vec(),
-                _ => Vec::new(),
-            });
+        if key != canonical && parse_tombstone_key(key).is_some_and(|parsed| parsed == *id) {
+            values.push(tombstone_value_bytes(value));
         }
     });
     values
+}
+
+fn parse_tombstone_key(key: &str) -> Option<EntityId> {
+    #[cfg(test)]
+    TOMBSTONE_KEY_PARSES.with(|parses| parses.set(parses.get() + 1));
+    EntityId::from_hex(key).ok()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tombstone keys this thread parsed as entity ids: the H15 work pin.
+    pub(crate) static TOMBSTONE_KEY_PARSES: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
 }
 
 pub(crate) fn map_for_each_bytes(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
@@ -146,7 +229,7 @@ pub(super) fn map_for_each_value_bytes_deferring(
 /// malformed remote tombstone must never be invisible to replay.
 /// Entities/edges maps use [`map_for_each_value_bytes`], which surfaces
 /// non-Binary values as `None` for quarantine instead (ONE-1157).
-pub(super) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
+pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, &bytes),
         _ => f(key, &[]),
@@ -182,6 +265,28 @@ pub fn export_updates_since(doc: &LoroDoc, remote_vv: &[u8]) -> Result<Vec<u8>> 
 pub(crate) fn export_updates_from(doc: &LoroDoc, vv: &VersionVector) -> Result<Vec<u8>> {
     doc.export(ExportMode::updates(vv))
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))
+}
+
+/// Whether `operations`, read from a doc over `meta`'s range, hold every
+/// operation the import blob counts. Loro clips a JSON range below a
+/// shallow root without saying so.
+pub(crate) fn json_covers_blob(
+    operations: &loro::json::JsonSchema,
+    meta: &loro::ImportBlobMetadata,
+) -> bool {
+    let expected = meta
+        .partial_end_vv
+        .iter()
+        .try_fold(0_usize, |sum, (peer, end)| {
+            let start = meta.partial_start_vv.get(peer).copied().unwrap_or(0);
+            sum.checked_add(usize::try_from(end.checked_sub(start)?).ok()?)
+        });
+    let inspected = operations
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .try_fold(0_usize, |sum, op| sum.checked_add(op.content.op_len()));
+    expected.is_some() && expected == inspected
 }
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
@@ -225,244 +330,5 @@ pub(crate) fn replicated_deep_value(doc: &LoroDoc) -> LoroValue {
                 .collect(),
         ),
         other => other,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use loro::{CommitOptions, ContainerTrait};
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn native_loro_map_ops() {
-        let doc = LoroDoc::new();
-        let map = doc.get_map("test");
-
-        map_insert_bytes(&map, "key1", b"hello").unwrap();
-        map.insert("text", "not-binary").unwrap();
-        doc.commit();
-
-        assert!(map_contains_binary(&map, "key1"));
-        assert_eq!(map_get_bytes(&map, "key1").unwrap(), b"hello");
-        assert!(!map_contains_binary(&map, "text"));
-        assert!(!map_contains_binary(&map, "missing"));
-
-        // Fail-closed presence: ANY value counts, only absence is absent.
-        assert!(map_contains_key(&map, "key1"));
-        assert!(map_contains_key(&map, "text"));
-        assert!(!map_contains_key(&map, "missing"));
-
-        map.delete("key1").unwrap();
-        doc.commit();
-
-        assert!(!map_contains_binary(&map, "key1"));
-        assert!(!map_contains_key(&map, "key1"));
-    }
-
-    #[test]
-    fn native_loro_map_for_each_bytes() {
-        let doc = LoroDoc::new();
-        let map = doc.get_map("test");
-
-        map_insert_bytes(&map, "a", b"1").unwrap();
-        map_insert_bytes(&map, "b", b"2").unwrap();
-        doc.commit();
-
-        let mut entries = Vec::new();
-        map_for_each_bytes(&map, |k, v| {
-            entries.push((k.to_string(), v.to_vec()));
-        });
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0], ("a".to_string(), b"1".to_vec()));
-        assert_eq!(entries[1], ("b".to_string(), b"2".to_vec()));
-    }
-
-    /// The tombstone helpers must see EVERY value shape (fail closed):
-    /// presence is value-agnostic, and non-Binary values read/iterate as the
-    /// EMPTY slice so the downstream decode resolves HARD. The Binary-only
-    /// helpers stay blind to non-binary values (entities/edges semantics).
-    #[test]
-    fn tombstone_helpers_see_non_binary_values() {
-        let doc = LoroDoc::new();
-        let map = doc.get_map("tombstones");
-
-        map_insert_bytes(&map, "bin", b"payload").unwrap();
-        map.insert("text", "deleted").unwrap();
-        map.insert("num", 7).unwrap();
-        map.insert_container("child", loro::LoroMap::new()).unwrap();
-        doc.commit();
-
-        // Presence: ANY value or container counts; absent stays absent.
-        for key in ["bin", "text", "num", "child"] {
-            assert!(map_contains_key(&map, key), "{key} must count as present");
-        }
-        assert!(!map_contains_key(&map, "missing"));
-
-        // Binary-only helpers keep ignoring non-binary values.
-        assert!(map_contains_binary(&map, "bin"));
-        assert!(!map_contains_binary(&map, "text"));
-        assert!(!map_contains_binary(&map, "child"));
-
-        // Value reads: Binary bytes pass through; present non-Binary reads
-        // as EMPTY (decodes HARD); absent is None.
-        assert_eq!(map_get_tombstone_value(&map, "bin").unwrap(), b"payload");
-        assert_eq!(
-            map_get_tombstone_value(&map, "text").unwrap(),
-            Vec::<u8>::new()
-        );
-        assert_eq!(
-            map_get_tombstone_value(&map, "child").unwrap(),
-            Vec::<u8>::new()
-        );
-        assert!(map_get_tombstone_value(&map, "missing").is_none());
-
-        // Iterator: every key visited, non-Binary as the empty slice.
-        let mut entries = Vec::new();
-        map_for_each_tombstone_value(&map, |k, v| {
-            entries.push((k.to_string(), v.to_vec()));
-        });
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-        assert_eq!(
-            entries,
-            vec![
-                ("bin".to_string(), b"payload".to_vec()),
-                ("child".to_string(), Vec::new()),
-                ("num".to_string(), Vec::new()),
-                ("text".to_string(), Vec::new()),
-            ]
-        );
-    }
-
-    /// M4 fix wave: tombstone probes must be entity-canonical — map keys
-    /// are raw remote strings, `EntityId::from_hex` is case-insensitive,
-    /// and `to_hex` emits lowercase, so an UPPERCASE-hex alias must read
-    /// as present (and yield its value) for the same id.
-    #[test]
-    fn tombstone_helpers_canonicalize_hex_casing() {
-        let id = EntityId::from_bytes_unchecked([0xAB; 16]);
-        let other = EntityId::from_bytes_unchecked([0xCD; 16]);
-        let upper = id.to_hex().to_uppercase();
-        assert_ne!(upper, id.to_hex());
-
-        let doc = LoroDoc::new();
-        let map = doc.get_map("tombstones");
-        map_insert_bytes(&map, &upper, b"hard-bytes").unwrap();
-        doc.commit();
-
-        assert!(
-            tombstone_map_contains_id(&map, &id),
-            "an uppercase alias must count as present for the same id"
-        );
-        assert!(!tombstone_map_contains_id(&map, &other));
-        assert_eq!(
-            tombstone_values_for_id(&map, &id),
-            vec![b"hard-bytes".to_vec()]
-        );
-        assert!(tombstone_values_for_id(&map, &other).is_empty());
-
-        // A non-Binary value under the canonical key joins the alias value;
-        // it reads as the EMPTY vec (decodes HARD downstream).
-        map.insert(id.to_hex().as_str(), "soft-ish").unwrap();
-        doc.commit();
-        assert!(tombstone_map_contains_id(&map, &id));
-        let values = tombstone_values_for_id(&map, &id);
-        assert_eq!(values.len(), 2, "canonical + alias both visited");
-        assert!(values.contains(&Vec::new()));
-        assert!(values.contains(&b"hard-bytes".to_vec()));
-    }
-
-    #[test]
-    fn native_loro_snapshot_roundtrip() {
-        let doc = LoroDoc::new();
-        let map = doc.get_map("entities");
-        map_insert_bytes(&map, "entity1", b"data").unwrap();
-        doc.commit();
-
-        let snapshot = export_snapshot(&doc).unwrap();
-        let doc2 = doc_from_snapshot(&snapshot).unwrap();
-        let map2 = doc2.get_map("entities");
-
-        assert_eq!(map_get_bytes(&map2, "entity1").unwrap(), b"data");
-    }
-
-    #[test]
-    fn native_loro_version_vector_roundtrip() {
-        let doc = LoroDoc::new();
-        let map = doc.get_map("test");
-        map_insert_bytes(&map, "k", b"v").unwrap();
-        doc.commit();
-
-        let vv = doc_version_vector(&doc);
-        assert!(!vv.is_empty());
-
-        let decoded = VersionVector::decode(&vv);
-        assert!(decoded.is_ok());
-    }
-
-    #[test]
-    fn native_loro_delta_sync() {
-        let doc_a = LoroDoc::new();
-        let map_a = doc_a.get_map("data");
-        map_insert_bytes(&map_a, "x", b"1").unwrap();
-        doc_a.commit();
-
-        let all = export_all_updates(&doc_a).unwrap();
-
-        let doc_b = LoroDoc::new();
-        import_doc(&doc_b, &all).unwrap();
-        let map_b = doc_b.get_map("data");
-        assert_eq!(map_get_bytes(&map_b, "x").unwrap(), b"1");
-
-        map_insert_bytes(&map_a, "y", b"2").unwrap();
-        doc_a.commit();
-
-        let vv_b = doc_version_vector(&doc_b);
-        let delta = export_updates_since(&doc_a, &vv_b).unwrap();
-        import_doc(&doc_b, &delta).unwrap();
-
-        assert_eq!(map_get_bytes(&map_b, "y").unwrap(), b"2");
-    }
-
-    #[test]
-    fn native_loro_subscribe_local_updates() {
-        let doc = LoroDoc::new();
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = received.clone();
-
-        let _sub = doc.subscribe_local_update(Box::new(move |bytes| {
-            received_clone.lock().unwrap().push(bytes.to_vec());
-            true
-        }));
-
-        let map = doc.get_map("test");
-        map_insert_bytes(&map, "k", b"v").unwrap();
-        doc.commit();
-
-        let updates = received.lock().unwrap();
-        assert!(!updates.is_empty());
-    }
-
-    #[test]
-    fn native_loro_commit_with_origin() {
-        let doc = LoroDoc::new();
-        let origins = Arc::new(Mutex::new(Vec::new()));
-        let origins_clone = origins.clone();
-
-        let map = doc.get_map("test");
-        let _sub = doc.subscribe(
-            &map.id(),
-            Arc::new(move |event| {
-                origins_clone.lock().unwrap().push(event.origin.to_string());
-            }),
-        );
-
-        map_insert_bytes(&map, "k", b"v").unwrap();
-        doc.commit_with(CommitOptions::new().origin("bridge"));
-
-        let recorded = origins.lock().unwrap();
-        assert!(recorded.iter().any(|o| o == "bridge"));
     }
 }

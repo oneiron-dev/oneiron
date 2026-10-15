@@ -1,13 +1,21 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize};
+use super::support::lfs_saturated;
+use crate::admission::Permit;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use futures_util::stream;
+use oneiron::Vault;
+use oneiron::origin::lfs::{LFS_CHUNK_MAX, LfsOid};
+use std::io;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 pub(super) async fn exchange(
     State(server): State<Arc<SyncServer>>,
@@ -19,22 +27,115 @@ pub(super) async fn exchange(
     let principal = auth.require_registered_principal()?;
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
+    // An LFS transfer like any other: its worker holds the permit until the
+    // reply is built, whether or not its caller is still there, and hands it
+    // on to the reply.
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
+        return Ok(lfs_saturated());
+    };
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
-    let bytes = tokio::task::spawn_blocking(move || {
+    let (object, bytes, permit) = tokio::task::spawn_blocking(move || {
+        let object = oneiron::sync::chunks::chunk_request_object(&body)?;
         oneiron::sync::chunks::serve_chunk_request(&vault, principal, scope, &body)
+            .map(|bytes| (object, bytes, permit))
     })
     .await
     .map_err(|_| ApiError::internal_server_error("lfs chunk worker failed"))?
     // Do not reveal absent object vs denied selector vs hash membership.
     .map_err(|_| ApiError::forbidden_scope("lfs chunk selector"))?;
+    #[cfg(test)]
+    release_hook::run(&server);
+    // A device-only flag may land while the worker builds the reply: the
+    // object is judged again as its bytes are released.
+    if oneiron::sync::chunks::lfs_object_withheld(&server.vault, object).unwrap_or(true) {
+        return Err(ApiError::forbidden_scope("lfs chunk selector").into());
+    }
+    // The declared length makes a reply cut short at the idle limit a broken
+    // transfer to the client, never a shorter one.
+    let length = bytes.len().to_string();
     Ok((
         StatusCode::OK,
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/vnd.oneiron.chunks",
-        )],
-        bytes,
+        [
+            (header::CONTENT_TYPE, "application/vnd.oneiron.chunks"),
+            (header::CONTENT_LENGTH, length.as_str()),
+        ],
+        reply(
+            Arc::clone(&server.vault),
+            object,
+            bytes,
+            permit,
+            server.transfers.idle,
+        ),
     )
         .into_response())
+}
+
+/// The reply, handed out a piece at a time by a task that holds the transfer
+/// permit until the last piece is taken, or until the client has taken none
+/// for `idle`. Only the pieces already handed out outlive it.
+fn reply(
+    vault: Arc<Vault>,
+    object: LfsOid,
+    bytes: Vec<u8>,
+    permit: Permit<String>,
+    idle: Duration,
+) -> Body {
+    let (pieces, receiver) = mpsc::channel::<Bytes>(2);
+    tokio::spawn(async move {
+        let _permit = permit;
+        for piece in bytes.chunks(LFS_CHUNK_MAX) {
+            let piece = Bytes::copy_from_slice(piece);
+            if pieces.send_timeout(piece, idle).await.is_err() {
+                return;
+            }
+        }
+    });
+    // Each piece is released only while no device-only world keeps the
+    // object; a flag set mid-reply ends the body with an error.
+    Body::from_stream(stream::unfold(receiver, move |mut receiver| {
+        let vault = Arc::clone(&vault);
+        async move {
+            let piece = receiver.recv().await?;
+            if oneiron::sync::chunks::lfs_object_withheld(&vault, object).unwrap_or(true) {
+                receiver.close();
+                let kept = io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "lfs object kept on this device",
+                );
+                return Some((Err(kept), receiver));
+            }
+            Some((Ok(piece), receiver))
+        }
+    }))
+}
+
+/// A device-only flag committed after the worker built its reply and before
+/// the handler releases it.
+#[cfg(test)]
+pub(super) mod release_hook {
+    use std::cell::Cell;
+
+    thread_local! {
+        // Per thread: the handler resumes on the test's own current-thread
+        // runtime.
+        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
+    }
+
+    pub(in crate::api::git_lfs) fn arm(world: oneiron::EntityId) {
+        FLAG.set(Some(world));
+    }
+
+    pub(super) fn run(server: &crate::server::SyncServer) {
+        if let Some(world) = FLAG.take() {
+            server
+                .vault
+                .keep_world_on_this_machine_under_for_test(
+                    &crate::test_credentials::host_issuer(server),
+                    world,
+                    true,
+                )
+                .expect("device-only flag");
+        }
+    }
 }

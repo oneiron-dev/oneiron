@@ -80,11 +80,8 @@ use crate::edit_distance::FinalizedProposalText;
 #[cfg(test)]
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 #[cfg(test)]
-use crate::error::Error;
-#[cfg(test)]
 use crate::receipt::{
-    FIELD_AMENDMENT_DELTA, FIELD_AMENDMENT_DELTA_UNCAPTURED, ReceiptKind, ReceiptRecord,
-    proposal_outcome_amended_body,
+    FIELD_AMENDMENT_DELTA, ReceiptKind, ReceiptRecord, proposal_outcome_amended_body,
 };
 #[cfg(test)]
 use rmpv::Value;

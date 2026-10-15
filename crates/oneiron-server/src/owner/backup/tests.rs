@@ -73,7 +73,8 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
     let later = person(&vault, b"after the backup");
     drop(vault);
 
-    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None).unwrap();
+    let source = SideRestoreSource::read(&vault_path).unwrap();
+    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None, &source).unwrap();
     assert!(rehearsal.verified);
     assert!(!rehearsal.kept);
     assert_eq!(rehearsal.checkpoint_id, outcome.checkpoint_id);
@@ -109,6 +110,7 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
         &outcome.backup.path,
         &vault_path,
         VaultConfig::default(),
+        exchange,
         |_| Err(anyhow::anyhow!("fsync: input/output error")),
     )
     .expect("the swap happened, so the restore succeeded");
@@ -124,6 +126,95 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
     drop(vault);
     let previous = Vault::open_owned(&restored.previous_vault, VaultConfig::default()).unwrap();
     assert!(previous.get(&later).unwrap().is_some());
+}
+
+/// A vault path that is a symlink to the vault's directory: the restore
+/// swaps that directory, so the path still names the live restored vault,
+/// and the vault set aside is the one archived.
+#[cfg(unix)]
+#[test]
+fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("data").join("vault");
+    let vault = Vault::open_owned(&directory, VaultConfig::default()).unwrap();
+    let kept = person(&vault, b"in the backup");
+    let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
+    let later = person(&vault, b"after the backup");
+    drop(vault);
+    let link = root.path().join("vault");
+    std::os::unix::fs::symlink(&directory, &link).unwrap();
+
+    let restored = restore_over(&outcome.backup.path, &link, VaultConfig::default()).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let vault = Vault::open_owned(&link, VaultConfig::default()).unwrap();
+    assert!(vault.get(&kept).unwrap().is_some());
+    assert!(vault.get(&later).unwrap().is_none());
+    person(&vault, b"the restored vault is live");
+    drop(vault);
+    let previous = Vault::open_owned(&restored.previous_vault, VaultConfig::default()).unwrap();
+    assert!(previous.get(&later).unwrap().is_some());
+    assert!(
+        previous
+            .put_entity(
+                &EntityId::now(),
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"the previous vault is archived",
+            )
+            .is_err()
+    );
+}
+
+/// A swap the engine cannot confirm once the directories were exchanged
+/// removes nothing: the staging directory may hold the previous vault, and
+/// the vault at the vault path stays the live one (Astra re-check: a failure
+/// after the exchange must not run the cleanup of a failure before it).
+#[test]
+fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
+    let later = person(&vault, b"after the backup");
+    drop(vault);
+
+    // The exchange happens, and is undone before the engine checks it.
+    let error = restore_over_syncing(
+        &outcome.backup.path,
+        &vault_path,
+        VaultConfig::default(),
+        |a, b| {
+            exchange(a, b)?;
+            exchange(a, b)
+        },
+        |_| Ok(()),
+    )
+    .expect_err("the engine finds the replacement out of place");
+    assert!(
+        format!("{error:#}").contains("nothing was removed"),
+        "{error:#}"
+    );
+    let staging = std::fs::read_dir(root.path())
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".vault.restore-")
+        })
+        .count();
+    assert_eq!(staging, 1, "the staging directory is kept");
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    assert!(vault.get(&later).unwrap().is_some());
+    person(&vault, b"the vault in place is live");
 }
 
 #[test]
@@ -176,7 +267,95 @@ fn a_failed_rehearsal_removes_only_what_it_created() {
     std::fs::write(custody.join("key"), b"not ours").unwrap();
     let bogus = root.path().join("not-a-backup");
     std::fs::write(&bogus, b"garbage").unwrap();
-    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch)).is_err());
+    drop(Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap());
+    let source = SideRestoreSource::read(&root.path().join("vault")).unwrap();
+    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch), &source).is_err());
     assert!(!scratch.exists());
     assert_eq!(std::fs::read(custody.join("key")).unwrap(), b"not ours");
+}
+
+#[test]
+fn a_clock_that_stepped_back_never_prunes_the_backup_just_taken() {
+    let root = tempfile::tempdir().unwrap();
+    let plan = plan(root.path(), 2);
+    let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
+    // Two backups stamped in the future: the clock has since stepped back.
+    let mut older = Vec::new();
+    for _ in 0..2 {
+        let taken = take(&vault, &plan).unwrap();
+        let future = taken
+            .backup
+            .file
+            .replace(&file_stamp(taken.backup.taken_ms), "20991231T235959.999Z");
+        std::fs::rename(&taken.backup.path, plan.dir.join(&future)).unwrap();
+        older.push(future);
+    }
+    let newest = take(&vault, &plan).unwrap();
+    assert!(newest.backup.path.exists(), "the backup just taken is kept");
+    assert_eq!(newest.pruned, vec![older[0].clone()]);
+    let listed: Vec<_> = list(&plan).unwrap().into_iter().map(|r| r.file).collect();
+    assert_eq!(listed, vec![older[1].clone(), newest.backup.file.clone()]);
+    assert!(newest.backup.sequence > 2, "{}", newest.backup.file);
+}
+
+/// A backup named before sequences (`<label>-<stamp>-<id8>`, as #1301
+/// shipped) still lists, older than every sequenced one, and is pruned first.
+#[test]
+fn a_backup_named_before_sequences_lists_first_and_is_pruned_first() {
+    let root = tempfile::tempdir().unwrap();
+    let plan = plan(root.path(), 2);
+    let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
+    let first = take(&vault, &plan).unwrap().backup;
+    let legacy = format!("{}-20991231T235959.999Z-abcdef12{FILE_SUFFIX}", plan.label);
+    std::fs::rename(&first.path, plan.dir.join(&legacy)).unwrap();
+    let listed = list(&plan).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].file.as_str(), listed[0].sequence),
+        (legacy.as_str(), 0)
+    );
+
+    let second = take(&vault, &plan).unwrap();
+    assert_eq!(second.backup.sequence, 1);
+    assert!(second.pruned.is_empty());
+    let third = take(&vault, &plan).unwrap();
+    assert_eq!(third.pruned, vec![legacy]);
+}
+
+#[test]
+fn pruning_preserves_contents_of_same_label_malformed_stamp_files() {
+    let root = tempfile::tempdir().unwrap();
+    let plan = plan(root.path(), 1);
+    let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
+    std::fs::create_dir_all(&plan.dir).unwrap();
+    let mut malformed = Vec::new();
+    for stamp in [
+        "",
+        "20261008T123456Z",
+        "20261332T123456.789Z",
+        "20260230T123456.789Z",
+        "2026100xT123456.789Z",
+    ] {
+        let path = plan.dir.join(format!(
+            "{}-0000000000-{stamp}-abcdef12.oneiron-backup",
+            plan.label
+        ));
+        let contents = format!("owner-sentinel:{stamp}").into_bytes();
+        std::fs::write(&path, &contents).unwrap();
+        malformed.push((path, contents));
+    }
+    let first = take(&vault, &plan).unwrap();
+    assert!(first.pruned.is_empty());
+    for (path, contents) in &malformed {
+        assert_eq!(std::fs::read(path).unwrap(), *contents);
+    }
+    let second = take(&vault, &plan).unwrap();
+    assert_eq!(second.pruned, vec![first.backup.file]);
+    assert!(!first.backup.path.exists());
+    let listed = list(&plan).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].file, second.backup.file);
+    for (path, contents) in &malformed {
+        assert_eq!(std::fs::read(path).unwrap(), *contents);
+    }
 }

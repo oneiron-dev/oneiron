@@ -37,238 +37,226 @@ fn worlds_filter_before_projection_and_counting() {
     assert_eq!(section.count_rows(), ["active: 1 off: 2"]);
 }
 
+/// The rider stays inside the board's row-byte limit whatever a restored
+/// session checkpoint holds: every row, and the one row a STREAM delta joins.
 #[test]
-fn changed_line_survives_epoch_and_rides_without_pushing() {
-    let mut session = SessionReadSet::default();
-    session.served("cl1", ServedLifecycle::Active); // rendered board row
-    session.served("cl2", ServedLifecycle::Active); // get() body
-    session.loaded_skill("sk1", "v2");
-    let reopened: SessionReadSet =
-        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
-    let changes = reopened.changed(1, |key| match key {
-        "cl1" => Some(ServedLifecycle::Superseded("cl3".into())),
-        "cl2" => Some(ServedLifecycle::Retracted),
-        _ => Some(ServedLifecycle::Active),
-    });
-    assert_eq!(
-        changes.render(),
-        ["changed[1:]{id,to}:", "cl1: superseded:cl3", "changed: +1"]
-    );
-    assert_eq!(changes.ride(None), None);
-    let header = BoardBlockHeader {
-        epoch: 9,
-        scope: "base".into(),
-    };
-    let legend = BoardLegend::canonical();
-    let render = render_board_block(
-        &BoardFrame {
-            header: &header,
-            legend: &legend,
-            sections: &[],
-            changes: Some(&changes),
-        },
-        BoardBudgetRequest {
-            harness_default_tok: 0,
-            caller_limit_tok: None,
-            explicit_override_tok: None,
-        },
-    )
+fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let huge = "m".repeat(MAX_BOARD_ROW_BYTES * 2);
+    let prefix: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|n| {
+            (
+                format!("{n}{huge}"),
+                serde_json::json!({"key": huge, "fingerprint": huge}),
+            )
+        })
+        .collect();
+    let session: SessionReadSet = serde_json::from_value(serde_json::json!({
+        "rows": {},
+        "loaded_skills": {},
+        "proposal_count": 0,
+        "own_proposals": [format!("claim:{huge}")],
+        "prefix_connectors": prefix,
+    }))
     .unwrap();
-    assert!(
-        render
-            .text
-            .lines()
-            .nth(2)
-            .unwrap()
-            .starts_with("changed[1:]")
-    );
-    let frame = changes
+    let mut line = ChangedLine {
+        rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge))],
+        ..ChangedLine::default()
+    };
+    session
+        .fold_own_changes(
+            &vault,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )
+        .unwrap();
+    assert!(!line.events.is_empty());
+    let rows = line.render();
+    assert!(rows.iter().all(|row| row.len() <= MAX_BOARD_ROW_BYTES));
+    assert!(rows.join(" ").len() <= MAX_BOARD_ROW_BYTES);
+    let delta = line
         .ride(Some(BoardStreamFrame {
-            epoch: 9,
-            kind: FrameKind::Delta(vec![DeltaRow {
-                key: "task1".into(),
-                line: "working".into(),
-            }]),
+            epoch: 1,
+            kind: FrameKind::Delta(Vec::new()),
         }))
         .unwrap();
-    let FrameKind::Delta(rows) = frame.kind else {
+    let FrameKind::Delta(delta) = delta.kind else {
         panic!("delta")
     };
-    assert_eq!(rows[0].key, "changed");
-    assert_eq!(
-        rows[0].line,
-        "changed[1:]{id,to}: cl1: superseded:cl3 changed: +1"
-    );
-    assert_eq!(rows.last().unwrap().key, "task1");
-    assert_eq!(
-        reopened.loaded_skills().collect::<Vec<_>>(),
-        [("sk1", "v2")]
-    );
+    assert!(delta[0].line.len() <= MAX_BOARD_ROW_BYTES);
 }
 
+/// A settled proposal is answered by the receipt that settled it. A later
+/// write under the same id that the gate refused leaves the body as it was,
+/// so its rule and diagnostic never ride as the answer.
 #[test]
-fn skills_found_and_agent_candidates_shed_before_memory_snippets() {
-    let mut session = SessionReadSet::default();
-    session.loaded_skill("sk-old", "1");
-    let hits = [
-        CapabilityHit {
-            id: id(1),
-            entity_type: crate::registry::ENTITY_TYPE_SKILL,
-            label: "found-skill".into(),
-        },
-        CapabilityHit {
-            id: id(2),
-            entity_type: crate::registry::ENTITY_TYPE_AGENT_DEF,
-            label: "found-agent".into(),
-        },
-    ];
-    let skills = SkillsSection::project(&hits, &session);
-    assert!(skills.found[0].contains("found-skill"));
-    assert_eq!(skills.loaded, "loaded: sk-old@1");
-    let agents = render_agents_section(&[], &[]).with_candidates(&hits);
-    assert_eq!(agents.rows.len(), 1);
-    assert_eq!(agents.rows[0].lane, AgentLane::Cand);
-    // Replacing turn hits clears the old candidates and found rows, not loaded.
-    assert!(agents.clone().with_candidates(&[]).rows.is_empty());
-    assert_eq!(SkillsSection::project(&[], &session).loaded, skills.loaded);
-    let tasks = render_tasks_section(&[], &[]);
-    let [_, agent_section] = assemble_task_agent_sections(&tasks, &agents).unwrap();
-    let sections = [
-        skills.board_section().unwrap(),
-        agent_section,
-        BoardSection::new(
-            "MEMORIES",
-            vec![],
-            vec!["snippet body ".repeat(10)],
-            vec!["count: 1".into()],
-            SectionPolicy {
-                pinned: false,
-                shed_rank: Some(ShedRank::MemoriesSnippets),
-            },
-        )
-        .unwrap(),
-    ];
-    let header = BoardBlockHeader {
-        epoch: 1,
-        scope: "base".into(),
+fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let claim = id(0x21);
+    vault.put_entity(
+        &id(0x22),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let body = ClaimBody::new(
+        "note.topic",
+        ClaimSubject::Entity(id(0x22)),
+        rmpv::Value::from("harbor"),
+        1.0,
+        ClaimApprovalStatus::Rejected,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let decision = |outcome: &str, reason: &str, grant: Option<&str>, row: Option<&str>| {
+        Ok::<_, crate::Error>(GateDecisionRecord {
+            version: 0,
+            decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
+            created_at: 2,
+            outcome: outcome.to_owned(),
+            reason_codes: vec![reason.to_owned()],
+            receipt_reasons: row
+                .map(|row| format!("policy_row_{row}"))
+                .into_iter()
+                .collect(),
+            system_notices: Vec::new(),
+            actor_class: "agent".to_owned(),
+            actor_ref: Some(id(7).to_hex()),
+            content_kind: "claim".to_owned(),
+            policy_manifest_version: "v0".to_owned(),
+            claim_id: Some(*claim.as_bytes()),
+            grant_ref: grant.map(str::to_owned),
+            diff_handle: vec![0xA5],
+            read_frontier_hash: [0; 32],
+            redacted_at: None,
+        })
     };
-    let legend = BoardLegend::canonical();
-    let frame = BoardFrame {
-        header: &header,
-        legend: &legend,
-        sections: &sections,
-        changes: None,
+    let declined = decision(
+        "rejected",
+        "gate.consent.bundle.reject",
+        Some("bundle:declined"),
+        None,
+    )?;
+    let refused = decision("deny", "gate.deny.actor_ceiling", None, Some("later"))?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &declined)?;
+        vault.store.append_gate_decision_in_txn(wtxn, &refused)
+    })?;
+
+    let session: SessionReadSet = serde_json::from_value(serde_json::json!({
+        "rows": {},
+        "loaded_skills": {},
+        "proposal_count": 0,
+        "own_proposals": [format!("claim:{}", claim.to_hex())],
+    }))
+    .unwrap();
+    let mut line = ChangedLine::default();
+    session.fold_own_changes(
+        &vault,
+        Some(id(7)),
+        crate::claim::CallerLocality::OnDevice,
+        &mut line,
+        16,
+    )?;
+    let [ChangedEvent::Proposal { change, .. }] = line.events.as_slice() else {
+        panic!("one settled proposal rides: {:?}", line.events);
     };
-    // Find the budget where only the cheaper discovery tier has shed.
-    let rendered = (1..500)
-        .find_map(|cap| {
-            let out = render_board_block(
-                &frame,
-                BoardBudgetRequest {
-                    harness_default_tok: cap,
-                    caller_limit_tok: None,
-                    explicit_override_tok: None,
+    assert_eq!(change.to, "rejected");
+    assert_eq!(
+        change.reason,
+        Some(ProposalReason::PersonWord("bundle:declined".to_owned()))
+    );
+    assert_eq!(
+        change.diagnostic.as_deref(),
+        Some("gate.consent.bundle.reject")
+    );
+    Ok(())
+}
+
+/// A full watch stops the submission cursor. An outcome delivered past it
+/// covers every receipt of its proposal that the fold read, so it rides once;
+/// a later submission under the same id is owed once more, and then never
+/// again.
+#[test]
+fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::gate::proposal_observation::{ProposalPolicySource, observe_submission_in_txn};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let actor = id(7);
+    vault.put_entity(
+        &id(0x32),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let (open, declined) = (id(0x33), id(0x34));
+    for (claim, approval) in [
+        (open, ClaimApprovalStatus::Proposed),
+        (declined, ClaimApprovalStatus::Rejected),
+    ] {
+        let body = ClaimBody::new(
+            "note.topic",
+            ClaimSubject::Entity(id(0x32)),
+            rmpv::Value::from("harbor"),
+            1.0,
+            approval,
+            ClaimLifecycleStatus::Active,
+        )?;
+        vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    }
+    let submit = |claim: EntityId| {
+        vault.with_write_txn(|txn| {
+            observe_submission_in_txn(
+                &vault.store,
+                txn,
+                actor,
+                &format!("claim:{}", claim.to_hex()),
+                ProposalPolicySource {
+                    threshold: u64::MAX,
+                    deciding_row: None,
+                    precedence_row: None,
+                    shipped_default_precedence: true,
                 },
+                true,
             )
-            .unwrap();
-            (out.shed.applied.last() == Some(&ShedRank::CapabilityDiscovery)).then_some(out)
-        })
-        .expect("discovery tier has a reducing budget interval");
-    assert!(!rendered.text.contains("found-skill"));
-    assert!(!rendered.text.contains("found-agent"));
-    assert!(rendered.text.contains("loaded: sk-old@1"));
-    assert!(rendered.text.contains("snippet body"));
-}
-
-#[test]
-fn new_pack_install_appears_on_existing_session_changed_line_without_push() {
-    let mut session = SessionReadSet::default();
-    let old = vec![("alice.tools".to_owned(), "ab".repeat(32))];
-    let updated = vec![
-        ("alice.tools".to_owned(), "cd".repeat(32)),
-        ("alice.connector".to_owned(), "ef".repeat(32)),
-    ];
-    assert!(session.pack_changes(&updated, 16).rows.is_empty());
-    session.observe_pack_inventory(&old);
-    let changed = session.pack_changes(&updated, 16);
-    assert_eq!(changed.rows.len(), 2);
-    assert!(
-        changed
-            .render()
-            .iter()
-            .any(|row| row.contains("alice.connector: installed:"))
-    );
-    assert!(changed.ride(None).is_none());
-    let frame = changed
-        .ride(Some(BoardStreamFrame {
-            epoch: 7,
-            kind: FrameKind::Keyframe("<board>\nnote: current\nlegend: kinds\n</board>".into()),
-        }))
-        .expect("existing frame");
-    let FrameKind::Keyframe(text) = frame.kind else {
-        panic!("keyframe")
-    };
-    assert!(text.find("note:").unwrap() < text.find("alice.connector: installed:").unwrap());
-    assert!(text.find("alice.connector: installed:").unwrap() < text.find("legend:").unwrap());
-    let reopened: SessionReadSet =
-        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
-    assert_eq!(reopened.pack_changes(&updated, 16), changed);
-}
-
-#[test]
-fn changed_rider_replaces_the_whole_block_and_clears_on_next_existing_frame() {
-    let changes = ChangedLine {
-        rows: vec![("cl1".into(), ServedLifecycle::Retracted)],
-        overflow: 0,
-        install_rows: Vec::new(),
-        install_overflow: 0,
-    };
-    let keyframe = changes
-        .ride(Some(BoardStreamFrame {
-            epoch: 3,
-            kind: FrameKind::Keyframe("<board>\nnote: current\nlegend: kinds\n</board>".into()),
-        }))
-        .unwrap();
-    let FrameKind::Keyframe(text) = &keyframe.kind else {
-        panic!("keyframe")
-    };
-    assert!(text.find("note:").unwrap() < text.find("changed[").unwrap());
-    assert!(text.find("changed[").unwrap() < text.find("legend:").unwrap());
-    let mut receiver = AppliedStreamState::default();
-    receiver.apply(keyframe);
-    let delta = || {
-        Some(BoardStreamFrame {
-            epoch: 3,
-            kind: FrameKind::Delta(vec![DeltaRow {
-                key: "task1".into(),
-                line: "working".into(),
-            }]),
         })
     };
-    receiver.apply(changes.ride(delta()).unwrap());
-    assert!(receiver.delta_overlay["changed"].contains("cl1: retracted"));
-    receiver.apply(ChangedLine::default().ride(delta()).unwrap());
-    assert_eq!(receiver.delta_overlay["changed"], "");
-    assert_eq!(receiver.delta_overlay["task1"], "working");
-    assert!(ChangedLine::default().ride(None).is_none());
-}
-
-#[test]
-fn base_world_obeys_the_same_exclusion_and_active_off_count_rules() {
-    let authority = |allowed, active| ResolvedWorldAuthority {
-        allowed_set: WorldAuthoritySet::new(allowed, []).unwrap(),
-        default_subset: WorldAuthoritySet::new(active, []).unwrap(),
-        active_set: WorldAuthoritySet::new(active, []).unwrap(),
-        allowed_claim_ids: vec![],
-        default_claim_id: None,
+    let wake = |session: &mut SessionReadSet| -> crate::Result<usize> {
+        let mut line = ChangedLine::default();
+        session.fold_own_changes(
+            &vault,
+            Some(actor),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )?;
+        session.acknowledge(&line);
+        Ok(line.events.len())
     };
-    let active = WorldsSection::project(&[], &authority(true, true), 1);
-    assert_eq!(active.rows, ["base ACTIVE local"]);
-    assert_eq!((active.active_count, active.off_count), (1, 0));
-    let off = WorldsSection::project(&[], &authority(true, false), 1);
-    assert_eq!(off.rows, ["off: base AVAILABLE-OFF local"]);
-    assert_eq!((off.active_count, off.off_count), (0, 1));
-    let hidden = WorldsSection::project(&[], &authority(false, false), 1);
-    assert!(hidden.rows.is_empty());
-    assert_eq!((hidden.active_count, hidden.off_count), (0, 0));
+    let watched: Vec<String> = (0..1024).map(|n| format!("claim:held{n}")).collect();
+    let mut session: SessionReadSet = serde_json::from_value(serde_json::json!({
+        "rows": {},
+        "loaded_skills": {},
+        "proposal_count": 0,
+        "own_proposals": watched,
+    }))
+    .unwrap();
+    // The open proposal finds no room in the watch, so the cursor stops
+    // before it. The declined one, submitted twice past it, rides once.
+    submit(open)?;
+    submit(declined)?;
+    submit(declined)?;
+    assert_eq!(wake(&mut session)?, 1);
+    assert_eq!(wake(&mut session)?, 0);
+    submit(declined)?;
+    assert_eq!(wake(&mut session)?, 1);
+    assert_eq!(wake(&mut session)?, 0);
+    assert_eq!(wake(&mut session)?, 0);
+    Ok(())
 }

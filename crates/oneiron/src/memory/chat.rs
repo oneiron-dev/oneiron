@@ -38,7 +38,7 @@ use crate::context_pack::{
 };
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
-use crate::registry::ENTITY_TYPE_REGISTRY;
+use crate::registry::{ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN};
 use crate::serialize::{SerializeConfig, serialize_pack};
 
 /// Chat uses the same closed five-level effort vocabulary as retrieval.
@@ -177,7 +177,7 @@ pub enum ChatResponse {
         /// The depth that priced this call.
         depth: ChatDepth,
         /// The retrieval this answer stands on.
-        retrieval: MemoryPack,
+        retrieval: Box<MemoryPack>,
     },
     /// A refusal to answer, typed rather than empty.
     Abstained {
@@ -352,12 +352,15 @@ impl Memory<'_> {
             gaps,
             tokens_used,
             depth,
-            retrieval: pack,
+            retrieval: Box::new(pack),
         })
     }
 
     /// The [`ChatScope::Documents`] evidence: the caller's own refs, read
-    /// through the existing [`Memory::hydrate`] surface and nothing else.
+    /// through the existing [`Memory::hydrate`] surface and nothing else. The
+    /// pack writers lay a document's fields out in their own rows, which no
+    /// read follows exactly, so a document whose stored body the write door
+    /// refuses is withheld whole, as context hydration withholds it.
     ///
     /// Refs are deduped on first appearance and read in that order up to
     /// `limit`. A well-formed ref that resolves to nothing is a gap rather
@@ -393,7 +396,7 @@ impl Memory<'_> {
                 }
                 break;
             }
-            match self.hydrate(std::slice::from_ref(*reference)) {
+            match self.hydrate_whole_body(std::slice::from_ref(*reference)) {
                 Ok(hydrated) => {
                     super::read_lane::fold_receipt(&mut narrowing, hydrated.receipt);
                     views.extend(hydrated.value);
@@ -404,6 +407,7 @@ impl Memory<'_> {
                 Err(err) => return Err(err),
             }
         }
+        self.add_turn_text(&mut views, &mut narrowing)?;
 
         // Rendered from the documents this call already hydrated: the format
         // the caller asked for, over exactly the set they named.
@@ -438,6 +442,79 @@ impl Memory<'_> {
             gaps,
         ))
     }
+
+    /// Gives each named TURN its text as `txt`, the field a turn renders its
+    /// text from. A turn's text is its messages' (ARCH-0004), which its own
+    /// body does not hold: those this caller may read, so a named turn never
+    /// shows the words of a message the caller could not name. A turn named
+    /// at a text revision (`MemoryItem::source_revision_ref`) gets the words
+    /// that revision pins, and none once they can no longer be found.
+    fn add_turn_text(
+        &self,
+        views: &mut [EntityView],
+        narrowing: &mut Option<crate::claim::ScopedReadReceipt>,
+    ) -> MemoryResult<()> {
+        let turns = views
+            .iter()
+            .enumerate()
+            .filter(|(_, view)| document_entity_type(&view.kind) == ENTITY_TYPE_TURN)
+            .map(|(index, view)| -> MemoryResult<_> {
+                let pin = view
+                    .short_ref
+                    .as_deref()
+                    .and_then(|short_ref| short_ref.rsplit_once('@'))
+                    .and_then(|(_, revision)| crate::memory::RevisionRef::from_hex(revision).ok());
+                Ok((index, EntityId::from_hex(&view.id_hex)?, pin))
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        if turns.is_empty() {
+            return Ok(());
+        }
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let reads: Vec<_> = turns
+            .iter()
+            .map(|(_, id, _)| crate::claim::PointRead::id(*id))
+            .collect();
+        let crate::claim::ScopedReadResult {
+            value: texts,
+            receipt,
+        } = lane.read_projected(&reads, None, |txn, rows| {
+            turns
+                .iter()
+                .zip(rows)
+                .map(|((_, turn, pin), row)| {
+                    if row.is_none() {
+                        return Ok(None);
+                    }
+                    let mode =
+                        pin.map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
+                    let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
+                        self.vault,
+                        &self.vault.store,
+                        txn,
+                        turn,
+                        mode,
+                        true,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    let messages =
+                        served.released(|message| lane.is_entity_readable_in(txn, message))?;
+                    Ok(crate::embed::joined_turn_text(&messages))
+                })
+                .collect::<crate::error::Result<Vec<_>>>()
+        })?;
+        super::read_lane::fold_receipt(narrowing, receipt);
+        for ((index, _, _), text) in turns.into_iter().zip(texts) {
+            if let (Some(text), Some(serde_json::Value::Object(body))) =
+                (text, views[index].body.as_mut())
+            {
+                body.insert("txt".to_owned(), serde_json::Value::String(text));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The minimal-depth answer: rendered pack, else the first item's text. Blank
@@ -468,11 +545,14 @@ fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec
         if candidate.trim().is_empty() {
             return None;
         }
-        if !items.iter().any(|item| item.short_id == *candidate) {
-            return None;
-        }
-        if !sources.contains(candidate) {
-            sources.push(candidate.clone());
+        // A composer may cite the bare short id the item shows; the source
+        // keeps the item's pin so it hydrates the revision that was read.
+        let item = items
+            .iter()
+            .find(|item| item.short_id == *candidate || item.reference() == *candidate)?;
+        let source = item.reference();
+        if !sources.contains(&source) {
+            sources.push(source);
         }
     }
     if sources.is_empty() {
@@ -486,7 +566,7 @@ fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec
 fn pack_short_ids(pack: &MemoryPack) -> Vec<String> {
     let mut short_ids = Vec::with_capacity(pack.items.len());
     for item in &pack.items {
-        short_ids.push(item.short_id.clone());
+        short_ids.push(item.reference());
     }
     short_ids
 }
@@ -496,18 +576,27 @@ fn pack_short_ids(pack: &MemoryPack) -> Vec<String> {
 /// was read at. The caller named this document, so nothing here is a ranked
 /// guess and no score is invented for it.
 fn document_item(view: &EntityView) -> MemoryItem {
-    let content = view.body.as_ref().and_then(|body| body.get("content"));
+    let text_field = if document_entity_type(&view.kind) == ENTITY_TYPE_TURN {
+        "txt"
+    } else {
+        "content"
+    };
+    let content = view.body.as_ref().and_then(|body| body.get(text_field));
     let value_text = match (content.and_then(serde_json::Value::as_str), &view.body) {
         (Some(text), _) => text.to_owned(),
         (None, Some(body)) => serde_json::to_string(body).unwrap_or_default(),
         (None, None) => String::new(),
     };
-    let short_id = match &view.short_ref {
-        Some(short_ref) => short_ref.clone(),
-        None => view.id_hex.clone(),
+    let (short_id, source_revision_ref) = match view.short_ref.as_deref() {
+        Some(short_ref) => match short_ref.rsplit_once('@') {
+            Some((bare, revision)) => (bare.to_owned(), Some(revision.to_owned())),
+            None => (short_ref.to_owned(), None),
+        },
+        None => (view.id_hex.clone(), None),
     };
     MemoryItem {
         short_id,
+        source_revision_ref,
         kind: view.kind.clone(),
         predicate: None,
         value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),
@@ -523,6 +612,8 @@ fn document_item(view: &EntityView) -> MemoryItem {
         facet: None,
         salience: None,
         reactions: Vec::new(),
+        cited_messages: Vec::new(),
+        conversation_id: None,
     }
 }
 

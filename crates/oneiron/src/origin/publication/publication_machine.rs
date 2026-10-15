@@ -168,7 +168,7 @@ impl Vault {
         }
         let row = OriginPublicationRow::from_record(&record);
         PUBLICATIONS.encode_value(&row)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if CAS_INTENT.contains(&self.store, wtxn, &intent_key)?
                 || PUBLICATIONS.contains(&self.store, wtxn, &publication_id)?
             {
@@ -421,7 +421,7 @@ impl Vault {
             OriginKeepRefKind::Publication,
             &terminal.publication_id.to_hex(),
         );
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let current = PUBLICATIONS
                 .get(&self.store, wtxn, &terminal.publication_id)?
                 .ok_or(Error::CorruptedIndex("origin finalize has no prepared row"))?

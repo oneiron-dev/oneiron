@@ -91,10 +91,11 @@ pub use hold_queue::{HeldPolicyItem, PolicyHoldResolution};
 mod owner_rows;
 pub use crate::batch::secret_scan::SecretScanMode;
 pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource};
+pub(crate) use owner_rows::is_live_vault_owner_in_txn;
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
-    PolicyRowSubmission, SecretScanReceipt, policy_row_grant_target,
+    PolicyRowSubmission, SecretScanReceipt, WorldPrivacyReceipt, policy_row_grant_target,
 };
 mod notice;
 mod pattern;

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use super::dispatch::DispatchBinding;
 use super::policy::BudgetPolicyRow;
 use super::state::BudgetState;
 use super::types::BudgetThreshold;
@@ -57,6 +58,12 @@ pub(super) struct LeaseRecord {
     pub(super) matched_rows: Vec<u16>,
     pub(super) floor_allocations: Vec<FloorAllocation>,
     pub(super) shared_reserved_units: u64,
+    /// What a bound admission granted this lease for; `None` on the plain
+    /// admissions, which never dispatch through [`super::BudgetGuard::begin_dispatch`].
+    pub(super) binding: Option<DispatchBinding>,
+    /// Set once by `begin_dispatch`: bytes may have left under this lease, so
+    /// it can no longer be released untouched.
+    pub(super) dispatched: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

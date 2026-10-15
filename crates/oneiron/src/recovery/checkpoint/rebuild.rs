@@ -56,8 +56,30 @@ pub(super) fn has_embedding_source(raw: &[u8]) -> Result<bool> {
         _ => Ok(false),
     }
 }
+/// Marks a restored record to be embedded again and queues the worker's job
+/// for it: the image holds no vectors, and the worker leases queued jobs only,
+/// so a marker alone left a restored vault without them for good.
+fn mark_for_reembedding(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    text: &[u8],
+) -> Result<()> {
+    vault.store.mark_pending_embedding(txn, id, text)?;
+    #[cfg(feature = "sync")]
+    if vault.config.embedding_model.is_some() {
+        crate::sync::queue::push_embed_job_in_txn(
+            &vault.store,
+            txn,
+            id,
+            crate::embed::EMBED_PRIORITY_BACKFILL,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let rows = crate::ports::EntityStoreRead::port_entity_raw_records(&vault.store, txn)?
             .collect::<Result<Vec<_>>>()?;
         let mut embeddings = 0;
@@ -120,20 +142,47 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                 _ => {}
             }
             if has_embedding_source(raw)? {
-                vault
-                    .store
-                    .mark_pending_embedding(txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+                mark_for_reembedding(vault, txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+                embeddings += 1;
+            }
+            // A TURN embeds its messages' text, so it is marked at that text.
+            if header.entity_type == crate::registry::ENTITY_TYPE_TURN
+                && let Some(text) = crate::embed::turn_text_in_txn(vault, txn, id)?
+            {
+                mark_for_reembedding(vault, txn, id, text.as_bytes())?;
                 embeddings += 1;
             }
         }
+        // A worker attached later, to a vault restored under no model or by a
+        // build without the queue, requeues them at its cold attach.
+        if embeddings > 0 {
+            vault
+                .store
+                .hnsw_meta
+                .put(txn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+        }
         let sources = INDEX_SOURCE_TEXT.scan(&vault.store, txn)?;
         let mut texts = 0;
+        let mut oversized = 0_usize;
         for (id, fields) in sources {
             if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?.is_none() {
                 continue;
             }
-            crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields)?;
-            texts += 1;
+            match crate::bm25::index_text(&vault.store, txn, &vault.analyzer, &id, &fields) {
+                Ok(()) => texts += 1,
+                // Text indexed before the per-document ceiling stays unindexed
+                // rather than holding the whole restore: its write door refuses it now.
+                Err(Error::Store(crate::error::StoreError::IndexedTextTooLarge { .. })) => {
+                    oversized += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if oversized > 0 {
+            tracing::warn!(
+                oversized,
+                "checkpoint restore left documents past the text ceiling out of search"
+            );
         }
         let phonetic = INDEX_SOURCE_PHONETIC.scan(&vault.store, txn)?;
         for (id, codes) in phonetic {
@@ -151,6 +200,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         for key in windows {
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &key[4..].to_owned(), &[1u8])?;
         }
+        crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;

@@ -16,7 +16,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 __all__ = ["Oneiron", "OneironError"]
 
 WitnessAuthor = Literal["user", "companion", "system"]
-Effort = Literal["light", "medium", "high", "xhigh", "max"]
+Effort = Literal["light", "medium", "high", "xhigh", "max", "call"]
 PackFormat = Literal["json", "yaml", "toon", "md", "txt"]
 
 class WitnessMessage(TypedDict):
@@ -65,6 +65,7 @@ class CommitReceipt(TypedDict):
 class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
+    kinds: NotRequired[list[str] | None]
 
 class MemoryProvenance(TypedDict):
     source: str
@@ -73,6 +74,7 @@ class MemoryProvenance(TypedDict):
 
 class MemoryItem(TypedDict):
     short_id: str
+    source_revision_ref: NotRequired[str]
     kind: str
     predicate: str | None
     value_text: str
@@ -82,9 +84,21 @@ class MemoryItem(TypedDict):
     world: str | None
     facet: str | None
     salience: float | None
+    cited_messages: NotRequired[list[CitedMessage]]
+    conversation_id: NotRequired[str]
+
+class CitedMessage(TypedDict):
+    short_id: str
+    value_text: str
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
+
+class TemporalHint(TypedDict):
+    phrase: str
+    status: Literal["used", "unresolved", "future"]
+    start: int | None
+    end: int | None
 
 class RetrievalMeta(TypedDict):
     quality: Literal["full", "degraded", "passthrough"]
@@ -95,6 +109,7 @@ class RetrievalMeta(TypedDict):
     total_candidates: int
     claims_returned: int
     deep_pending: bool | None
+    temporal_hints: NotRequired[list[TemporalHint]]
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
@@ -216,12 +231,13 @@ class Oneiron:
     @classmethod
     def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
+    def in_room_turn(self, room_ref: str) -> "Oneiron": ...
 # BEGIN GENERATED FACADE VERBS
     def cancel(self, task_ref: str) -> TaskCancelReceipt: ...
     def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
-    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None) -> MemoryPack: ...
+    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> MemoryPack: ...
     def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
     def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...

@@ -25,6 +25,7 @@
 
 mod archive_purge;
 mod authorship;
+mod birth_position;
 mod booking;
 mod claim_conflict;
 mod skill_authoring;
@@ -35,21 +36,26 @@ mod campaign;
 pub mod caps;
 mod chat;
 mod claims;
+mod conversation_list;
+mod credential_key;
 mod dreamer;
 mod entity_delete;
 mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
+mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
 mod read_lane;
 mod reads;
 mod recall;
+mod room_turn;
 mod structural;
 mod subscriptions;
 mod support;
+mod transcript;
 mod witness;
 
 #[cfg(test)]
@@ -76,6 +82,7 @@ pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, SafeDeleteReason,
 };
+pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
 pub use export::{ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
@@ -85,10 +92,11 @@ pub use key_value::{
     KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
     KeyValuePutReceipt, KeyValueSearch,
 };
+pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
+    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult,
 };
@@ -99,10 +107,14 @@ pub use outbound::{
     OutboundScheduleContext,
 };
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+pub(crate) use recall::check_recall_request;
 pub use recall::{
-    Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,
-    RetrievalMeta, ScopeHonesty,
+    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
+    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
+    RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip,
+    RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };
+pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;
 pub use structural::{
@@ -110,22 +122,33 @@ pub use structural::{
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{Memory, parse_actor_key, resolve_entity_ref};
-pub(crate) use witness::MessageStreamRuntime;
+pub use support::{HostWriteOrigin, Memory, parse_actor_key, resolve_entity_ref};
+pub use transcript::{
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+};
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
+pub(crate) use witness::{MessageStreamRuntime, message_stream_finality_in_txn};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
+pub(crate) use credential_key::owner_exemption_holds_in_txn;
 pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
-pub(crate) use witness::sole_edge_target;
+pub(crate) use witness::{
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
+    witness_message_body,
+};
+pub(crate) use witness::{
+    next_witness_message_order, sole_edge_target, taken_witness_message_order,
+    witness_message_order,
+};
 
 // Read-version, revision-change, and publication types are available under
 // the existing memory namespace; no additional crate-root surface is required.

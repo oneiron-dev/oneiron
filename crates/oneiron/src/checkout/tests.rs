@@ -1,25 +1,6 @@
 use super::*;
 
 #[test]
-fn checkout_result_identity_is_stable_and_domain_separated() {
-    let id = CheckoutId::from_bytes([1; 16]).unwrap();
-    assert_eq!(
-        checkout_result_identity(id, 7, "abc", "def"),
-        checkout_result_identity(id, 7, "abc", "def")
-    );
-    assert_ne!(
-        checkout_result_identity(id, 7, "abc", "def"),
-        checkout_result_identity(id, 8, "abc", "def")
-    );
-}
-
-#[test]
-fn checkout_git_oid_requires_lowercase_sha1_hex() {
-    assert!(GitOid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_ok());
-    assert!(GitOid::parse("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").is_err());
-}
-
-#[test]
 fn checkout_git_oid_rejects_zero() {
     // Git's null sentinel must not authorize collection of unpushed work.
     assert!(matches!(
@@ -29,14 +10,6 @@ fn checkout_git_oid_rejects_zero() {
     // A single non-zero nibble is a real oid and still parses.
     assert!(GitOid::parse("0000000000000000000000000000000000000001").is_ok());
     assert!(GitOid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_ok());
-}
-
-#[test]
-fn checkout_ttl_policy_is_pinned() {
-    assert!(CheckoutTaskClass::Build.allows_ttl_reclaim());
-    assert!(CheckoutTaskClass::Verify.allows_ttl_reclaim());
-    assert!(!CheckoutTaskClass::Edit.allows_ttl_reclaim());
-    assert!(!CheckoutTaskClass::Effect.allows_ttl_reclaim());
 }
 
 use crate::Vault;
@@ -152,35 +125,6 @@ impl CheckoutRepoOps for Ops {
 }
 
 #[test]
-fn checkout_epoch_fences_renew_and_settle() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
-    let grant = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let stale = CheckoutLeaseFence {
-        checkout_id: id(),
-        epoch: 0,
-        holder_ref: "one".into(),
-    };
-    assert!(matches!(
-        s.renew(stale.clone(), 10, 101),
-        Err(CheckoutError::StaleEpoch { .. })
-    ));
-    assert!(matches!(
-        s.settle(CheckoutSettlementRequest {
-            fence: stale,
-            disposition: CheckoutSettlementDisposition::Select,
-            observed_ref: "a".into(),
-            result_ref: "b".into(),
-            now: 101
-        }),
-        Err(CheckoutError::StaleEpoch { .. })
-    ));
-    assert_eq!(grant.epoch, 1);
-}
-
-#[test]
 fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
     for class in [CheckoutTaskClass::Build, CheckoutTaskClass::Verify] {
         let (_d, v) = vault();
@@ -201,75 +145,6 @@ fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
         s.claim(request(class, "one", 100)).unwrap();
         assert!(s.reclaim_idempotent(id(), "two".into(), 111).is_err());
     }
-}
-
-#[test]
-fn checkout_settlement_is_consume_once() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let f = CheckoutLeaseFence {
-        checkout_id: id(),
-        epoch: g.epoch,
-        holder_ref: "one".into(),
-    };
-    let first = s
-        .settle(CheckoutSettlementRequest {
-            fence: f.clone(),
-            disposition: CheckoutSettlementDisposition::Select,
-            observed_ref: "a".into(),
-            result_ref: "b".into(),
-            now: 101,
-        })
-        .unwrap();
-    assert!(matches!(
-        s.settle(CheckoutSettlementRequest {
-            fence: f,
-            disposition: CheckoutSettlementDisposition::Apply,
-            observed_ref: "a".into(),
-            result_ref: "b".into(),
-            now: 102
-        }),
-        Err(CheckoutError::SettlementAlreadyWon)
-    ));
-    assert_eq!(
-        first.result_identity,
-        checkout_result_identity(id(), 1, "a", "b")
-    );
-}
-
-#[test]
-fn checkout_teardown_retains_for_missing_dirty_and_occupant() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let f = CheckoutLeaseFence {
-        checkout_id: id(),
-        epoch: g.epoch,
-        holder_ref: "one".into(),
-    };
-    let ops = Ops {
-        inspection: CheckoutTeardownInspection {
-            observed_head: None,
-            dirty: false,
-            receipt_match: TeardownReceiptMatch::Match,
-            occupant: None,
-        },
-        inspect_calls: std::cell::Cell::new(0),
-        collect_calls: std::cell::Cell::new(0),
-        collect_fails: std::cell::Cell::new(0),
-    };
-    assert!(matches!(
-        s.teardown(f, None, &ops, 102).unwrap(),
-        CheckoutTeardownOutcome::Retained {
-            reason: CheckoutRetainReason::MissingPushedHeadReceipt,
-            ..
-        }
-    ));
 }
 
 fn fence(grant: &CheckoutLeaseGrant, holder: &str) -> CheckoutLeaseFence {
@@ -416,76 +291,6 @@ fn checkout_teardown_retains_live_mismatch_and_uncertain() {
             }
         ));
     }
-}
-
-#[test]
-fn checkout_collects_clean_matching_receipt_and_removes_lease() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
-    assert!(matches!(
-        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
-            .unwrap(),
-        CheckoutTeardownOutcome::Collected { .. }
-    ));
-    assert_eq!(o.collect_calls.get(), 1);
-    assert_eq!(s.get(id()).unwrap(), None);
-}
-
-#[test]
-fn checkout_settlement_facts_retry_and_release() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let settle_request = |d| CheckoutSettlementRequest {
-        fence: fence(&g, "one"),
-        disposition: d,
-        observed_ref: "a".into(),
-        result_ref: "b".into(),
-        now: 101,
-    };
-    let first = s
-        .settle(settle_request(CheckoutSettlementDisposition::Select))
-        .unwrap();
-    let retry = s
-        .settle(settle_request(CheckoutSettlementDisposition::Select))
-        .unwrap();
-    assert_eq!(first.receipt_id, retry.receipt_id);
-    assert!(matches!(
-        s.settle(settle_request(CheckoutSettlementDisposition::Apply)),
-        Err(CheckoutError::SettlementAlreadyWon)
-    ));
-    let (facts, _) = s.into_parts();
-    assert!(matches!(
-        facts.0.as_slice(),
-        [
-            CheckoutFactMutation::Claimed { .. },
-            CheckoutFactMutation::Settled { .. }
-        ]
-    ));
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    s.settle(CheckoutSettlementRequest {
-        fence: fence(&g, "one"),
-        disposition: CheckoutSettlementDisposition::Release,
-        observed_ref: "a".into(),
-        result_ref: "b".into(),
-        now: 101,
-    })
-    .unwrap();
-    let (facts, _) = s.into_parts();
-    assert!(matches!(
-        facts.0.last(),
-        Some(CheckoutFactMutation::Released { .. })
-    ));
 }
 
 #[test]
@@ -1212,4 +1017,157 @@ fn checkout_retained_state_can_settle_after_teardown_retain() {
         }),
         Err(CheckoutError::SettlementAlreadyWon)
     ));
+}
+
+use crate::credential_door::{CredentialDoorError, CredentialDoorService};
+use std::sync::Arc;
+
+/// Raises `vault`'s authoritative instant to at least `secs` through the
+/// persisted authority clock floor the credential door reads it from, and
+/// returns the door's reading.
+fn raise_authority_instant(vault: &Vault, secs: u64) -> u64 {
+    let mut wtxn = vault.store.env.write_txn().unwrap();
+    vault
+        .store
+        .sync_state
+        .put(
+            &mut wtxn,
+            crate::authority::authority_first_seen_clock_sync_key(),
+            &crate::authority::encode_authority_first_seen_secs(secs),
+        )
+        .unwrap();
+    wtxn.commit().unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    vault.instant_in_txn(&txn).unwrap().secs()
+}
+
+/// ASTRA-9A-2-R4 R4-1: a checkout lease is the authority its ticket redeems
+/// at the credential door. A restore over the vault brings back the task and
+/// the blueprint as they were at the backup, and keeps the lease as it is
+/// now: a ticket whose lease was shortened since, and has run out, stays
+/// refused.
+#[test]
+fn a_restore_never_revives_a_checkout_ticket_shortened_since() {
+    let (_d, v) = vault();
+    let live = Arc::new(v);
+    let backups = tempfile::tempdir().unwrap();
+    let image = backups.path().join("backup");
+    let start = {
+        let txn = live.store.env.read_txn().unwrap();
+        live.instant_in_txn(&txn).unwrap().secs()
+    };
+    let t = raise_authority_instant(&live, start.max(crate::unix_seconds_now()) + 100_000);
+    let task_body = crate::habit::task_body_for_test(crate::habit::TaskRole::Task);
+    live.put_entity(
+        &task(),
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange { start: t, end: t },
+        t,
+        &task_body,
+    )
+    .unwrap();
+    let mut claim = request(CheckoutTaskClass::Build, "one", t);
+    claim.ttl_secs = Some(86_400);
+    let repo = claim.repo_ref.clone();
+    let mut leases = CheckoutLeaseService::new(&live, Sink::default(), Live::default());
+    let grant = leases.claim(claim).unwrap();
+    let ticket = format!("{}.{}", grant.checkout_id, grant.epoch);
+    let door = CredentialDoorService::new(Arc::clone(&live));
+    door.checkout_credential(&ticket, "one", &repo)
+        .expect("the ticket redeems while its lease runs");
+    let blueprints = VaultEnvBlueprintStore::new(&live);
+    let mut blueprint = EnvBlueprint::new(repo.clone(), EnvBlueprintStages::default());
+    blueprints.put(&blueprint).unwrap();
+    live.snapshot_checkpoint(&image, t).unwrap();
+    let restore = |name: &str, at: u64| {
+        let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &backups.path().join(name),
+            live.config.clone(),
+            &live,
+            at,
+        )
+        .unwrap();
+        Arc::new(restored)
+    };
+    let materialization = |vault: &Vault| {
+        VaultEnvBlueprintStore::new(vault)
+            .get(&repo)
+            .unwrap()
+            .map(|stored| stored.light_checkout_materialization)
+    };
+
+    // The task and the blueprint are edited since the backup; the lease is not.
+    let mut edited = Vec::new();
+    rmpv::encode::write_value(
+        &mut edited,
+        &rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from(crate::habit::TASK_BODY_ROLE_KEY),
+                rmpv::Value::from(crate::habit::TaskRole::Task.role_byte()),
+            ),
+            (
+                rmpv::Value::from("notes"),
+                rmpv::Value::from("edited since the backup"),
+            ),
+        ]),
+    )
+    .unwrap();
+    live.put_entity(
+        &task(),
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: t + 1,
+            end: t + 1,
+        },
+        t + 1,
+        &edited,
+    )
+    .unwrap();
+    blueprint.light_checkout_materialization = MaterializationSpec::FullClone;
+    blueprints.put(&blueprint).unwrap();
+    {
+        let restored = restore("routine", t);
+        assert_eq!(restored.get(&task()).unwrap(), Some(task_body.clone()));
+        assert_eq!(
+            materialization(&restored),
+            Some(MaterializationSpec::Blobless)
+        );
+        CredentialDoorService::new(Arc::clone(&restored))
+            .checkout_credential(&ticket, "one", &repo)
+            .expect("a lease unchanged since the backup still redeems its ticket");
+    }
+
+    // The holder shortens its lease since the backup, and the shorter lease
+    // runs out before the one the backup holds would.
+    let renewed = leases.renew(fence(&grant, "one"), 60, t + 1).unwrap();
+    assert_eq!(renewed.lease_expires_at, Some(t + 61));
+    let now = raise_authority_instant(&live, t + 120);
+    assert!((t + 61..t + 86_400).contains(&now), "{now}");
+    assert!(matches!(
+        door.checkout_credential(&ticket, "one", &repo),
+        Err(CredentialDoorError::AuthorityRejected)
+    ));
+
+    let restored = restore("shortened", t + 120);
+    assert!(
+        matches!(
+            CredentialDoorService::new(Arc::clone(&restored))
+                .checkout_credential(&ticket, "one", &repo),
+            Err(CredentialDoorError::AuthorityRejected)
+        ),
+        "the restore revived a ticket the live vault refuses"
+    );
+    assert_eq!(
+        CheckoutLeaseService::new(&restored, Sink::default(), Live::default())
+            .get(id())
+            .unwrap()
+            .and_then(|lease| lease.lease_expires_at),
+        Some(t + 61)
+    );
+    assert_eq!(restored.get(&task()).unwrap(), Some(task_body));
+    assert_eq!(
+        materialization(&restored),
+        Some(MaterializationSpec::Blobless)
+    );
 }

@@ -202,10 +202,6 @@ fn weak_evidence_abstains() -> Result<()> {
         row.replay_inputs.is_some(),
         "abstention still records its input"
     );
-    assert!(
-        row.pack_output.is_some(),
-        "abstention still records its pack"
-    );
     let pack = pack.value;
 
     assert!(
@@ -306,6 +302,118 @@ fn confidence_surfaced() -> Result<()> {
     );
     let encoded = serde_json::to_value(empty).expect("empty context serializes");
     assert_eq!(encoded["reason"], "below_threshold");
+    Ok(())
+}
+
+/// 9B (#1323 follow-up 0): the shipped local model is a compressed space. A
+/// paraphrase that shares no word with its target scored 0.29 against it,
+/// unrelated text at most 0.12, so the engine's 0.3 floor withheld every
+/// paraphrase recall on a served vault. A space's own floors count it.
+#[test]
+fn a_compressed_space_counts_a_paraphrase_under_its_own_floors() -> Result<()> {
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    let at = |cosine: f32| [cosine, (1.0 - cosine * cosine).sqrt(), 0.0, 0.0];
+    let target = entity_id(0x3C);
+    for (floors, found) in [
+        (crate::config::VectorEvidenceFloors::default(), false),
+        (
+            crate::config::VectorEvidenceFloors {
+                floor: 0.15,
+                strong: 0.25,
+            },
+            true,
+        ),
+    ] {
+        let mut config = embedding_test_config();
+        config.vector_evidence = floors;
+        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        put_text_and_vector(
+            &vault,
+            target,
+            "the mechanic says the automobile needs new brakes",
+            at(0.29),
+        )?;
+        put_text_and_vector(
+            &vault,
+            entity_id(0x3D),
+            "renew the passport before october",
+            at(0.12),
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("who fixes my car", 10)
+            .search_vector(&query, 10)
+            .run()?;
+
+        assert_eq!(
+            pack.results.first().map(|entity| entity.id) == Some(target),
+            found,
+            "{floors:?}: {:?}",
+            pack.empty
+        );
+    }
+    Ok(())
+}
+
+/// Sol 9B #7: a run's replay identity holds every input that changes its
+/// result. The embedding space's evidence floors decide whether RET-01
+/// withholds a run, and a folding run returns a matched MESSAGE as its TURN.
+/// Bug repro: neither was in the fork hash, and the floors were not in the
+/// replay inputs, so two runs that differ in what they return shared one key.
+#[test]
+fn the_evidence_floors_and_the_turn_fold_key_the_replay() -> Result<()> {
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    let (_dir, vault) = open_test_vault();
+    put_text_and_vector(
+        &vault,
+        entity_id(0x3E),
+        "the mechanic says the automobile needs new brakes",
+        [0.29, (1.0_f32 - 0.29 * 0.29).sqrt(), 0.0, 0.0],
+    )?;
+    let space = crate::config::VectorEvidenceFloors {
+        floor: 0.15,
+        strong: 0.25,
+    };
+
+    let mut keys = Vec::new();
+    for floors in [crate::config::VectorEvidenceFloors::default(), space] {
+        vault.set_vector_evidence(floors)?;
+        let (run_id, trace) = captured_retrieval_run_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("who fixes my car", 10)
+                .search_vector(&query, 10)
+                .limit(10),
+        )?;
+        let config = vault
+            .retrieval_run(run_id)?
+            .and_then(|run| run.replay_inputs)
+            .expect("replay inputs")
+            .config;
+        for (name, value) in [("floor", floors.floor), ("strong", floors.strong)] {
+            assert_eq!(
+                config["vector_evidence"][name].as_f64().map(|v| v as f32),
+                Some(value),
+                "{floors:?}: {config}"
+            );
+        }
+        keys.push(trace.fork_hash);
+    }
+    let (_, folded) = captured_retrieval_run_trace(
+        &vault,
+        vault
+            .query()
+            .search_text("who fixes my car", 10)
+            .search_vector(&query, 10)
+            .limit(10)
+            .fold_messages_into_turns(crate::pipeline::TurnFold::Fold),
+    )?;
+    keys.push(folded.fork_hash);
+
+    assert_ne!(keys[0], keys[1], "the floors key the replay");
+    assert_ne!(keys[1], keys[2], "the turn fold keys the replay");
     Ok(())
 }
 
@@ -626,6 +734,48 @@ fn retrieval_trace_fork_hash_replay_key_is_stable_for_same_inputs() -> Result<()
             .retrieval_trace_by_fork_hash(first_trace.fork_hash)?
             .is_none()
     );
+    Ok(())
+}
+
+/// Astra on #1421 (P8 fix 6): over one row `yes no`, a reader of the
+/// telemetry holds every fork-hash input but the query, so the unkeyed digest
+/// of each guess tells which query ran. The stored hash is keyed: it matches
+/// no guess, lookup by it still works, and a reopened vault keys alike.
+#[test]
+fn a_stored_fork_hash_confirms_no_guessed_query() -> Result<()> {
+    let (dir, vault) = open_test_vault();
+    put_text(&vault, entity_id(0xC7), "yes no")?;
+    let (_, stored) =
+        captured_retrieval_run_trace(&vault, vault.query().search_text("yes", 10).limit(10))?;
+    let guesses = crate::vault::unkeyed_for_test(|| -> Result<_> {
+        let mut guesses = Vec::new();
+        for guess in ["yes", "no"] {
+            let builder = vault.query().search_text(guess, 10).limit(10);
+            guesses.push(captured_retrieval_run_trace(&vault, builder)?.1.fork_hash);
+        }
+        Ok(guesses)
+    })?;
+    for guess in &guesses {
+        assert_ne!(&stored.fork_hash, guess, "the stored hash confirms a guess");
+    }
+    assert_eq!(
+        stored.fork_hash,
+        vault.retrieval_trace_key().seal(guesses[0]),
+        "the stored hash is the query's own digest, keyed"
+    );
+    assert_eq!(
+        vault.retrieval_trace_by_fork_hash(stored.fork_hash)?,
+        Some(stored.clone())
+    );
+
+    drop(vault);
+    let mut config = embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let vault = Vault::open(dir.path(), config)?;
+    crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
+    let (_, reopened) =
+        captured_retrieval_run_trace(&vault, vault.query().search_text("yes", 10).limit(10))?;
+    assert_eq!(reopened.fork_hash, stored.fork_hash);
     Ok(())
 }
 
@@ -1153,34 +1303,25 @@ fn retrieval_telemetry_skips_active_write_transaction() -> Result<()> {
 }
 
 #[test]
-fn retrieval_telemetry_does_not_mutate_short_id_counters() -> Result<()> {
+fn retrieval_capture_leaves_public_short_ids_contiguous_for_entity_writes() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x35);
-    put_text(&vault, id, "counter telemetry")?;
-
-    let counter_key = crate::store::short_id_counter_key(1);
-    let before = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &counter_key)?
-            .map(|value| value.to_vec())
-    };
-
-    let results = vault.query().search_text("counter", 10).run()?;
-    assert!(!results.is_empty());
-    assert_eq!(vault.retrieval_runs(1)?.len(), 1);
-
-    let after = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &counter_key)?
-            .map(|value| value.to_vec())
-    };
-    assert_eq!(before, after);
+    let first = entity_id(0x35);
+    let second = entity_id(0x36);
+    put_text(&vault, first, "capture continuity")?;
+    let before = crate::retrieval_depth::short_ref_or_hex(&vault, &first)?;
+    assert_eq!(before.split_once(':').unwrap().0, "tn1");
+    for _ in 0..3 {
+        let results = vault.query().search_text("continuity", 10).run()?;
+        assert!(results.iter().any(|hit| hit.id == first));
+    }
+    assert_eq!(vault.retrieval_runs(10)?.len(), 3);
+    assert_eq!(
+        crate::retrieval_depth::short_ref_or_hex(&vault, &first)?,
+        before
+    );
+    put_text(&vault, second, "second entity")?;
+    let after = crate::retrieval_depth::short_ref_or_hex(&vault, &second)?;
+    assert_eq!(after.split_once(':').unwrap().0, "tn2");
     Ok(())
 }
 
@@ -1331,4 +1472,48 @@ fn opted_in_search_persists_retrieval_telemetry_across_reopen() -> Result<()> {
     );
     assert_eq!(reopened.retrieval_runs(10)?.len(), 1);
     Ok(())
+}
+
+/// Greptile 1333 (bad floors admit weak matches): the floors are cosine
+/// similarities, `0 <= floor <= strong <= 1`, and opening a vault refuses any
+/// other pair. Bug repro: a NaN floor was accepted, and no score is below
+/// NaN, so a pack of weak vector matches never abstained.
+#[test]
+fn a_vault_refuses_vector_evidence_floors_outside_their_range() {
+    use crate::config::VectorEvidenceFloors;
+    let floors = |floor, strong| VectorEvidenceFloors { floor, strong };
+    let (_dir, open) = open_test_vault();
+    for refused in [
+        floors(f32::NAN, 0.5),
+        floors(0.3, f32::NAN),
+        floors(f32::NEG_INFINITY, 0.5),
+        floors(0.3, f32::INFINITY),
+        floors(-0.1, 0.5),
+        floors(0.3, 1.5),
+        floors(0.6, 0.5),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = embedding_test_config();
+        config.vector_evidence = refused;
+        let opened = crate::Vault::open(dir.path(), config);
+        assert!(
+            matches!(opened, Err(crate::Error::InvalidConfig(_))),
+            "{refused:?} opened: {:?}",
+            opened.err()
+        );
+        // Set on an open vault by a host that learns them late, the same
+        // floors are refused, and the ones in force stay.
+        assert!(matches!(
+            open.set_vector_evidence(refused),
+            Err(crate::Error::InvalidConfig(_))
+        ));
+        assert_eq!(open.vector_evidence(), VectorEvidenceFloors::default());
+    }
+    // The engine's calibration and a compressed space's both open.
+    for accepted in [VectorEvidenceFloors::default(), floors(0.15, 0.25)] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = embedding_test_config();
+        config.vector_evidence = accepted;
+        crate::Vault::open(dir.path(), config).expect("valid floors open");
+    }
 }

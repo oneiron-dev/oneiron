@@ -232,7 +232,7 @@ impl Vault {
         rmpv::encode::write_value(&mut data, &manifest)
             .map_err(|_| Error::InvariantViolation("encode Imported test policy"))?;
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
                 .ok_or(Error::InvariantViolation(
                     "test permit requires a seeded default policy",
@@ -322,9 +322,30 @@ impl Vault {
                 "default test policy has no source trust",
             ));
         };
-        let Some(Value::Map(permit)) = rows.iter_mut().find_map(|(key, value)| {
+        // The stock Generated rows bind the commitment projector and, since
+        // ARCH-0026's warm default, the Dreamer; the projector's is rebound.
+        let projector = Value::from(
+            crate::commitment_schedule::commitment_projection_actor()?
+                .entity_ref()
+                .to_hex(),
+        );
+        let permit = match rows.iter_mut().find_map(|(key, value)| {
             (key.as_str() == Some(ClaimSource::Generated.as_str())).then_some(value)
-        }) else {
+        }) {
+            Some(Value::Map(permit)) => Some(permit),
+            Some(Value::Array(permits)) => permits.iter_mut().find_map(|permit| match permit {
+                Value::Map(fields)
+                    if fields.iter().any(|(key, value)| {
+                        key.as_str() == Some("actor_ref") && *value == projector
+                    }) =>
+                {
+                    Some(fields)
+                }
+                _ => None,
+            }),
+            _ => None,
+        };
+        let Some(permit) = permit else {
             return Err(Error::InvariantViolation(
                 "default test policy has no Generated permit",
             ));
@@ -360,7 +381,7 @@ impl Vault {
         rmpv::encode::write_value(&mut data, &manifest)
             .map_err(|_| Error::InvariantViolation("encode Generated test policy"))?;
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
                 .ok_or(Error::InvariantViolation(
                     "test permit requires a seeded default policy",
@@ -416,32 +437,8 @@ impl Vault {
         Self::finish_open(store, config, seed_mode)
     }
 
-    /// Opens a vault with `engine_storage_abi` standing in for
-    /// [`crate::store::STORAGE_ABI_VERSION`], so a vault stamped at one ABI
-    /// version can be reopened by an "engine" carrying another and the
-    /// fail-closed handshake observed end to end (ARCH-0052 D9 / ONE-1732).
-    ///
-    /// TEST-ONLY, and structurally so: `#[cfg(test)]` keeps it out of every
-    /// built artifact and `pub(crate)` keeps it inside this crate, so no
-    /// production build contains an ABI override at all. [`Vault::open`] and
-    /// [`Store::open`] take no ABI argument and always gate on the compiled
-    /// constant — there is no caller-supplied path around the gate.
-    #[cfg(test)]
-    pub(crate) fn open_with_storage_abi_version_for_test(
-        path: impl AsRef<Path>,
-        config: VaultConfig,
-        engine_storage_abi: u16,
-    ) -> Result<Self> {
-        validate_open_config(&config)?;
-        let store =
-            Store::open_with_storage_abi_version_for_test(path, &config, engine_storage_abi)?;
-        Self::finish_open(store, config, DefaultPolicySeedMode::Required)
-    }
-
     /// Everything after the storage gates: analyzer discovery, the text-index
-    /// handshake, first-open seeding, and the pre-handle censuses. Split out of
-    /// [`Self::open_seeded`] so the test-only ABI-injection opener above shares
-    /// this body instead of duplicating it.
+    /// handshake, first-open seeding, and the pre-handle censuses.
     fn finish_open(
         store: Store,
         config: VaultConfig,
@@ -530,7 +527,13 @@ impl Vault {
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(&store)?,
+            retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
+                &store,
+            )?,
             store,
+            vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
+                config.vector_evidence,
+            )),
             config,
             analyzer,
             writer_lease: None,
@@ -549,16 +552,24 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            speculative_passes: Default::default(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            slow_retrieval_stage: Default::default(),
         };
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
         crate::deletion::topology_delete_intent::recover_topology_delete_intents_on_open(&vault)?;
-        vault.with_write_txn(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
+        // Whose seals count follows the posture this handle opened with and
+        // the authority a restore carried in; the stored shell edges follow
+        // it before any caller observes this vault (H161).
+        vault.reconcile_identity_topology_on_open()?;
+        vault.with_write_txn_grouped(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
+        vault.backfill_row_deletion_fences_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             // The seeded births below stamp the owner's `substrate` FACET,
             // which the owner PERSON put mints. Pinned at 0 like the bootstrap
@@ -566,13 +577,29 @@ impl Vault {
             // row is too, and a whole-vault import between vaults finds it
             // unchanged.
             // An erased owner stays erased.
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 let owner = embedded_owner_actor_id()?;
                 if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                     vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
                 }
                 Ok(())
             })?;
+            // An untouched seeded policy manifest takes the one this build
+            // ships. A failure leaves the vault on its own; the next open
+            // tries again.
+            match vault.upgrade_seeded_policy_manifest() {
+                Ok(Some(regate)) => tracing::info!(
+                    rebound = regate.rebound,
+                    restaged = regate.restaged,
+                    stale = regate.stale,
+                    "the seeded policy manifest took the shipped one; waiting consents re-gated"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
+                ),
+            }
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;
@@ -582,6 +609,8 @@ impl Vault {
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
         while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
         while vault.collect_lfs_garbage(32)? != 0 {}
+        // An erase or sweep interrupted after its commit resumes here.
+        vault.finish_gate_decision_retirements_after_commit();
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),
@@ -589,6 +618,9 @@ impl Vault {
         })?;
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
+        // The image a restore in this vault's place set aside reads, and
+        // refuses every write from here on (`Store::swap_out`).
+        vault.store.seal_if_archived()?;
         Ok(vault)
     }
 

@@ -241,7 +241,7 @@ fn run_skill_optimize_bound(
     let drafted_in = proven_cycle(vault, attempt)?;
     let authority = vault.dreamer_actor_for_attempt(attempt)?;
     let proposal_id = vault.store.clock.entity_id()?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if let Some(owner) = owner {
             vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
         }

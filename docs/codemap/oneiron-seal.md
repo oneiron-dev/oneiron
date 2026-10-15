@@ -11,10 +11,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/api.rs` | src | m | 11 struct · 11 enum · 4 trait · 1 fn · 1 type · 2 const · 1 mod · 2 re-export | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +18 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
+| `src/api.rs` | src | m | 13 struct · 11 enum · 4 trait · 1 fn · 1 type · 2 const · 1 mod · 2 re-export | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +20 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
 | `src/api/report.rs` | src | m | 6 struct · 10 enum · 7 fn | Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind +8 | Evidence-oriented verification report |
+| `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
-| `src/lib.rs` | src | s | 1 mod · 5 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
+| `src/lib.rs` | src | s | 2 mod · 5 re-export | — | Native Rust PAdES seal and verification engine (ONE-1837) |
 | `src/native/cms/assemble.rs` | src | s | 9 crate-vis | — | Signed-attribute builders and detached SignedData assembly |
 | `src/native/cms/der.rs` | src | s | 11 crate-vis | — | Strict-DER TLV writer/reader plus the shared sha256 helper |
 | `src/native/cms/mod.rs` | src | s | 7 crate-vis | — | CMS/CAdES SignedData assembly and parsing with exact byte control (§7.3) |
@@ -22,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/cms/parse.rs` | src | s | 5 crate-vis | — | Strict CMS ContentInfo/SignerInfo parsing with version gating |
 | `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
-| `src/native/engine.rs` | src | m | 1 struct · 2 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
+| `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 3 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
 | `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
@@ -57,9 +58,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_sig_shapes.rs` | src | m | — | — | Verifier tests E: ByteRange and Contents shapes, field-tree reachability and cycles, SubFilter dispatch… |
 | `src/native/verify/verify_tests_time_lta_a.rs` | src | m | 18 crate-vis | — | Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append… |
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
-| `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10): offline fetcher posture, policy defaults, and — with `network-fetch` — the… |
+| `src/organ.rs` | src | m | 1 struct · 8 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ… |
+| `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
+| `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
-| `tests/it/verify_vectors.rs` | test | m | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
-| `tests/oracle.rs` | test | m | — | — | CI differential oracle (§9, amendment A6) |
+| `tests/it/verify_vectors.rs` | test | s | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
+| `tests/oracle.rs` | test | s | — | — | CI differential oracle (§9, amendment A6) |
 | `tests/support/mod.rs` | test | m | 39 crate-vis | — | Shared test support: ephemeral identities, fixture backend/fetcher/clock, and a functional fixture TSA |
+| `tests/support/rogue_seal_organ.rs` | test | L | 4 crate-vis | — | A hostile seal organ for the seal binding's checks (feature `hostile-organ-tests`; never shipped) |

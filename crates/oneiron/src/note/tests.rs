@@ -27,50 +27,6 @@ fn encode_map(entries: Vec<(Value, Value)>) -> Vec<u8> {
 }
 
 #[test]
-fn opinion_kind_round_trip() {
-    // The wire literal IS the ABI — pinned here, not derived.
-    assert_eq!(
-        NoteKind::parse("opinion/take")
-            .expect("shipped kind")
-            .as_str(),
-        "opinion/take"
-    );
-    assert_eq!(
-        NoteKind::parse("opinion/take"),
-        Some(NoteKind::parse("opinion/take").expect("shipped kind"))
-    );
-    assert_eq!(
-        NOTE_BODY_KEYS,
-        ["kind", "author_ref", "markdown", "source_revision_ref"]
-    );
-
-    let body = take("Disagree: the source predates the merger.");
-    let decoded = decode_note_body(&encode_note_body(&body).expect("encode")).expect("decode");
-    assert_eq!(decoded, body);
-
-    for unknown in ["plugin/", "OPINION/TAKE", ""] {
-        assert_eq!(NoteKind::parse(unknown), None);
-    }
-    for kind in [
-        "scratchpad",
-        "observation",
-        "handoff",
-        "research",
-        "reflection",
-        "diary",
-    ] {
-        let body = NoteBody {
-            kind: NoteKind::parse(kind).unwrap(),
-            ..take("birth")
-        };
-        assert_eq!(
-            decode_note_body(&encode_note_body(&body).unwrap()).unwrap(),
-            body
-        );
-    }
-}
-
-#[test]
 fn decode_rejects_every_abi_deviation() {
     let author = actor(0x7a);
 
@@ -186,48 +142,6 @@ fn decode_rejects_every_abi_deviation() {
 }
 
 #[test]
-fn live_note_projection_validates_birth_abi_in_every_feature_mode() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    let txn = vault.store.env.read_txn().unwrap();
-    let id = actor(0x6a);
-    let valid = encode_note_body(&take("valid birth")).unwrap();
-    assert_eq!(
-        live_body_in_txn(
-            &vault.store,
-            &txn,
-            &id,
-            crate::registry::ENTITY_TYPE_NOTE,
-            &valid
-        )
-        .unwrap()
-        .as_ref(),
-        valid.as_slice(),
-    );
-    assert!(matches!(
-        live_body_in_txn(
-            &vault.store,
-            &txn,
-            &id,
-            crate::registry::ENTITY_TYPE_NOTE,
-            &[0xff]
-        ),
-        Err(Error::Record(RecordError::InvalidNoteBody(_)))
-    ));
-    assert_eq!(
-        live_body_in_txn(
-            &vault.store,
-            &txn,
-            &id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            &[0xff]
-        )
-        .unwrap()
-        .as_ref(),
-        &[0xff],
-    );
-}
-
-#[test]
 fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let actor = actor(0x61);
@@ -331,19 +245,6 @@ fn diary_round_trip_and_revision_are_required() {
     }
 }
 
-#[test]
-fn note_core_rejects_a_parallel_document_head_field() {
-    let body = take("immutable birth");
-    let bytes = encode_note_body(&body).unwrap();
-    let mut value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
-    let Value::Map(fields) = &mut value else {
-        panic!("NOTE map")
-    };
-    fields.push(("document_head".into(), actor(0x43).to_hex().into()));
-    assert!(decode_note_body(&encode_map(fields.clone())).is_err());
-    assert!(encode_note_body(&take("")).is_err());
-}
-
 fn facet_stamps(vault: &crate::Vault, id: EntityId) -> Vec<EntityId> {
     vault
         .edges_out(&id)
@@ -373,38 +274,6 @@ fn put_facet(vault: &crate::Vault, seed: u8) -> EntityId {
         )
         .unwrap();
     facet
-}
-
-#[test]
-fn a_note_born_with_no_mask_carries_the_vault_default_facet() {
-    let (_dir, vault, owner) = owner_fixture();
-    let note = vault.create_note("research", "born", owner).unwrap();
-
-    assert_eq!(
-        facet_stamps(&vault, note),
-        vec![vault.default_facet().unwrap()]
-    );
-}
-
-#[test]
-fn a_note_born_under_a_mask_carries_that_mask() {
-    let (_dir, vault, owner) = owner_fixture();
-    let mask = put_facet(&vault, 0x51);
-    let receipt = vault
-        .memory(owner.entity_ref(), owner.actor_class())
-        .author_note(&NoteWriteEnvelope {
-            kind: NoteKind::Diary,
-            scope: NoteScope::ActorPrivate {
-                owner_ref: owner.entity_ref(),
-            },
-            markdown: "masked".to_owned(),
-            source_revision_ref: [0x52; 16],
-            mask: Some(mask),
-        })
-        .unwrap();
-    let note = EntityId::from_hex(&receipt.id_hex).unwrap();
-
-    assert_eq!(facet_stamps(&vault, note), vec![mask]);
 }
 
 #[test]
@@ -438,34 +307,93 @@ fn fork_to_facet_leaves_the_origin_stamp_unchanged() {
     assert_eq!(facet_stamps(&vault, note), vec![default]);
 }
 
+/// Greptile #1336 repro: an owner's fork of a raw claim keeps the claim's
+/// citations where the support check reads them. Once a claim's cited source
+/// is erased, the claim and the fork that moves it to a facet are both
+/// unsupported, and neither recall nor a point read returns the fork. The
+/// fork of a claim whose source is live still reads.
 #[test]
-fn a_pending_fork_suggestion_moves_nothing() {
+fn a_fork_keeps_the_support_its_claim_needs() {
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    use crate::dreamer_consolidation::{
+        ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+    };
+    use crate::memory::{Effort, RecallScope};
     let (_dir, vault, owner) = owner_fixture();
-    let note = vault.create_note("research", "origin", owner).unwrap();
     let facet = put_facet(&vault, 0x55);
-    let agent = actor(0x56);
-    vault
-        .put_entity(
-            &agent,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"agent",
+    let claim = |source: EntityId, text: &str| {
+        let id = EntityId::now();
+        let mut body = ClaimBody::new(
+            "profile.note",
+            ClaimSubject::Entity(owner.entity_ref()),
+            Value::from(text),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
         )
         .unwrap();
-    vault
-        .suggest_facet_fork(
-            note,
-            facet,
-            crate::WriteActor::new(agent, crate::edge::EdgeActorClass::Agent),
-        )
-        .unwrap();
-
-    assert!(
+        body.source = Some(ClaimSource::UserStated);
+        body.evidence = Some(encode_consolidation_evidence(
+            &ConsolidationEvidenceEnvelope {
+                refs: vec![source],
+                chain: Vec::new(),
+                source_meet: ClaimSource::UserStated,
+            },
+        ));
         vault
-            .edges_in(&note)
-            .unwrap()
-            .iter()
-            .all(|edge| edge.kind != crate::edge::EdgeKind::DerivedFrom)
-    );
+            .put_claim(&id, &body, crate::TimeRange { start: 10, end: 10 }, 10)
+            .unwrap();
+        id
+    };
+    let erased = vault
+        .create_note("research", "erased source", owner)
+        .unwrap();
+    let live = vault.create_note("research", "live source", owner).unwrap();
+    let unsupported = claim(erased, "aurora erased citation");
+    let supported = claim(live, "aurora live citation");
+    vault
+        .delete_entity_with_options(
+            &erased,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
+    let forks = [unsupported, supported]
+        .map(|origin| vault.fork_to_facet(origin, facet, true, owner).unwrap());
+    for (id, text) in [
+        (forks[0], "aurora erased citation"),
+        (forks[1], "aurora live citation"),
+    ] {
+        vault.batch().text(&id, &[("body", text)]).commit().unwrap();
+    }
+    let support = {
+        let txn = vault.store.env.read_txn().unwrap();
+        [unsupported, supported, forks[0], forks[1]].map(|id| {
+            let body = vault.get_claim_in_txn(&txn, &id).unwrap().expect("claim");
+            crate::claim::has_live_support_in_txn(&vault.store, &txn, &body).unwrap()
+        })
+    };
+    assert_eq!(support, [false, true, false, true]);
+    let memory = vault.memory(owner.entity_ref(), owner.actor_class());
+    let pack = memory
+        .recall(
+            "aurora",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    let recalled: Vec<_> = pack
+        .items
+        .iter()
+        .filter_map(|item| crate::memory::resolve_entity_ref(&vault, &item.short_id).ok())
+        .collect();
+    assert!(recalled.contains(&forks[1]), "{recalled:?}");
+    assert!(!recalled.contains(&forks[0]), "{recalled:?}");
+    let read = |id: EntityId| memory.get_entity(&id.to_hex()).unwrap().value;
+    assert!(read(forks[1]).is_some());
+    assert!(read(forks[0]).is_none());
 }

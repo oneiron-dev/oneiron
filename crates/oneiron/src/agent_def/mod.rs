@@ -64,66 +64,18 @@ use rmpv::Value;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod one_1698_tests {
-    use crate::edge::EdgeActorClass;
-    use crate::gate::PolicyApprovalCeiling;
-    use crate::{VaultConfig, WriteActor};
-
-    /// The `sys.default` row id, pinned by the canonical manifest. Constructed
-    /// explicitly (with intent) because `test_util::entity` refuses
-    /// production-pinned seed bytes.
-    fn default_base_row_id() -> crate::EntityId {
-        crate::EntityId::from_bytes([0xA6; 16]).expect("pinned seeded row id is non-reserved")
-    }
-
-    #[test]
-    fn seeded_default_base_row_carries_its_own_ceiling() -> crate::Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-        let (id, definition) = vault
-            .get_seeded_agent_definition_by_logical_id("sys.default")?
-            .expect("default base row is seeded");
-        assert_eq!(id, default_base_row_id());
-        assert_eq!(definition.agent_id, "sys.default");
-
-        let rtxn = vault.store.env.read_txn()?;
-        let ceiling = crate::gate::agent_definition_ceiling_for_actor(
-            &vault.store,
-            &rtxn,
-            WriteActor::new(id, EdgeActorClass::Agent),
-        );
-        assert_eq!(ceiling, Some(PolicyApprovalCeiling::Auto));
-        Ok(())
-    }
-
-    #[test]
-    fn deleted_seeded_row_resolves_proposed() -> crate::Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-        let id = default_base_row_id();
-        vault.with_write_txn(|wtxn| {
-            vault.store.entities.delete(wtxn, id.as_bytes())?;
-            Ok(())
-        })?;
-
-        let rtxn = vault.store.env.read_txn()?;
-        let ceiling = crate::gate::agent_definition_ceiling_for_actor(
-            &vault.store,
-            &rtxn,
-            WriteActor::new(id, EdgeActorClass::Agent),
-        );
-        assert_eq!(ceiling, Some(PolicyApprovalCeiling::Proposed));
-        Ok(())
-    }
-}
-
 mod portable;
 mod portable_binding;
+mod portable_knowledge;
+#[cfg(test)]
+pub(crate) use portable::agent_pack_files;
 pub(crate) use portable::{
-    AgentSkillReference, agent_pack_files, resolve_agent_skill_refs, select_agent_knowledge,
+    AgentSkillReference, agent_pack_files_in, resolve_agent_skill_refs, select_agent_knowledge,
 };
 pub(crate) use portable_binding::{
     agent_fork_hash_in_txn, bind_agent_birth_in_txn, import_agent_fork_hash_in_txn,
 };
+pub(crate) use portable_knowledge::{KnowledgeFormat, decode_agent_knowledge};
 
 mod portable_source;
 pub(crate) use portable_source::{

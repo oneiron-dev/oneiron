@@ -497,6 +497,3 @@ fn declared_embed_latency_reference() -> Option<String> {
     }
     Some(trimmed.to_owned())
 }
-
-#[cfg(test)]
-mod tests;

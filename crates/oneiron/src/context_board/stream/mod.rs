@@ -1,20 +1,16 @@
-//! Board streaming frames and harness wake dispatch.
+//! Board streaming frames, routing and the pending-wake queue.
 
 mod events;
 mod frames;
 mod provenance;
+mod publish;
 mod registry;
 mod wake;
-mod wake_dispatch;
 
 #[cfg(test)]
 mod routing_tests;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod wake_adapter_tests;
-#[cfg(test)]
-mod wake_tests;
 
 pub use self::events::{
     BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError,
@@ -25,12 +21,9 @@ pub use self::frames::{
     CoalesceOutcome, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
     StreamConnectionId,
 };
+pub use self::publish::CommittedTaskBoardState;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
-pub use self::wake::{
-    BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
-    WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations,
-    WakeEnvelope, WakeReportDisposition,
-};
+pub use self::wake::WakeEnvelope;
 
 use super::one_line_token;
 
@@ -42,4 +35,4 @@ use super::one_line_token;
 #[cfg(test)]
 use self::provenance::*;
 #[cfg(test)]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;

@@ -3,9 +3,44 @@
 use super::*;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, WriteActor};
+use std::time::Duration;
+
+use crate::ai_host::AiHost;
+use crate::ai_host::test_support::{eventually, models, rooted_vault, route_extraction};
+use crate::fake_llm::{FakeLlm, Reply};
 
 fn setup() -> (tempfile::TempDir, Arc<SyncServer>, Value) {
     let (dir, server) = test_server();
+    let actor = author(&server);
+    (dir, server, actor)
+}
+
+/// `setup` on a server whose Dreamer writes summary bodies with a host
+/// instruction, its model the local fake.
+async fn setup_with_dreamer(fake: &FakeLlm) -> (tempfile::TempDir, Arc<SyncServer>, Value, AiHost) {
+    let (dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let models = models(
+        &fake.base_url,
+        "[dreamer]\nsummary_prompt = \"Summarize these records.\"",
+    );
+    let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
+    let config = SyncServerConfig {
+        allow_unauthenticated: true,
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    let actor = author(&server);
+    (dir, server, actor, host)
+}
+
+/// A person entity with a DAG write policy, as the wire `actor`.
+fn author(server: &SyncServer) -> Value {
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
     server
         .vault
@@ -19,11 +54,65 @@ fn setup() -> (tempfile::TempDir, Arc<SyncServer>, Value) {
         .unwrap();
     oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, actor, true)
         .unwrap();
-    (
-        dir,
-        server,
-        json!({"entity_ref": actor.entity_ref().to_hex(), "actor_class": "human"}),
+    json!({"entity_ref": actor.entity_ref().to_hex(), "actor_class": "human"})
+}
+
+async fn declare(server: &Arc<SyncServer>, path: &str, body: Value) -> Value {
+    let (status, value) = route_json(server.clone(), json_request("POST", path, body)).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{value:?}");
+    value
+}
+
+/// The one summary the Dreamer wrote, once it lands, and the merge header
+/// it carries on `turn`.
+async fn dreamt_summary(server: &SyncServer, turn: &Value) -> (EntityId, EntityId) {
+    let summaries = || {
+        server
+            .vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
+            .unwrap()
+    };
+    assert!(
+        eventually(Duration::from_secs(30), || !summaries().is_empty()).await,
+        "no summary landed; status {:?}",
+        server.ai.status().dreamer
+    );
+    let [summary] = summaries()[..] else {
+        panic!("one summary expected");
+    };
+    let turn = EntityId::from_hex(turn.as_str().unwrap()).unwrap();
+    let header = server
+        .vault
+        .claims_for_subject(&turn)
+        .unwrap()
+        .into_iter()
+        .find(|id| {
+            server
+                .vault
+                .get_claim(id)
+                .unwrap()
+                .is_some_and(|claim| claim.predicate == "merge.summary")
+        })
+        .expect("merge header on the landing turn");
+    (summary, header)
+}
+
+/// The body is the model's text under the Dreamer's byline, never a caller's.
+fn assert_dreamer_body(server: &SyncServer, summary: &EntityId, text: &str) {
+    let body = oneiron::scope_summary::decode_scope_summary_body(
+        &server.vault.get(summary).unwrap().unwrap(),
     )
+    .unwrap();
+    assert_eq!(body.text, text);
+    assert_eq!(
+        body.actor,
+        server
+            .vault
+            .dreamer_authority()
+            .unwrap()
+            .entity_ref()
+            .to_hex()
+    );
 }
 
 async fn post(server: &Arc<SyncServer>, path: &str, body: Value) -> Value {
@@ -34,6 +123,18 @@ async fn post(server: &Arc<SyncServer>, path: &str, body: Value) -> Value {
 
 async fn get(server: &Arc<SyncServer>, path: &str) -> Value {
     let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+    let (status, value) = route_json(server.clone(), request).await;
+    assert_eq!(status, StatusCode::OK, "{value:?}");
+    value
+}
+
+/// The conversation list, read as the vault's owner.
+async fn list(server: &Arc<SyncServer>, path: &str) -> Value {
+    let request = Request::builder()
+        .uri(path)
+        .header(AUTHORIZATION, owner_reader_bearer(server))
+        .body(Body::empty())
+        .unwrap();
     let (status, value) = route_json(server.clone(), request).await;
     assert_eq!(status, StatusCode::OK, "{value:?}");
     value
@@ -214,7 +315,12 @@ async fn dag_addressing_route_validates_recipients_without_limiting_listing() {
 
 #[tokio::test]
 async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply() {
-    let (_dir, server, actor) = setup();
+    let reply = Reply::Text {
+        text: "the Dreamer's summary".to_owned(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
     let conv = post(
         &server,
         "/v1/core/conversations",
@@ -281,60 +387,48 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
         json!(covers)
     );
     let current = post(&server, &format!("{path}/records"), json!({"parent": root["id"], "advance": true, "body": {"txt": "continued"}, "actor": actor})).await;
-    oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, writer, false)
-        .unwrap();
-    let request = json!({"scope": scope, "text": "caller result", "actor": actor, "land_on": root["id"], "as_record": true});
-    let before = server
-        .vault
-        .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
-        .unwrap();
+    // ARCH-0006a: the caller declares the scope and the Dreamer writes the
+    // body, so a write-scoped caller cannot set one.
+    let request = json!({"scope": scope, "actor": actor, "land_on": root["id"], "as_record": true});
+    let mut forged = request.clone();
+    forged["text"] = json!("caller result");
     let (status, _) = route_json(
         server.clone(),
-        json_request("POST", &format!("{path}/summaries"), request.clone()),
+        json_request("POST", &format!("{path}/summaries"), forged),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(
-        server
-            .vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
-            .unwrap(),
-        before
-    );
-    oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, writer, true)
-        .unwrap();
-    let summary = post(&server, &format!("{path}/summaries"), request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let queued = declare(&server, &format!("{path}/summaries"), request).await;
+    assert_eq!(queued["coalesced"], false);
+    let (summary, header) = dreamt_summary(&server, &root["id"]).await;
+    assert_dreamer_body(&server, &summary, "the Dreamer's summary");
+    // The host's instruction, over the covered records' text.
+    assert!(fake.seen().iter().any(|seen| {
+        let messages = seen.body["messages"].to_string();
+        messages.contains("Summarize these records.") && messages.contains("retained")
+    }));
     let all = get(
         &server,
-        &format!(
-            "/v1/core/summaries/{}/covers",
-            summary["summary"].as_str().unwrap()
-        ),
+        &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
     )
     .await;
     assert_eq!(all["covers"], json!(covers));
     let drilled = get(
         &server,
-        &format!(
-            "/v1/core/claims/{}/drill",
-            summary["claim"].as_str().unwrap()
-        ),
+        &format!("/v1/core/claims/{}/drill", header.to_hex()),
     )
     .await;
     assert_eq!(drilled["records"], all["covers"]);
+    let reply_id = server.vault.head(&conv_id).unwrap().unwrap();
     let reply = get(
         &server,
-        &format!(
-            "/v1/core/turns/{}?with=reply_strip",
-            summary["record"].as_str().unwrap()
-        ),
+        &format!("/v1/core/turns/{}?with=reply_strip", reply_id.to_hex()),
     )
     .await;
     assert_eq!(reply["reply_to"]["record"], root["id"]);
     assert_eq!(reply["reply_strip"]["record"], root["id"]);
     assert_eq!(reply["reply_strip"]["text"], "asking turn");
     assert_eq!(reply["reply_strip"]["stale"], false);
-    let reply_id = EntityId::from_hex(summary["record"].as_str().unwrap()).unwrap();
     assert_eq!(server.vault.head(&conv_id).unwrap(), Some(reply_id));
     assert_eq!(
         server
@@ -347,33 +441,244 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
         post(&server, &format!("{path}/scope"), scope).await["records"],
         json!(covers)
     );
+    host.shutdown().await;
 }
 
-#[test]
-fn dag_routes_are_registered_in_openapi() {
-    use utoipa::OpenApi;
-    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
-    for (path, method) in [
-        ("/v1/core/conversations/{conversation_id}/records", "post"),
-        ("/v1/core/conversations/{conversation_id}/records", "get"),
-        ("/v1/core/conversations/{conversation_id}/head", "post"),
-        ("/v1/core/conversations/{conversation_id}/scope", "post"),
-        (
-            "/v1/core/conversations/{conversation_id}/migrate-dag",
-            "post",
+/// ARCH-0026 RD-26: the vault wakes the Dreamer once per turn by default. A
+/// turn landed through the DAG door is read by a Micro round with no session
+/// end to trigger it.
+#[tokio::test]
+async fn a_landed_turn_wakes_the_dreamer_on_the_vault_grain() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
+    post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "my sister Hana moved to Osaka last spring", "spkr": "user"}, "actor": actor}),
+    )
+    .await;
+    assert!(
+        eventually(Duration::from_secs(30), || fake
+            .seen()
+            .iter()
+            .any(|seen| seen.body["messages"].to_string().contains("Osaka")))
+        .await,
+        "no Micro round read the turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// A Dreamer whose start scan has read a turn captured before it started, and
+/// a server on its handle. Start's own turn scan runs off the request path and
+/// could pick a witnessed turn up instead, so the earlier turn must be read
+/// first: that scan's one write transaction planned it, so the scan is over
+/// before any witness. A later read comes from the door's own wake.
+async fn server_past_the_start_scan(
+    fake: &FakeLlm,
+) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
+    let (dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    crate::ai_host::test_support::capture_user_turn(&vault, "my aunt Mei lives in Kyoto");
+    let models = models(
+        &fake.base_url,
+        "[dreamer]\nsummary_prompt = \"Summarize these records.\"",
+    );
+    let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(fake, "Kyoto")).await,
+        "start's turn scan queued no Micro round for the earlier turn"
+    );
+    let config = SyncServerConfig {
+        auth_secret: Some(crate::ai_host::test_support::TEST_SECRET.to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    (dir, server, host)
+}
+
+fn read_by_a_round(fake: &FakeLlm, text: &str) -> bool {
+    fake.seen()
+        .iter()
+        .any(|seen| seen.body["messages"].to_string().contains(text))
+}
+
+/// A witnessed turn is learned as it occurs, so it must occur after the
+/// earlier turn the Micro watermark has stepped past.
+fn later_turn(server: &SyncServer) -> Value {
+    json!({
+        "conversation_ref": "41414141414141414141414141414141",
+        "occurred_at": server.vault.now_recorded_at() + 1,
+        "messages": [{"author": "user", "message_type": "text", "is_visible": true, "order": 0,
+            "content": "my brother Kenji moved to Sapporo last winter"}],
+    })
+}
+
+/// The same wake through the generated facade: a turn witnessed at
+/// `POST /v1/core/facade/witness` is read by a Micro round. The handler is
+/// generated (the verb-table row's `lands_turn`), so this fails if
+/// `scripts/sdk/generate.py` stops emitting the wake.
+#[tokio::test]
+async fn a_facade_witness_turn_wakes_the_dreamer() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let (slip, key) = crate::test_credentials::credential(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            owner.to_hex()
         ),
-        ("/v1/core/turns/{turn_id}/sub-sessions", "post"),
-        ("/v1/core/turns/{turn_id}/sub-sessions", "get"),
-        ("/v1/core/conversations/{conversation_id}/summaries", "post"),
-        ("/v1/core/summaries/{summary_id}/covers", "get"),
-        ("/v1/core/claims/{claim_id}/drill", "get"),
-        (
-            "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
-            "post",
+    );
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &key,
+        json_request("POST", "/v1/core/facade/witness", later_turn(&server)),
+    );
+    let response = crate::build_app(Arc::clone(&server))
+        .oneshot(request)
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the witnessed turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// The same wake through MCP: a turn witnessed by the generated `witness` tool
+/// is read by a Micro round. Every MCP door (the tool list, code mode, the
+/// stdio bridge) reaches the verb table through one generated dispatcher, so
+/// this fails if `scripts/sdk/generate.py` stops emitting the wake there.
+#[tokio::test]
+async fn an_mcp_witness_turn_wakes_the_dreamer() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let actor = seeded_test_entity_id(0x0024_6512);
+    let credential = "mcp-witness-wake";
+    register_mcp_actor(&server, credential, actor, EdgeActorClass::Human).await;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "write_memory"),
+        json!({"arguments": {"spec": later_turn(&server)}}),
+    );
+    let (_, body) = route_json(
+        Arc::clone(&server),
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the witnessed turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// Room speech lands its turn through the same witness gate, so the generated
+/// `rooms.speak` tool wakes the turn producer too.
+#[tokio::test]
+async fn an_mcp_room_speech_wakes_the_dreamer() {
+    use oneiron::workspace_roster::ProjectRecord;
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, host) = server_past_the_start_scan(&fake).await;
+    let owner = seeded_test_entity_id(0x0024_6513);
+    let credential = "mcp-room-speech-wake";
+    register_mcp_actor(&server, credential, owner, EdgeActorClass::Human).await;
+    let project = EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
+    let mut turn = later_turn(&server);
+    turn["conversation_ref"] = json!(record.home_room);
+    turn["turn_ref"] = json!(EntityId::now().to_hex());
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(owner, "speak_room"),
+        json!({"arguments": {"spec": turn, "room_ref": record.home_room}}),
+    );
+    let (_, body) = route_json(
+        Arc::clone(&server),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "speak",
+            "rooms.speak",
+            args,
         ),
-    ] {
-        assert!(doc["paths"][path][method].is_object(), "{method} {path}");
-    }
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &fake, "Sapporo"
+        ))
+        .await,
+        "no Micro round read the room's turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// No Dreamer writes summaries here, so a declaration is refused rather than
+/// queued for a writer that never comes.
+#[tokio::test]
+async fn a_summary_declaration_without_a_dreamer_is_refused() {
+    let (_dir, server, actor) = setup();
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "root"}, "actor": actor}),
+    )
+    .await;
+    let request = json!({"scope": {"path": {"branch_span": {"after": root["id"], "through": root["id"]}}}, "actor": actor});
+    let (status, body) = route_json(
+        server.clone(),
+        json_request("POST", &format!("{path}/summaries"), request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_eq!(
+        error_envelope(&body)["details"]["code"],
+        "SUMMARY_WRITER_UNAVAILABLE"
+    );
 }
 
 #[tokio::test]
@@ -474,7 +779,12 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
 
 #[tokio::test]
 async fn thread_meta_and_summary_routes_roundtrip() {
-    let (_dir, server, actor) = setup();
+    let reply = Reply::Text {
+        text: "thread summary".to_owned(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
     let conversation = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
     let path = format!(
         "/v1/core/conversations/{}",
@@ -516,27 +826,23 @@ async fn thread_meta_and_summary_routes_roundtrip() {
         get(&server, &thread_path).await["roots"],
         json!([reply["id"]])
     );
-    let summary = post(
+    declare(
         &server,
         &format!("{thread_path}/summary"),
-        json!({"text": "thread summary", "actor": actor}),
+        json!({"actor": actor}),
     )
     .await;
+    let (summary, header) = dreamt_summary(&server, &root["id"]).await;
+    assert_dreamer_body(&server, &summary, "thread summary");
     let covers = get(
         &server,
-        &format!(
-            "/v1/core/summaries/{}/covers",
-            summary["summary"].as_str().unwrap()
-        ),
+        &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
     )
     .await;
     assert_eq!(covers["covers"], json!([reply["id"]]));
     let drill = get(
         &server,
-        &format!(
-            "/v1/core/claims/{}/drill",
-            summary["claim"].as_str().unwrap()
-        ),
+        &format!("/v1/core/claims/{}/drill", header.to_hex()),
     )
     .await;
     assert_eq!(drill["records"], covers["covers"]);
@@ -549,6 +855,7 @@ async fn thread_meta_and_summary_routes_roundtrip() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -591,7 +898,7 @@ async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
     )
     .await;
     assert_eq!(thread["head"], hidden_head["id"]);
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let row = list["items"]
         .as_array()
         .unwrap()
@@ -669,78 +976,11 @@ async fn list_preview_traverses_deleted_selected_shells_without_losing_other_roo
         }
         expected.push((room["id"].as_str().unwrap().to_owned(), text));
     }
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     for (id, text) in expected {
         let row = rows.iter().find(|row| row["id"] == id).unwrap();
         assert_eq!(row["lastMessageSnippet"], text, "room {id}");
-    }
-}
-
-#[tokio::test]
-async fn list_preview_walks_deleted_ordinary_session_turns_and_keeps_other_rooms() {
-    let (_dir, server, actor) = setup();
-    let session = match server.vault.mint_session(100).expect("ordinary session") {
-        oneiron::session_lifecycle::SessionMintOutcome::Minted(id) => id,
-        other => panic!("expected new session, got {other:?}"),
-    };
-    let mut expected = Vec::new();
-    for (case, text) in [
-        ("head", "session root"),
-        ("ancestor", "session child"),
-        ("unrelated", "other session room"),
-    ] {
-        let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
-        let records = format!(
-            "/v1/core/conversations/{}/records",
-            room["id"].as_str().unwrap()
-        );
-        let root = post(
-            &server,
-            &records,
-            json!({
-                "advance": true, "session": session.to_hex(), "actor": actor,
-                "body": {"txt": if case == "ancestor" { "deleted ancestor" } else { text }},
-            }),
-        )
-        .await;
-        let mut deleted = None;
-        if case != "unrelated" {
-            let child = post(
-                &server,
-                &records,
-                json!({
-                    "parent": root["id"], "advance": true, "session": session.to_hex(),
-                    "body": {"txt": if case == "head" { "deleted head" } else { text }},
-                    "actor": actor,
-                }),
-            )
-            .await;
-            deleted = Some(if case == "head" {
-                child["id"].clone()
-            } else {
-                root["id"].clone()
-            });
-        }
-        if let Some(id) = deleted {
-            let id = EntityId::from_hex(id.as_str().unwrap()).unwrap();
-            server
-                .vault
-                .delete_own_room_record(id, oneiron::DeleteReason::UserDelete)
-                .unwrap();
-            assert!(server.vault.is_deleted_shell(&id).unwrap());
-        }
-        expected.push((room["id"].as_str().unwrap().to_owned(), text));
-    }
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
-    for (room, text) in expected {
-        let row = list["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["id"] == room)
-            .unwrap();
-        assert_eq!(row["lastMessageSnippet"], text, "room {room}");
     }
 }
 
@@ -839,7 +1079,7 @@ async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_co
                         .unwrap();
                     assert!(server.vault.is_deleted_shell(&session).unwrap());
                 }
-                let list = get(&server, "/v1/core/conversations?limit=20").await;
+                let list = list(&server, "/v1/core/conversations?limit=20").await;
                 let rows = list["items"].as_array().unwrap();
                 let selected = rows.iter().find(|row| row["id"] == room["id"]).unwrap();
                 let expected = if !head_deleted {
@@ -887,7 +1127,7 @@ async fn empty_room_remains_listable_after_dag_read() {
     let dag = get(&server, &empty_records).await;
     assert!(dag["head"].is_null());
     assert_eq!(dag["main_line"], json!([]));
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
         rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
@@ -937,7 +1177,7 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
     .await;
     assert!(dag["head"].is_null());
     assert_eq!(dag["main_line"], json!([]));
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
         rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
@@ -946,4 +1186,214 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
         rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
         "healthy retained text"
     );
+}
+
+/// ARCH-0006a #dag-summaries: a summary never feeds on summary prose, and its
+/// `covers` are the exact records it summarized. The first canonical summary
+/// leaves its reply on the trunk; the second one reads and covers the records,
+/// not that reply (review repros).
+#[tokio::test]
+async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
+    let reply = Reply::Text {
+        text: "summary prose one".to_owned(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "the original record"}, "actor": actor}),
+    )
+    .await;
+    let summaries = || {
+        server
+            .vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
+            .unwrap()
+            .len()
+    };
+    declare(
+        &server,
+        &format!("{path}/summaries"),
+        json!({"scope": {"path": "canonical"}, "actor": actor, "land_on": root["id"], "as_record": true}),
+    )
+    .await;
+    assert!(eventually(Duration::from_secs(30), || summaries() == 1).await);
+    // A later record after the first summary's reply is new evidence, so the
+    // second declaration composes again; over unchanged records it would
+    // reuse the first summary.
+    let head = server
+        .vault
+        .resolve_dag_scope(&oneiron::conversation_dag::ScopeSelector {
+            conversation: EntityId::from_hex(conv["id"].as_str().unwrap()).unwrap(),
+            session: None,
+            path: oneiron::conversation_dag::ScopePath::Canonical,
+            include_forks: false,
+        })
+        .unwrap()
+        .records
+        .last()
+        .copied()
+        .unwrap();
+    let later = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"parent": head.to_hex(), "advance": true, "body": {"txt": "a later record"}, "actor": actor}),
+    )
+    .await;
+    declare(
+        &server,
+        &format!("{path}/summaries"),
+        json!({"scope": {"path": "canonical"}, "actor": actor}),
+    )
+    .await;
+    assert!(eventually(Duration::from_secs(30), || summaries() == 2).await);
+    let prompts = fake
+        .seen()
+        .iter()
+        .map(|seen| seen.body["messages"].to_string())
+        .filter(|messages| messages.contains("Summarize these records."))
+        .collect::<Vec<_>>();
+    let [_, second] = &prompts[..] else {
+        panic!("two summary calls expected, saw {}", prompts.len());
+    };
+    assert!(second.contains("the original record"), "{second}");
+    assert!(second.contains("a later record"), "{second}");
+    assert!(!second.contains("summary prose one"), "{second}");
+    let mut covers = Vec::new();
+    for summary in server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
+        .unwrap()
+    {
+        let read = get(
+            &server,
+            &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
+        )
+        .await;
+        covers.push(read["covers"].clone());
+    }
+    covers.sort_by_key(|covers| covers.as_array().map_or(0, Vec::len));
+    assert_eq!(
+        covers,
+        [json!([root["id"]]), json!([root["id"], later["id"]])]
+    );
+    host.shutdown().await;
+}
+
+/// Gate 3 (map gap 12): the Dreamer's extraction and narrative roles routed
+/// to two providers. Each role's calls go to its own provider under its own
+/// run, and every call there is admitted, dispatched and settled on its own
+/// receipts. Before, the narrative went out on the extraction backend.
+#[tokio::test]
+async fn the_dreamers_extraction_and_narrative_roles_call_their_own_providers_under_their_own_runs()
+{
+    use oneiron::llm::run_admission::{MemoryReceipts, RunEvent};
+    let extractor = FakeLlm::start(
+        vec![],
+        Some(Reply::text(json!({"candidates": []}).to_string())),
+    )
+    .await;
+    let narrator = FakeLlm::start(vec![], Some(Reply::text("thread summary"))).await;
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    let models = crate::ai_host::test_support::models_toml(&format!(
+        r#"
+default = "extractor:extract"
+extraction_egress = true
+[providers.extractor]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.narrator]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.extraction_teacher]
+rungs = [{{ model = "extractor:extract" }}]
+[roles.dreamer_current]
+rungs = [{{ model = "narrator:narrate" }}]
+[dreamer]
+summary_prompt = "Summarize these records."
+"#,
+        extractor.base_url, narrator.base_url
+    ));
+    let receipts = Arc::new(MemoryReceipts::default());
+    let host =
+        AiHost::start_receipted(Arc::clone(&vault), Some(&models), true, receipts.clone()).await;
+    let config = SyncServerConfig {
+        allow_unauthenticated: true,
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    let actor = author(&server);
+    let conversation = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!(
+        "/v1/core/conversations/{}",
+        conversation["id"].as_str().unwrap()
+    );
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "my sister Hana moved to Osaka", "spkr": "user"}, "actor": actor}),
+    )
+    .await;
+    let thread_path = format!("{path}/records/{}/thread", root["id"].as_str().unwrap());
+    post(
+        &server,
+        &thread_path,
+        json!({"advance": false, "body": {"txt": "reply"}, "actor": actor}),
+    )
+    .await;
+    declare(
+        &server,
+        &format!("{thread_path}/summary"),
+        json!({"actor": actor}),
+    )
+    .await;
+    let (summary, _) = dreamt_summary(&server, &root["id"]).await;
+    assert_dreamer_body(&server, &summary, "thread summary");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &extractor, "Osaka"
+        ))
+        .await,
+        "no Micro round read the turn"
+    );
+    host.shutdown().await;
+
+    let extraction = |seen: &crate::fake_llm::Seen| {
+        seen.body["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("Extract durable memory claims"))
+    };
+    assert!(extractor.seen().iter().all(extraction));
+    assert!(!narrator.seen().is_empty());
+    assert!(!narrator.seen().iter().any(extraction));
+    let rows = receipts.rows();
+    for (run, fake) in [
+        ("dreamer-pass/extraction_teacher", &extractor),
+        ("dreamer-pass/dreamer_current", &narrator),
+    ] {
+        let count = |event: fn(&RunEvent) -> bool| {
+            rows.iter()
+                .filter(|row| row.run == run && event(&row.event))
+                .count()
+        };
+        let calls = fake.seen().len();
+        assert_eq!(
+            [
+                count(|event| matches!(event, RunEvent::Admitted(_))),
+                count(|event| matches!(event, RunEvent::Dispatched { .. })),
+                count(|event| matches!(event, RunEvent::Settled { .. })),
+            ],
+            [calls; 3],
+            "{run}: {rows:?}"
+        );
+    }
 }

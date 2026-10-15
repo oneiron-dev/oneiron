@@ -12,7 +12,5 @@ No third-party documents or personal data are included.
 Office oracle receipts from W7-C14 (real-workbook runs, spreadsheet measurements, the DOCX
 comparison and the PPTArena identity run) are evidence of past runs and are not stored here.
 `archived-receipts.json` names each one by its old path under this folder, its size and its
-BLAKE3; the kept branch `w7/W7-C14` holds the same bytes.
-`scripts/tests/test_docedit_receipt_pointers.py` keeps that list well formed and the receipts
-out of the tree. The inputs those runs read (corpus cases, Excel goldens, manifests, DOCX
-fixtures) do live here.
+BLAKE3; the kept branch `w7/W7-C14` holds the same bytes. The inputs those runs read (corpus
+cases, Excel goldens, manifests, DOCX fixtures) do live here.

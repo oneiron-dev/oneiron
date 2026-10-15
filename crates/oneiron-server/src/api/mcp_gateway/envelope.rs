@@ -4,6 +4,7 @@ use super::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call,
     mcp_error_response, mcp_params, mcp_validated_call_args, resolve_mcp_gateway_actor,
 };
+use crate::auth::Locality;
 use crate::mcp::McpCacheHint;
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpResolvedActor;
@@ -16,6 +17,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::response::Json;
+use oneiron::claim::CallerLocality;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -100,7 +102,7 @@ impl McpGatewayError {
 /// The mode is REGISTRATION state carried down from the route, never something
 /// the request could select. Everything that already spoke `McpResolvedActor`
 /// still does, through `Deref`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct McpCallContext {
     pub(crate) actor: McpResolvedActor,
     pub(crate) mode: McpSurfaceMode,
@@ -142,10 +144,11 @@ impl McpCallContext {
 /// unavailable refusal at the shared name-resolution door.
 pub(crate) async fn mcp_gateway(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     body: Bytes,
 ) -> impl IntoResponse {
-    mcp_endpoint(McpSurfaceMode::Primary, headers, server, body).await
+    mcp_endpoint(McpSurfaceMode::Primary, headers, locality, server, body).await
 }
 
 /// The TOOL-FIRST endpoint: one generated tool per exported verb row.
@@ -154,15 +157,17 @@ pub(crate) async fn mcp_gateway(
 /// wire moves a connection between this router entry and the primary one.
 pub(crate) async fn mcp_tool_first_gateway(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     body: Bytes,
 ) -> impl IntoResponse {
-    mcp_endpoint(McpSurfaceMode::ToolFirst, headers, server, body).await
+    mcp_endpoint(McpSurfaceMode::ToolFirst, headers, locality, server, body).await
 }
 
 async fn mcp_endpoint(
     mode: McpSurfaceMode,
     headers: HeaderMap,
+    locality: CallerLocality,
     server: Arc<SyncServer>,
     body: Bytes,
 ) -> Json<Value> {
@@ -192,8 +197,15 @@ async fn mcp_endpoint(
     // instead, so their ORIGINAL spelling is read back out of the request bytes
     // and carried to that decoder unrounded (ONE-1704 repair).
     let raw_arguments = crate::mcp::mcp_raw_call_arguments(&body);
-    let result =
-        handle_mcp_request(mode, &headers, &server, request, raw_arguments.as_deref()).await;
+    let result = handle_mcp_request(
+        mode,
+        &headers,
+        locality,
+        &server,
+        request,
+        raw_arguments.as_deref(),
+    )
+    .await;
     Json(match result {
         Ok(result) => json!({
             "jsonrpc": "2.0",
@@ -216,6 +228,7 @@ pub(super) fn mcp_request_id(id: &Value) -> String {
 pub(crate) async fn handle_mcp_request(
     mode: McpSurfaceMode,
     headers: &HeaderMap,
+    locality: CallerLocality,
     server: &Arc<SyncServer>,
     request: McpJsonRpcRequest,
     raw_arguments: Option<&str>,
@@ -230,8 +243,11 @@ pub(crate) async fn handle_mcp_request(
 
     match request.method.as_str() {
         "initialize" => {
-            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
-            Ok(json!({
+            let actor =
+                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            // It states the credential's scope, so it is released as every
+            // result is (DEC-0005).
+            let result = json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
@@ -241,9 +257,12 @@ pub(crate) async fn handle_mcp_request(
                     "tools": { "listChanged": false },
                 },
                 "surfaceMode": mode.as_str(),
-                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call with connector actor metadata matching this authenticated credential.",
+                "executeCodeAdmitted": matches!(mode, McpSurfaceMode::Primary)
+                    && super::admission::mcp_execute_code_admitted(server, &actor),
+                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call to call one. A call runs as this credential's actor; it need not name one, and an actor block that names anyone else is refused.",
                 "actor": mcp_actor_result(&actor),
-            }))
+            });
+            super::device_release::mcp_release_result(server, &actor, &[], false, result)
         }
         "notifications/initialized" => Ok(json!({})),
         // Deliberately actor-free: a listing that echoed the caller back would
@@ -251,17 +270,19 @@ pub(crate) async fn handle_mcp_request(
         // immutable registration is that it is the same bytes for everyone.
         // The credential is still REQUIRED, just never reflected.
         "tools/list" => {
-            let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
+            let _actor =
+                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
             Ok(json!({
                 "surfaceMode": mode.as_str(),
                 "tools": server.mcp_surface(mode).listing(),
             }))
         }
         "tools/call" => {
-            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, server).await?;
+            let actor =
+                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                let args = mcp_validated_call_args(server, mode, params, raw_arguments)?;
+                let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;
                 execute_mcp_tool(server, args, &actor).await
@@ -272,8 +293,17 @@ pub(crate) async fn handle_mcp_request(
             // decode, validation, actor mismatch, bound-verb or scope refusal,
             // scoped-grant refusal, board/task dispatch, projection, facade, or
             // engine failure — leaves with the effective scope attached. Only
-            // failures before this point are legitimately scope-less.
-            called.map_err(|error| error.with_effective_scope(&actor))
+            // failures before this point are legitimately scope-less. Each is
+            // released as a result is, by the rows its words and its scope
+            // name (DEC-0005).
+            called.map_err(|error| {
+                super::device_release::mcp_release_error(
+                    server,
+                    &actor,
+                    Some(&[]),
+                    error.with_effective_scope(&actor),
+                )
+            })
         }
         _ => Err(McpGatewayError::new(
             -32601,

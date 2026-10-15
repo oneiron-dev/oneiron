@@ -2,7 +2,7 @@
 use super::scan::ScanCursorTag;
 use super::{CleanupCandidate, CleanupKind};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
-use crate::error::{Error, Result};
+use crate::error::{Error, MaintenanceError, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
@@ -50,6 +50,27 @@ pub(crate) fn attempt_is_archived(
         .is_some_and(|marker| marker == *blake3::hash(raw).as_bytes()))
 }
 
+/// Drops the archive markers of an attempt row that left the ledger, so no
+/// marker outlives the row it archived.
+pub(crate) fn forget_archived_attempt_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<()> {
+    ARCHIVE.delete(store, txn, record.id.as_bytes())?;
+    if let Some(task) = &record.task_ref {
+        TASK_ARCHIVE.delete(
+            store,
+            txn,
+            &TaskAttemptKey {
+                task: task.clone(),
+                attempt: *record.id.as_bytes(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
 fn eligible(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -61,6 +82,11 @@ fn eligible(
         return Ok(None);
     }
     let record = decode_record(raw, id)?;
+    // A job row whose owner prunes and bounds it is job state: cleanup never
+    // proposes it, so it never mints a proposal id.
+    if crate::attempt_queue::owner_retained_kind(&record.kind) {
+        return Ok(None);
+    }
     Ok((record.state == AttemptState::Completed
         && vault.now_recorded_at().saturating_sub(record.updated_at) > days.saturating_mul(86_400))
     .then_some(record))
@@ -77,7 +103,11 @@ pub(super) fn scan(
     let lower = after_bytes
         .as_ref()
         .map_or(Bound::Unbounded, |bytes| Bound::Excluded(bytes.as_slice()));
-    let upper: Bound<&[u8]> = Bound::Unbounded;
+    // Owner-retained rows are job state at the top of the ledger's key
+    // order: the arm stops before them, so they take none of its budget and
+    // never become its cursor.
+    let upper: Bound<&[u8]> =
+        Bound::Excluded(&crate::attempt_queue::OWNER_RETAINED_RANGE_START[..]);
     let mut last = None;
     let mut exhausted = true;
     for (examined, row) in vault
@@ -155,31 +185,76 @@ pub(crate) fn restore_task_attempts(
 }
 
 impl Vault {
+    /// Every completed queue record cleanup archived that is still archived,
+    /// in id order. The queue listing leaves them out; this is how the owner
+    /// finds them to restore.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn archived_attempts(&self) -> Result<Vec<AttemptId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut out = Vec::new();
+        for (id, _) in ARCHIVE.scan(&self.store, &rtxn)? {
+            let attempt = AttemptId::from_bytes(&id)?;
+            if let Some(raw) = self.store.attempt_records.get(&rtxn, &id)?
+                && attempt_is_archived(&self.store, &rtxn, attempt, &raw)?
+            {
+                out.push(attempt);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `id` is a completed queue record cleanup archived.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn archived_attempt(&self, id: AttemptId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        attempt_is_archived(&self.store, &rtxn, id, &raw)
+    }
+
     /// Restores a completed queue record without changing its state or payload.
     /// Direct `AttemptQueue::get` always reads it, even while archived.
     pub fn restore_archived_attempt(&self, id: AttemptId) -> Result<()> {
-        self.with_write_txn(|txn| {
-            let raw = self
-                .store
-                .attempt_records
-                .get(txn, id.as_bytes())?
-                .ok_or(Error::InvalidConfig("unknown attempt".into()))?;
-            if !attempt_is_archived(&self.store, txn, id, &raw)? {
-                return Err(Error::InvalidConfig("attempt is not archived".into()));
-            }
-            let record = decode_record(&raw, id)?;
-            ARCHIVE.delete(&self.store, txn, id.as_bytes())?;
-            if let Some(task) = record.task_ref {
-                TASK_ARCHIVE.delete(
-                    &self.store,
-                    txn,
-                    &TaskAttemptKey {
-                        task,
-                        attempt: *id.as_bytes(),
-                    },
-                )?;
-            }
-            Ok(())
-        })
+        self.with_write_txn_grouped(|txn| restore_archived_attempt_in_txn(self, txn, id))
     }
+}
+
+pub(super) fn restore_archived_attempt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: AttemptId,
+) -> Result<()> {
+    let not_archived = || {
+        Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
+            entity: crate::entity_id::bytes_to_hex_lower(id.as_bytes()),
+        })
+    };
+    let raw = vault
+        .store
+        .attempt_records
+        .get(txn, id.as_bytes())?
+        .ok_or_else(not_archived)?;
+    if !attempt_is_archived(&vault.store, txn, id, &raw)? {
+        return Err(not_archived());
+    }
+    let record = decode_record(&raw, id)?;
+    ARCHIVE.delete(&vault.store, txn, id.as_bytes())?;
+    if let Some(task) = record.task_ref {
+        TASK_ARCHIVE.delete(
+            &vault.store,
+            txn,
+            &TaskAttemptKey {
+                task,
+                attempt: *id.as_bytes(),
+            },
+        )?;
+    }
+    Ok(())
 }

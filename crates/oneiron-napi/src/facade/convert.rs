@@ -10,10 +10,11 @@ use super::boundary::{
     BoundaryResult, FORGET_PAGE_SIZE, ts_from_engine, ts_opt_to_engine, ts_to_engine,
 };
 use super::dtos::{
-    NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiClaimView, NapiCommitReceipt,
-    NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
-    NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
+    NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem,
+    NapiMemoryPack, NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope,
+    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -294,6 +295,7 @@ pub(super) fn gate_receipt_from_engine(
 pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> NapiMemoryItem {
     NapiMemoryItem {
         short_id: item.short_id,
+        source_revision_ref: item.source_revision_ref,
         kind: item.kind,
         predicate: item.predicate,
         value_text: item.value_text,
@@ -307,6 +309,15 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         world: item.world,
         facet: item.facet,
         salience: item.salience.map(f64::from),
+        cited_messages: item
+            .cited_messages
+            .into_iter()
+            .map(|cited| NapiCitedMessage {
+                short_id: cited.short_id,
+                value_text: cited.value_text,
+            })
+            .collect(),
+        conversation_id: item.conversation_id,
     }
 }
 
@@ -339,6 +350,25 @@ pub(super) fn memory_pack_from_engine(
             )?,
             deep_pending: pack.retrieval_meta.deep_pending,
             partial: pack.retrieval_meta.partial,
+            temporal_hints: pack
+                .retrieval_meta
+                .temporal_hints
+                .into_iter()
+                .map(|hint| {
+                    Ok(NapiTemporalHint {
+                        phrase: hint.phrase,
+                        status: hint.status.as_str().to_owned(),
+                        start: hint
+                            .start
+                            .map(|start| ts_from_engine(start, "temporal hint start"))
+                            .transpose()?,
+                        end: hint
+                            .end
+                            .map(|end| ts_from_engine(end, "temporal hint end"))
+                            .transpose()?,
+                    })
+                })
+                .collect::<BoundaryResult<_>>()?,
         },
         pack_version: pack.pack_version,
         rendered: pack.rendered,
@@ -351,5 +381,6 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
     scope.map_or_else(RecallScope::default, |scope| RecallScope {
         world_ref: scope.world_ref,
         facet: scope.facet,
+        kinds: scope.kinds,
     })
 }
