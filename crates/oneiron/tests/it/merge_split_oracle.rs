@@ -609,12 +609,9 @@ mod seam {
     }
 
     /// The owner whose rulings the propose lane records: a ruling is the
-    /// owner's word, so the door takes the owner's proof.
+    /// owner's word, so the door takes the vault's own owner's proof.
     fn ruling_owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
-        let id = EntityId::from_bytes([0x25; 16]).expect("fixture id");
-        if vault.get_entity_type(&id).expect("entity type").is_none() {
-            super::put_person(vault, 0x25);
-        }
+        let id = vault.ensure_embedded_owner_actor().expect("embedded owner");
         vault
             .authenticate_owner(
                 id,

@@ -2591,6 +2591,21 @@ fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, Write
     (temp, vault, subject, human, agent)
 }
 
+/// A PERSON acting as human that is not the vault's owner (H149).
+fn non_owner_human(vault: &Vault) -> WriteActor {
+    let persona = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    vault
+        .put_entity(
+            &persona.entity_ref(),
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("seed a human who is not the owner");
+    persona
+}
+
 #[test]
 fn expression_preference_agent_explicit_user_rejected() {
     let (_temp, vault, subject, _human, agent) = expression_preference_fixture();
@@ -2886,14 +2901,7 @@ fn expression_preference_retract_admits_human_owner_actor() -> Result<()> {
 fn expression_preference_override_refuses_a_human_who_is_not_the_owner() -> Result<()> {
     let (_temp, vault, subject, _owner, agent) = expression_preference_fixture();
     let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
-    let persona = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
-    vault.put_entity(
-        &persona.entity_ref(),
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let persona = non_owner_human(&vault);
     assert_matches!(
         vault.retract_expression_preference(&persona, &claim_id, 3),
         Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }))
@@ -3448,7 +3456,9 @@ fn typed_expression_doors_still_supersede_and_restore_after_the_guards() -> Resu
 /// `superseded_short_id` where a preference write can close several heads.
 #[test]
 fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
-    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let (_temp, vault, subject, _owner, _agent) = expression_preference_fixture();
+    // Its own preferences: a human needs no owner binding for them.
+    let human = non_owner_human(&vault);
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     let first = memory
         .set_expression_preference(
@@ -3518,7 +3528,9 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
 /// would perform only the first half.
 #[test]
 fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
-    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let (_temp, vault, subject, _owner, _agent) = expression_preference_fixture();
+    // Its own preferences: a human needs no owner binding for them.
+    let human = non_owner_human(&vault);
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     for (language, at) in [("ja", 1), ("en-US", 2)] {
         memory

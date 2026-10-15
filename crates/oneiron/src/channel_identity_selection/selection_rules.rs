@@ -212,7 +212,9 @@ impl ChannelIdentitySelectionWriter {
     }
 
     /// The writer still holds in the write's own transaction: the owner proof
-    /// belongs to this vault and is live, and an agent writer names a live
+    /// belongs to this vault, is live and names this vault's owner (a native
+    /// proof of any other person is no owner's writer), and an agent writer
+    /// names a live
     /// actor of this vault whose type can act as an agent and, in a rooted
     /// vault, whose authority binding is live.
     pub(super) fn revalidate_in_txn(
@@ -221,7 +223,7 @@ impl ChannelIdentitySelectionWriter {
         txn: &heed::RoTxn<'_>,
     ) -> ChannelIdentitySelectionResult<()> {
         if let Some(owner) = &self.owner {
-            owner.revalidate_in_txn(vault, txn)?;
+            owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
             return Ok(());
         }
         let live_type =

@@ -59,10 +59,11 @@ fn person(vault: &Vault, seed: u8) -> crate::EntityId {
     id
 }
 
+/// The vault's own owner's proof: an owner-locked rule is the owner's (H149).
 fn owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
     vault
         .authenticate_owner(
-            person(vault, 0x66),
+            vault.ensure_embedded_owner_actor().expect("embedded owner"),
             "principal:owner",
             true,
             crate::store::GateDecisionId::now(),
@@ -511,7 +512,10 @@ fn duplicate_rows_and_regressed_revisions_fail_typed() {
 fn writer_kind_is_derived_from_the_authenticated_actor() {
     let (_dir, vault) = open_vault();
     assert_eq!(owner_writer(&vault).kind(), SelectionRuleWriterKind::Owner);
-    assert_eq!(owner_writer(&vault).actor_ref(), entity(0x66));
+    assert_eq!(
+        owner_writer(&vault).actor_ref(),
+        vault.ensure_embedded_owner_actor().expect("embedded owner")
+    );
     assert_eq!(agent_writer(&vault).kind(), SelectionRuleWriterKind::Agent);
 
     let system = WriteActor::new(entity(0x6F), EdgeActorClass::System);
@@ -535,6 +539,48 @@ fn a_caller_asserted_human_class_cannot_write_as_the_owner() {
     );
 }
 
+/// H149: a native owner proof shows a live person, not whose vault this is.
+/// A person of this vault who is not its owner writes no owner-locked law.
+#[test]
+fn a_person_who_is_not_the_owner_cannot_write_as_the_owner() {
+    let (_dir, vault) = open_vault();
+    let proof = vault
+        .authenticate_owner(
+            person(&vault, 0x6C),
+            "principal:stranger",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("a live person authenticates");
+    let retire = ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
+        agent_amendable: false,
+        enabled: false,
+        ..authored_rule(
+            "builtin.work_deal",
+            RelationshipContext::WorkDeal,
+            SelectionRuleScope::VaultDefault,
+            ChannelIdentityFace::DelegatedOwnerAccount,
+        )
+    });
+    assert!(
+        vault
+            .update_channel_identity_selection_rules(
+                0,
+                &ChannelIdentitySelectionWriter::owner(&proof),
+                retire,
+            )
+            .is_err(),
+        "a person who is not this vault's owner amended its law as the owner"
+    );
+    assert_eq!(
+        vault
+            .stored_channel_identity_selection_rules()
+            .expect("stored law"),
+        None,
+        "nothing was written"
+    );
+}
+
 /// The owner's writer carries its proof to the write door, which checks it in
 /// the write's own transaction: a proof from another vault writes nothing
 /// here, and an agent writer must name a live actor of this vault.
@@ -543,7 +589,7 @@ fn the_selection_write_door_rechecks_its_writer() {
     let (_dir, vault) = open_vault();
     let (_other_dir, other) = open_vault();
     let foreign = ChannelIdentitySelectionWriter::owner(&owner_proof(&other));
-    person(&vault, 0x66);
+    vault.ensure_embedded_owner_actor().expect("embedded owner");
     let retire = ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
         agent_amendable: false,
         enabled: false,
@@ -627,7 +673,10 @@ fn accepted_changes_stamp_the_actor_and_advance_one_revision() {
         .expect("row present");
     // The caller mis-stamped both provenance fields; the door derived them.
     assert_eq!(row.writer_kind, SelectionRuleWriterKind::Owner);
-    assert_eq!(row.updated_by, Some(entity(0x66)));
+    assert_eq!(
+        row.updated_by,
+        Some(vault.ensure_embedded_owner_actor().expect("embedded owner"))
+    );
 
     let reread = vault.channel_identity_selection_rules().expect("reread");
     assert_eq!(reread, updated);

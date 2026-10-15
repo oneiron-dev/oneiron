@@ -164,11 +164,9 @@ impl Amendment {
     }
 }
 
+/// The vault's own owner: a preference principal is the owner (H149).
 fn fixture_owner(vault: &Vault) -> WriteActor {
-    let id = EntityId::from_bytes([0xD1; 16]).expect("fixture owner id");
-    vault
-        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"preference owner")
-        .expect("owner");
+    let id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     WriteActor::new(id, EdgeActorClass::Human)
 }
 

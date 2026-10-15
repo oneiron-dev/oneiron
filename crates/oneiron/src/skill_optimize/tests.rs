@@ -680,9 +680,11 @@ fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (skill, _) = put_standard_active(&vault, "oneiron.skill.private-buffer");
     attribute_defects_across_split(&vault, &skill, "oneiron.skill.private-buffer");
-    let owner_id = EntityId::now();
+    // The vault's own owner; a principal is the owner (H149).
+    let owner_id = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let other_id = EntityId::now();
-    put_actor(&vault, &owner_id);
     put_actor(&vault, &other_id);
     let owner = crate::write_envelope::WriteActor::new(owner_id, crate::EdgeActorClass::Human);
     let other = crate::write_envelope::WriteActor::new(other_id, crate::EdgeActorClass::Human);
@@ -754,9 +756,8 @@ fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
             .is_empty()
     );
     assert!(
-        optimize_brief_for_principal_at(&vault, &candidate, other, 301)?
-            .rejected_edits
-            .is_empty()
+        optimize_brief_for_principal_at(&vault, &candidate, other, 301).is_err(),
+        "a person who is not the vault's owner read the owner's brief"
     );
     assert_eq!(
         optimize_brief_for_principal_at(&vault, &candidate, owner, 301)?.rejected_edits[0].proposal,

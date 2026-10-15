@@ -239,6 +239,11 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
             .is_some()
     );
 
+    // The other PERSON is not the vault's owner (H149): it reads by an
+    // explicit grant, so its misses below are not vacuous either.
+    vault
+        .install_read_permit_for_test(crate::WriteActor::new(other, EdgeActorClass::Human))
+        .unwrap();
     for actor in [owner, other] {
         let facade = vault.memory(actor, EdgeActorClass::Human);
         for subject_ref in [None, Some(owner.to_hex())] {
@@ -265,13 +270,7 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
             );
             assert!(facade.claim_history(revision).unwrap().is_empty());
         }
-        // The owner reads its own row, so its misses here are not vacuous. On
-        // a vault with no root no other PERSON holds the owner's reads (H149).
-        assert_eq!(
-            facade.get_entity(&owner.to_hex()).unwrap().is_some(),
-            actor == owner,
-            "{actor:?} reads the owner's row"
-        );
+        assert!(facade.get_entity(&owner.to_hex()).unwrap().is_some());
         assert!(facade.query_bm25("privatecanary", 10).unwrap().is_empty());
         assert!(
             facade

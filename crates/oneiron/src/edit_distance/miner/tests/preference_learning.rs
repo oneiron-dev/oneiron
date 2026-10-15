@@ -267,14 +267,21 @@ fn legacy_evidence_and_other_principals_do_not_cross_the_miner_threshold() -> Re
         .into_iter()
         .enumerate()
     {
-        sign_off(
+        let landed = sign_off(
             &format!("gate:isolated-{i}"),
             "isolated",
             actor,
             i,
             100 + i as u64,
         )
-        .land_bound(&vault, principal)?;
+        .land_bound(&vault, principal);
+        if principal == Some(b) {
+            // A person who is not the vault's owner binds no preference
+            // principal (H149); the evidence stays unbound.
+            assert!(landed.is_err(), "a non-owner bound a preference principal");
+        } else {
+            landed?;
+        }
     }
     assert!(emitted(&super::super::run_substitution_miner_at(&vault, &run, 300)?).is_empty());
     sign_off("gate:isolated-last", "isolated", actor, 9, 200).land_bound(&vault, Some(a))?;
@@ -374,9 +381,8 @@ fn optimizer_reads_only_live_dev_substitutions_for_its_explicit_principal() -> R
     assert_eq!(brief.substitution_proposals.len(), 1);
     assert_eq!(brief.principal, Some(owner.entity_ref()));
     assert!(
-        optimize_brief_for_principal_at(&vault, &candidate, other, 300)?
-            .substitution_proposals
-            .is_empty()
+        optimize_brief_for_principal_at(&vault, &candidate, other, 300).is_err(),
+        "a person who is not the vault's owner read the owner's brief"
     );
     assert!(
         optimize_brief_for_principal_at(&vault, &candidate, owner, 300 + YEAR * 2)?

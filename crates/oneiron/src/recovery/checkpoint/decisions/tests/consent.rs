@@ -329,7 +329,9 @@ pub(super) fn booking_publications() -> Result<Case> {
 /// again, giving the other its autonomy back.
 pub(super) fn principal_autonomy() -> Result<Case> {
     let (dir, vault) = open_vault();
-    let owner = person(&vault, 0x71)?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let (sora, rin) = (person(&vault, 0x72)?, person(&vault, 0x73)?);
     let owner = vault.authenticate_owner(
         owner,
@@ -379,9 +381,7 @@ pub(super) fn principal_autonomy() -> Result<Case> {
 /// the draft to be sent again.
 pub(super) fn esign_ceremonies() -> Result<Case> {
     let (dir, vault) = open_seeded()?;
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    let owner = person(&vault, 0x71)?;
     let document = entity(0x91);
     vault.put_blob_artifact(
         &document,

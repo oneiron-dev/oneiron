@@ -1207,6 +1207,11 @@ fn mixed_room_messages() -> (
             crate::conversation::HistoryChoice::Share,
         )
         .expect("join");
+    // Membership reads nothing, and Bob is not the vault's owner (H149): he
+    // reads the room's rows by an explicit read grant.
+    vault
+        .install_read_permit_for_test(crate::WriteActor::new(bob, EdgeActorClass::Human))
+        .expect("Bob's read grant");
     let first = vault
         .memory(alice, EdgeActorClass::Human)
         .witness(&WitnessTurn {
@@ -1236,10 +1241,9 @@ fn mixed_room_messages() -> (
             occurred_at: 11,
         })
         .expect("second actor appends to the first TURN");
-    // Membership reads nothing: the owner resolves Bob's message (H149).
     let b_message = EntityId::from_hex(
         &vault
-            .memory(alice, EdgeActorClass::Human)
+            .memory(bob, EdgeActorClass::Human)
             .get_entity(&second.message_short_ids[0])
             .unwrap()
             .value
