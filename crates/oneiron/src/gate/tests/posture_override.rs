@@ -335,6 +335,44 @@ fn override_receipt_is_source_specific() -> Result<()> {
     Ok(())
 }
 
+/// H109: the opt-out posture answers a counterparty's opt-out, never the
+/// owner's revocation. Under `allow_with_receipt`, a send to a revoked contact
+/// with a matching scoped grant still holds, under the revocation's reason.
+#[test]
+fn allow_with_receipt_posture_never_lifts_a_contact_revocation() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0xEE),
+        &opt_out_posture_manifest(Some("allow_with_receipt")),
+    )?;
+    let policy = resolve(&vault)?;
+    let contact =
+        CounterpartyContactRecord::user_introduction(test_id(0xEB), "mika@example.com", 10)?;
+    vault.create_counterparty_contact(&test_id(0xEC), &contact)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("mika@example.com".to_owned());
+    let decide = |vault: &crate::Vault| {
+        vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+        })
+    };
+    assert_eq!(decide(&vault)?.1.outcome(), GateOutcome::Allow);
+
+    vault.revoke_counterparty_contact(&test_id(0xEC), 20)?;
+    let (_decision_id, held, _charge) = decide(&vault)?;
+    assert_eq!(held.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&held),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    assert_eq!(
+        held.receipt_reasons().first(),
+        Some(&"counterparty_contact_revoked")
+    );
+    Ok(())
+}
+
 /// The override tokens one decision carries, in receipt order.
 fn override_tokens(decision: &GateDecision) -> Vec<&'static str> {
     decision

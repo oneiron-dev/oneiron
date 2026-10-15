@@ -66,7 +66,7 @@ impl Decision for SendContacts {
                 effect.actor.actor_ref = Some(actor.to_hex());
                 effect.provenance.actor_entity_ref = Some(*actor);
             }
-            let (effect, send_override) =
+            let (effect, send_override, _) =
                 crate::gate::hydrate_external_effect_contact(store, &txn, &effect, &policy)?;
             Ok(SendPosture {
                 risk: effect.policy_risk,
