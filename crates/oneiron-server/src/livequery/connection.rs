@@ -380,6 +380,17 @@ impl Connection {
         }
     }
 
+    /// The document naming this socket's session, which a resume carries.
+    #[cfg(test)]
+    pub(crate) fn session_document(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        let sessions = self.hub.sessions.lock().ok()?;
+        sessions
+            .iter()
+            .find(|(_, kept)| Arc::ptr_eq(kept, session))
+            .map(|(document, _)| document.clone())
+    }
+
     /// Whether subscription `id` is open on this socket.
     #[cfg(test)]
     pub(crate) fn opened(&self, id: u64) -> bool {

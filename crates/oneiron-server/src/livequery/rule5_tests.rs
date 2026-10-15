@@ -237,6 +237,54 @@ async fn a_wait_past_its_deadline_is_a_typed_timeout() {
     assert_eq!(subscribe(&mut second, &auth, 1).await, None);
 }
 
+/// Bug repro (rule 5 review R1: Sol F6, F7; Astra F7, F8): a resume
+/// queued for a subscription turn its kept session already held, and a
+/// session let go while its resume waited came back without a turn.
+/// Done-means: a resume keeps its session and both its turns, at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resume_keeps_its_session_and_its_turns() {
+    let (_dir, server) = production_tests::server_with_limits(LimitsConfig {
+        live_sessions: 1,
+        live_subscriptions: 1,
+        queue_wait_timeout_ms: 2_000,
+        ..LimitsConfig::default()
+    });
+    let hub = connection::Hub::for_server(&server);
+    let auth = auth(&server);
+    let mut first = connection::Connection::new(Arc::clone(&hub), 1);
+    assert_eq!(subscribe(&mut first, &auth, 1).await, None);
+    let document = first.session_document().unwrap();
+    drop(first);
+    let cursor = Cursor {
+        document: document.clone(),
+        version_vector: loro::VersionVector::new().encode(),
+        batch: 0,
+    };
+    let payload = test_wire::request(
+        TAG_SUB,
+        json!({"method":"sub.open","subscriptionId":1,"scopedView":{},"channel":"receipts",
+            "cursor":{"document":document,"versionVector":cursor.version_vector,"batch":0}}),
+    );
+    let mut resumed = connection::Connection::new(Arc::clone(&hub), 2);
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        resumed.admit(Some(&auth), &payload[1..]),
+    )
+    .await
+    .expect("a resume waits for no turn its session holds");
+    let request = SubRequest::Open {
+        subscription_id: 1,
+        scoped_view: ScopedView::default(),
+        channel: Channel::Receipts,
+        cursor: Some(cursor),
+        origin: None,
+    };
+    resumed.control(&auth, request).unwrap();
+    assert!(resumed.opened(1), "the resume is served");
+    assert_eq!(resumed.session_document(), Some(document));
+    assert_eq!(hub.waiting(), (0, 0));
+}
+
 struct Source(Value);
 impl LiveQuerySource for Source {
     fn derive(&self, _: &ScopedView, _: Channel) -> Result<DerivedView, AppError> {
