@@ -457,7 +457,17 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 6
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/id_pin.rs",
+     "purpose": "The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -467,7 +477,7 @@
      "path": "src/agent_def/manifest.rs",
      "purpose": "Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -477,7 +487,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "mod": 1,
       "re-export": 3
      }
@@ -3477,7 +3487,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/batch/tests/seeded_actors.rs",
@@ -19037,7 +19047,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/actor_fork.rs",
@@ -29704,7 +29714,7 @@
      "path": "src/recovery/checkpoint/decisions/tasks.rs",
      "purpose": "What a task, an ask and an agent may do: the authority a task's facts prove through the `ScopedTo` edges…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -29804,7 +29814,7 @@
      "path": "src/recovery/checkpoint/decisions/tests/tasks.rs",
      "purpose": "Census cases for what a task, an ask and an agent may do",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -40303,7 +40313,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41649,7 +41659,7 @@
    },
    "over_bar": 39,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2523,
+   "source_files": 2524,
    "test_files": 819
   },
   "oneiron-android": {
