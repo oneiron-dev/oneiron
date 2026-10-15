@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2531 | 826 | 41 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2531 | 827 | 40 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 22 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 108 | 18 | 0 |
@@ -69,7 +69,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `attempt_queue` | dir | 38 | m | — | Generic LMDB-backed background attempt queue |
 | `authority` | dir | 83 | m | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 9 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
-| `batch` | dir | 99 | L | yes | — |
+| `batch` | dir | 99 | m | yes | — |
 | `blob_artifact` | dir | 45 | m | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | s | — | — |
@@ -174,7 +174,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `merge_queue` | dir | 8 | m | — | Durable batched speculation over real detached worktrees |
 | `note` | file+dir | 37 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 17 | m | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
-| `origin` | dir | 51 | m | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
+| `origin` | dir | 53 | m | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 40 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | dir | 9 | m | — | Replay-first outbound effect execution |
 | `outbound_consent` | dir | 10 | m | — | Payload-aware consent and transport boundary for scoped outbound tools |
@@ -206,7 +206,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `run_tree` | dir | 9 | m | — | Run tree projection and control adapter over generic AttemptQueue rows |
 | `saved_query` | dir | 12 | m | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
 | `scope_summary` | dir | 6 | m | yes | Retained spawned sub-sessions and Dreamer-composed scope summaries |
-| `secret_custody` | dir | 9 | m | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
+| `secret_custody` | dir | 8 | m | yes | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `secret_lease` | dir | 8 | m | yes | ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single… |
 | `secret_manifest` | file+dir | 2 | m | — | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `secret_rotation` | file+dir | 3 | m | yes | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |

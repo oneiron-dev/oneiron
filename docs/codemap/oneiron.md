@@ -299,7 +299,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/prepared_index.rs` | src | s | 2 crate-vis | — | Index work a committing batch does before its write transaction opens (RESEARCH-1115 Bend 2): the BM25… |
 | `src/batch/put_apply/apply/authority.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/put_apply/apply/claim.rs` | src | s | 1 crate-vis | — | — |
-| `src/batch/put_apply/apply/mod.rs` | src | L | 1 crate-vis | — | The `apply_put` entity-put chokepoint: validation, claim gate, type dispatch, and staging |
+| `src/batch/put_apply/apply/mod.rs` | src | m | 1 crate-vis | — | The `apply_put` entity-put chokepoint: validation, claim gate, type dispatch, and staging |
 | `src/batch/put_apply/apply/validation.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/put_apply/claim_admission.rs` | src | s | 4 crate-vis | — | Claim-body and immutable-ledger admission before any put side effect |
 | `src/batch/put_apply/connector_key_guard.rs` | src | s | 1 crate-vis | — | Sealed connector-key admission authority at the generic batch/replay door |
@@ -2079,16 +2079,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/lfs/store.rs` | src | m | 2 struct · 13 fn · 5 const · 7 crate-vis | LfsPutOutcome, VaultLfsObject | Object plane: Vault adapter methods, shared expectation gate, key builders, record codec |
 | `src/origin/lfs/tests.rs` | test | s | — | — | Inline contract suite: digest/round-trip, put/dedup/refusal, fail-closed corruption, ref attach/detach… |
 | `src/origin/lfs/upload.rs` | src | m | 2 fn · 1 const · 3 crate-vis | — | Bounded streaming ingress: validate before publishing, then commit small chunk transactions |
-| `src/origin/mod.rs` | src | s | 9 mod · 1 re-export | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
+| `src/origin/mod.rs` | src | s | 10 mod · 1 re-export | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `src/origin/publication/mod.rs` | src | s | 2 re-export | — | The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910) |
-| `src/origin/publication/publication_codec.rs` | src | m | 5 fn · 16 crate-vis | — | Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders |
-| `src/origin/publication/publication_journal.rs` | src | s | 10 crate-vis | — | Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers |
+| `src/origin/publication/publication_codec.rs` | src | m | 5 fn · 17 crate-vis | — | Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders |
+| `src/origin/publication/publication_journal.rs` | src | s | 14 crate-vis | — | Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers |
 | `src/origin/publication/publication_machine.rs` | src | m | 10 crate-vis | — | State machine: stage, advance, CAS, finish/refuse/finalize T2, availability gate, pin release and orphan sweep |
-| `src/origin/publication/publication_protocol.rs` | src | s | 8 fn · 1 crate-vis | — | Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement… |
+| `src/origin/publication/publication_protocol.rs` | src | m | 8 fn · 1 crate-vis | — | Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement… |
 | `src/origin/publication/publication_tests_a.rs` | src | m | 16 crate-vis | — | Tests: fixtures plus provenance, dependency-retention, happy-path, atomicity, availability and CAS-mismatch… |
 | `src/origin/publication/publication_tests_b.rs` | src | m | — | — | Tests: crash-window recovery, advertisement projection, terminal-wins, duplicate-intent, stale-outcome… |
-| `src/origin/publication/publication_types.rs` | src | m | 4 struct · 3 enum · 9 fn · 11 const | OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus | Pinned constants, protocol enums with string tables, and request/record/receipt/report types |
+| `src/origin/publication/publication_types.rs` | src | m | 4 struct · 3 enum · 9 fn · 10 const | OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus | Pinned constants, protocol enums with string tables, and request/record/receipt/report types |
 | `src/origin/residence.rs` | src | s | 2 struct · 1 enum · 4 fn · 9 crate-vis | OriginAuthority, OriginAuthorityLease, OriginResidence | Explicit owner-controlled origin epochs |
+| `src/origin/scan_check.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 const · 4 crate-vis | OriginScan, OriginScanCheck | Origin scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/smart_http/advertise.rs` | src | m | 6 crate-vis | — | The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy |
 | `src/origin/smart_http/advertise_tests.rs` | test | m | — | — | Advertisement gate and stock-client roundtrip tests, plus the LFS attach/detach landing tests |
@@ -2103,7 +2104,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/exchange_tests.rs` | test | m | — | — | One exchange's lifetime: a push whose client is gone before its response begins, or whose exchange unwinds… |
 | `src/origin/smart_http/history_scan_tests.rs` | test | m | — | — | The door scans every blob a push makes reachable, not only the tip diff (H263): a secret one commit adds and… |
 | `src/origin/smart_http/hooks.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | DoorHooksDir | The per-request door-owned hook directory and the vetted pre-receive script it carries |
-| `src/origin/smart_http/intent.rs` | src | m | 1 struct · 1 enum · 1 fn · 8 crate-vis | ReceivePackRefResult, ReceivePackRefStatus | The crash-durable per-ref intent journal and its reconcile/resume path |
+| `src/origin/smart_http/intent.rs` | src | m | 1 struct · 1 enum · 1 fn · 12 crate-vis | ReceivePackRefResult, ReceivePackRefStatus | The crash-durable per-ref intent journal and its reconcile/resume path |
 | `src/origin/smart_http/intent_recovery_tests.rs` | test | m | — | — | Crash/recovery contract: pre-outcome crash, declined effects, partial resume, supersede, delete-only… |
 | `src/origin/smart_http/landing.rs` | src | m | 2 struct · 3 fn | ReceivePackAttribution, ReceivePackLanding | The single-writer landing: apply path, per-ref publication fan-out, and wire-outcome mapping |
 | `src/origin/smart_http/landing_lfs.rs` | src | s | 3 crate-vis | — | LFS pointer admission and the per-ref tree walk that attaches pointers to the refs that carry them |
@@ -2111,6 +2112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/mod.rs` | src | s | 9 re-export · 1 crate-vis | — | Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908) |
 | `src/origin/smart_http/paths.rs` | src | s | 3 fn · 11 const · 19 crate-vis | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
 | `src/origin/smart_http/push_cert_tests.rs` | test | s | — | — | Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs… |
+| `src/origin/smart_http/scan_cap_tests.rs` | test | s | — | — | No origin scan refuses for how many rows it reads (rule 5): a repository keeps taking pushes, advertisements… |
 | `src/origin/smart_http/serve.rs` | src | m | 1 struct · 1 trait · 4 fn · 4 crate-vis | ServeReport, ServeSink | One-request orchestration: coordinator lock, reconcile, threaded exchange, finish |
 | `src/origin/smart_http/serve_cmd.rs` | src | m | 3 struct · 12 fn · 7 crate-vis | ServeChild, ServeCommand, ServeRequest | The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle |
 | `src/origin/smart_http/tests.rs` | test | m | 25 crate-vis | — | Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin |
@@ -2543,12 +2545,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/tests.rs` | test | m | — | — | Exact covers, gated merge atomicity and revision-bound late results |
 | `src/scope_summary/word_sources.rs` | src | s | 2 crate-vis | — | Where the words of one stored revision came from |
 | `src/secret_custody/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack body codec for custody records, bands, floors, and bindings |
-| `src/secret_custody/doors.rs` | src | m | 4 fn · 11 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
+| `src/secret_custody/doors.rs` | src | m | 4 fn · 10 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/floor.rs` | src | m | 2 fn · 8 crate-vis | — | Vault floor resolution plus the shared strict POLICY_MANIFEST walk |
-| `src/secret_custody/mod.rs` | src | s | 3 re-export · 12 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
+| `src/secret_custody/mod.rs` | src | s | 3 re-export · 11 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/owner_door.rs` | src | m | 4 struct · 1 fn | ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered | The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody |
 | `src/secret_custody/owner_door/tests.rs` | test | L | — | — | ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody… |
-| `src/secret_custody/replication.rs` | src | s | 3 crate-vis | — | Name-index planning for admitted same-vault custody replay |
 | `src/secret_custody/tests.rs` | test | L | — | — | SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index… |
 | `src/secret_custody/types.rs` | src | m | 5 struct · 1 enum · 9 fn · 5 const · 1 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand | Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata |
 | `src/secret_lease/admission.rs` | src | s | 1 fn · 1 crate-vis | — | The one cap-only admission rule, pure + door-side halves |
@@ -2907,7 +2908,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/lfs.rs` | src | s | 3 fn · 1 crate-vis | — | Object-scoped have/want state on the existing owner-authenticated sync client |
 | `src/sync/client/mod.rs` | src | s | 5 re-export | — | Client-side sync over WebSocket |
 | `src/sync/client/note_session.rs` | src | s | 2 crate-vis | — | The existing app-tier MessagePack auth.bind handshake on the sync socket |
-| `src/sync/client/residence.rs` | src | m | 3 struct · 1 enum · 4 fn | ResidenceHit, ResidenceSearch, SearchSource, ThinItem | Bounded on-demand home reads on an independent short-lived authenticated socket |
+| `src/sync/client/residence.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 crate-vis | ResidenceHit, ResidenceSearch, SearchSource, ThinItem | Bounded on-demand home reads on an independent short-lived authenticated socket |
 | `src/sync/client/residence/index.rs` | src | s | 1 fn | — | Paged, revision-bound current-window metadata enrolment |
 | `src/sync/client/sync_frames.rs` | src | m | 4 fn · 4 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
 | `src/sync/client/tests.rs` | test | XL | — | — | — |
