@@ -1,9 +1,11 @@
+mod cache_evict;
 mod cache_store;
 mod community;
 mod policy;
 mod query;
 mod walk;
 
+pub(crate) use self::cache_evict::evict_ppr_cache_page;
 pub(crate) use self::cache_store::{
     MAX_PPR_SEEDS, cleanup_ppr_cache, drop_rebuildable_ppr_cache, flush_deferred_ppr_cache_writes,
     flush_deferred_ppr_cache_writes_admitted, increment_graph_version, invalidate_ppr_for_delete,

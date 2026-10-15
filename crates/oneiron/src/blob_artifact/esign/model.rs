@@ -185,10 +185,12 @@ pub enum EsignEvent {
         authority: String,
     },
 }
+/// The predicate of the claim that opens a signing document's ledger.
+pub(super) const DRAFT_PREDICATE: &str = "esign.draft";
 impl EsignEvent {
     pub(super) fn predicate(&self) -> &'static str {
         match self {
-            Self::Drafted { .. } => "esign.draft",
+            Self::Drafted { .. } => DRAFT_PREDICATE,
             Self::Sent => "esign.sent",
             Self::Viewed { .. } => "esign.viewed",
             Self::FieldSaved { .. } => "esign.field",

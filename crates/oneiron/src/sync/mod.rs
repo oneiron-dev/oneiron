@@ -54,6 +54,7 @@ pub mod residence_operation_budgets;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
+mod sweep_fence;
 #[cfg(test)]
 mod tests;
 pub mod transport;

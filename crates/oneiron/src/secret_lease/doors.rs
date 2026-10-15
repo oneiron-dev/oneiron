@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use super::admission::admit_record_use;
-use super::codec::SECRET_LEASE;
+use super::codec::{SECRET_LEASE, SECRET_LOCAL_REGISTRATION};
 use super::files::write_secret_file;
 use super::storage::{
     read_live_lease_in_txn, read_local_registration_in_txn, read_record_for_ref_in_txn,
@@ -323,5 +323,38 @@ impl Vault {
         }
         wtxn.commit()?;
         Ok(expired)
+    }
+
+    /// Retries, through the same teardown, the registrations a revoke or an
+    /// expiry kept because their file could not be removed then: the oldest
+    /// attempt first, at most `limit` a call. A registration whose lease is
+    /// still `Active` is never touched, and a file that is not the one the
+    /// vault wrote is never removed. Returns how many registrations went with
+    /// their file and how many are still kept.
+    pub(crate) fn retry_kept_secret_teardowns(&self, now: u64, limit: usize) -> Result<(u64, u64)> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut kept = Vec::new();
+        for (_, stored) in SECRET_LOCAL_REGISTRATION.scan(&self.store, &wtxn)? {
+            let Some(attempted_at) = stored.removal_attempted_at else {
+                continue;
+            };
+            let lease_id = stored.registration.lease_id;
+            let retired = read_secret_lease_in_txn(&self.store, &wtxn, &lease_id)?
+                .is_none_or(|lease| lease.status != SecretLeaseStatus::Active);
+            if retired {
+                kept.push((attempted_at, lease_id));
+            }
+        }
+        kept.sort_unstable();
+        let mut removed = 0u64;
+        for (_, lease_id) in kept.iter().take(limit) {
+            teardown_local_registration_in_txn(&self.store, &mut wtxn, lease_id, now)?;
+            if read_local_registration_in_txn(&self.store, &wtxn, lease_id)?.is_none() {
+                removed += 1;
+            }
+        }
+        wtxn.commit()?;
+        let still_kept = u64::try_from(kept.len()).unwrap_or(u64::MAX) - removed;
+        Ok((removed, still_kept))
     }
 }

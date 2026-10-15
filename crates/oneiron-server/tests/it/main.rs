@@ -25,6 +25,9 @@ mod history_import;
 #[cfg(unix)]
 mod host_re_root;
 mod import_claims;
+// Runs the shipped binary through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod maintain_cli;
 // The wake ledger talks to Hypnos over a Unix socket.
 #[cfg(unix)]
 mod managed_ledger_wire;

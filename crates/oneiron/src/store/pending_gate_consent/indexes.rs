@@ -422,7 +422,14 @@ impl Store {
             return Err(Error::CorruptedIndex("critical confirm index"));
         }
         CRITICAL_CONFIRM_INDEX.put(self, wtxn, &binding.confirm_id, &claim_id)?;
-        Ok(())
+        // A vault that is not running wakes when the window closes, so the
+        // expiry sweep can demote a write still waiting on its confirm.
+        crate::housekeeping::note_wake_in_txn(
+            self,
+            wtxn,
+            crate::housekeeping::HousekeepingSweep::CriticalConfirmExpiry,
+            binding.expires_at,
+        )
     }
 
     pub(super) fn delete_pending_gate_consent_critical_confirm_index_in_txn(

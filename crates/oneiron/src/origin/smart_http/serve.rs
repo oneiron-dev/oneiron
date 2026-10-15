@@ -30,7 +30,7 @@ use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{lock_repository, try_lock_repository};
+use crate::git_wire::{lock_repository, lock_repository_before_maintenance, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
@@ -121,9 +121,11 @@ pub fn serve(
 /// It runs under its own idle limit in place of [`SERVE_IDLE_TIMEOUT`]: a
 /// transport whose body and sink bound their own waits passes the same limit,
 /// so whichever side sees the stall first ends the exchange the same way. And
-/// it never waits for the repository: a push that finds the coordinator taken
+/// it never waits for another writer: a push that finds the coordinator taken
 /// fails at once with [`CodeError::GitHttpRepositoryBusy`], so an admitted
-/// exchange never sits queued behind another push. A read is never refused
+/// exchange never sits queued behind another push. The host's repository
+/// maintenance gives the coordinator up to it instead, within one of the
+/// maintenance's polls, and the push waits that out. A read is never refused
 /// for it: it recovers and projects its ref list under the coordinator only
 /// when it finds it free.
 ///
@@ -242,7 +244,7 @@ fn serve_request(
         if wait_for_repository {
             Some(lock_repository(&common_dir)?)
         } else {
-            Some(try_lock_repository(&common_dir)?.ok_or_else(repository_busy)?)
+            Some(lock_repository_before_maintenance(&common_dir)?.ok_or_else(repository_busy)?)
         }
     } else {
         // A fetch and an advertisement mutate nothing, so neither queues behind

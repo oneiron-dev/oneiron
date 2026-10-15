@@ -79,6 +79,8 @@ mod dreamer;
 pub use self::dreamer::dreamer_grant;
 mod embedder_serve;
 pub use self::embedder_serve::embedder_serve;
+mod maintain;
+pub use maintain::maintain;
 mod owner;
 pub use owner::{
     backup, doctor, export, import, recover_clock, recover_window, restore, runs, secret_scan,

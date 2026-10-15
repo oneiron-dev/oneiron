@@ -316,7 +316,6 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
         if !covered {
             missing += 1;
             tracing::error!(
-                request_id = %receipt.request_id,
                 "sweep audit: receipt has sweep_queued_at but NO pending h: row and NO \
                  sweep_complete_at — erasure obligation was DROPPED (GDPR SLA breach signal)"
             );

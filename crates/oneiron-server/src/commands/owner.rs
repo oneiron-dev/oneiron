@@ -26,7 +26,7 @@ use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
-fn emit(value: &impl Serialize) -> anyhow::Result<()> {
+pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, value)?;
     writeln!(stdout)?;
@@ -41,7 +41,7 @@ fn backup_plan(config: &ServeConfig) -> BackupPlan {
     )
 }
 
-fn vault_config(config: &ServeConfig) -> oneiron::VaultConfig {
+pub(super) fn vault_config(config: &ServeConfig) -> oneiron::VaultConfig {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths =
         super::resolve_dict_search_paths(&config.dict_search_paths).paths;
@@ -57,13 +57,22 @@ fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vaul
 /// [`open_vault`] for a command no running server answers: `instead` says
 /// what to do while one holds the vault.
 fn open_stopped_vault(config: &ServeConfig, instead: &str) -> anyhow::Result<oneiron::Vault> {
+    open_stopped_vault_with(config, vault_config(config), instead)
+}
+
+/// [`open_stopped_vault`] under a vault config the command adjusted.
+pub(super) fn open_stopped_vault_with(
+    config: &ServeConfig,
+    vault_config: oneiron::VaultConfig,
+    instead: &str,
+) -> anyhow::Result<oneiron::Vault> {
     let path = &config.vault_path;
     anyhow::ensure!(
         path.join("data.mdb").is_file(),
         "vault {} does not exist; `oneiron init` creates one",
         path.display()
     );
-    oneiron::Vault::open_owned(path, vault_config(config)).map_err(|error| match error {
+    oneiron::Vault::open_owned(path, vault_config).map_err(|error| match error {
         oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
             "vault {} is open in a running `oneiron serve`; stop it first, {instead}",
             path.display()

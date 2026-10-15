@@ -79,6 +79,8 @@ pub struct WindowManager {
     /// sweep can still observe an orphaned external `Arc<LoadedWindow>` that
     /// could persist a full-history snapshot later.
     issued_handles: Mutex<HashMap<WindowKey, Vec<Weak<LoadedWindow>>>>,
+    /// Windows a sweep holds closed while it compacts them.
+    sweep_fence: super::sweep_fence::SweepFence,
     /// Shared Observer A outbound sink: every window this manager opens
     /// routes its persisted local updates here (connection channel when
     /// attached, durable `SyncQueue` otherwise).
@@ -128,6 +130,7 @@ impl WindowManager {
             config,
             windows: Mutex::new(HashMap::new()),
             issued_handles: Mutex::new(HashMap::new()),
+            sweep_fence: super::sweep_fence::SweepFence::default(),
             outbound: Arc::new(OutboundSink::new()),
             promotions: tokio::sync::broadcast::channel(64).0,
             #[cfg(test)]
@@ -212,6 +215,12 @@ impl WindowManager {
         // attach mutex, never the registry lock.
         self.attach_to_vault();
         let mut registry = self.lock_registry();
+        // A window a sweep holds closed opens once the sweep is done.
+        while self.sweep_fence.holds(key) {
+            drop(registry);
+            self.sweep_fence.wait_until_open(key);
+            registry = self.lock_registry();
+        }
         if let Some(existing) = registry.get(key) {
             let existing = Arc::clone(existing);
             // A resident SKILL may have arrived before its actor. Observer B
@@ -325,28 +334,41 @@ impl WindowManager {
         Some(window)
     }
 
-    /// Sweep live-window probe (ONE-1162): fail closed if this manager cannot
-    /// prove `key` has no registered doc and no orphaned external handle.
+    /// Sweep live-window probe (ONE-1162): runs `f` with `key` closed and
+    /// kept closed, or fails closed, returning `None` without running it,
+    /// unless this manager can prove `key` has no registered doc and no
+    /// orphaned external handle.
     ///
     /// `discard_window` can remove the registry entry while caller-held
     /// `Arc<LoadedWindow>` clones keep the doc and observers alive. Those
     /// retained handles can still call `persist_state`, so the sweep must
     /// treat them exactly like a registered live window and defer compaction.
-    pub(crate) fn window_live_for_sweep(&self, key: &WindowKey) -> bool {
-        let registry = match self.windows.lock() {
-            Ok(registry) => registry,
-            Err(_) => return true,
-        };
+    /// The window is marked closed under the registry lock, so no open of it
+    /// is under way, and an open that comes during `f` waits and then reads
+    /// what `f` wrote, rather than registering the history `f` drops. Opens
+    /// of other windows go through. A window another sweep holds closed is
+    /// left to it, so the mark is released only by the sweep that made it.
+    pub(crate) fn while_window_closed<T>(
+        &self,
+        key: &WindowKey,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let registry = self.windows.lock().ok()?;
         if registry.contains_key(key) {
-            return true;
+            return None;
         }
-        drop(registry);
-
-        let mut issued = match self.issued_handles.lock() {
-            Ok(issued) => issued,
-            Err(_) => return true,
+        let retained = {
+            let mut issued = self.issued_handles.lock().ok()?;
+            Self::prune_issued_handles_locked(&mut issued, key)
         };
-        Self::prune_issued_handles_locked(&mut issued, key)
+        if retained {
+            return None;
+        }
+        let closed = self.sweep_fence.close(key)?;
+        drop(registry);
+        let result = f();
+        drop(closed);
+        Some(result)
     }
 
     /// Returns the keys of all currently loaded windows.

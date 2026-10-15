@@ -456,6 +456,7 @@ pub(super) fn load_match_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
     space_id: &str,
+    now: u64,
 ) -> Result<Vec<VoiceMatchCandidate>> {
     let mut candidates = Vec::new();
     for subject in active_print_subjects(store, rtxn)? {
@@ -465,6 +466,11 @@ pub(super) fn load_match_candidates(
         if record.space.space_id != space_id {
             // A print pinned to another space is simply not a candidate here;
             // it is never compared and never scored low.
+            continue;
+        }
+        if record.delete_after.is_some_and(|deadline| deadline <= now) {
+            // Past its retention deadline the print is owed a hard delete;
+            // until the prune lands it recognizes no one.
             continue;
         }
         candidates.push(VoiceMatchCandidate {
