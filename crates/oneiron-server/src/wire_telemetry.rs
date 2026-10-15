@@ -136,7 +136,7 @@ pub struct WireLimitQuestion {
 /// the window; the first is logged at once, and the question is kept on this
 /// server's vault at the next observation tick, so asking never waits on
 /// storage. A question waits until its write succeeds, across later windows
-/// too, but a row holds at most [`PENDING_WINDOWS`] of them, so a sink no
+/// too, but a row holds at most eight of them (`PENDING_WINDOWS`), so a sink no
 /// vault keeps (the embedder endpoint's) stays bounded.
 #[derive(Default)]
 pub struct LimitQuestions {
