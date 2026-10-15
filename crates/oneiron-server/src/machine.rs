@@ -56,6 +56,45 @@ pub(crate) fn open_file_limit() -> Option<u64> {
     }
 }
 
+/// The most descriptors serving raises its soft open-file limit to: hard
+/// limits are often far higher (524,288 on many Linux hosts; unlimited, as
+/// macOS reports it).
+const OPEN_FILES_WANTED: u64 = 65_536;
+
+/// Raises this process's soft open-file limit to its hard limit, at most to
+/// [`OPEN_FILES_WANTED`], and answers the limit it then holds. A raise the
+/// platform refuses keeps the limit there was, and says so.
+pub(crate) fn raise_open_file_limit() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } == 0 {
+            let wanted = limit.rlim_max.min(OPEN_FILES_WANTED);
+            if limit.rlim_cur < wanted {
+                let raised = libc::rlimit {
+                    rlim_cur: wanted,
+                    rlim_max: limit.rlim_max,
+                };
+                // SAFETY: `setrlimit` reads the struct on the stack and nothing else.
+                let refused = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raw const raised) };
+                if refused != 0 {
+                    tracing::warn!(
+                        kind = "open_file_limit",
+                        held = limit.rlim_cur,
+                        wanted,
+                        "the open-file limit was not raised; transfers are bounded by the one held"
+                    );
+                }
+            }
+        }
+    }
+    open_file_limit()
+}
+
 /// Bytes an unprivileged writer may still use on the filesystem holding
 /// `path`.
 pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {

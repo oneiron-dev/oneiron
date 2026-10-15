@@ -14,6 +14,7 @@ mod lifecycle;
 mod oid;
 mod pointer;
 mod policy;
+mod read_room;
 mod scanner;
 mod store;
 mod upload;
@@ -26,6 +27,7 @@ pub use self::pointer::{LfsPointerIntent, LfsPushedPointer};
 pub use self::policy::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsAssetClass, LfsPathPolicy,
 };
+pub use self::read_room::LfsReadRoom;
 pub use self::store::{
     LFS_BASIC_TRANSFER, LFS_JSON_MEDIA_TYPE, LfsPutOutcome, VAULT_LFS_ASSET_ID_DOMAIN,
     VAULT_LFS_REPO_ID_DOMAIN, VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation,

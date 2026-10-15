@@ -175,6 +175,12 @@ pub enum CodeError {
     /// was admitted; the push may be retried.
     #[error("git repository is busy with another writer")]
     GitHttpRepositoryBusy,
+    /// A check that a published ref's LFS objects are readable waited for
+    /// the host's room to read one whole manifest past its deadline. Nothing
+    /// was decided: the publication stays as it was, and the call may be
+    /// retried.
+    #[error("no room to read an lfs manifest came within the wait")]
+    LfsReadRoomWaitedOut,
     /// The credential door refused a push inside the quarantine window
     /// (ONE-1908). The refs never moved and the objects never became
     /// reachable. The reason names paths and detector codes only — never a
@@ -245,6 +251,7 @@ impl CodeError {
             Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
             Self::GitHttpExchangeIdle => ErrorKind::GitHttpExchangeIdle,
             Self::GitHttpRepositoryBusy => ErrorKind::GitHttpRepositoryBusy,
+            Self::LfsReadRoomWaitedOut => ErrorKind::LfsReadRoomWaitedOut,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
             Self::VaultRead(_) => ErrorKind::VaultRead,

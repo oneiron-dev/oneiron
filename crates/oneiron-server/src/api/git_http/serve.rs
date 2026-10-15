@@ -252,6 +252,11 @@ pub(super) fn serve_failure(
             "another writer held the repository past limits.queue_wait_timeout_ms; nothing was received; retry"
                 .to_owned(),
         ),
+        Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::LfsReadRoomWaitedOut))) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no room to check the LFS objects came within limits.queue_wait_timeout_ms; ref effects may be partial; retry to recover"
+                .to_owned(),
+        ),
         Ok(Err(
             oneiron::Error::ConcurrentWrite(_)
             | oneiron::Error::Code(oneiron::error::CodeError::RepoMutationFailed(_)),

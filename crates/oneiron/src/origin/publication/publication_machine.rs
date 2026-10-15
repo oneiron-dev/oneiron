@@ -551,12 +551,21 @@ impl Vault {
             }
         }
         for (oid, size) in &record.required_lfs_oids {
-            if !self.has_lfs_object(*oid, *size)? {
+            // The check reads the object's whole manifest, so it first takes
+            // room for it from the host, by the row it found stored, and
+            // holds it through the check. A wait that runs out is an error
+            // and decides nothing.
+            let room = if self.has_lfs_object(*oid, *size)? {
+                self.lfs_manifest_read_room(*oid)?
+            } else {
+                None
+            };
+            let Some(_room) = room else {
                 return Ok(Some(format!(
                     "required lfs object {} at {size} bytes is not stored in this vault",
                     oid.to_hex()
                 )));
-            }
+            };
             match self.verify_lfs_object(*oid, *size) {
                 Ok(true) => {}
                 Ok(false) | Err(Error::CorruptedIndex(_)) => {

@@ -10,7 +10,7 @@ use super::paths::serve_failed;
 use super::serve::ServeSink;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWire};
 use crate::origin::lfs::lfs_repo_id;
 
@@ -82,6 +82,10 @@ pub(super) struct AdvertisedRefGate<'a> {
     emitted_ref: bool,
     projection: Option<AdvertisementProjection>,
     unresolved: bool,
+    /// The projection waited for room to check published LFS objects past
+    /// its deadline: which refs it holds cannot be told, so the exchange
+    /// fails rather than hide refs that may be whole.
+    waited_out: bool,
 }
 
 impl<'a> AdvertisedRefGate<'a> {
@@ -103,6 +107,7 @@ impl<'a> AdvertisedRefGate<'a> {
             emitted_ref: false,
             projection: None,
             unresolved: false,
+            waited_out: false,
         }
     }
 
@@ -163,7 +168,11 @@ impl<'a> AdvertisedRefGate<'a> {
         if self.capabilities.is_none() {
             self.capabilities = capabilities.map(<[u8]>::to_vec);
         }
-        if !self.keeps_advertised_ref(oid, name) {
+        let keeps = self.keeps_advertised_ref(oid, name);
+        if self.waited_out {
+            return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+        }
+        if !keeps {
             return Ok(());
         }
         let mut payload = Vec::with_capacity(line.len());
@@ -263,7 +272,10 @@ impl<'a> AdvertisedRefGate<'a> {
             self.wait_for_repository,
         ) {
             Ok(projection) => self.projection = Some(projection),
-            Err(_) => self.unresolved = true,
+            Err(error) => {
+                self.unresolved = true;
+                self.waited_out = matches!(error, Error::Code(CodeError::LfsReadRoomWaitedOut));
+            }
         }
     }
 

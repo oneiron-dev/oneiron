@@ -11,9 +11,12 @@
 //! Lock order, where a line sits beside the LFS transfer permits: a read (a
 //! chunk exchange, a download, a verify) takes its bytes on the reads line,
 //! then its transfer permit; an upload takes its transfer permit, then, once
-//! its body is spooled, its bytes on the installs line. A read waiting for a
-//! permit holds only bytes no upload waits for, and an install in progress
-//! waits on no line, so neither wait closes a cycle.
+//! its body is spooled, its bytes on the installs line. A git exchange that
+//! checks its published refs' LFS objects takes its git permit, then perhaps
+//! the repository, then each manifest's bytes on the reads line. A read
+//! waiting for its transfer permit holds bytes, but no holder of a transfer
+//! permit waits for a git permit, a repository or the reads line, and an
+//! install in progress waits on no line, so no wait closes a cycle.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};

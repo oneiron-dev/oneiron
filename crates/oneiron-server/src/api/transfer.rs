@@ -9,6 +9,7 @@
 //! process or its spool for as long as the socket stays open. A transfer that
 //! keeps moving, however slowly, is never cut.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -71,10 +72,13 @@ pub(super) type ReadHold = (HeldBytes, Permit);
 /// files, the listener, the runtime's own), counted generously.
 pub(crate) const OWN_DESCRIPTORS: u64 = 256;
 
-/// Descriptors one git exchange may hold at its peak: both ends of its
-/// child's three pipes and of the exec-error channel while the child starts,
-/// and a push's repository lock file.
-pub(crate) const GIT_DESCRIPTORS: u64 = 9;
+/// Descriptors one git exchange may hold at its peak, counted generously:
+/// its backend's three pipes, the repository lock file, and, while the
+/// backend still writes, a git child the exchange reads through (an
+/// advertisement's object checks, a push's door) with its three pipes open
+/// as the next one starts, both ends of that one's three pipes and of its
+/// exec-error channel.
+pub(crate) const GIT_DESCRIPTORS: u64 = 16;
 
 /// Descriptors one LFS transfer holds: an upload's spool.
 const LFS_DESCRIPTORS: u64 = 1;
@@ -92,8 +96,10 @@ pub(crate) struct Transfers {
     /// LFS reads' room in memory, half the memory row: a chunk exchange's
     /// [`LFS_MEMORY_ROOM`], or what a download's or a verify's manifest
     /// takes ([`Self::read_room`]). A read takes it before its transfer
-    /// permit (the lock order [`crate::byte_line`] names).
-    lfs_reads: ByteLine,
+    /// permit (the lock order [`crate::byte_line`] names). The origin's
+    /// checks that published refs' LFS objects are readable take theirs on
+    /// it too ([`OriginReads`]).
+    lfs_reads: Arc<ByteLine>,
     /// Uploads' room in memory to install, the other half (by
     /// `git_lfs::streaming::install_room`). A worker takes it once its body
     /// is spooled, holding its transfer permit, so it is held only for
@@ -127,7 +133,15 @@ impl Transfers {
     ) -> Self {
         let wait = limits.queue_wait();
         let half = usize::try_from(limits.lfs_memory_bytes / 2).unwrap_or(usize::MAX);
-        let (git, lfs) = descriptor_bounds(limits, crate::machine::open_file_limit());
+        let open_files = crate::machine::raise_open_file_limit();
+        let (git, lfs) = descriptor_bounds(limits, open_files);
+        tracing::info!(
+            kind = "transfer_descriptor_room",
+            open_files = ?open_files,
+            git_exchanges = git,
+            lfs_transfers = lfs,
+            "transfers are bounded by the open-file limit the process holds"
+        );
         if git < limits.git_exchanges || lfs < limits.lfs_transfers {
             tracing::warn!(
                 kind = "transfer_descriptor_room",
@@ -136,11 +150,13 @@ impl Transfers {
                 "the open-file limit leaves room for fewer transfers than their rows; past it they queue"
             );
         }
+        let lfs_reads = Arc::new(ByteLine::new(LimitRow::LfsMemoryBytes, half));
+        OriginReads::lend(vault, &lfs_reads, &questions, wait);
         Self {
             git: Admission::new(LimitRow::GitExchanges, Arc::clone(&questions), git, wait),
             pushes: Mutex::default(),
             lfs: Admission::new(LimitRow::LfsTransfers, Arc::clone(&questions), lfs, wait),
-            lfs_reads: ByteLine::new(LimitRow::LfsMemoryBytes, half),
+            lfs_reads,
             lfs_installs: Arc::new(ByteLine::new(LimitRow::LfsMemoryBytes, half)),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
@@ -254,10 +270,7 @@ impl Transfers {
         vault: &oneiron::Vault,
         oid: oneiron::origin::lfs::LfsOid,
     ) -> oneiron::Result<Option<u64>> {
-        Ok(vault.lfs_manifest_row_bytes(oid)?.map(|row| {
-            row.saturating_mul(MANIFEST_COPIES)
-                .saturating_add(READ_ROOM)
-        }))
+        Ok(vault.lfs_manifest_row_bytes(oid)?.map(manifest_room))
     }
 
     /// The line an upload's worker takes its install room on, once its body
@@ -321,6 +334,58 @@ fn descriptor_bounds(limits: &LimitsConfig, open_files: Option<u64>) -> (usize, 
         bound(limits.git_exchanges, GIT_DESCRIPTORS),
         bound(limits.lfs_transfers, LFS_DESCRIPTORS),
     )
+}
+
+/// The room reading a whole manifest whose row is `row` bytes takes: the row
+/// as many times as it is copied at once, and the chunk and pieces beside it.
+fn manifest_room(row: u64) -> u64 {
+    row.saturating_mul(MANIFEST_COPIES)
+        .saturating_add(READ_ROOM)
+}
+
+/// The reads line, lent to the origin's checks that published refs' LFS
+/// objects are readable: each whole manifest they read waits for room on it
+/// as a download's does. They run on git exchange workers, which hold their
+/// permit and may hold the repository, so the lock order is git permit,
+/// repository, reads line; no read holding room waits for either.
+struct OriginReads {
+    reads: Arc<ByteLine>,
+    questions: Arc<LimitQuestions>,
+    wait: Duration,
+    runtime: Handle,
+}
+
+impl OriginReads {
+    fn lend(
+        vault: &oneiron::Vault,
+        reads: &Arc<ByteLine>,
+        questions: &Arc<LimitQuestions>,
+        wait: Duration,
+    ) {
+        // Every serve path builds its server on the runtime that serves it.
+        let Ok(runtime) = Handle::try_current() else {
+            tracing::warn!(
+                kind = "lfs_read_room",
+                "transfers built off a runtime lend the origin no room for LFS reads"
+            );
+            return;
+        };
+        vault.set_lfs_read_room(Arc::new(Self {
+            reads: Arc::clone(reads),
+            questions: Arc::clone(questions),
+            wait,
+            runtime,
+        }));
+    }
+}
+
+impl oneiron::origin::lfs::LfsReadRoom for OriginReads {
+    fn hold(&self, row_bytes: u64) -> Option<Box<dyn Any + Send>> {
+        let bytes = usize::try_from(manifest_room(row_bytes)).unwrap_or(usize::MAX);
+        self.runtime
+            .block_on(self.reads.reserve_alone(bytes, self.wait, &self.questions))
+            .map(|held| Box::new(held) as Box<dyn Any + Send>)
+    }
 }
 
 /// Room an upload in flight holds against the LFS quota.

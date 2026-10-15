@@ -123,14 +123,19 @@ disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads s
 Only the machine's own floors and the anonymous surface hold work back. Past
 `max_connections` the server stops accepting, so new sockets wait in the
 kernel's backlog; raising the open-file limit (`LimitNOFILE=`) raises the
-default. The descriptors the sockets leave hold the transfer rows too: half
-of what is left past the server's own (256) bounds git exchanges at nine
-descriptors each (a child's pipes while it starts, and a push's lock), and
-the other half LFS transfers at one each, so a 1,024-descriptor limit runs 14
-git exchanges at once and queues the rest; a log line
-(`transfer_descriptor_room`) says so at start. LFS transfers hold memory
-within `lfs_memory_bytes`. Reads take room on one half before they take a
-transfer permit: a chunk exchange 128 MiB, and 256 bytes for each byte its
+default. Serving raises its soft open-file limit to the hard one, at most
+65,536 (a refused raise keeps the limit there was, and logs it). The
+descriptors the sockets leave hold the transfer rows too: half of what is
+left past the server's own (256) bounds git exchanges at sixteen
+descriptors each (its backend's pipes, a push's lock, and a git child it
+reads through while the next one starts), and the other half LFS transfers
+at one each, so a 1,024-descriptor limit runs 8 git exchanges at once, and
+65,536 with half for sockets runs 1,016; past them they queue. A log line
+(`transfer_descriptor_room`) gives the limit held and the bounds at start.
+LFS transfers hold memory within `lfs_memory_bytes`. Reads take room on one
+half before they take a transfer permit (and so does a git exchange's
+check that its published refs' LFS objects are readable, for each manifest
+it reads): a chunk exchange 128 MiB, and 256 bytes for each byte its
 request declares, which it decodes; a download or a verify four times its
 manifest's stored row, and 1 MiB, for as long as it streams. An upload takes
 room on the other half once its body is spooled: 256 bytes for each byte of
