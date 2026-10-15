@@ -61,10 +61,9 @@ impl Vault {
     // contract suite reaches only these methods.
     // -----------------------------------------------------------------
 
-    // Read/write/list helpers intentionally remain behind `feature = "sync"`
-    // instead of `cfg(test)` because the sync bridge regression suite is an
-    // integration test crate. Production bridge code still uses direct
-    // transactional `sync_state` access when multiple keys must update
+    // Read/write/list helpers intentionally remain behind `feature = "sync"` instead of `cfg(test)`
+    // because the sync bridge regression suite is an integration test crate. Production bridge code
+    // still uses direct transactional `sync_state` access when multiple keys must update
     // atomically.
 
     // ─── Tree Query API ───────────────────────────────────────
@@ -544,6 +543,7 @@ impl Vault {
             conversation_presence: Default::default(),
             message_streams: Default::default(),
             live_rows: Default::default(),
+            world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             housekeeping: Default::default(),
             #[cfg(feature = "sync")]
