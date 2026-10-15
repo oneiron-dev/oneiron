@@ -674,7 +674,7 @@ fn a_device_only_row_rides_in_no_snapshot_root() {
         "fixture: Loro roots the snapshot before the removal"
     );
     let manager = Arc::new(crate::sync::WindowManager::new(
-        vault.clone(),
+        vault,
         Arc::new(Materializer::new()),
         "test",
     ));
