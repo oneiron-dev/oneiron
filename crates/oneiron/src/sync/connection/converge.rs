@@ -37,22 +37,53 @@ impl SyncConnection {
         } else {
             ConvergenceSession::from_queued_with_force(queued, force_resync)
         };
+        if !self
+            .confirm_rounds(write, read, client, event_tx, &mut session, false)
+            .await?
+        {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Convergence not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds — \
+                 forcing re-bootstrap"
+            )));
+            // The windows still behind are fetched whole: reloading their durable state
+            // would only stall them again.
+            let mut refetch = force_resync.clone();
+            refetch.extend(session.pending.iter().cloned());
+            return self
+                .re_bootstrap(write, read, client, event_tx, &refetch)
+                .await;
+        }
+        // The ONLY queue-clear on the convergence path. Every window
+        // is VV-confirmed here, so the CONFIRMED variant applies: it
+        // also removes delete-bearing rows + their `d:` markers
+        // (ONE-1135). If it fails, the rows are replayed (idempotent
+        // Loro import) on the next reconnect — retention is the
+        // fail-closed side.
+        if let Err(e) = self.queue.clear_through_confirmed(session.max_seq) {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Failed to clear converged queue: {e}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// VV rounds over the session's pending windows: `true` once all of them
+    /// confirm, `false` when the round budget runs out first.
+    async fn confirm_rounds(
+        &self,
+        write: &mut WsSink,
+        read: &mut WsSource,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        session: &mut ConvergenceSession,
+        strict: bool,
+    ) -> Result<bool, String> {
         loop {
             let frames = session
                 .begin_round(client)
                 .map_err(|e| format!("Convergence round failed: {e}"))?;
             let Some(frames) = frames else {
-                let _ = event_tx.send(SyncEvent::Error(format!(
-                    "Convergence not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds — \
-                     forcing re-bootstrap"
-                )));
-                // The windows still behind are fetched whole: reloading their durable state
-                // would only stall them again.
-                let mut refetch = force_resync.clone();
-                refetch.extend(session.pending.iter().cloned());
-                return self
-                    .re_bootstrap(write, read, client, event_tx, &refetch)
-                    .await;
+                return Ok(false);
             };
             for frame in frames {
                 write
@@ -60,22 +91,18 @@ impl SyncConnection {
                     .await
                     .map_err(|e| format!("Convergence send failed: {e}"))?;
             }
-            self.pump_server_frames(read, write, client, event_tx, PumpBudget::standard())
-                .await?;
+            self.pump_server_frames(
+                read,
+                write,
+                client,
+                event_tx,
+                PumpBudget::standard(),
+                strict,
+            )
+            .await?;
             session.note_progress(client);
             if session.all_converged() {
-                // The ONLY queue-clear on the convergence path. Every window
-                // is VV-confirmed here, so the CONFIRMED variant applies: it
-                // also removes delete-bearing rows + their `d:` markers
-                // (ONE-1135). If it fails, the rows are replayed (idempotent
-                // Loro import) on the next reconnect — retention is the
-                // fail-closed side.
-                if let Err(e) = self.queue.clear_through_confirmed(session.max_seq) {
-                    let _ = event_tx.send(SyncEvent::Error(format!(
-                        "Failed to clear converged queue: {e}"
-                    )));
-                }
-                return Ok(());
+                return Ok(true);
             }
         }
     }
@@ -101,10 +128,36 @@ impl SyncConnection {
                 .map_err(|e| format!("Re-bootstrap send failed: {e}"))?;
         }
         let received = self
-            .pump_server_frames(read, write, client, event_tx, PumpBudget::standard())
+            .pump_server_frames(read, write, client, event_tx, PumpBudget::standard(), true)
             .await?;
         if received == 0 {
             return Err("Re-bootstrap sync timeout".to_string());
+        }
+        // F25 H17/H21: a reply proves nothing about a given window. The delete
+        // rows the queue clear kept are sent again, and every forced or
+        // replayed window must be VV-confirmed against this re-bootstrap's
+        // own server witness before the caller clears `fr:w:` or says Synced.
+        let kept = self.queue.drain_updates().map_err(|e| format!("{e}"))?;
+        let sent = self
+            .replay_queued_updates(write, client, event_tx, kept)
+            .await?;
+        let mut session = ConvergenceSession::confirming(&sent, force_resync);
+        session.note_progress(client);
+        if !session.all_converged()
+            && !self
+                .confirm_rounds(write, read, client, event_tx, &mut session, true)
+                .await?
+        {
+            return Err(format!(
+                "Re-bootstrap not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds"
+            ));
+        }
+        if !sent.is_empty()
+            && let Err(e) = self.queue.clear_through_confirmed(session.max_seq)
+        {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Failed to clear converged queue: {e}"
+            )));
         }
         Ok(())
     }
@@ -162,7 +215,7 @@ impl SyncConnection {
     /// sending any produced responses. Returns the number of binary frames
     /// processed. Protocol errors are surfaced as events, not failures —
     /// fail-closed for the queue: an unconfirmed window simply stays
-    /// unconfirmed.
+    /// unconfirmed. A `strict` pump (re-bootstrap) fails on the first one.
     async fn pump_server_frames(
         &self,
         read: &mut WsSource,
@@ -170,6 +223,7 @@ impl SyncConnection {
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
         budget: PumpBudget,
+        strict: bool,
     ) -> Result<usize, String> {
         let mut received = 0usize;
         let mut wait = budget.first_frame;
@@ -195,6 +249,7 @@ impl SyncConnection {
                                     .map_err(|e| format!("Send response failed: {e}"))?;
                             }
                         }
+                        Err(e) if strict => return Err(format!("Protocol error: {e}")),
                         Err(e) => {
                             let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
                         }

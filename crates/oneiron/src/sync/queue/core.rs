@@ -57,7 +57,11 @@ impl SyncQueue {
     /// [`clear_through_confirmed`](Self::clear_through_confirmed) (the
     /// VV-confirmed path, M4-12) removes them.
     #[cfg(test)]
-    pub(super) fn push_delete_bearing(&self, window_key: &str, update_bytes: &[u8]) -> Result<u64> {
+    pub(in crate::sync) fn push_delete_bearing(
+        &self,
+        window_key: &str,
+        update_bytes: &[u8],
+    ) -> Result<u64> {
         let update = DeleteBearingUpdate::for_test(update_bytes.to_vec());
         let mut wtxn = self.vault.store.env.write_txn()?;
         let seq = push_delete_bearing_in_txn(&self.vault, &mut wtxn, window_key, &update)?;

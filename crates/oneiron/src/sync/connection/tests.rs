@@ -114,10 +114,13 @@ fn window_doc() -> LoroDoc {
 /// per window, answering SyncStep1/SyncStep2 the same way the production
 /// peer does. `forget_window` simulates the lost-confirmation failure
 /// mode the stub had no defense against: inbound UPDATE frames for that window
-/// are silently dropped, never imported.
+/// are silently dropped, never imported. `garble_window` answers that
+/// window's VV request with a frame of an unknown tag and its replacement
+/// request with nothing.
 struct FakeServer {
     docs: HashMap<String, LoroDoc>,
     forget_window: Option<String>,
+    garble_window: Option<String>,
 }
 
 impl FakeServer {
@@ -125,6 +128,7 @@ impl FakeServer {
         Self {
             docs: HashMap::new(),
             forget_window: None,
+            garble_window: None,
         }
     }
 
@@ -139,6 +143,12 @@ impl FakeServer {
                 let (key, sub_tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
                 let key = key.to_string();
                 let forgets = self.forget_window.as_deref() == Some(key.as_str());
+                if self.garble_window.as_deref() == Some(key.as_str()) {
+                    return match sub_tag {
+                        window_sub_tags::VV_REQUEST => vec![vec![0xEE]],
+                        _ => Vec::new(),
+                    };
+                }
                 let doc = self.doc(&key);
                 match sub_tag {
                     window_sub_tags::UPDATE => {
@@ -502,6 +512,102 @@ async fn full_resync_marker_retained_when_rebootstrap_errors() {
         vault.sync_state_get(&marker_key).unwrap().as_deref(),
         Some([1u8].as_slice()),
         "fr:w marker must remain set so the next connect retries"
+    );
+}
+
+/// One `connect_and_sync` against `server`, as the forced-window tests run it.
+/// The queue lives in the vault, so rows seeded through another connection
+/// replay here.
+async fn connect_to_fake(
+    manager: &Arc<WindowManager>,
+    server: FakeServer,
+) -> (SyncConnection, Result<(), String>) {
+    let (server_url, server_task) =
+        spawn_fake_sync_server(server, None, Arc::new(AtomicUsize::new(0))).await;
+    let conn = SyncConnection::new(
+        Arc::clone(manager),
+        ConnectionConfig {
+            client_config: SyncClientConfig {
+                server_url,
+                residence_mode: crate::sync::SyncResidenceMode::All,
+                ..Default::default()
+            },
+            auto_reconnect: false,
+        },
+    )
+    .unwrap();
+    let (mut client, _rx) = SyncClient::new(Arc::clone(manager), full_client_config()).unwrap();
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let result = conn
+        .connect_and_sync(&mut client, &event_tx)
+        .await
+        .map(drop);
+    server_task.abort();
+    (conn, result)
+}
+
+/// F25 H21: a protocol error while the forced window re-bootstraps fails the
+/// connect and keeps `fr:w:`. Before, the bad frame still counted as a reply,
+/// so the re-bootstrap returned Ok and the marker cleared unsynced.
+#[tokio::test]
+async fn full_resync_marker_retained_when_rebootstrap_reply_is_malformed() {
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let marker_key = format!("fr:w:{FULL_RESYNC_TEST_WINDOW}");
+    vault.sync_state_put(&marker_key, &[1u8]).unwrap();
+    let mut server = FakeServer::new();
+    server.garble_window = Some(FULL_RESYNC_TEST_WINDOW.to_string());
+
+    let (_conn, result) = connect_to_fake(&manager, server).await;
+
+    assert!(
+        result.is_err(),
+        "a malformed reply during the forced re-bootstrap must fail the connect"
+    );
+    assert_eq!(
+        vault.sync_state_get(&marker_key).unwrap().as_deref(),
+        Some([1u8].as_slice()),
+        "fr:w marker must remain set so the next connect retries"
+    );
+}
+
+/// F25 H17: a delete row the server never confirms survives the convergence
+/// fallback, and the connect that ran it does not end Synced. Before, the
+/// re-bootstrap returned Ok on any reply without sending the kept row again.
+#[tokio::test]
+async fn unconfirmed_delete_row_fails_the_rebootstrap_connect() {
+    let manager = test_manager();
+    let seeder = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
+    let writer = window_doc();
+    writer
+        .get_map("tombstones")
+        .insert("victim-entity", b"t".as_slice())
+        .unwrap();
+    writer.commit();
+    let seq = seeder
+        .queue()
+        .push_delete_bearing(
+            "2026-03",
+            &writer.export(ExportMode::all_updates()).unwrap(),
+        )
+        .unwrap();
+    let mut server = FakeServer::new();
+    server.forget_window = Some("2026-03".to_string());
+
+    drop(seeder);
+    let (conn, result) = connect_to_fake(&manager, server).await;
+
+    match result {
+        Ok(()) => panic!("a re-bootstrap with an unconfirmed delete must not end Synced"),
+        Err(e) => assert!(e.contains("Re-bootstrap not confirmed"), "{e}"),
+    }
+    assert!(
+        conn.queue()
+            .drain_updates()
+            .unwrap()
+            .iter()
+            .any(|update| update.seq == seq),
+        "the unconfirmed delete row stays queued for the next connect"
     );
 }
 

@@ -370,49 +370,9 @@ impl SyncConnection {
                 queued_updates = queued.len(),
                 "replaying queued sync updates"
             );
-            let mut sent = Vec::with_capacity(queued.len());
-            for update in queued {
-                // Mirror the queued ops into the LOCAL window doc first:
-                // convergence is confirmed by VV equality with the server,
-                // which only vouches for ops the local doc knows about
-                // (ONE-1128). Corrupt bytes cannot be confirmed — surface
-                // loudly and still replay them; the server-side import is
-                // the last chance to recover the ops.
-                if let Err(e) = client.import_queued_update(&update.window_key, &update.encoded) {
-                    let _ = event_tx.send(SyncEvent::Error(format!(
-                        "Queued update import failed (window {}, seq {}): {e}",
-                        update.window_key, update.seq
-                    )));
-                }
-                // Bytes queued while a world was portable stay here once it
-                // is flagged device-only; the window's next export reads the
-                // flag again. Bytes that cannot be read in full keep their
-                // row and every later one queued: nothing past them is sent,
-                // so no clear reaches them.
-                match client.update_verdict(&update.window_key, &update.encoded) {
-                    UpdateVerdict::Portable => {}
-                    UpdateVerdict::Withheld => continue,
-                    UpdateVerdict::Uninspectable => break,
-                }
-                // Re-encode as WindowSync wire message
-                let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
-                {
-                    residence_update_frame(update.seq, &update.window_key, &update.encoded)
-                } else {
-                    transport::encode_window_sync(
-                        &update.window_key,
-                        window_sub_tags::UPDATE,
-                        &update.encoded,
-                    )
-                    .into_result()
-                }
-                .map_err(|e| format!("Queue replay encode failed: {e}"))?;
-                write
-                    .send(Message::Binary(msg.into()))
-                    .await
-                    .map_err(|e| format!("Queue replay failed: {e}"))?;
-                sent.push(update);
-            }
+            let sent = self
+                .replay_queued_updates(&mut write, client, event_tx, queued)
+                .await?;
 
             // ARCH-0023b Fig. 2 convergence dance. Any error here leaves the
             // queue intact (fail-closed) and surfaces as a connection failure.
@@ -514,6 +474,61 @@ impl SyncConnection {
         })
         .await
         .map_err(|_| "home residence acknowledgment timed out".to_string())?
+    }
+
+    /// Sends queued rows the way Phase 3 replays them, importing each into the
+    /// local window doc first. Returns the rows sent; a row the device-only
+    /// verdict withholds is skipped, and nothing past an unjudged row is sent.
+    pub(super) async fn replay_queued_updates(
+        &self,
+        write: &mut WsSink,
+        client: &mut SyncClient,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        queued: Vec<QueuedUpdate>,
+    ) -> Result<Vec<QueuedUpdate>, String> {
+        let mut sent = Vec::with_capacity(queued.len());
+        for update in queued {
+            // Mirror the queued ops into the LOCAL window doc first:
+            // convergence is confirmed by VV equality with the server,
+            // which only vouches for ops the local doc knows about
+            // (ONE-1128). Corrupt bytes cannot be confirmed — surface
+            // loudly and still replay them; the server-side import is
+            // the last chance to recover the ops.
+            if let Err(e) = client.import_queued_update(&update.window_key, &update.encoded) {
+                let _ = event_tx.send(SyncEvent::Error(format!(
+                    "Queued update import failed (window {}, seq {}): {e}",
+                    update.window_key, update.seq
+                )));
+            }
+            // Bytes queued while a world was portable stay here once it
+            // is flagged device-only; the window's next export reads the
+            // flag again. Bytes that cannot be read in full keep their
+            // row and every later one queued: nothing past them is sent,
+            // so no clear reaches them.
+            match client.update_verdict(&update.window_key, &update.encoded) {
+                UpdateVerdict::Portable => {}
+                UpdateVerdict::Withheld => continue,
+                UpdateVerdict::Uninspectable => break,
+            }
+            // Re-encode as WindowSync wire message
+            let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
+                residence_update_frame(update.seq, &update.window_key, &update.encoded)
+            } else {
+                transport::encode_window_sync(
+                    &update.window_key,
+                    window_sub_tags::UPDATE,
+                    &update.encoded,
+                )
+                .into_result()
+            }
+            .map_err(|e| format!("Queue replay encode failed: {e}"))?;
+            write
+                .send(Message::Binary(msg.into()))
+                .await
+                .map_err(|e| format!("Queue replay failed: {e}"))?;
+            sent.push(update);
+        }
+        Ok(sent)
     }
 
     fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {
