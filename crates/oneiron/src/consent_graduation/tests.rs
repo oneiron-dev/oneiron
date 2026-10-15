@@ -398,9 +398,10 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
-    // Only the vault's owner shares it; the 0x25 owner the ramp doors take
-    // is an Owner member from then on.
-    let owner = owner(&vault);
+    // Only the vault's owner shares it. With no preset the sharer is no
+    // member, so 0x25, the shared vault's Owner member, is the owner whose
+    // proof the ramp doors take.
+    put_person(&vault, 0x25);
     vault
         .initialize_shared_vault(
             &crate::test_util::embedded_owner_proof(&vault),
@@ -413,6 +414,14 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
             1,
         )
         .expect("share the vault");
+    let owner = vault
+        .authenticate_owner(
+            crate::test_util::entity(0x25),
+            "principal:owner",
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("the Owner member's proof");
     let agent = put_person(&vault, 0x33);
     let project = ScopeId(crate::test_util::entity(0x34));
     let mut grant = FederationGrant::new(
