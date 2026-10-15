@@ -344,7 +344,7 @@ fn retracted_provenance_excludes_direct_and_edge_claim_links_for_person_and_owne
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
     // The owner reads as themselves too: the vault's embedded owner.
-    let person = vault.ensure_embedded_owner_actor()?;
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let peer = entity(0x82);
     for id in [person, peer] {
         vault.put_entity(

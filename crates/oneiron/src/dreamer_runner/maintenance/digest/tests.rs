@@ -152,7 +152,7 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     crate::test_util::provision_engine_machines(&vault);
     // The digest is the owner's: the asked person is the vault's owner.
-    let person = vault.ensure_embedded_owner_actor()?;
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let other = entity(0x62);
     let skill = entity(0x63);
     for id in [person, other] {

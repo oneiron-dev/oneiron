@@ -79,7 +79,7 @@ fn companion_profile_access_grant_fails_closed_on_malformed_record() -> Result<(
 fn foreign_door_clamps_live_claim_gate_and_widen_requires_allow() -> Result<()> {
     use crate::write_envelope::{ClaimCandidate, WriteActor, WriteProvenance};
     let (_tmp, vault) = temp_vault();
-    let human = vault.ensure_embedded_owner_actor()?;
+    let human = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let introducer = test_id(0x64);
     let foreign = test_id(0x65);
     for id in [human, introducer, foreign] {

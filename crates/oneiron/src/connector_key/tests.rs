@@ -2179,7 +2179,7 @@ mod foreign_owner_proof {
             &serde_json::to_string(&rows)
                 .map_err(|_| Error::InvariantViolation("test slate encoding"))?,
         )?;
-        let actor = vault.ensure_embedded_owner_actor()?;
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let own = owner(&vault, actor)?;
         let (_other_tmp, _other, foreign) =
             crate::test_util::foreign_owner_proof(actor, &actor.to_hex());
@@ -2239,7 +2239,7 @@ mod foreign_owner_proof {
             .and_then(|key| key.pending_manifest)
             .map(|pending| pending.candidate_id)
             .ok_or(Error::InvariantViolation("a staged candidate"))?;
-        let actor = vault.ensure_embedded_owner_actor()?;
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let own = owner(&vault, actor)?;
         let (_other_tmp, _other, foreign) =
             crate::test_util::foreign_owner_proof(actor, &actor.to_hex());

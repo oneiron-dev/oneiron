@@ -27,7 +27,7 @@ fn opted_out_effect() -> GateEvaluatorInput {
     effect
 }
 fn owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
-    let actor = vault.ensure_embedded_owner_actor()?;
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault.authenticate_owner(
         actor,
         &actor.to_hex(),

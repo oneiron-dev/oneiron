@@ -22,7 +22,7 @@ struct SpanFixture {
 fn span_fixture() -> Result<SpanFixture> {
     let (tmp, vault) = test_vault();
     let target = test_entity_id(12);
-    let actor_id = vault.ensure_embedded_owner_actor()?;
+    let actor_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     put_person(&vault, &target)?;
     let actor =
         crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
@@ -71,7 +71,7 @@ fn quote_fixture() -> Result<SpanFixture> {
     let tmp = tempfile::tempdir()?;
     // The production witness door supplies a canonical MESSAGE envelope.
     let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
-    let actor_id = vault.ensure_embedded_owner_actor()?;
+    let actor_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let receipt = vault
         .memory(actor_id, crate::edge::EdgeActorClass::Human)
         .witness(&WitnessTurn {

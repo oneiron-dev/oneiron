@@ -41,7 +41,7 @@ pub(super) fn park_consent_bundle_member(
 pub(super) fn consent_bundle_owner(
     vault: &crate::Vault,
 ) -> Result<crate::consent::AuthenticatedOwner> {
-    let owner_id = vault.ensure_embedded_owner_actor()?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
 }
 

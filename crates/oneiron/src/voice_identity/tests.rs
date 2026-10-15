@@ -2174,7 +2174,7 @@ fn voice_offer_nonce_requires_exact_device_confirm_and_is_single_use() -> Result
     use crate::genui::ConsentSurface;
 
     let (_tmp, vault) = temp_vault();
-    let actor = vault.ensure_embedded_owner_actor()?;
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     enroll_principal(
         &vault,
         actor,

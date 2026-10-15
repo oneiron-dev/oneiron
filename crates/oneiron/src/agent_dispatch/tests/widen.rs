@@ -14,7 +14,7 @@ fn open_board_vault() -> (tempfile::TempDir, Vault) {
 
 /// The vault's embedded owner's proof: who owns the board and lands a widen.
 fn vault_owner(vault: &Vault) -> Result<AuthenticatedOwner> {
-    let id = vault.ensure_embedded_owner_actor()?;
+    let id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
 }
 

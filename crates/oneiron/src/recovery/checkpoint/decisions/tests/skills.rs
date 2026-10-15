@@ -134,7 +134,10 @@ fn pack_vault() -> Result<(tempfile::TempDir, Vault, ForeignSkillPublisher, Enti
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
     let at = TimeRange { start: 1, end: 1 };
-    let (owner, hub) = (vault.ensure_embedded_owner_actor()?, entity(0xC6));
+    let (owner, hub) = (
+        vault.ensure_embedded_owner_actor().expect("embedded owner"),
+        entity(0xC6),
+    );
     let owner =
         vault.authenticate_owner(owner, "principal:pack-owner", true, GateDecisionId::now())?;
     let record = SkillHubRecord::new(

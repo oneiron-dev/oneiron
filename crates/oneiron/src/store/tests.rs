@@ -3645,7 +3645,7 @@ fn open_gate_retention_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn gate_retention_owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
-    let id = vault.ensure_embedded_owner_actor()?;
+    let id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault.authenticate_owner(id, "principal:gate-retention", true, GateDecisionId::now())
 }
 

@@ -1144,7 +1144,7 @@ fn receipt_retention_keeps_publish_admission_for_idempotent_replay() -> Result<(
         vault.store.append_gate_decision_in_txn(txn, &unrelated)?;
         Ok(unrelated.decision_id)
     })?;
-    let owner_id = vault.ensure_embedded_owner_actor()?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:publish-retention",
