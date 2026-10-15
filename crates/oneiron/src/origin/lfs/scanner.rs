@@ -14,48 +14,226 @@ pub(super) struct CredentialStream {
     seen_private: bool,
     dashes: usize,
     seam: Option<Seam>,
+    /// The recovery-phrase rule over the whole stream: a phrase's run of
+    /// one-word segments crosses the line breaks that end a seam's segment.
+    phrases: Option<crate::batch::secret_scan::PhraseStream>,
+    /// The blocklist over the whole stream, which matches anywhere in a
+    /// segment, the part a long one drops included.
+    blocklist: Option<crate::batch::secret_scan::BlocklistStream>,
 }
 
-/// The longest run of one segment a seam keeps on either side of an edge.
-const SEAM_MAX: usize = 1024;
+/// How much of one segment a seam reads whole, once its padding is squeezed:
+/// as much as an object the upload reads whole, so a segment up to that size
+/// is read whole however a peer cuts it.
+const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
 
-/// The write door's text rules across a feed edge. A batch scan reads each
-/// chunk alone, so a `password=` at one chunk's end and its value at the
-/// next one's start meet nowhere else: the segment an edge splits (the text
+/// How much of a run of one repeated character a seam keeps: as much as the
+/// longest token any text rule measures (a stream keeps 128 bytes of one too),
+/// so the run reads as it did.
+const RUN_KEEP: usize = 128;
+
+/// How much of a run of whitespace a seam keeps: its first two characters,
+/// which every text rule reads as it reads the whole run (the assignment
+/// rule's `export ` prefix strips only before a run of one space).
+const SPACE_KEEP: usize = 2;
+
+/// How much a segment longer than [`SEAM_MAX`] keeps of each of the places
+/// the assignment rule reads (see [`Seam::bound`]).
+const PART_KEEP: usize = SEAM_MAX / 4;
+
+/// The write door's text rules across feed edges, but for the recovery-phrase
+/// rule, which the stream reads whole. A batch scan reads each chunk alone,
+/// so a `password=` at one chunk's end and its value at the next one's start
+/// meet nowhere else: a segment an edge splits (the text
 /// between `\n`, `\r`, `,`, `;`, `{` and `}`, as the assignment rule splits
-/// it) is read whole. A segment longer than [`SEAM_MAX`] before the edge is
-/// not carried: the chunk that holds its start holds its key and value too.
+/// it) is read whole once it ends, in the chunk that ends it or at the end of
+/// the stream, so each byte is read once more at most. A peer chooses the
+/// edges, and padding must not carry a key away from its value: each run of
+/// whitespace reads as its first [`SPACE_KEEP`] characters and each run of
+/// one other character as at most [`RUN_KEEP`] of it. A segment still
+/// longer than [`SEAM_MAX`] keeps what the assignment rule reads of it, and
+/// only that rule reads it ([`Seam::bound`]); the stream reads the rules
+/// that match anywhere.
 #[derive(Default)]
 struct Seam {
+    /// A long segment's key's first [`PART_KEEP`], once its middle was
+    /// dropped.
+    head: Vec<u8>,
+    /// A long segment's key (or its end, after `head`), and its first `=` or
+    /// `:`.
+    key: Vec<u8>,
+    /// A long segment's value's first [`PART_KEEP`].
+    value: Vec<u8>,
+    /// The open segment's text since its start, or since its kept parts.
     tail: Vec<u8>,
-    overlong: bool,
+    /// Whether the open segment crossed an edge, so that no chunk holds it.
+    crossed: bool,
+    /// The last character kept or squeezed, and how long its run is.
+    run: Option<(char, usize)>,
+    /// Where in `tail` the segment's first `=` or `:` stands, until a long
+    /// segment's key takes it.
+    separator: Option<usize>,
+    /// Which part of a segment longer than [`SEAM_MAX`] `tail` holds.
+    long: Option<Part>,
+}
+
+/// The part of a long segment a seam's tail holds.
+#[derive(Clone, Copy)]
+enum Part {
+    /// The key, past its first [`PART_KEEP`].
+    Key,
+    /// The value's start, until it holds [`PART_KEEP`].
+    Value,
+    /// What follows the value's start; `true` once some of it was dropped.
+    Rest(bool),
 }
 
 impl Seam {
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        let head_end = bytes.iter().position(|byte| segment_break(*byte));
-        if !self.tail.is_empty() && !self.overlong {
-            let head = &bytes[..head_end.unwrap_or(bytes.len()).min(SEAM_MAX)];
-            let joined = [self.tail.as_slice(), head].concat();
-            crate::batch::secret_scan::scan_write_seam(&String::from_utf8_lossy(&joined))?;
-        }
-        match bytes.iter().rposition(|byte| segment_break(*byte)) {
-            Some(at) => {
-                self.tail.clear();
-                self.overlong = false;
-                self.carry(&bytes[at + 1..]);
-            }
-            None => self.carry(bytes),
-        }
+        let Some(first) = bytes.iter().position(|byte| segment_break(*byte)) else {
+            self.carry(bytes);
+            return Ok(());
+        };
+        self.carry(&bytes[..first]);
+        self.finish()?;
+        let last = bytes
+            .iter()
+            .rposition(|byte| segment_break(*byte))
+            .unwrap_or(first);
+        self.carry(&bytes[last + 1..]);
         Ok(())
     }
 
-    fn carry(&mut self, run: &[u8]) {
-        if self.overlong || self.tail.len() + run.len() > SEAM_MAX {
-            self.tail.clear();
-            self.overlong = true;
-        } else {
-            self.tail.extend_from_slice(run);
+    /// Reads the open segment if it crossed an edge, and closes it.
+    fn finish(&mut self) -> Result<()> {
+        if self.crossed {
+            let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+            let value_cut = matches!(self.long, Some(Part::Rest(true)));
+            if self.head.is_empty() && !value_cut {
+                // Nothing was dropped: the whole segment.
+                let whole = [self.key.as_slice(), &self.value, &self.tail].concat();
+                crate::batch::secret_scan::scan_write_seam(&text(&whole))?;
+            } else if let Some((_, key)) = self.key.split_last() {
+                let value = if value_cut {
+                    text(&self.value)
+                } else {
+                    text(&[self.value.as_slice(), &self.tail].concat())
+                };
+                crate::batch::secret_scan::scan_cut_seam(
+                    (!self.head.is_empty()).then(|| text(&self.head)).as_deref(),
+                    &text(key),
+                    &value,
+                    value_cut,
+                )?;
+            }
+        }
+        *self = Self::default();
+        Ok(())
+    }
+
+    fn carry(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.crossed |= !(self.head.is_empty() && self.key.is_empty() && self.tail.is_empty());
+        self.squeeze(bytes);
+        self.bound();
+    }
+
+    /// Bounds a segment longer than [`SEAM_MAX`] to what the assignment rule
+    /// reads of it: its first `=` or `:`, never dropped, [`PART_KEEP`] of
+    /// each end of its key and of its value's start, and whether more of the
+    /// value was dropped. The rest of the value is kept only while nothing of
+    /// it is dropped (as [`PART_KEEP`] of its end, for a tail is cut only once
+    /// it is twice what it keeps, so each byte moves once at most).
+    fn bound(&mut self) {
+        loop {
+            match self.long {
+                None if self.tail.len() <= SEAM_MAX => return,
+                None => {
+                    let key = self.separator.unwrap_or(self.tail.len());
+                    if key > 2 * PART_KEEP {
+                        self.keep_key_ends(key);
+                    }
+                    self.long = Some(Part::Key);
+                }
+                Some(Part::Key) => {
+                    let Some(at) = self.separator.take() else {
+                        if self.tail.len() > 2 * PART_KEEP {
+                            self.keep_key_ends(self.tail.len());
+                        }
+                        return;
+                    };
+                    // A key whose first part is kept keeps its last.
+                    let dropped = if self.head.is_empty() {
+                        0
+                    } else {
+                        at.saturating_sub(PART_KEEP)
+                    };
+                    self.tail.drain(..dropped);
+                    self.key.extend(self.tail.drain(..=at - dropped));
+                    self.long = Some(Part::Value);
+                }
+                Some(Part::Value) => {
+                    if self.tail.len() < PART_KEEP {
+                        return;
+                    }
+                    self.value.extend(self.tail.drain(..PART_KEEP));
+                    self.long = Some(Part::Rest(false));
+                }
+                Some(Part::Rest(_)) => {
+                    if self.tail.len() > 2 * PART_KEEP {
+                        self.tail.drain(..self.tail.len() - PART_KEEP);
+                        self.long = Some(Part::Rest(true));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Keeps the first [`PART_KEEP`] of a key the tail holds `key` bytes of
+    /// as its head, and its last: the middle is dropped.
+    fn keep_key_ends(&mut self, key: usize) {
+        if self.head.is_empty() {
+            self.head.extend_from_slice(&self.tail[..PART_KEEP]);
+        }
+        self.tail.drain(..key - PART_KEEP);
+        if let Some(at) = &mut self.separator {
+            *at -= key - PART_KEEP;
+        }
+    }
+
+    /// Appends `bytes` with their padding squeezed: each run of whitespace
+    /// (every character the assignment rule trims) to its first
+    /// [`SPACE_KEEP`], and each run of one other character past [`RUN_KEEP`]
+    /// to that many. Bytes that are not text (a character an edge cut in
+    /// two) stay as they are.
+    fn squeeze(&mut self, bytes: &[u8]) {
+        for chunk in bytes.utf8_chunks() {
+            for ch in chunk.valid().chars() {
+                // Whitespace of any kind runs as one.
+                let class = if ch.is_whitespace() { ' ' } else { ch };
+                let run = match self.run {
+                    Some((previous, run)) if previous == class => run + 1,
+                    _ => 1,
+                };
+                self.run = Some((class, run));
+                if run <= if class == ' ' { SPACE_KEEP } else { RUN_KEEP } {
+                    if matches!(ch, '=' | ':')
+                        && self.separator.is_none()
+                        && matches!(self.long, None | Some(Part::Key))
+                    {
+                        self.separator = Some(self.tail.len());
+                    }
+                    self.tail
+                        .extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+                }
+            }
+            if !chunk.invalid().is_empty() {
+                self.tail.extend_from_slice(chunk.invalid());
+                self.run = None;
+            }
         }
     }
 }
@@ -71,13 +249,30 @@ impl CredentialStream {
     pub(super) fn with_write_seam(on: bool) -> Self {
         Self {
             seam: on.then(Seam::default),
+            phrases: on.then(Default::default),
+            blocklist: on.then(Default::default),
             ..Self::default()
         }
+    }
+
+    /// Reads what the last edge left open: a segment that crossed an edge
+    /// and runs to the end of the stream, and the phrase rule's last run.
+    pub(super) fn finish(&mut self) -> Result<()> {
+        if let Some(phrases) = &mut self.phrases {
+            phrases.finish()?;
+        }
+        self.seam.as_mut().map_or(Ok(()), Seam::finish)
     }
 
     pub(super) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         if let Some(seam) = &mut self.seam {
             seam.feed(bytes)?;
+        }
+        if let Some(phrases) = &mut self.phrases {
+            phrases.feed(&String::from_utf8_lossy(bytes))?;
+        }
+        if let Some(blocklist) = &mut self.blocklist {
+            blocklist.feed(bytes)?;
         }
         for &byte in bytes {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
