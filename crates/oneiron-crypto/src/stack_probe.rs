@@ -11,7 +11,7 @@ const PAINT: u8 = 0xA5;
 
 /// The `span` bytes below the probe's frame after the computation returned, lowest
 /// address first.
-pub(crate) struct Below {
+pub struct Below {
     bytes: Vec<u8>,
 }
 
@@ -19,7 +19,7 @@ impl Below {
     /// How far below the probe's frame the computation wrote: the distance to the
     /// deepest byte that no longer holds the paint. Equal to the span when it ran
     /// deeper than the probe looked.
-    pub(crate) fn depth(&self) -> usize {
+    pub fn depth(&self) -> usize {
         self.bytes
             .iter()
             .position(|&b| b != PAINT)
@@ -28,7 +28,7 @@ impl Below {
 
     /// How far below the probe's frame the deepest copy of `secret` starts, if any
     /// copy is left in the region.
-    pub(crate) fn depth_of(&self, secret: &[u8]) -> Option<usize> {
+    pub fn depth_of(&self, secret: &[u8]) -> Option<usize> {
         self.bytes
             .windows(secret.len())
             .position(|w| w == secret)
@@ -40,7 +40,7 @@ impl Below {
 /// `span` must fit in the test thread's stack. `f` is called through a vtable, so it
 /// cannot be inlined into this frame: everything it does lands below it.
 #[inline(never)]
-pub(crate) fn run(span: usize, f: &mut dyn FnMut()) -> Below {
+pub fn run(span: usize, f: &mut dyn FnMut()) -> Below {
     assert!(span > 0);
     let mut bytes = vec![0u8; span];
     let out = bytes.as_mut_ptr();

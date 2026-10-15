@@ -375,7 +375,12 @@ fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
     // The fold applies a machine revision only from an owner key, a slip
     // issuer, so the admin's removal of a live machine restricts nothing
     // and waits (review round 6, Astra F1).
-    let current = fold().machine(request.machine).unwrap().profile.clone();
+    let current = fold()
+        .machine(request.machine)
+        .unwrap()
+        .head()
+        .profile
+        .clone();
     waits(admin_row(
         BOUND + 1,
         AuthorityOp::MachineProfile(MachineProfile {
@@ -448,10 +453,7 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
         let fold = host.vault.authority_fold().unwrap();
         assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
         assert!(fold.slips.mints.len() > 20 * BOUND);
-        assert!(
-            fold.machine(machine.machine)
-                .is_some_and(FoldedMachine::is_mine)
-        );
+        assert!(fold.machine(machine.machine).is_some_and(RosterHead::mine));
     });
     let next = HostSlipIssuer::from_secret(b"next host root placeholder words").unwrap();
     host.vault.re_root_host(&host.issuer, &next).unwrap();
@@ -469,10 +471,7 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
         }
         let fold = host.vault.authority_fold().unwrap();
         assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
-        assert!(
-            fold.machine(machine.machine)
-                .is_some_and(FoldedMachine::is_mine)
-        );
+        assert!(fold.machine(machine.machine).is_some_and(RosterHead::mine));
     });
 }
 
@@ -717,10 +716,7 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
                 "machine {machine}: {:?}",
                 fold.issues
             );
-            assert!(
-                fold.machine(witness.machine)
-                    .is_some_and(FoldedMachine::is_mine)
-            );
+            assert!(fold.machine(witness.machine).is_some_and(RosterHead::mine));
             assert_eq!(stored() - before, BOUND + 2, "machine {machine}");
             if machine {
                 seq += 1;
@@ -1696,7 +1692,12 @@ fn the_owners_rows_past_the_signer_bound_land_and_import_in_any_order() {
         .put_authority_log_entry(&next(admit(&admin)), at, 1)
         .unwrap();
     with_rows_per_signer_for_test(BOUND, || {
-        let current = fold().machine(request.machine).unwrap().profile.clone();
+        let current = fold()
+            .machine(request.machine)
+            .unwrap()
+            .head()
+            .profile
+            .clone();
         let demote = AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Owned(MachineOwnership::WorkSchool),
             revision: current.revision + 1,
@@ -1733,7 +1734,7 @@ fn the_owners_rows_past_the_signer_bound_land_and_import_in_any_order() {
             let fold = imported(&history);
             assert!(!fold.authority_log_past_bound());
             assert_eq!(
-                fold.machine(request.machine).unwrap().profile.role,
+                fold.machine(request.machine).unwrap().head().profile.role,
                 MachineRole::Owned(MachineOwnership::WorkSchool)
             );
         }
@@ -1782,6 +1783,7 @@ fn concurrent_demotions_of_one_machine_land_past_the_signer_bound() {
             .unwrap()
             .machine(request.machine)
             .unwrap()
+            .head()
             .profile
             .clone();
         let revision = |class, revision| {
@@ -1808,7 +1810,7 @@ fn concurrent_demotions_of_one_machine_land_past_the_signer_bound() {
         assert!(!fold.authority_log_past_bound());
         assert!(
             fold.machine(request.machine)
-                .is_some_and(|machine| machine.removed)
+                .is_some_and(|machine| machine.head().removed)
         );
     });
 }

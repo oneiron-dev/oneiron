@@ -21,6 +21,11 @@
 //!   fork, say): none installs its successor, and all their fences stay
 //!   closed. A handoff or conflict that a closed fence fences yields: it
 //!   installs nothing and retires nothing. The rest settle.
+//! - An owner anchor's entries, its root and its marks, rest on no roster
+//!   key, so no fence holds them, even when a roster enrolled the anchor's
+//!   public key: anyone may enrol a public key. Those are the rows the anchor
+//!   fold took, and a removal whose own proof took it through an anchor's
+//!   chain; a root the fold refused makes no row the anchor's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,6 +35,8 @@ use super::*;
 #[derive(Debug, Default)]
 pub(super) struct Retirements {
     fences: Vec<Fence>,
+    /// The entries that folded through an owner anchor's branch.
+    anchored: BTreeSet<AuthorityEntryHash>,
 }
 
 #[derive(Debug)]
@@ -84,9 +91,11 @@ impl Fence {
         &self,
         hash: &AuthorityEntryHash,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
         entries.get(hash).is_some_and(|entry| {
             !matches!(entry.op, AuthorityOp::Genesis { .. })
+                && !anchored.contains(hash)
                 && entry.vault_id == self.vault_id
                 && !self.line.contains(hash)
                 && entry_signer_keys(entry).any(|key| self.keys.contains(key))
@@ -99,11 +108,13 @@ impl Fence {
         hash: &AuthorityEntryHash,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        anchored: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
-        self.signed_outside(hash, entries)
-            || ancestors
-                .get(hash)
-                .is_some_and(|past| past.iter().any(|a| self.signed_outside(a, entries)))
+        self.signed_outside(hash, entries, anchored)
+            || ancestors.get(hash).is_some_and(|past| {
+                past.iter()
+                    .any(|a| self.signed_outside(a, entries, anchored))
+            })
     }
 }
 
@@ -128,18 +139,23 @@ impl Retirements {
         self.fences.iter().any(|fence| fence.conflict)
     }
 
-    /// Whether `hash` stands on a retired key: it, or an entry in its
-    /// ancestry, is signed by a key a closed fence holds, outside that
-    /// handoff's line. Such an entry proves nothing, restrictions included.
+    /// Whether a restriction `hash` stands on a retired key: it, or an entry
+    /// in its ancestry, is signed by a key a closed fence holds, outside that
+    /// handoff's line. Such an entry proves nothing. The rows its own proof
+    /// folded through an owner anchor's branch, `routed`, rest on no roster
+    /// key (Sol code-R2 S2-F2); a row it took through the roster is the
+    /// roster's, whatever root its branch names (Sol code-R3 S3-F1).
     pub(super) fn excludes(
         &self,
         hash: &AuthorityEntryHash,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        routed: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
+        let anchored: BTreeSet<_> = self.anchored.union(routed).copied().collect();
         self.fences
             .iter()
-            .any(|fence| fence.excludes(hash, entries, ancestors))
+            .any(|fence| fence.excludes(hash, entries, ancestors, &anchored))
     }
 }
 
@@ -232,6 +248,11 @@ fn close_fences(
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
     let gone = with_descendants(states, refused, ancestors);
+    let anchored: BTreeSet<_> = states
+        .iter()
+        .filter(|(hash, state)| state.anchor_entries.contains(*hash))
+        .map(|(hash, _)| *hash)
+        .collect();
     let fences: Vec<Fence> = states
         .keys()
         .filter(|hash| {
@@ -248,7 +269,7 @@ fn close_fences(
         .map(|fence| {
             fences
                 .iter()
-                .map(|other| fence.excludes(&other.handoff, entries, ancestors))
+                .map(|other| fence.excludes(&other.handoff, entries, ancestors, &anchored))
                 .collect()
         })
         .collect();
@@ -313,12 +334,13 @@ fn close_fences(
                 })
             })
             .collect(),
+        anchored,
     };
     for hash in states.keys().filter(|hash| !gone.contains(*hash)) {
         if retirements
             .fences
             .iter()
-            .any(|fence| fence.signed_outside(hash, entries))
+            .any(|fence| fence.signed_outside(hash, entries, &retirements.anchored))
         {
             refused.insert(*hash, AuthorityFoldIssue::RetiredSigner(*hash));
         }
@@ -329,6 +351,20 @@ fn close_fences(
             .or_insert(AuthorityFoldIssue::UnsettledHandoff(handoff));
     }
     retirements
+}
+
+/// Whether a door reads `entry` as an owner anchor's row, which rests on no
+/// roster key: a root record its own anchor signs, or a machine mark signed
+/// alone by a key `anchor` names as the anchor of a root.
+fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
+    entry.cosigns.is_empty()
+        && match (&entry.op, &entry.signer.public_key) {
+            (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {
+                *key == record.anchor_key
+            }
+            (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key)) => anchor(key),
+            _ => false,
+        }
 }
 
 /// The primary signer and every co-signer of `entry`.
@@ -376,42 +412,37 @@ pub(crate) fn authority_row_resident(
 }
 
 impl AuthorityFold {
-    /// Whether a row not yet in this fold is signed, as primary or co-signer,
-    /// by a key a handoff retired. Such a key keeps no standing: its rows that
-    /// stand are already here in a handoff's line, because a handoff folds
-    /// only once its whole ancestry does. Every door that admits signed
-    /// authority rows refuses one.
-    pub(crate) fn signed_by_retired_key(
-        &self,
-        hash: &AuthorityEntryHash,
-        entry: &AuthorityLogEntry,
-    ) -> bool {
-        !self.valid_entries.contains(hash)
-            && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key))
-    }
-
     /// Whether `entry` stands on a retired key: it, or, for a main-log row, a
     /// row in its ancestry that this fold does not hold, is signed by a key a
-    /// handoff retired.
-    /// The fold refuses such a row with its descendants, so a door refuses a
-    /// new row that descends from one, whoever signs it. `row` reads an
-    /// ancestor by hash, stored or arriving beside `entry`; the walk stops at
-    /// rows this fold holds, whose ancestry it holds too. An approval the
-    /// stale-roster window expired counts as held here: it stood in the
-    /// settled fold, so no fence refused it, though it approves nothing now.
+    /// handoff retired. Such a key keeps no standing: its rows that stand are
+    /// already here in a handoff's line, because a handoff folds only once its
+    /// whole ancestry does. The fold refuses such a row with its descendants,
+    /// so a door refuses a new row that descends from one, whoever signs it.
+    /// `row` reads an ancestor by hash, stored or arriving beside `entry`; the
+    /// walk stops at rows this fold holds, whose ancestry it holds too. An
+    /// approval the stale-roster window expired counts as held here: it stood
+    /// in the settled fold, so no fence refused it, though it approves nothing
+    /// now.
+    ///
+    /// An owner anchor's row is none (`anchor_signed`): its anchor names a
+    /// root this fold holds or one arriving beneath it, so a root and its marks
+    /// pass together on their first arrival. A held root counts on any branch:
+    /// a mark parented beside it passes here, and the fold routes it through
+    /// the roster and fences it there, so it stays inert (Wonder W2-F1).
     pub(crate) fn stands_on_retired_key(
         &self,
         hash: &AuthorityEntryHash,
         entry: &AuthorityLogEntry,
         row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
     ) -> crate::error::Result<bool> {
-        if self.signed_by_retired_key(hash, entry) {
-            return Ok(true);
-        }
         // A world's edit stands on no main-log row the fold refuses: it is
         // judged with each such row crossed (`refold_world_edits`), so only its
         // own signer counts here (Wonder P2 round 1, W4).
-        if self.retired_keys.is_empty() || super::world_privacy::side_world(&entry.op).is_some() {
+        if super::world_privacy::side_world(&entry.op).is_some() {
+            return Ok(!self.valid_entries.contains(hash)
+                && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key)));
+        }
+        if self.retired_keys.is_empty() {
             return Ok(false);
         }
         let expired: BTreeSet<&AuthorityEntryHash> = self
@@ -422,6 +453,7 @@ impl AuthorityFold {
                 _ => None,
             })
             .collect();
+        let mut arriving = vec![(*hash, entry.clone())];
         let mut seen = BTreeSet::new();
         let mut stack = entry.parent_hashes.clone();
         while let Some(parent) = stack.pop() {
@@ -434,11 +466,21 @@ impl AuthorityFold {
             let Some(ancestor) = row(&parent)? else {
                 continue;
             };
-            if self.signed_by_retired_key(&parent, &ancestor) {
-                return Ok(true);
-            }
             stack.extend(ancestor.parent_hashes.iter().copied());
+            arriving.push((parent, ancestor));
         }
-        Ok(false)
+        let anchors: BTreeSet<[u8; 32]> = arriving
+            .iter()
+            .filter_map(|(_, row)| match &row.op {
+                AuthorityOp::OwnerRoot(record) => Some(record.anchor_key),
+                _ => None,
+            })
+            .chain(self.root_anchors.keys().copied())
+            .collect();
+        Ok(arriving.iter().any(|(hash, row)| {
+            !self.valid_entries.contains(hash)
+                && !anchor_signed(row, |key| anchors.contains(key))
+                && entry_signer_keys(row).any(|key| self.retired_keys.contains(key))
+        }))
     }
 }

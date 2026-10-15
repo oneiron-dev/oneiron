@@ -335,9 +335,10 @@ impl LocalFoldContext {
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
             hosted: false,
-            machine_standing: &crate::authority::world_privacy::every_admitted_machine,
+            machine_standing: &crate::authority::machine_standing::every_chain,
             pre_handoff_entries: None,
             memory_floor_bytes: DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
+            pin: None,
         }
     }
 }
@@ -387,9 +388,13 @@ pub(super) fn single_owner_state(
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
+        root_anchors: BTreeMap::new(),
+        anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
         worlds: BTreeMap::new(),
         refused_world_edits: BTreeSet::new(),
+        world_keys: BTreeMap::new(),
+        refused_world_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
         actor_rows: BTreeSet::new(),
@@ -853,4 +858,34 @@ pub(super) fn mature_observed_widen(vault: &crate::Vault, entry: &AuthorityLogEn
         })
         .unwrap();
     now
+}
+
+/// P1's checks read a machine's roster chain.
+pub(super) trait RosterChain {
+    fn roster_chain(&self) -> &MachineRevision;
+}
+
+impl RosterChain for FoldedMachine {
+    fn roster_chain(&self) -> &MachineRevision {
+        self.roster
+            .as_ref()
+            .expect("the roster profiled this machine")
+    }
+}
+
+/// P2's single-revision machine, read from P6b's chains: the roster chain's
+/// head, and mine by it under no pin (the P2 port's mechanical test change).
+pub(super) trait RosterHead {
+    fn head(&self) -> &MachineRevision;
+    fn mine(&self) -> bool;
+}
+
+impl RosterHead for FoldedMachine {
+    fn head(&self) -> &MachineRevision {
+        self.roster.as_ref().expect("a roster chain")
+    }
+
+    fn mine(&self) -> bool {
+        self.is_mine(None)
+    }
 }
