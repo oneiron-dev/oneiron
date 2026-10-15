@@ -25,6 +25,9 @@ use crate::config::LimitsConfig;
 use crate::machine::DiskFloor;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
+/// The largest page LMDB writes in (`MAX_PAGESIZE`).
+const LARGEST_PAGE: u64 = 32 * 1024;
+
 /// The permits remotely started transfers take, and how long either side of
 /// one may wait for the other.
 pub(crate) struct Transfers {
@@ -41,18 +44,25 @@ pub(crate) struct Transfers {
     lfs_reserved: Arc<Mutex<u64>>,
     /// The vault disk's floor, and the room uploads in flight claim on it.
     pub(crate) disk: DiskFloor,
+    /// The page size the vault's object plane is stored in, which each
+    /// stored chunk rounds up to; the largest LMDB writes in when it cannot
+    /// be read.
+    lfs_page: u64,
+    /// The page size a test has the object plane look stored in.
+    #[cfg(test)]
+    shown_page: Mutex<Option<u64>>,
     pub(crate) questions: Arc<LimitQuestions>,
     pub(crate) idle: Duration,
     pub(crate) wait: Duration,
 }
 
 impl Transfers {
-    /// `vault_dir` is where the vault's spools and stored objects are
-    /// written: the disk whose floor holds.
+    /// The floor holds on the disk `vault` writes its spools and stored
+    /// objects to.
     pub(crate) fn new(
         limits: &LimitsConfig,
         questions: Arc<LimitQuestions>,
-        vault_dir: PathBuf,
+        vault: &oneiron::Vault,
     ) -> Self {
         let wait = limits.queue_wait();
         Self {
@@ -71,7 +81,13 @@ impl Transfers {
             ),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
-            disk: DiskFloor::new(vault_dir, limits.disk_reserve_bytes),
+            disk: DiskFloor::new(
+                vault.lfs_storage_dir().to_owned(),
+                limits.disk_reserve_bytes,
+            ),
+            lfs_page: vault.lfs_storage_page_size().unwrap_or(LARGEST_PAGE),
+            #[cfg(test)]
+            shown_page: Mutex::default(),
             questions,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
             wait,
@@ -113,6 +129,29 @@ impl Transfers {
             )
         };
         line.admit(principal.unwrap_or_default().to_owned()).await
+    }
+
+    /// The page size the vault's object plane is stored in.
+    pub(super) fn lfs_page(&self) -> u64 {
+        #[cfg(test)]
+        if let Some(page) = *self
+            .shown_page
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            return page;
+        }
+        self.lfs_page
+    }
+
+    /// Has the object plane look stored in `page`-byte pages, whatever the
+    /// vault's are.
+    #[cfg(test)]
+    pub(crate) fn show_page(&self, page: u64) {
+        *self
+            .shown_page
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(page);
     }
 
     /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.

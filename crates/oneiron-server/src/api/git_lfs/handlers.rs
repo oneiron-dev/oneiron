@@ -161,7 +161,8 @@ pub(crate) async fn lfs_upload(
     }
     // A declared upload writes its spool and then its stored copy.
     let floor = server.transfers.disk.clone();
-    let room = |size: u64| size.saturating_add(super::streaming::stored_copy(size));
+    let page = server.transfers.lfs_page();
+    let room = |size: u64| size.saturating_add(super::streaming::stored_copy(size, page));
     if let Some(size) = declared
         && !floor.has_room_for(room(size))
     {
@@ -198,6 +199,7 @@ pub(crate) async fn lfs_upload(
             declared,
             size_row,
             floor,
+            page,
             reservation,
             questions: Arc::clone(&server.transfers.questions),
             now: now_secs()?,

@@ -199,6 +199,13 @@ impl Vault {
         self.store.env.path()
     }
 
+    /// The page size the object plane is stored in. Each stored chunk takes
+    /// whole pages of it, so the room an object's stored copy may take on
+    /// the disk past its bytes depends on it.
+    pub fn lfs_storage_page_size(&self) -> Result<u64> {
+        self.store.page_size()
+    }
+
     /// The bytes every recorded LFS object declares, deleted ones still
     /// awaiting reclamation included: what the object plane holds on disk,
     /// before chunk sharing. A storage quota is judged against it.

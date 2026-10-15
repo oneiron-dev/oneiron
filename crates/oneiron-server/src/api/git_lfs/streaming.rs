@@ -8,7 +8,7 @@ use crate::machine::{DiskClaim, DiskFloor};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use axum::body::{Body, Bytes};
 use futures_util::stream;
-use oneiron::origin::lfs::{LFS_CHUNK_MAX, LfsOid, LfsPutOutcome};
+use oneiron::origin::lfs::{LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsOid, LfsPutOutcome};
 use oneiron::{TimeRange, Vault};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -27,15 +27,23 @@ pub(super) type UploadHold = (Permit, Arc<DiskClaim>);
 const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The room the stored copy of a `bytes` object may take on the vault's
-/// disk: its chunks, each rounded up to whole pages (an eighth more at the
-/// smallest full chunk), and the rows each chunk adds, counted generously at
-/// a quarter more; and what every object takes whatever its size, its
-/// spool's last block, its last short chunk's page, its manifest and its
-/// rows, counted at [`OBJECT_ROOM`]. Copy-on-write growth while readers hold
-/// old pages is not counted; the reserve is the margin for it.
-pub(super) fn stored_copy(bytes: u64) -> u64 {
-    bytes.saturating_add(bytes / 4).saturating_add(OBJECT_ROOM)
+/// disk, its storage written in `page`-byte pages: its chunks, every one but
+/// the last at least [`LFS_CHUNK_MIN`], each taking at most a page more than
+/// its bytes once rounded up to whole pages, and the rows each adds, counted
+/// at [`CHUNK_ROWS`]; and what every object takes whatever its size, its
+/// spool's last block, its manifest and its rows, counted at
+/// [`OBJECT_ROOM`]. Copy-on-write growth while readers hold old pages is not
+/// counted; the reserve is the margin for it.
+pub(super) fn stored_copy(bytes: u64, page: u64) -> u64 {
+    let chunks = (bytes / LFS_CHUNK_MIN as u64).saturating_add(1);
+    bytes
+        .saturating_add(chunks.saturating_mul(page.saturating_add(CHUNK_ROWS)))
+        .saturating_add(OBJECT_ROOM)
 }
+
+/// The rows one stored chunk adds, and the room they take, counted
+/// generously.
+const CHUNK_ROWS: u64 = 4 * 1024;
 
 /// What one stored object takes on the disk whatever its size.
 const OBJECT_ROOM: u64 = 64 * 1024;
@@ -47,6 +55,8 @@ pub(super) struct UploadTerms {
     /// The per-object size row: past it the upload carries on and asks.
     pub(super) size_row: u64,
     pub(super) floor: DiskFloor,
+    /// The page size the vault's object plane is stored in.
+    pub(super) page: u64,
     /// Its room in the LFS quota, grown at its end to what it came to.
     pub(super) reservation: Reservation,
     pub(super) questions: Arc<LimitQuestions>,
@@ -67,6 +77,7 @@ pub(super) async fn upload(
         declared,
         size_row,
         floor,
+        page,
         reservation,
         questions,
         now,
@@ -78,6 +89,7 @@ pub(super) async fn upload(
         body: BodyReader::new(receiver),
         vault: Arc::clone(&vault),
         floor,
+        page,
         claim: Arc::clone(&hold.1),
         reservation,
         declared,
@@ -129,6 +141,7 @@ struct FloorReader {
     body: BodyReader,
     vault: Arc<Vault>,
     floor: DiskFloor,
+    page: u64,
     claim: Arc<DiskClaim>,
     reservation: Reservation,
     declared: Option<u64>,
@@ -162,7 +175,7 @@ impl Read for FloorReader {
         // its end, once its size is known.
         let needed = if count == 0 {
             self.reservation.cover(&self.vault, self.read);
-            Some(stored_copy(self.read))
+            Some(stored_copy(self.read, self.page))
         } else if self
             .looked_at
             .is_none_or(|at| self.read - at >= FLOOR_EVERY_BYTES)
@@ -172,7 +185,7 @@ impl Read for FloorReader {
                 |declared| {
                     declared
                         .saturating_sub(written)
-                        .saturating_add(stored_copy(declared.max(self.read)))
+                        .saturating_add(stored_copy(declared.max(self.read), self.page))
                 },
             ))
         } else {
