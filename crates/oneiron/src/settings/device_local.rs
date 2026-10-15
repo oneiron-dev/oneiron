@@ -65,7 +65,7 @@ impl Vault {
             .store
             .entities
             .get(&rtxn, world.as_bytes())?
-            .and_then(|raw| EntityMetadataHeader::parse(raw).map(|header| header.entity_type));
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
         Ok(kind == Some(crate::registry::ENTITY_TYPE_WORLD))
     }
 
