@@ -28,12 +28,17 @@ const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The room the stored copy of a `bytes` object may take on the vault's
 /// disk: its chunks, each rounded up to whole pages (an eighth more at the
-/// smallest chunk), and the rows each chunk and the object add, counted
-/// generously at a quarter more. Copy-on-write growth while readers hold old
-/// pages is not counted; the reserve is the margin for it.
+/// smallest full chunk), and the rows each chunk adds, counted generously at
+/// a quarter more; and what every object takes whatever its size, its
+/// spool's last block, its last short chunk's page, its manifest and its
+/// rows, counted at [`OBJECT_ROOM`]. Copy-on-write growth while readers hold
+/// old pages is not counted; the reserve is the margin for it.
 pub(super) fn stored_copy(bytes: u64) -> u64 {
-    bytes.saturating_add(bytes / 4)
+    bytes.saturating_add(bytes / 4).saturating_add(OBJECT_ROOM)
 }
+
+/// What one stored object takes on the disk whatever its size.
+const OBJECT_ROOM: u64 = 64 * 1024;
 
 /// One upload's terms, fixed before its worker starts.
 pub(super) struct UploadTerms {

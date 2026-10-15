@@ -61,6 +61,8 @@ pub(super) struct LiveCompaction {
     /// whose run started them. A pass outlives the call that started it, so
     /// it holds a permit of its own, never the run's.
     passes: Arc<Admission<String>>,
+    /// Where a pass waits for its turn: a task, never a thread of its own.
+    runtime: tokio::runtime::Handle,
 }
 
 impl CodeModeCompaction {
@@ -158,6 +160,7 @@ impl CodeModeCompaction {
                 models.code_mode.max_runs,
                 wait,
             )),
+            runtime: tokio::runtime::Handle::current(),
         }))
     }
 
@@ -201,6 +204,7 @@ impl CodeModeCompaction {
                 Arc::new(ThreadSpawn {
                     passes: Arc::clone(&live.passes),
                     credential: credential.to_owned(),
+                    runtime: live.runtime.clone(),
                 }),
             ),
             Ok(None) => RunCompaction::off(CompactionOff::Disabled),
@@ -268,38 +272,44 @@ fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<M
     allowances
 }
 
-/// Each pass runs on its own thread; the run never waits for it. The thread
-/// takes a permit before the pass starts, waiting its credential's turn past
-/// the bound (round-robin across credentials, so one credential's backlog
-/// never holds another's pass back), and holds it until the pass ends,
-/// whether or not the run that started it is still there.
+/// Each pass runs on its own thread; the run never waits for it. A pass
+/// takes its place in line when it is spawned and waits its credential's
+/// turn past the bound (round-robin across credentials, so one credential's
+/// backlog never holds another's pass back) as a task on the runtime: its
+/// thread starts only with the permit, which it holds until the pass ends,
+/// whether or not the run that started it is still there. So the bound is on
+/// threads too, not only on passes running.
 struct ThreadSpawn {
     passes: Arc<Admission<String>>,
     credential: String,
+    runtime: tokio::runtime::Handle,
 }
 
 impl CompactionSpawn for ThreadSpawn {
     fn spawn(&self, pass: Box<dyn FnOnce() + Send + 'static>) {
-        let passes = Arc::clone(&self.passes);
-        let credential = self.credential.clone();
-        if let Err(error) = std::thread::Builder::new()
-            .name("code-mode-compaction".to_owned())
-            .spawn(move || {
-                let Ok(_permit) = passes.admit_blocking(credential) else {
-                    // The pass's sender drops with it, so the run reads a
-                    // pass that never ran.
-                    tracing::debug!(
-                        reason = "compaction_waited_out",
-                        "a compaction pass waited past its deadline for its turn"
-                    );
-                    return;
-                };
-                pass();
-            })
-        {
-            // The pass's sender drops with it, so the run reads a refused pass.
-            tracing::error!(%error, "a compaction pass thread did not start");
-        }
+        let turn = self.passes.admit_in_line(self.credential.clone());
+        self.runtime.spawn(async move {
+            let Ok(permit) = turn.await else {
+                // The pass's sender drops with it, so the run reads a pass
+                // that never ran.
+                tracing::debug!(
+                    reason = "compaction_waited_out",
+                    "a compaction pass waited past its deadline for its turn"
+                );
+                return;
+            };
+            if let Err(error) = std::thread::Builder::new()
+                .name("code-mode-compaction".to_owned())
+                .spawn(move || {
+                    let _permit = permit;
+                    pass();
+                })
+            {
+                // The pass's sender drops with it, so the run reads a pass
+                // that never ran.
+                tracing::error!(kind = ?error.kind(), "a compaction pass thread did not start");
+            }
+        });
     }
 }
 

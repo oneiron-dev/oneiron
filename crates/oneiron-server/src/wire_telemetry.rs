@@ -2,7 +2,7 @@
 use oneiron::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 const MANIFEST: &str = "manifest:rc42:wire-observation:v1";
@@ -127,13 +127,19 @@ pub struct WireLimitQuestion {
 /// Where crossed rows ask. Each crossing counts in its row's question for
 /// the window; the first is logged at once, and the question is kept on this
 /// server's vault at the next observation tick, so asking never waits on
-/// storage. Only each row's latest window waits to be kept, so a sink no
-/// vault keeps (the embedder endpoint's) holds one question a row at most.
+/// storage. A question waits until its write succeeds, across later windows
+/// too, but a row holds at most [`PENDING_WINDOWS`] of them, so a sink no
+/// vault keeps (the embedder endpoint's) stays bounded.
 #[derive(Default)]
 pub struct LimitQuestions {
-    asked: Mutex<BTreeMap<LimitRow, Asked>>,
+    /// Each row's questions, oldest first: those not kept yet, and always the
+    /// latest.
+    asked: Mutex<BTreeMap<LimitRow, VecDeque<Asked>>>,
 }
-/// A row's question for its latest window.
+/// A row keeps at most this many windows' questions waiting to be kept; past
+/// it the oldest goes.
+const PENDING_WINDOWS: usize = 8;
+/// One window's question for a row.
 struct Asked {
     window: u64,
     question: WireLimitQuestion,
@@ -142,32 +148,35 @@ struct Asked {
 impl LimitQuestions {
     /// `row`, set to `bound`, saw `observed`. Nothing waits on the answer.
     pub(crate) fn ask(&self, row: LimitRow, bound: u64, observed: u64) {
-        let now = oneiron_vault_contract::now_ts();
+        self.ask_at(row, bound, observed, oneiron_vault_contract::now_ts());
+    }
+    fn ask_at(&self, row: LimitRow, bound: u64, observed: u64, now: u64) {
         let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
         let mut asked = lock(&self.asked);
-        if let Some(open) = asked.get_mut(&row).filter(|open| open.window == window) {
+        let windows = asked.entry(row).or_default();
+        if let Some(open) = windows.back_mut().filter(|open| open.window == window) {
             let question = &mut open.question;
             question.crossings = question.crossings.saturating_add(1);
             question.observed = question.observed.max(observed);
             open.kept = false;
             return;
         }
-        let question = WireLimitQuestion {
-            kind: WireQuestionKind::InspectLimitCrossing,
-            row: row.key().to_owned(),
-            bound,
-            observed,
-            raised_at: now,
-            crossings: 1,
-        };
-        asked.insert(
-            row,
-            Asked {
-                window,
-                question,
-                kept: false,
+        windows.retain(|open| !open.kept);
+        if windows.len() == PENDING_WINDOWS {
+            windows.pop_front();
+        }
+        windows.push_back(Asked {
+            window,
+            question: WireLimitQuestion {
+                kind: WireQuestionKind::InspectLimitCrossing,
+                row: row.key().to_owned(),
+                bound,
+                observed,
+                raised_at: now,
+                crossings: 1,
             },
-        );
+            kept: false,
+        });
         drop(asked);
         tracing::warn!(
             kind = "limit_crossed",
@@ -181,24 +190,40 @@ impl LimitQuestions {
     pub fn latest(&self, row: LimitRow) -> Option<WireLimitQuestion> {
         lock(&self.asked)
             .get(&row)
+            .and_then(VecDeque::back)
             .map(|open| open.question.clone())
     }
     /// The questions not kept yet, each with its row and window.
     fn unkept(&self) -> Vec<(LimitRow, u64, WireLimitQuestion)> {
         lock(&self.asked)
             .iter()
-            .filter(|(_, open)| !open.kept)
-            .map(|(row, open)| (*row, open.window, open.question.clone()))
+            .flat_map(|(row, windows)| {
+                windows
+                    .iter()
+                    .filter(|open| !open.kept)
+                    .map(|open| (*row, open.window, open.question.clone()))
+            })
             .collect()
     }
-    /// Marks `question` kept, unless a crossing since changed it.
+    /// Marks `question` kept, unless a crossing since changed it, and lets
+    /// go of every kept window but the latest.
     fn kept(&self, row: LimitRow, window: u64, question: &WireLimitQuestion) {
-        if let Some(open) = lock(&self.asked).get_mut(&row)
-            && open.window == window
-            && open.question == *question
+        let mut asked = lock(&self.asked);
+        let Some(windows) = asked.get_mut(&row) else {
+            return;
+        };
+        if let Some(open) = windows
+            .iter_mut()
+            .find(|open| open.window == window && open.question == *question)
         {
             open.kept = true;
         }
+        let latest = windows.len().saturating_sub(1);
+        let mut at = 0;
+        windows.retain(|open| {
+            at += 1;
+            !open.kept || at > latest
+        });
     }
 }
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

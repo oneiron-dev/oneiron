@@ -64,7 +64,7 @@ use zeroize::Zeroizing;
 use super::local::evidence::RunProfile;
 use super::local::model_manager::ModelManager;
 use super::local::{Embedded, LocalEmbedder, Priority, Side};
-use crate::admission::Admission;
+use crate::admission::{Admission, Permit};
 use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
@@ -82,6 +82,9 @@ const SMALL_BODY_BYTES: usize = 256 * 1024;
 const SMALL_BODIES_BYTES: usize = 16 * 1024 * 1024;
 /// What larger bodies may hold at once: two of the largest.
 const LARGE_BODIES_BYTES: usize = 2 * MAX_BODY_BYTES;
+/// The pieces an answer streams out in, each copied, so what the transport
+/// holds of an answer is a few pieces, never the whole of it.
+const ANSWER_PIECE: usize = 64 * 1024;
 /// How long a body has to arrive once its bytes are reserved. One that is
 /// still arriving then is refused, and its reservation returned: a stalled
 /// upload holds a budget for this long at most.
@@ -232,6 +235,8 @@ struct Served {
     /// How long a request waits for its turn before it is told to retry,
     /// nothing started.
     wait: Duration,
+    /// How long an answer waits for its client to read the next piece.
+    idle: Duration,
 }
 
 /// Bytes request bodies may hold at once, one permit a byte, taken before a
@@ -338,6 +343,7 @@ impl Served {
             large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
             questions,
             wait,
+            idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
         }
     }
 
@@ -670,14 +676,20 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
     };
     let embedder = Arc::clone(&served.embedder);
     let instruction = request.instruction;
+    // The request's place goes into the work and comes back with its
+    // answer: a caller who hangs up frees nothing the work still takes, and
+    // the place is held until the answer is delivered.
     let embedded = tokio::task::spawn_blocking(move || {
-        let _held = (held, turn, body_held);
-        embedder.embed_raw(&texts, side, instruction.as_deref(), priority)
+        let _turn = (turn, body_held);
+        (
+            embedder.embed_raw(&texts, side, instruction.as_deref(), priority),
+            held,
+        )
     })
     .await;
-    let embedded = match embedded {
-        Ok(Ok(embedded)) => embedded,
-        Ok(Err(error)) => {
+    let (embedded, held) = match embedded {
+        Ok((Ok(embedded), held)) => (embedded, held),
+        Ok((Err(error), _)) => {
             tracing::warn!(kind = ?error.kind(), "endpoint embedding failed");
             return refuse(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -712,7 +724,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             },
         })
         .collect();
-    axum::Json(EmbeddingsResponse {
+    let answer = serde_json::to_vec(&EmbeddingsResponse {
         object: "list",
         data,
         model: request.model,
@@ -724,8 +736,48 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         transform: served.embedder.transform().to_owned(),
         profile: served.embedder.profile().clone(),
         provenance: served.embedder.provenance(),
-    })
-    .into_response()
+    });
+    let Ok(answer) = answer else {
+        return refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "the answer could not be encoded",
+        );
+    };
+    let length = answer.len();
+    let mut response = Response::new(answer_body(answer, held, served.idle));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
+    // A declared length makes an answer cut short at the idle limit a
+    // broken one to the client, never a shorter one.
+    headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(length));
+    response
+}
+
+/// Streams `answer` out in copied pieces, holding the request's place in
+/// `embedder_requests` until the last piece is handed on, the client goes
+/// away, or the client reads nothing for `idle`.
+fn answer_body(answer: Vec<u8>, held: Permit, idle: Duration) -> axum::body::Body {
+    let (pieces, receiver) = tokio::sync::mpsc::channel::<axum::body::Bytes>(2);
+    tokio::spawn(async move {
+        let _held = held;
+        for piece in answer.chunks(ANSWER_PIECE) {
+            let piece = axum::body::Bytes::copy_from_slice(piece);
+            if pieces.send_timeout(piece, idle).await.is_err() {
+                return;
+            }
+        }
+    });
+    axum::body::Body::from_stream(futures_util::stream::unfold(
+        receiver,
+        |mut receiver| async move {
+            let piece = receiver.recv().await?;
+            Some((Ok::<_, std::io::Error>(piece), receiver))
+        },
+    ))
 }
 
 /// The refusal for a request without the configured bearer key; `None` when

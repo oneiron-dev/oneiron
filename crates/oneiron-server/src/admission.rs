@@ -128,18 +128,27 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
 
     /// A permit for `key`'s work, now or at its turn.
     pub(crate) async fn admit(&self, key: K) -> Result<Permit, WaitTimedOut> {
-        let mut place = match self.enter(Some(key)) {
-            Entry::Admitted(permit) => return Ok(permit),
-            Entry::Queued(place) => place,
-        };
-        let waiter = Arc::clone(&place.waiter);
-        let _ = tokio::time::timeout(self.pool.wait, waiter.granted()).await;
-        place.settle().ok_or(WaitTimedOut)
+        self.admit_in_line(key).await
     }
 
-    /// [`Self::admit`] for a caller on a thread of its own.
-    pub(crate) fn admit_blocking(&self, key: K) -> Result<Permit, WaitTimedOut> {
-        self.wait_blocking(Some(key))
+    /// [`Self::admit`], in line from this call on: the returned future only
+    /// waits, so work spawned in order keeps its order, and waiting holds no
+    /// thread.
+    pub(crate) fn admit_in_line(
+        &self,
+        key: K,
+    ) -> impl Future<Output = Result<Permit, WaitTimedOut>> + Send + 'static {
+        let entry = self.enter(Some(key));
+        let wait = self.pool.wait;
+        async move {
+            let mut place = match entry {
+                Entry::Admitted(permit) => return Ok(permit),
+                Entry::Queued(place) => place,
+            };
+            let waiter = Arc::clone(&place.waiter);
+            let _ = tokio::time::timeout(wait, waiter.granted()).await;
+            place.settle().ok_or(WaitTimedOut)
+        }
     }
 
     /// A permit for the host's own work, given only when no caller waits.
