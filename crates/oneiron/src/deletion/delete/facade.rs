@@ -215,6 +215,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             self.store
                 .reject_held_gate_partition_in_txn(&txn, id.as_bytes())?;
+            self.reject_held_blob_references_in_txn(&txn, id)?;
             self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
         }
         let requested_at = self.store.clock.now_recorded_at();

@@ -11,6 +11,15 @@ pub(in crate::deletion) struct ErasedBlobReferences {
     pub(in crate::deletion) changed: Vec<EntityId>,
 }
 
+/// What a hard erase reaches, read before anything is torn.
+struct BlobReferenceWalk {
+    holdings: Vec<crate::blob_artifact::Holding>,
+    /// Every reference to the bytes.
+    references: Vec<EntityId>,
+    /// The carriers the walk scrubs: those references and the texts derived from the bytes.
+    scrubbed: Vec<EntityId>,
+}
+
 impl Vault {
     /// ARCH-0005a / ARCH-0038 carrier 13: "HardErase pierces refcounting". A hard erase of an
     /// artifact takes its version bytes and every reference to them in one walk, never one
@@ -37,42 +46,14 @@ impl Vault {
         artifact: &EntityId,
         tombstone: &[u8],
     ) -> Result<ErasedBlobReferences> {
-        let holdings = self.erased_holdings_in_txn(wtxn, artifact)?;
-        if holdings.is_empty() {
+        let Some(BlobReferenceWalk {
+            holdings,
+            references,
+            scrubbed,
+        }) = self.blob_reference_walk_in_txn(wtxn, artifact)?
+        else {
             return Ok(ErasedBlobReferences::default());
-        }
-        let references =
-            crate::blob_artifact::references_in_txn(&self.store, wtxn, artifact, &holdings)?;
-        let mut derived = Vec::new();
-        for holding in &holdings {
-            for row in crate::ports::EdgeStoreRead::port_edges(
-                &self.store,
-                wtxn,
-                &holding.asset,
-                crate::ports::EdgeDirection::In,
-                Some(crate::EdgeKind::DerivedFrom),
-                None,
-            )? {
-                let source = row?.target;
-                if crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &source)?
-                    .as_deref()
-                    .and_then(EntityMetadataHeader::parse)
-                    .is_some_and(|header| {
-                        header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
-                    })
-                {
-                    derived.push(source);
-                }
-            }
-        }
-        derived.sort_unstable();
-        derived.dedup();
-        let scrubbed: Vec<EntityId> = references
-            .iter()
-            .chain(&derived)
-            .filter(|carrier| *carrier != artifact)
-            .copied()
-            .collect();
+        };
         for carrier in &scrubbed {
             self.store
                 .reject_held_gate_partition_in_txn(wtxn, carrier.as_bytes())?;
@@ -106,6 +87,73 @@ impl Vault {
         let mut changed = holders;
         changed.extend(&scrubbed);
         Ok(ErasedBlobReferences { carriers, changed })
+    }
+
+    /// Refuses a hard erase of `id` BEFORE its tombstone publishes when a carrier its blob-reference
+    /// walk would scrub sits in a held gate partition, as `reject_held_redirect_shells_in_txn`
+    /// does for a redirect shell. The walk re-checks in the transaction that tears.
+    pub(in crate::deletion) fn reject_held_blob_references_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if let Some(walk) = self.blob_reference_walk_in_txn(txn, id)? {
+            for carrier in walk.scrubbed {
+                self.store
+                    .reject_held_gate_partition_in_txn(txn, carrier.as_bytes())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What a hard erase of `id` reaches, read before anything is torn: the bytes it holds, every
+    /// reference to them, and the carriers it scrubs (those references and every ASSET_TEXT
+    /// derived from the bytes, never `id` itself). `None` when it holds no version bytes.
+    fn blob_reference_walk_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<BlobReferenceWalk>> {
+        let holdings = self.erased_holdings_in_txn(txn, id)?;
+        if holdings.is_empty() {
+            return Ok(None);
+        }
+        let references = crate::blob_artifact::references_in_txn(&self.store, txn, id, &holdings)?;
+        let mut derived = Vec::new();
+        for holding in &holdings {
+            for row in crate::ports::EdgeStoreRead::port_edges(
+                &self.store,
+                txn,
+                &holding.asset,
+                crate::ports::EdgeDirection::In,
+                Some(crate::EdgeKind::DerivedFrom),
+                None,
+            )? {
+                let source = row?.target;
+                if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &source)?
+                    .as_deref()
+                    .and_then(EntityMetadataHeader::parse)
+                    .is_some_and(|header| {
+                        header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+                    })
+                {
+                    derived.push(source);
+                }
+            }
+        }
+        let mut scrubbed: Vec<EntityId> = references
+            .iter()
+            .chain(&derived)
+            .filter(|carrier| *carrier != id)
+            .copied()
+            .collect();
+        scrubbed.sort_unstable();
+        scrubbed.dedup();
+        Ok(Some(BlobReferenceWalk {
+            holdings,
+            references,
+            scrubbed,
+        }))
     }
 
     /// The bytes a hard erase of `id` takes: an artifact's version bytes, or a blob's own bytes
