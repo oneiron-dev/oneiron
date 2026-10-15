@@ -87,7 +87,8 @@ pub use self::confirm::{
     GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub(crate) use self::confirm::{
-    claim_critical_confirm_settled_in_txn, critical_write_confirm_binding,
+    GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED, claim_critical_confirm_settled_in_txn,
+    critical_write_confirm_binding, pending_row_holds_critical_confirm,
     reconcile_critical_write_confirm_on_replicated_overwrite,
 };
 pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;

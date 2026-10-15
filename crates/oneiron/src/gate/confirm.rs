@@ -35,6 +35,34 @@ pub const GATE_REASON_CRITICAL_CONFIRM_TIMEOUT: &str = "gate.pending.critical_co
 pub const GATE_REASON_CRITICAL_CONFIRM_DECLINED: &str = "gate.retract.critical_confirm_declined";
 pub(super) const GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE: &str =
     "gate.retract.critical_confirm_replicated_overwrite";
+/// The pending reason of the confirm this device attaches to a critical claim
+/// that reached it by sync. The peer's Auto stamp is not this device's Clear.
+/// The hold has no deadline here, since a timeout's demotion would rewrite the
+/// peer's bytes on this device.
+pub(super) const GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM: &str =
+    "gate.pending.critical_confirm_replicated";
+/// The pending reason a later revision's ordinary review carries when it
+/// replaced an unsettled critical confirm. A new review is not the owner's
+/// answer to that confirm, so the claim stays held until the review settles.
+pub(crate) const GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED: &str =
+    "gate.pending.critical_confirm_carried";
+/// The change-log reason of a Clear, which changes no claim bytes.
+const CHANGE_REASON_CRITICAL_CONFIRM_CLEARED: &str = "critical confirm cleared";
+
+/// Whether `row` holds a critical confirm open: attached here or on sync,
+/// timed out, or carried into a later revision's review.
+pub(crate) fn pending_row_holds_critical_confirm(row: &PendingGateConsentRecord) -> bool {
+    row.reason_codes
+        .iter()
+        .any(|reason| reason.contains("critical_confirm"))
+}
+
+fn is_replicated_critical_confirm(row: &PendingGateConsentRecord) -> bool {
+    matches!(
+        row.reason_codes.as_slice(),
+        [reason] if reason == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
+    )
+}
 
 /// A private, single-use authority for a settlement status rewrite.
 ///
@@ -241,7 +269,7 @@ impl Vault {
                 .ok_or(Error::EntityNotFound)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            let expired = binding.expires_at <= now;
+            let expired = binding.expires_at <= now && !is_replicated_critical_confirm(&pending);
             let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
             if expired && !deferred {
                 put_preauthorized_claim_status_in_txn(
@@ -319,6 +347,21 @@ impl Vault {
                         .delete_pending_gate_consent_in_txn(wtxn, &binding.claim_id)?;
                     self.store
                         .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    // A Clear changes no claim bytes, so it logs a mutation of
+                    // its own: a consumer that skipped the held claim, such as
+                    // the Dreamer wake count, meets it again.
+                    crate::ports::audit_mutation_in_txn(
+                        &self.store,
+                        wtxn,
+                        crate::ports::MutationAudit {
+                            entity: binding.claim_id,
+                            op: crate::ports::ChangeOp::Update,
+                            actor_principal: None,
+                            occurred_at: now,
+                            input: &confirm_id,
+                            reason: Some(CHANGE_REASON_CRITICAL_CONFIRM_CLEARED),
+                        },
+                    )?;
                     Ok(Ok(CriticalWriteConfirmResolution::Cleared))
                 }
                 CriticalWriteConfirmDisposition::Decline => {
@@ -392,6 +435,9 @@ impl Vault {
             )?;
             let mut demoted = 0;
             for (_, row) in pending {
+                if is_replicated_critical_confirm(&row) {
+                    continue;
+                }
                 let Ok(binding) = critical_write_confirm_binding(&row) else {
                     continue;
                 };
@@ -457,7 +503,10 @@ pub enum CriticalWriteConfirmResolution {
 /// lifecycle. The durable invalidation is consulted before classifying ordinary
 /// pending rows, so neither deletion nor an unrelated pending row can shadow it.
 /// A live attachment is closed only for a changed/missing stored body; an exact
-/// replay preserves that attachment.
+/// replay preserves that attachment. A hold this device attached on sync bound
+/// only the earlier peer body: it closes without a demotion or an invalidation,
+/// and the put attaches a hold of its own to a new body that needs one, so the
+/// peer's bytes land unchanged.
 pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -471,9 +520,11 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     let live_binding = pending
         .as_ref()
         .filter(|row| {
-            row.reason_codes
-                .iter()
-                .any(|reason| reason.contains("critical_confirm"))
+            pending_row_holds_critical_confirm(row)
+                && !row
+                    .reason_codes
+                    .iter()
+                    .any(|reason| reason == GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED)
         })
         .map(critical_write_confirm_binding)
         .transpose()?;
@@ -488,6 +539,17 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
         "critical binding without pending",
     ))?;
     if !body_changed_or_missing {
+        return Ok(false);
+    }
+    if is_replicated_critical_confirm(&pending) {
+        store.close_pending_gate_consent_in_txn(
+            wtxn,
+            claim_id,
+            pending.created_at,
+            "invalidated",
+            vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
+            None,
+        )?;
         return Ok(false);
     }
     store.close_pending_gate_consent_in_txn(
@@ -513,7 +575,8 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
 /// A critical write commits `Auto` with an attached confirmation and stays
 /// retrieval-visible, but nothing consolidates it or acts on it until its
 /// owner clears it. The attachment is the claim's pending-consent row with a
-/// critical-confirm reason, and only settlement removes it. A timed-out row
+/// critical-confirm reason, and only settlement removes it: a later
+/// revision's review that replaces the row carries its hold. A timed-out row
 /// keeps the claim ineligible, so expiry follows the sweep: a row past its
 /// deadline that the sweep has not reached yet still counts. A ceremony a
 /// replicated overwrite invalidated was never settled either, so its durable
@@ -527,11 +590,7 @@ pub(crate) fn claim_critical_confirm_settled_in_txn(
 ) -> Result<bool> {
     let attached = store
         .pending_gate_consent_in_txn(txn, claim_id)?
-        .is_some_and(|row| {
-            row.reason_codes
-                .iter()
-                .any(|reason| reason.contains("critical_confirm"))
-        });
+        .is_some_and(|row| pending_row_holds_critical_confirm(&row));
     Ok(!attached && !store.critical_confirm_invalidation_exists_in_txn(txn, claim_id)?)
 }
 
@@ -542,6 +601,7 @@ pub(crate) fn critical_write_confirm_binding(
         pending.reason_codes.as_slice(),
         [reason]
             if reason.as_str() == GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED
+                || reason.as_str() == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
                 || reason.as_str() == GATE_REASON_CRITICAL_CONFIRM_TIMEOUT
     ) {
         return Err(Error::InvalidClaimBody("not a critical-confirm attachment"));

@@ -11,8 +11,12 @@ use crate::vault::Vault;
 /// [`claim_consolidation_eligible_in_txn`] before it reads a head, so a
 /// critical claim whose owner confirmation is outstanding reaches none of
 /// them (ARCH-0026 §G3). A write its owner authored in person attaches no
-/// confirmation, so it is eligible at once. The invariant check walks this
-/// list.
+/// confirmation, so it is eligible at once. A reserved predicate never carries
+/// one either: its owning door writes it past the criticality ladder, and a
+/// replicated one attaches none. Readers that consume only reserved heads
+/// (provider priors under `actor.*`, skill reliability and hub provenance
+/// under `skill.*`) are therefore not on this list. The invariant check walks
+/// this list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConsolidationReader {
     /// Affect VAD consolidation of one claim.
@@ -40,6 +44,8 @@ pub(crate) enum ConsolidationReader {
     /// A fact a question's answer is checked against, when its arrival is
     /// projected into a label and when a label is read back.
     ArrivalFact,
+    /// The answer claim whose prediction that fact labels, on both roads.
+    AnswerPrediction,
     /// A head derived-attachment verification counts as support.
     DerivedSupport,
     /// A goal-velocity or engagement signal the state index blends.
@@ -50,7 +56,7 @@ pub(crate) enum ConsolidationReader {
 
 impl ConsolidationReader {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 15] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::ClaimVad,
         Self::CopingOutcome,
         Self::VadAnnotation,
@@ -63,6 +69,7 @@ impl ConsolidationReader {
         Self::PrecommitEvidence,
         Self::ResolutionWaterfall,
         Self::ArrivalFact,
+        Self::AnswerPrediction,
         Self::DerivedSupport,
         Self::StateIndexSignal,
         Self::WakeCount,
@@ -82,6 +89,7 @@ impl ConsolidationReader {
             Self::PrecommitEvidence => "precommit_evidence",
             Self::ResolutionWaterfall => "resolution_waterfall",
             Self::ArrivalFact => "arrival_fact",
+            Self::AnswerPrediction => "answer_prediction",
             Self::DerivedSupport => "derived_support",
             Self::StateIndexSignal => "state_index_signal",
             Self::WakeCount => "wake_count",

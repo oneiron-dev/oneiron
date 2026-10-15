@@ -1034,6 +1034,9 @@ fn replay_path_still_skips_source_trust_gate() -> Result<()> {
     // An unrooted relay stores the signed row provisionally: the other
     // vault's key cannot verify it, and replay still never re-gates.
     let (_dir_b, vault_b) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    // A critical replica waits for this device's own Clear, which records a
+    // verdict here; this check is about source trust, so the name is normal.
+    crate::test_util::declare_predicates_normal(&vault_b, &["profile."])?;
     let decisions_before = gate_decision_count(&vault_b);
     vault_b
         .batch()
@@ -1584,10 +1587,11 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
             fixture.run.now_ms + 1,
             Some(&closure_checker),
         );
+        // Closing the old head admits nothing new, so it asks no checker.
         assert_eq!(
             closure_host.calls(),
-            if hold { 1 } else { 2 },
-            "an allowed closure checks both the replacement and its old head"
+            1,
+            "a closure checks its replacement once"
         );
         if hold {
             assert_eq!(
