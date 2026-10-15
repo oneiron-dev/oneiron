@@ -8,6 +8,7 @@ use crate::store::{
 #[test]
 fn checkpoint_preserves_exact_nonbootstrap_blend_weights() -> Result<()> {
     let (dir, vault) = open_test_vault();
+    let copies = crate::test_support::restore_tempdir();
     let expected = RetrievalBlendWeightTableEntry {
         version: 1,
         weights: RetrievalBlendWeights::new(0.125, 0.25, 0.5, 0.125),
@@ -35,7 +36,7 @@ fn checkpoint_preserves_exact_nonbootstrap_blend_weights() -> Result<()> {
     drop(vault);
     let (restored, _) = Vault::restore_checkpoint(
         &image,
-        &dir.path().join("restored"),
+        &copies.path().join("restored"),
         embedding_test_config(),
         crate::recovery::checkpoint::RestoreReason::Restore,
         400,

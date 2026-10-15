@@ -264,6 +264,24 @@ pub(crate) fn embedding_test_config() -> VaultConfig {
     config
 }
 
+/// A store clock pinned at `now` with fresh ids, for fixtures whose records
+/// carry fixed timestamps that the engine's clock must agree with.
+pub(crate) fn pinned_store_clock(now: u64) -> crate::ports::StoreClock {
+    struct Pinned(u64);
+    impl crate::ports::Clock for Pinned {
+        fn now_recorded_at(&self) -> u64 {
+            self.0
+        }
+    }
+    impl crate::ports::IdGen for Pinned {
+        fn ulid(&self) -> [u8; 16] {
+            uuid::Uuid::now_v7().into_bytes()
+        }
+    }
+    let pinned = std::sync::Arc::new(Pinned(now));
+    crate::ports::StoreClock::new(pinned.clone(), pinned)
+}
+
 /// Opens a temporary vault with the supplied config. Returns the
 /// `TempDir` so callers keep the directory alive for the vault's lifetime.
 pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
@@ -287,6 +305,20 @@ pub(crate) fn sign_machine_candidate(
         .sign_retained_machine_claim_in_txn(&txn, id, candidate, &mut envelope)
         .expect("machine claim signature");
     envelope
+}
+
+/// A native host's proof for the vault's embedded owner, who is ensured
+/// first: what an owner-bound door (an off-record promote or flip) takes.
+pub(crate) fn embedded_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
 }
 
 /// Binds `owner` as the rooted test vault's human owner, so owner verbs keep

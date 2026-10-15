@@ -11,6 +11,16 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+/// The fields of a Gemini part that each hold its one piece of data.
+const PART_DATA: [&str; 7] = [
+    "text",
+    "inlineData",
+    "fileData",
+    "functionCall",
+    "functionResponse",
+    "executableCode",
+    "codeExecutionResult",
+];
 #[derive(Debug, Clone, Default)]
 pub(super) struct GeminiAccumulator {
     assembly: StreamAssembly,
@@ -42,18 +52,48 @@ impl GeminiAccumulator {
                 raw_provider: usage.clone(),
             });
         }
-        let Some(candidate) = chunk.pointer("/candidates/0") else {
+        // Candidates or a candidate of a shape this decoder cannot walk could
+        // hold a tool request, so they fail the decode rather than read as
+        // none.
+        let candidate = match chunk.get("candidates") {
+            None | Some(Value::Null) => None,
+            Some(Value::Array(candidates)) => candidates.first(),
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+        };
+        let Some(candidate) = candidate else {
             if chunk.pointer("/promptFeedback/blockReason").is_some() {
                 return Err(FatalLlmError::ContentFiltered.into());
             }
             return Ok(vec![]);
         };
+        if !candidate.is_object() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
         let mut events = Vec::new();
-        if let Some(parts) = candidate
-            .pointer("/content/parts")
-            .and_then(Value::as_array)
-        {
+        // Content this decoder cannot walk could hold a tool request behind
+        // the text before it, so content or parts of any other shape fail the
+        // decode rather than read as no parts.
+        let parts = match candidate.get("content") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(content)) => match content.get("parts") {
+                None | Some(Value::Null) => None,
+                Some(Value::Array(parts)) => Some(parts),
+                Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            },
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+        };
+        if let Some(parts) = parts {
             for part in parts {
+                // A part holds one piece of data. A second beside its text, a
+                // function call above all, would vanish behind a tool-free
+                // answer, so the decode fails.
+                let data = PART_DATA
+                    .iter()
+                    .filter(|field| part.get(**field).is_some_and(|value| !value.is_null()))
+                    .count();
+                if data > 1 {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                }
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
                     let reasoning = part.get("thought").and_then(Value::as_bool) == Some(true);
                     let part_id = self.text_part(reasoning, &mut events)?;

@@ -434,8 +434,11 @@ fn finish_remote_applied_write(
     receipt: RemoteWriteReceipt,
     now: u64,
 ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
-    // UID and SEQUENCE are provider-preserved invariants. The receipt hash
-    // describes the stored representation and is committed below as ground truth.
+    // UID and SEQUENCE are provider-preserved invariants. The receipt's content
+    // hash is the provider's claim about what it stored, not evidence of it:
+    // the echo state below records what was staged, so a provider copy that
+    // differs reads as a remote change the next pull imports, never as an
+    // echo of this write. A divergent receipt still settles the write.
     if receipt.uid != row.uid || receipt.sequence != row.sequence {
         return Err(CalendarConnectorError::Outbox {
             outbox_id: row.outbox_id,
@@ -452,7 +455,7 @@ fn finish_remote_applied_write(
             href: Some(receipt.href.clone()),
             etag: receipt.etag.clone(),
             last_sequence: receipt.sequence,
-            content_hash: receipt.content_hash,
+            content_hash: row.content_hash,
             last_seen_at: now,
         },
     )?;
@@ -469,7 +472,6 @@ fn finish_remote_applied_write(
     for (member, _) in &row.component_hashes {
         crate::calendar::claims::require_event_subject(vault, member)?;
     }
-    let single_component = row.component_hashes.len() == 1;
     for &(member, content_hash) in &row.component_hashes {
         // Direction is a routing fact: a seat that also reads this UID is two-way,
         // a seat that only writes it is outbound. Neither is an approval gate.
@@ -486,13 +488,7 @@ fn finish_remote_applied_write(
             system: row.system.clone(),
             uid: row.uid.clone(),
             last_sequence: receipt.sequence,
-            // For one component the provider receipt is already its per-EVENT hash.
-            // A multi-component receipt names the whole resource, not one passport.
-            content_hash: if single_component {
-                receipt.content_hash
-            } else {
-                content_hash
-            },
+            content_hash,
             direction,
             last_seen_at: now,
             presence: CalendarPassportPresence::Live,
