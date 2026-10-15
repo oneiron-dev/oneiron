@@ -524,3 +524,149 @@ pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
             .is_some(),
     }
 }
+
+/// Rule five at the embedder's answer row: with room for one answer at a
+/// time, `callers` requests each wait for the answer before theirs to be
+/// delivered, then all answer, and the row asks.
+pub(crate) fn cross_the_answers(callers: usize) -> crate::admission::Crossing {
+    let limits = crate::config::LimitsConfig {
+        embedder_answer_bytes: 1,
+        ..Default::default()
+    };
+    let served = Arc::new(Served::new(
+        Arc::new(Slow(synthetic())),
+        Vec::new(),
+        Some(Zeroizing::new(KEY.to_owned())),
+        &limits,
+    ));
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let calls: Vec<_> = (0..callers)
+        .map(|n| std::thread::spawn(move || embed(addr, &serde_json::json!([format!("text {n}")]))))
+        .collect();
+    let refused = calls
+        .into_iter()
+        .map(|call| call.join().ok())
+        .filter(|status| *status != Some(200))
+        .count();
+    crate::admission::Crossing {
+        refused,
+        asked: served
+            .questions
+            .latest(LimitRow::EmbedderAnswerBytes)
+            .is_some(),
+    }
+}
+
+/// Floats in each row the wide model answers.
+const WIDE_DIMS: usize = 4_096;
+
+/// A model whose rows are `WIDE_DIMS` wide, so an answer of many inputs is
+/// far larger than the sockets between server and client take; it counts
+/// the requests it is given.
+#[derive(Default)]
+struct Wide {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl Wide {
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl ServedModel for Wide {
+    fn model_id(&self) -> &str {
+        SYNTHETIC_MODEL
+    }
+
+    fn dimensions(&self) -> usize {
+        WIDE_DIMS
+    }
+
+    fn transform(&self) -> &str {
+        SYNTHETIC_TRANSFORM
+    }
+
+    fn profile(&self) -> &RunProfile {
+        static PROFILE: std::sync::OnceLock<RunProfile> = std::sync::OnceLock::new();
+        PROFILE.get_or_init(|| RunProfile::of(&EmbedderConfig::default()))
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(oneiron::embed::EmbeddingDevice::Cuda, "candle 0.11.0 q8_0")
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        _side: Side,
+        _instruction: Option<&str>,
+        _priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Embedded {
+            rows: texts.iter().map(|_| vec![0.5; WIDE_DIMS]).collect(),
+            tokens: texts.len(),
+        })
+    }
+}
+
+/// Review r7 (Astra, P1): an answer kept its whole encoding until its
+/// reader took the last piece, and only `embedder_requests` bounded how many
+/// did, so callers who read slowly could hold gigabytes of answers. An
+/// answer now takes its room in `embedder_answer_bytes` before the model
+/// makes it and keeps it until it is delivered; past the row the next
+/// request waits its turn, and the row asks.
+#[test]
+fn an_unread_answer_keeps_its_room_and_the_next_request_waits_for_it() {
+    use std::io::Write;
+    // Room for one answer at a time: each takes the whole row.
+    let limits = crate::config::LimitsConfig {
+        embedder_answer_bytes: 1,
+        ..Default::default()
+    };
+    let wide = Arc::new(Wide::default());
+    let served = Arc::new(Served::new(
+        Arc::clone(&wide) as Arc<dyn ServedModel>,
+        Vec::new(),
+        Some(Zeroizing::new(KEY.to_owned())),
+        &limits,
+    ));
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let inputs: Vec<String> = (0..MAX_INPUTS).map(|n| format!("input {n}")).collect();
+    let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": inputs }).to_string();
+    let send = || {
+        let mut stream = post_head(addr, Some(KEY), body.len());
+        stream.write_all(body.as_bytes()).expect("body sent");
+        stream
+    };
+    let soon = |done: &dyn Fn() -> bool| {
+        (0..1_000).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            done()
+        })
+    };
+
+    // A 32 MiB answer nobody reads: more than the sockets take.
+    let unread = send();
+    assert!(soon(&|| wide.calls() == 1), "the first request is embedded");
+    let mut next = send();
+    assert!(
+        soon(&|| served
+            .questions
+            .latest(LimitRow::EmbedderAnswerBytes)
+            .is_some()),
+        "the next request waits for the answer row, and the row asks"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(
+        wide.calls(),
+        1,
+        "no answer is made while the one before it holds the row"
+    );
+
+    // Once the first answer's reader goes, the next is made and answered.
+    drop(unread);
+    assert_eq!(status(&mut next).expect("an answer"), 200);
+    assert_eq!(wide.calls(), 2);
+}

@@ -34,6 +34,11 @@ async fn cross(row: LimitRow) -> Crossing {
                 .await
                 .unwrap()
         }
+        LimitRow::EmbedderAnswerBytes => tokio::task::spawn_blocking(|| {
+            crate::embedder::serve::tests::cross_the_answers(CALLERS)
+        })
+        .await
+        .unwrap(),
     }
 }
 
