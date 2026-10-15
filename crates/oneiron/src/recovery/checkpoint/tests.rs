@@ -1865,3 +1865,45 @@ fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
     );
     assert!(aside.is_dir());
 }
+
+/// Review r1 (Sol F1): a refused restore leaves a copy another owner opened
+/// meanwhile. An owner that takes the copy's writer lease after the make
+/// keeps its directory and its row, though the restore's own open is refused.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_leaves_a_copy_another_owner_holds() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let destination = root.path().join("copy");
+    let owner = std::rc::Rc::new(std::cell::RefCell::new(None));
+    crate::store::arm_after_restore_destination_made({
+        let (destination, owner) = (destination.clone(), owner.clone());
+        move || {
+            let held = Vault::open_owned(&destination, VaultConfig::device()).unwrap();
+            let (row, _) = claim_with_receipt(&held);
+            *owner.borrow_mut() = Some((held, row));
+        }
+    });
+    let refused = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    );
+    assert!(
+        matches!(refused, Err(Error::ConcurrentWrite(_))),
+        "{:?}",
+        refused.map(|_| ())
+    );
+    let (held, row) = owner.borrow_mut().take().expect("the other owner opened");
+    assert!(held.get(&row).unwrap().is_some());
+    drop(held);
+    let reopened = Vault::open_owned(&destination, VaultConfig::device()).unwrap();
+    assert!(
+        reopened.get(&row).unwrap().is_some(),
+        "the other owner's copy survives the refused restore"
+    );
+}
