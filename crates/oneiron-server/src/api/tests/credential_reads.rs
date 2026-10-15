@@ -1170,6 +1170,22 @@ async fn a_members_bounded_credential_reads_its_room_as_missing() {
         ),
         "{body}"
     );
+    // FACET-READ: the pack door refuses a member's credential limited to a
+    // facet before it resolves any room, so its room and a missing one
+    // answer alike.
+    let faceted = format!(
+        "{};facets={}",
+        room.agent_recipe(None),
+        seeded_test_entity_id(0x2401_0013).to_hex()
+    );
+    let mut answers = Vec::new();
+    for conversation in [room.room, seeded_test_entity_id(0x2401_0012)] {
+        let (status, mut body) = pack(faceted.clone(), conversation).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        body["error"].as_object_mut().unwrap().remove("requestId");
+        answers.push(body);
+    }
+    assert_eq!(answers[0], answers[1]);
     let (status, body) = pack(room.agent_recipe(None), room.room).await;
     assert_eq!(status, StatusCode::OK, "a member reads its room: {body}");
 }

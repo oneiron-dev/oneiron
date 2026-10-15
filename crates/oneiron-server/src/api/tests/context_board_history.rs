@@ -873,7 +873,27 @@ async fn a_board_counts_and_dates_nothing_for_any_key() {
         }
         sessions
     };
+    // FACET-READ: the board door refuses a credential limited to a facet
+    // before it reads any row, so a hidden row moves its answer no more.
+    let faceted = || async {
+        let bearer = test_bearer(&format!(
+            "scope=core:read;facets={}",
+            seeded_test_entity_id(0x2516_0113).to_hex()
+        ));
+        let (status, mut refused) = route_json(
+            server.clone(),
+            core_request_with_authz("POST", "/v1/core/context-board", bearer, Some(&json!({}))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused:#}");
+        refused["error"]
+            .as_object_mut()
+            .unwrap()
+            .remove("requestId");
+        refused
+    };
     let before = sessions().await;
+    let refused = faceted().await;
     put_person(
         &server,
         seeded_test_entity_id(0x2516_0112),
@@ -884,6 +904,7 @@ async fn a_board_counts_and_dates_nothing_for_any_key() {
         before,
         "a hidden row moves no count or date"
     );
+    assert_eq!(faceted().await, refused);
 }
 
 /// F16 (A-F6): a keyed board's replay re-admits the notifications it

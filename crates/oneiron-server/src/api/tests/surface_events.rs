@@ -543,6 +543,29 @@ async fn a_submitter_learns_nothing_of_an_identity_it_cannot_read() {
     for receipt in &receipts[1..] {
         assert_eq!(receipt, &receipts[0]);
     }
+    // FACET-READ: a submitter limited to a facet no identity sits in learns
+    // of each what it learns of a missing one, and queues nothing.
+    let faceted = test_bearer(&format!(
+        "scope=core:read,core:write;facets={}",
+        seeded_test_entity_id(0x2516_0306).to_hex()
+    ));
+    let mut faceted_receipts = Vec::new();
+    for address in [
+        "nobody@example.com",
+        "hidden-active@example.com",
+        "hidden-vault-bound@example.com",
+        "hidden-provisioning@example.com",
+    ] {
+        let (status, mut receipt) = submit(faceted.clone(), address).await;
+        if let Some(fields) = receipt.as_object_mut() {
+            fields.remove("event_id");
+            fields.remove("receiving_address_or_handle");
+        }
+        faceted_receipts.push((status, receipt));
+    }
+    for receipt in &faceted_receipts[1..] {
+        assert_eq!(receipt, &faceted_receipts[0]);
+    }
     let status_of = |correlation: String| {
         let server = server.clone();
         async move {
@@ -622,6 +645,22 @@ async fn a_handoff_status_reads_only_under_its_identity() {
         error.remove("details");
     }
     assert_eq!(held, missing);
+    // FACET-READ: the status door refuses a credential limited to a facet
+    // before it looks up any correlation, so a held handoff and a missing
+    // one answer alike.
+    let faceted = test_bearer(&format!(
+        "scope=core:read;facets={}",
+        seeded_test_entity_id(0x2516_0314).to_hex()
+    ));
+    let mut answers = Vec::new();
+    for correlation in ["status-held", "status-missing"] {
+        let (status, mut body) = status_as(faceted.clone(), correlation).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let error = body["error"].as_object_mut().unwrap();
+        error.remove("requestId");
+        answers.push(body);
+    }
+    assert_eq!(answers[0], answers[1]);
     let (status, snapshot) = status_as(test_bearer("scope=core:read"), "status-held").await;
     assert_eq!(status, StatusCode::OK, "{snapshot}");
 }

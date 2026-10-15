@@ -10,6 +10,36 @@ fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()
 }
 
+/// The vault's host root as a read: whole, or limited to one facet
+/// (FACET-READ). No row these fixtures write sits in a facet.
+fn host_root_read(
+    vault: &crate::Vault,
+    facet: Option<EntityId>,
+) -> crate::Result<crate::claim::ScopedRead<'_>> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"board facet root")?;
+    let mut slip = vault.ensure_host_root_slip(&issuer)?;
+    let proof = match facet {
+        None => vault.verified_host_root_slip(&issuer)?,
+        Some(facet) => {
+            let mut scope = Scope::top();
+            scope.facets = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]));
+            issuer.attenuate(
+                &mut slip,
+                crate::authority::SlipCaveat {
+                    scope: Some(scope),
+                    ..Default::default()
+                },
+            )?;
+            let binding = issuer.binding_proof(&slip, b"board facet")?;
+            vault.verify_capability_slip(&issuer.public_key(), &slip, b"board facet", &binding)?
+        }
+    };
+    Ok(vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"),
+    ))
+}
+
 #[test]
 fn worlds_filter_before_projection_and_counting() {
     let worlds = [1, 2, 3, 4].map(|n| WorldPresence {
@@ -157,7 +187,20 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
     }))
     .unwrap();
     let mut line = ChangedLine::default();
-    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex()]);
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), "host"]);
+    // FACET-READ: a read limited to a facet the claim does not sit in folds
+    // no outcome of it, as of a missing row; the same root, whole, folds one.
+    for (facet, rides) in [(Some(id(0x5F)), 0), (None, 1)] {
+        let mut folded = ChangedLine::default();
+        session.fold_own_changes(
+            &host_root_read(&vault, facet)?,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut folded,
+            16,
+        )?;
+        assert_eq!(folded.events.len(), rides, "{facet:?}: {folded:?}");
+    }
     let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
     session.fold_own_changes(
         &read,
@@ -284,7 +327,7 @@ fn a_lifecycle_rider_names_no_retraction_its_reader_cannot_read() -> crate::Resu
         crate::TimeRange { start: 2, end: 2 },
         2,
     )?;
-    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex()]);
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), "host"]);
     let rows = |actor: u8| {
         let read =
             vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
@@ -296,6 +339,16 @@ fn a_lifecycle_rider_names_no_retraction_its_reader_cannot_read() -> crate::Resu
         Vec::new(),
         "a reader of no agent learns no retraction"
     );
+    // FACET-READ: a read limited to a facet the agent does not sit in learns
+    // no retraction either; the same root, whole, does.
+    let root_rows = |facet| -> crate::Result<_> {
+        Ok(session.refresh(&host_root_read(&vault, facet)?, 16)?.rows)
+    };
+    assert_eq!(
+        root_rows(None)?,
+        vec![(agent.to_hex(), ServedLifecycle::Retracted)]
+    );
+    assert_eq!(root_rows(Some(id(0x5F)))?, Vec::new());
     Ok(())
 }
 
