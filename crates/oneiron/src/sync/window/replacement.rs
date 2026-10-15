@@ -188,6 +188,8 @@ pub fn prepare_replacement(
             .collect()
     };
     vault.with_write_txn_grouped(|wtxn| {
+        #[cfg(any(test, feature = "test-hooks"))]
+        super::test_hooks::refuse_replacement_install()?;
         persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations.

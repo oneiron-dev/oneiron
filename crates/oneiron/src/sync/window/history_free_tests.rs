@@ -1389,3 +1389,69 @@ fn a_refused_replacement_keeps_its_pending_mirror() {
         );
     }
 }
+
+/// Bug repro (ASTRA-S5-002): forward rematerialization wrote the peer's value over this vault's
+/// pending-mirror row in LMDB before the install transaction, so an install the disk floor refused
+/// left LMDB holding the peer's bytes while the window and the marker said nothing had happened.
+/// Done-means: a refused install leaves this vault's row and its marker as they were.
+#[test]
+fn a_refused_install_leaves_this_vaults_rows_alone() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let id = EntityId::now();
+    let put = |body: &[u8]| {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TURN,
+                TimeRange { start: at, end: at },
+                at,
+                body,
+            )
+            .unwrap();
+        vault.get_raw(&id).unwrap().unwrap()
+    };
+    let earlier = put(b"earlier value");
+    let hub = create_window_doc("hub", &key);
+    map_insert_bytes(&hub.get_map("entities"), &id.to_hex(), &earlier).unwrap();
+    hub.commit();
+    let old = create_window_doc("receiver", &key);
+    old.import(&hub.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    // The hub's concurrent edit, past enough of its own history that this vault's unsent value
+    // cannot be proved to win: the replacement keeps the hub's, and this vault's is a conflict.
+    for n in 0..4 {
+        write_row(&hub, at + 10 + n, b"hub row");
+    }
+    let remote = blob(ENTITY_TYPE_TURN, at + 1, b"hub concurrent edit");
+    map_insert_bytes(&hub.get_map("entities"), &id.to_hex(), &remote).unwrap();
+    hub.commit();
+    let local = put(b"unsent local edit");
+    assert_ne!(local, earlier, "fixture: the local edit is a new value");
+    let marker = format!("pm:{key}:{}", id.to_hex());
+    vault.sync_state_put(&marker, &[1]).unwrap();
+    let snapshot = hub
+        .export(ExportMode::shallow_snapshot(&hub.oplog_frontiers()))
+        .unwrap();
+    super::test_hooks::arm_replacement_install_refusal();
+
+    let refused = prepare_replacement(
+        &vault,
+        &Materializer::new(),
+        &key,
+        &old,
+        &snapshot,
+        &std::collections::HashMap::new(),
+    );
+    assert!(refused.is_err(), "fixture: the install was not refused");
+    assert_eq!(
+        vault.get_raw(&id).unwrap(),
+        Some(local),
+        "a refused install changed this vault's row"
+    );
+    assert!(
+        vault.sync_state_get(&marker).unwrap().is_some(),
+        "a refused install cleared the pending mirror"
+    );
+}
