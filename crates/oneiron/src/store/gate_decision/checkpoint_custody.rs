@@ -229,8 +229,9 @@ fn names(_: &Path, (): &()) -> Result<bool> {
 /// everything in it, through the descriptor it holds and still under the
 /// lease. A directory moved in under the name since is left as it is, and so
 /// is one another owner leased first (review r1, both F1). Off unix, with no
-/// identity or lease to check, it removes the destination by name, as main's
-/// discard did.
+/// identity to check, it removes the destination by name, still only under
+/// the copy's lease, as main's discard did once the copy had opened; no lease
+/// is granted off unix today, so there it removes nothing.
 pub(crate) struct MadeDestination {
     destination: PathBuf,
     #[cfg(unix)]
@@ -324,18 +325,19 @@ impl Drop for MadeDestination {
         if self.kept {
             return;
         }
-        // Only under its own lease: without it, the copy is another owner's.
-        #[cfg(unix)]
+        // Only under its own lease: without it, the copy is another owner's,
+        // or, off unix, was never opened (review r3, Sol F3).
         let removed = self.lease.take().is_some_and(|lease| {
+            #[cfg(unix)]
             let removed = remove_held_directory(&self.destination, &self.made).is_ok();
+            // With no directory identity to check, the destination goes by
+            // name after the copy's vault has closed, as main's discard took
+            // it (Engine ruling on review r1's F2).
+            #[cfg(not(unix))]
+            let removed = std::fs::remove_dir_all(&self.destination).is_ok();
             drop(lease);
             removed
         });
-        // With no directory identity or lease to check, the destination goes
-        // by name after the copy's vault has closed, as main's discard took
-        // it (Engine ruling on review r1's F2).
-        #[cfg(not(unix))]
-        let removed = std::fs::remove_dir_all(&self.destination).is_ok();
         if !removed {
             tracing::warn!("a refused restore left the copy it made in place");
         }

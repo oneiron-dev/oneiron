@@ -380,7 +380,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (mut vault, report, forked, made) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -410,7 +410,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (mut vault, report, forked, made) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -564,7 +564,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (mut vault, report, forked, made) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -575,20 +575,18 @@ impl Vault {
         )?;
         #[cfg(test)]
         panic_if_armed();
-        if let Err(error) = authority_plane::refuse_new_members(current, &vault)
-            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
-        {
-            // The copy closes, the custody it forked goes, and then the
-            // directory made for it, still under the copy's lease.
-            drop(vault);
-            drop(forked);
-            drop(made);
-            return Err(error);
-        }
+        // Refused here, or unwound, the bindings above drop in reverse: the
+        // copy closes, the custody it forked goes, and then the directory
+        // made for it, still under the copy's lease (review r3, Sol F4).
+        authority_plane::refuse_new_members(current, &vault)
+            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))?;
         forked.keep();
         made.keep(&mut vault);
         Ok((vault, report))
     }
+    /// Restores `image` into `destination`. The made directory, the forked
+    /// custody and the copy come back in that order, so a caller's bindings,
+    /// dropped in reverse, close the copy before the others go.
     fn restore_image(
         image: CheckpointImage,
         checkpoint_id: String,
@@ -597,7 +595,7 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
-    ) -> Result<(Self, RestoreReport, ForkedCustody, MadeDestination)> {
+    ) -> Result<(MadeDestination, ForkedCustody, Self, RestoreReport)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -730,7 +728,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        Ok((vault, report, forked, made))
+        Ok((made, forked, vault, report))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;

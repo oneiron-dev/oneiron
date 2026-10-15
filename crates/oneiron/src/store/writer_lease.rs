@@ -115,6 +115,13 @@ impl VaultWriterLease {
         #[cfg(not(target_os = "linux"))]
         let lock_dir = vault_dir.to_path_buf();
         let file = Self::lock_exclusive_nonblocking(&lock_dir)?;
+        #[cfg(unix)]
+        let writable = match &file {
+            Some(file) => Self::bind_lock_file(&directory, file)?,
+            None => false,
+        };
+        #[cfg(not(unix))]
+        let writable = false;
         let lease = Self {
             file,
             pid,
@@ -122,7 +129,7 @@ impl VaultWriterLease {
             directory,
         };
         lease.validate_directory(vault_dir)?;
-        if let Some(file) = lease.file.as_ref() {
+        if let Some(file) = lease.file.as_ref().filter(|_| writable) {
             Self::write_pid_line(file, pid)?;
         }
         Ok(lease)
@@ -211,16 +218,44 @@ impl VaultWriterLease {
             .map_err(std::io::Error::from)?,
         );
         Self::lock_file(&file)?;
+        let writable = Self::bind_lock_file(&directory, &file)?;
         let lease = Self {
             file: Some(file),
             pid,
             directory,
         };
         lease.validate_directory(vault_dir)?;
-        if let Some(file) = lease.file.as_ref() {
+        if let Some(file) = lease.file.as_ref().filter(|_| writable) {
             Self::write_pid_line(file, pid)?;
         }
         Ok(lease)
+    }
+
+    /// Refuses `file`, just locked, unless `directory`'s lock name still
+    /// holds that very file. A removal unlinks the lock last, under its own
+    /// lease; a lock opened before that and granted after it is no one's,
+    /// and another owner may already hold a fresh lock under the name
+    /// (review r3, Sol F1). Answers whether the PID line may be written: a
+    /// regular file with no other link is the directory's alone, and one
+    /// linked elsewhere is locked but never written (Sol F2).
+    #[cfg(unix)]
+    fn bind_lock_file(directory: &std::fs::File, file: &std::fs::File) -> Result<bool> {
+        use rustix::fs::{AtFlags, FileType, fstat, statat};
+        let locked = fstat(file).map_err(std::io::Error::from)?;
+        let named = match statat(directory, VAULT_WRITER_LOCK_FILE, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(named) => named,
+            Err(rustix::io::Errno::NOENT) => {
+                return Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD));
+            }
+            Err(error) => return Err(std::io::Error::from(error).into()),
+        };
+        if (named.st_dev, named.st_ino) != (locked.st_dev, locked.st_ino) {
+            return Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD));
+        }
+        Ok(
+            FileType::from_raw_mode(locked.st_mode) == FileType::RegularFile
+                && locked.st_nlink == 1,
+        )
     }
 
     /// Takes `file`'s exclusive lock without waiting.

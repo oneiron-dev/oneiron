@@ -289,8 +289,11 @@ pub fn remove_held_directory(path: &Path, held: &File) -> Result<()> {
 }
 
 #[cfg(test)]
+type RootEntryCallback = Box<dyn FnMut(&std::ffi::CStr)>;
+
+#[cfg(test)]
 thread_local! {
-    static AFTER_ROOT_ENTRY_REMOVED: std::cell::RefCell<Option<Box<dyn FnMut(&std::ffi::CStr)>>> =
+    static AFTER_ROOT_ENTRY_REMOVED: std::cell::RefCell<Option<RootEntryCallback>> =
         std::cell::RefCell::new(None);
 }
 

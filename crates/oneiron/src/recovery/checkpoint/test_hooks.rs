@@ -23,7 +23,7 @@ pub(super) fn arm_restore_failure(step: RestoreStep) {
 }
 
 pub(super) fn fail_at(step: RestoreStep) -> Result<()> {
-    if RESTORE_FAILS_AT.with(|slot| slot.get()) != Some(step) {
+    if RESTORE_FAILS_AT.with(std::cell::Cell::get) != Some(step) {
         return Ok(());
     }
     RESTORE_FAILS_AT.with(|slot| slot.set(None));
