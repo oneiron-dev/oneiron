@@ -22,8 +22,8 @@
 //! 5. every pending tombstone (`pt:`), left in place for the next open;
 //! 6. the reverse and forward rematerializations, as a window open runs.
 //!
-//! A conflict names a value the candidate does not hold once every step has run; one a later step
-//! put back is dropped.
+//! A conflict names a value the candidate does not hold once every step has run, the forward pass
+//! and the export scrubs included; one a later step put back is dropped.
 //!
 //! Below the old window's own shallow root no operation is left to read. There a key carries
 //! over when the candidate's value came from a peer whose every operation the old window holds
@@ -172,19 +172,20 @@ pub fn prepare_replacement(
     }
     candidate.commit();
     reverse_rematerialize(vault, &candidate, key)?;
-    // A queued send retires only once each value it wrote is in the window being installed or
-    // named as a conflict.
+    forward_rematerialize(vault, &candidate, materializer, key)?;
+
+    let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
+    // The candidate is final once its snapshot is cut: the forward pass and the export scrubs can
+    // still take a value out. A queued send retires only once each value it wrote is in the
+    // window being installed or named as a conflict, and every other conflict is provisional
+    // until here: a value a later step put back, such as a newer queued send writing it again,
+    // was kept after all.
     for conflict in lost_queued_writes(old, &candidate, &sends)? {
         if !conflicts.contains(&conflict) {
             conflicts.push(conflict);
         }
     }
-    // Every conflict is provisional until here: a value a later step put back, such as a newer
-    // queued send writing it again, was kept after all.
     conflicts.retain(|conflict| !holds_value(&candidate, conflict));
-    forward_rematerialize(vault, &candidate, materializer, key)?;
-
-    let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
     let vv = doc_version_vector(&candidate);
     let stale_updates: Vec<_> = {
         let rtxn = vault.store.env.read_txn()?;
