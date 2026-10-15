@@ -111,7 +111,7 @@ impl Memory<'_> {
                 .get(&txn, preview.entity().as_bytes())
                 .map_err(crate::Error::from)?;
             if let Some(raw) = target
-                && crate::blob_artifact::carrier_content_hash(preview.entity(), raw)?.is_some()
+                && crate::blob_artifact::carrier_content_hash(&preview.entity(), &raw)?.is_some()
             {
                 return Err(carrier_erase_refused());
             }
