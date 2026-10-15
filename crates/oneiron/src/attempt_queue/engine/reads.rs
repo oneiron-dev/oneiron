@@ -245,12 +245,21 @@ impl AttemptQueue<'_> {
 
     /// Reads persisted attempt rows for one run id in deterministic creation order.
     pub fn list_run(&self, run_id: &str) -> Result<Vec<AttemptRecord>> {
-        validate_optional_run_id(Some(run_id))?;
         let rtxn = self.store.env.read_txn()?;
+        self.list_run_in_txn(&rtxn, run_id)
+    }
+
+    /// [`Self::list_run`] in the caller's snapshot.
+    pub(crate) fn list_run_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        validate_optional_run_id(Some(run_id))?;
         let mut records = Vec::new();
-        for id_bytes in self.store.attempt_ids_for_run_in_txn(&rtxn, run_id)? {
+        for id_bytes in self.store.attempt_ids_for_run_in_txn(rtxn, run_id)? {
             let id = AttemptId::from_bytes(&id_bytes)?;
-            let Some(raw_record) = self.store.attempt_records.get(&rtxn, id.as_bytes())? else {
+            let Some(raw_record) = self.store.attempt_records.get(rtxn, id.as_bytes())? else {
                 return Err(Error::CorruptedIndex("attempt run index"));
             };
             let record = decode_record(&raw_record, id)?;

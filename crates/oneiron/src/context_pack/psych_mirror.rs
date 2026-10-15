@@ -144,23 +144,41 @@ pub enum PsychProfilePackStaleReason {
     },
 }
 
+/// The section for a profile that is not there, or that the pack's clamp or
+/// reader does not admit: the two read alike.
+pub(super) fn missing_psych_profile_pack_section(key: PsychProfileKey) -> PsychProfilePackSection {
+    PsychProfilePackSection {
+        section: "psych_profile".to_owned(),
+        status: "missing".to_owned(),
+        entity_id: psych_profile_entity_id(&key),
+        key,
+        profile: None,
+        stale_reason: None,
+    }
+}
+
 /// Materializes a requested stored-profile companion section.
 pub fn psych_profile_pack_section(
     vault: &Vault,
     key: &PsychProfileKey,
 ) -> Result<PsychProfilePackSection> {
-    let state = vault.psych_profile_for(key)?;
-    let key = *key;
+    Ok(pack_section(*key, vault.psych_profile_for(key)?))
+}
+
+/// [`psych_profile_pack_section`] in the caller's snapshot.
+pub(super) fn psych_profile_pack_section_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    key: &PsychProfileKey,
+) -> Result<PsychProfilePackSection> {
+    let state = vault.psych_profile_state_in_txn(rtxn, &psych_profile_entity_id(key), None)?;
+    Ok(pack_section(*key, state))
+}
+
+fn pack_section(key: PsychProfileKey, state: PsychProfileState) -> PsychProfilePackSection {
     let entity_id = psych_profile_entity_id(&key);
-    Ok(match state {
-        PsychProfileState::Missing => PsychProfilePackSection {
-            section: "psych_profile".to_owned(),
-            status: "missing".to_owned(),
-            entity_id,
-            key,
-            profile: None,
-            stale_reason: None,
-        },
+    match state {
+        PsychProfileState::Missing => missing_psych_profile_pack_section(key),
         PsychProfileState::Fresh(profile) => PsychProfilePackSection {
             section: "psych_profile".to_owned(),
             status: "fresh".to_owned(),
@@ -185,5 +203,5 @@ pub fn psych_profile_pack_section(
                 stale_reason: Some(stale_reason),
             }
         }
-    })
+    }
 }

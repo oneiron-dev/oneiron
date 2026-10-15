@@ -54,15 +54,16 @@ impl crate::Vault {
 
     /// Reads and decodes a PsychProfile snapshot record.
     pub fn get_psych_profile(&self, id: &EntityId) -> Result<Option<PsychProfile>> {
-        let Some(raw) = self.get_raw(id)? else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_PSYCH_PROFILE {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        decode_psych_profile_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        decode_psych_profile_row(self.get_raw(id)?)
+    }
+
+    /// [`Self::get_psych_profile`] in the caller's snapshot.
+    pub(crate) fn get_psych_profile_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<PsychProfile>> {
+        decode_psych_profile_row(self.get_raw_in(rtxn, id)?)
     }
 
     /// List-safe read: a deleted/archived profile is absent, while malformed
@@ -94,25 +95,59 @@ impl crate::Vault {
         id: &EntityId,
         expected_source_revision_ids: Option<&[EntityId]>,
     ) -> Result<PsychProfileState> {
-        let Some(profile) = self.get_psych_profile(id)? else {
-            return Ok(PsychProfileState::Missing);
-        };
-        if profile.status == PsychProfileSnapshotStatus::Stale {
-            return Ok(PsychProfileState::Stale {
-                profile,
-                reason: PsychProfileStaleReason::MarkedStale,
-            });
-        }
-        if let Some(expected) = expected_source_revision_ids {
-            let expected = canonical_expected_source_revision_ids(expected.to_vec());
-            if expected != profile.source_revision_ids {
-                let actual = profile.source_revision_ids.clone();
-                return Ok(PsychProfileState::Stale {
-                    profile,
-                    reason: PsychProfileStaleReason::SourceRevisionMismatch { expected, actual },
-                });
-            }
-        }
-        Ok(PsychProfileState::Fresh(profile))
+        Ok(psych_profile_state_of(
+            self.get_psych_profile(id)?,
+            expected_source_revision_ids,
+        ))
     }
+
+    /// [`Self::psych_profile_state`] in the caller's snapshot.
+    pub(crate) fn psych_profile_state_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        expected_source_revision_ids: Option<&[EntityId]>,
+    ) -> Result<PsychProfileState> {
+        Ok(psych_profile_state_of(
+            self.get_psych_profile_in_txn(rtxn, id)?,
+            expected_source_revision_ids,
+        ))
+    }
+}
+
+fn decode_psych_profile_row(raw: Option<Vec<u8>>) -> Result<Option<PsychProfile>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_PSYCH_PROFILE {
+        return Err(Error::InvalidEntityType(header.entity_type));
+    }
+    decode_psych_profile_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+}
+
+fn psych_profile_state_of(
+    profile: Option<PsychProfile>,
+    expected_source_revision_ids: Option<&[EntityId]>,
+) -> PsychProfileState {
+    let Some(profile) = profile else {
+        return PsychProfileState::Missing;
+    };
+    if profile.status == PsychProfileSnapshotStatus::Stale {
+        return PsychProfileState::Stale {
+            profile,
+            reason: PsychProfileStaleReason::MarkedStale,
+        };
+    }
+    if let Some(expected) = expected_source_revision_ids {
+        let expected = canonical_expected_source_revision_ids(expected.to_vec());
+        if expected != profile.source_revision_ids {
+            let actual = profile.source_revision_ids.clone();
+            return PsychProfileState::Stale {
+                profile,
+                reason: PsychProfileStaleReason::SourceRevisionMismatch { expected, actual },
+            };
+        }
+    }
+    PsychProfileState::Fresh(profile)
 }

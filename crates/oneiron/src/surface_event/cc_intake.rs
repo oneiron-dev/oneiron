@@ -89,6 +89,7 @@ impl Vault {
             }
             let ack = SurfaceEventAck {
                 status_path: surface_event_status_path(&event.correlation_id),
+                receiving_identity_ref: event.receiving_identity_ref.clone(),
                 correlation_id: event.correlation_id,
                 attempt_ref: SurfaceEventAttemptRef::from_attempt_id(admitted.attempt.id),
                 state: SurfaceEventHandoffState::from_attempt_state(admitted.attempt.state),

@@ -388,11 +388,11 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
             ("api_version", "Stable API level string."),
             (
                 "counts",
-                "Live entity counts keyed by numeric entity type; zero counts are omitted.",
+                "Live entity counts keyed by numeric entity type; zero counts are omitted. Always empty: a count may count only rows the caller's key reads, and no key reads every row.",
             ),
             (
                 "last_activity",
-                "Latest learned-at timestamp across agent-visible entities.",
+                "Latest learned-at timestamp across agent-visible entities. Always null, for the same reason.",
             ),
         ],
     ),

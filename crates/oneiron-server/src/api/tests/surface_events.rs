@@ -16,7 +16,7 @@ async fn v1_core_surface_event_submit_acks_with_202_and_is_queryable() {
         server.clone(),
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&body),
     )
     .await;
@@ -68,7 +68,7 @@ async fn v1_core_surface_event_replay_returns_the_original_attempt() {
         server.clone(),
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&body),
     )
     .await;
@@ -81,7 +81,7 @@ async fn v1_core_surface_event_replay_returns_the_original_attempt() {
         server.clone(),
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&body),
     )
     .await;
@@ -118,7 +118,7 @@ async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
         server.clone(),
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&body),
     )
     .await;
@@ -197,11 +197,12 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
         .expect("seed vault-bound identity");
     activate_seeded_identity(&server, identity_ref, 1_782_357_000);
 
+    // The submitter reads the identity, so its receipt may name it.
     let (status, receipt) = core_json(
         server.clone(),
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&surface_event_body(address, "provider-reject-2")),
     )
     .await;
@@ -292,6 +293,18 @@ async fn v1_core_surface_event_routes_enforce_core_scopes() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&error, "FORBIDDEN");
 
+    // So does a write-only one: a submitter reads the identity it addresses.
+    let (status, error) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:write",
+        Some(&body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_error_envelope(&error, "FORBIDDEN");
+
     // Read route rejects a write-only token.
     let (status, error) = core_json(
         server.clone(),
@@ -318,7 +331,7 @@ async fn v1_core_surface_event_routes_enforce_core_scopes() {
         server,
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&body),
     )
     .await;
@@ -340,7 +353,7 @@ async fn v1_core_surface_event_submit_honors_the_idempotency_middleware() {
         let request = Request::builder()
             .method("POST")
             .uri("/v1/core/surface-events")
-            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header(AUTHORIZATION, test_bearer("scope=core:read,core:write"))
             .header("Idempotency-Key", idempotency_key)
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
@@ -399,7 +412,7 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
         let request = Request::builder()
             .method("POST")
             .uri("/v1/core/surface-events")
-            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header(AUTHORIZATION, test_bearer("scope=core:read,core:write"))
             .header("Idempotency-Key", "provider-idem-retry-1")
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
@@ -440,4 +453,359 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
     assert_eq!(accepted_status, StatusCode::ACCEPTED);
     assert_eq!(ack["replayed"], Value::from(false));
     assert_eq!(ack["state"], Value::from("queued"));
+}
+
+/// F16 H172: a submitter learns nothing of an identity it cannot read. An
+/// active identity, a vault-bound one and one still provisioning refuse the
+/// event as an address no identity holds does: no identity or agent ref, no
+/// reason that tells them apart, and nothing is queued. A reader of the
+/// identities keeps the precise reasons, and its event to the active one is
+/// queued.
+#[tokio::test]
+async fn a_submitter_learns_nothing_of_an_identity_it_cannot_read() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let requested = |counter: u128, address: &str, binding| {
+        server
+            .vault
+            .create_channel_identity(
+                &seeded_test_entity_id(counter),
+                &oneiron::channel_identity::ChannelIdentity::requested(
+                    "email",
+                    address,
+                    oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
+                    binding,
+                    1_782_357_000,
+                ),
+            )
+            .expect("seed identity");
+    };
+    requested(
+        0x2516_0301,
+        "hidden-vault-bound@example.com",
+        oneiron::channel_identity::ChannelIdentityBinding::vault(7),
+    );
+    activate_seeded_identity(&server, seeded_test_entity_id(0x2516_0301), 1_782_357_000);
+    requested(
+        0x2516_0302,
+        "hidden-provisioning@example.com",
+        oneiron::channel_identity::ChannelIdentityBinding::agent(seeded_test_entity_id(
+            0x2516_0303,
+        )),
+    );
+    seed_surface_identity(&server, 0x2516_0305, "hidden-active@example.com");
+    let principal = seeded_test_entity_id(0x2516_0304);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let narrowed = test_bearer(&format!(
+        "scope=core:read,core:write;principal_ref={}",
+        principal.to_hex()
+    ));
+    let correlation = |address: &str| format!("hidden-{}", address.replace('@', "-at-"));
+    let submit = |bearer: String, address: &'static str| {
+        let server = server.clone();
+        async move {
+            route_json(
+                server,
+                core_request_with_authz(
+                    "POST",
+                    "/v1/core/surface-events",
+                    bearer,
+                    Some(&surface_event_body(address, &correlation(address))),
+                ),
+            )
+            .await
+        }
+    };
+    let mut receipts = Vec::new();
+    for address in [
+        "nobody@example.com",
+        "hidden-active@example.com",
+        "hidden-vault-bound@example.com",
+        "hidden-provisioning@example.com",
+    ] {
+        let (status, mut receipt) = submit(narrowed.clone(), address).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{receipt}");
+        let fields = receipt.as_object_mut().unwrap();
+        fields.remove("event_id");
+        fields.remove("receiving_address_or_handle");
+        receipts.push(receipt);
+    }
+    assert_eq!(
+        receipts[0]["rejection_reason"],
+        "unknown_receiving_identity"
+    );
+    for receipt in &receipts[1..] {
+        assert_eq!(receipt, &receipts[0]);
+    }
+    // FACET-READ: the submit door refuses a credential limited to a facet
+    // before it looks up any identity, so each hidden identity answers as a
+    // missing one does, and nothing is queued.
+    let faceted = test_bearer(&format!(
+        "scope=core:read,core:write;facets={}",
+        seeded_test_entity_id(0x2516_0306).to_hex()
+    ));
+    let mut faceted_receipts = Vec::new();
+    for address in [
+        "nobody@example.com",
+        "hidden-active@example.com",
+        "hidden-vault-bound@example.com",
+        "hidden-provisioning@example.com",
+    ] {
+        let (status, mut receipt) = submit(faceted.clone(), address).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{receipt}");
+        receipt["error"]
+            .as_object_mut()
+            .unwrap()
+            .remove("requestId");
+        faceted_receipts.push(receipt);
+    }
+    for receipt in &faceted_receipts[1..] {
+        assert_eq!(receipt, &faceted_receipts[0]);
+    }
+    let status_of = |correlation: String| {
+        let server = server.clone();
+        async move {
+            let uri = format!("/v1/core/surface-events/{correlation}");
+            core_json(server, "GET", &uri, "core:read", None).await
+        }
+    };
+    let (status, _) = status_of(correlation("hidden-active@example.com")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nothing was queued");
+
+    // A reader of the identities keeps the precise reasons, and is queued.
+    let full = test_bearer("scope=core:read,core:write");
+    let (status, receipt) = submit(full.clone(), "hidden-vault-bound@example.com").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{receipt}");
+    assert_eq!(receipt["rejection_reason"], "non_agent_bound_identity");
+    let (status, ack) = submit(full, "hidden-active@example.com").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{ack}");
+    let (status, _) = status_of(correlation("hidden-active@example.com")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// F16 (S-F3): a handoff's status reads only to a caller that reads its
+/// receiving identity. To any other it is the 404 of a correlation id no
+/// event was admitted under.
+#[tokio::test]
+async fn a_handoff_status_reads_only_under_its_identity() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    seed_surface_identity(&server, 0x2516_0311, "status-hidden@example.com");
+    let (status, ack) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/surface-events",
+        "core:read,core:write",
+        Some(&surface_event_body(
+            "status-hidden@example.com",
+            "status-held",
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{ack}");
+    let principal = seeded_test_entity_id(0x2516_0313);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let status_as = |bearer: String, correlation: &'static str| {
+        let server = server.clone();
+        async move {
+            route_json(
+                server,
+                core_request_with_authz(
+                    "GET",
+                    &format!("/v1/core/surface-events/{correlation}"),
+                    bearer,
+                    None,
+                ),
+            )
+            .await
+        }
+    };
+    let narrowed = test_bearer(&format!(
+        "scope=core:read;principal_ref={}",
+        principal.to_hex()
+    ));
+    let (held_status, mut held) = status_as(narrowed.clone(), "status-held").await;
+    let (missing_status, mut missing) = status_as(narrowed, "status-missing").await;
+    assert_eq!(held_status, StatusCode::NOT_FOUND, "{held}");
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
+    for body in [&mut held, &mut missing] {
+        let error = body["error"].as_object_mut().unwrap();
+        error.remove("requestId");
+        error.remove("message");
+        error.remove("details");
+    }
+    assert_eq!(held, missing);
+    // FACET-READ: the status door refuses a credential limited to a facet
+    // before it looks up any correlation, so a held handoff and a missing
+    // one answer alike.
+    let faceted = test_bearer(&format!(
+        "scope=core:read;facets={}",
+        seeded_test_entity_id(0x2516_0314).to_hex()
+    ));
+    let mut answers = Vec::new();
+    for correlation in ["status-held", "status-missing"] {
+        let (status, mut body) = status_as(faceted.clone(), correlation).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let error = body["error"].as_object_mut().unwrap();
+        error.remove("requestId");
+        answers.push(body);
+    }
+    assert_eq!(answers[0], answers[1]);
+    let (status, snapshot) = status_as(test_bearer("scope=core:read"), "status-held").await;
+    assert_eq!(status, StatusCode::OK, "{snapshot}");
+}
+
+/// F16 round 2 (Sol F1, Astra F1): two events under one correlation id, each
+/// to its own identity. A handoff its reader cannot read is set aside before
+/// the run's cardinality is judged: a reader of neither gets the missing
+/// 404, and a reader of only one gets that one's status.
+#[tokio::test]
+async fn a_hidden_handoff_never_makes_a_correlation_ambiguous() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    seed_surface_identity(&server, 0x2516_0321, "pair-a@example.com");
+    seed_surface_identity(&server, 0x2516_0323, "pair-b@example.com");
+    let mut acks = Vec::new();
+    for address in ["pair-a@example.com", "pair-b@example.com"] {
+        let (status, ack) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/surface-events",
+            "core:read,core:write",
+            Some(&surface_event_body(address, "pair-shared")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{ack}");
+        acks.push(ack);
+    }
+    assert_ne!(acks[0]["attempt_ref"], acks[1]["attempt_ref"]);
+    let status_as = |bearer: String, correlation: &'static str| {
+        let server = server.clone();
+        async move {
+            route_json(
+                server,
+                core_request_with_authz(
+                    "GET",
+                    &format!("/v1/core/surface-events/{correlation}"),
+                    bearer,
+                    None,
+                ),
+            )
+            .await
+        }
+    };
+
+    let neither = seeded_test_entity_id(0x2516_0325);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        neither,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let neither = test_bearer(&format!(
+        "scope=core:read;principal_ref={}",
+        neither.to_hex()
+    ));
+    let (held_status, mut held) = status_as(neither.clone(), "pair-shared").await;
+    let (missing_status, mut missing) = status_as(neither, "pair-missing").await;
+    assert_eq!(held_status, StatusCode::NOT_FOUND, "{held}");
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
+    for body in [&mut held, &mut missing] {
+        let error = body["error"].as_object_mut().unwrap();
+        error.remove("requestId");
+        error.remove("message");
+        error.remove("details");
+    }
+    assert_eq!(held, missing);
+
+    // Once the second identity is gone, a reader of the vault reads the
+    // first handoff alone, and gets its status.
+    assert!(
+        server
+            .vault
+            .delete_entity(&seeded_test_entity_id(0x2516_0323))
+            .expect("delete the second identity")
+    );
+    let (status, snapshot) = status_as(test_bearer("scope=core:read"), "pair-shared").await;
+    assert_eq!(status, StatusCode::OK, "{snapshot}");
+    assert_eq!(snapshot["attempt_ref"], acks[0]["attempt_ref"]);
+}
+
+/// F16 round 2 (Sol F3, Astra F3): a keyed retry replays a surface event's
+/// ack only while its submitter still reads the identity the event
+/// addressed. Once it does not, the replay is refused and names nothing,
+/// and nothing is queued again.
+#[tokio::test]
+async fn a_keyed_surface_event_replays_only_while_its_identity_reads() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    seed_surface_identity(&server, 0x2516_0331, "replay-held@example.com");
+    let principal = seeded_test_entity_id(0x2516_0333);
+    let body = surface_event_body("replay-held@example.com", "replay-held");
+    let submit = || {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/surface-events")
+            .header(
+                AUTHORIZATION,
+                test_bearer(&format!(
+                    "scope=core:read,core:write;principal_ref={}",
+                    principal.to_hex()
+                )),
+            )
+            .header("Idempotency-Key", "replay-held-key")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        route_json(server.clone(), request)
+    };
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+        ],
+    );
+    let (status, first) = submit().await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{first}");
+    let (status, again) = submit().await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{again}");
+    assert_eq!(again, first, "a reader of its identity replays the ack");
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (status, refused) = submit().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_error_envelope(&refused, "INVALID_STATE");
+    let attempt = first["attempt_ref"].as_str().unwrap();
+    assert!(!refused.to_string().contains(attempt), "{refused}");
+    let (status, snapshot) = core_json(
+        server.clone(),
+        "GET",
+        "/v1/core/surface-events/replay-held",
+        "core:read",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{snapshot}");
+    assert_eq!(snapshot["attempt_ref"], first["attempt_ref"]);
 }

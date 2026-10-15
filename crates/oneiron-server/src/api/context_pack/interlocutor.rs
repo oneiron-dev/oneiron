@@ -20,9 +20,16 @@ use crate::error::ApiError;
 /// delegated token narrowed by scope alone is NOT owner-grade, so it takes
 /// the clamp like any other narrowed credential rather than silently
 /// skipping the gate. `room` is a room read's [`RoomAudience`].
+///
+/// Every contact the set names is one `read`, the caller's own read, reads:
+/// one it cannot read resolves as a missing one does, so a narrowed caller
+/// learns no contact's existence, status, label or id by naming it. A voice
+/// roster's segments carry no record scope, so it resolves only for the
+/// owner's own unnarrowed read (`ScopedRead::is_unnarrowed_owner`).
 pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
+    read: &oneiron::claim::ScopedRead<'_>,
     controls: Option<&CoreInterlocutorControls>,
     room: Option<&RoomAudience>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
@@ -71,7 +78,11 @@ pub(crate) fn resolve_core_interlocutor_set(
                 {
                     continue;
                 }
-                oneiron::disclosure::RoomParty::Contact(contact) => {
+                oneiron::disclosure::RoomParty::Contact(contact)
+                    if read.is_ref_readable(contact).map_err(|error| {
+                        core_engine_error("room contact admission failed", error)
+                    })? =>
+                {
                     oneiron::InterlocutorPartyInput::ContactRef(*contact)
                 }
                 _ => oneiron::InterlocutorPartyInput::UnknownLabel {
@@ -88,7 +99,18 @@ pub(crate) fn resolve_core_interlocutor_set(
     if let Some(principal_ref) = auth.principal_ref() {
         let principal_id = parse_entity_id_param(principal_ref, "principal_ref")?;
         if room_reader != Some(principal_id) {
-            let party = match vault.get_counterparty_contact(&principal_id) {
+            let readable = read.is_ref_readable(&principal_id).map_err(|error| {
+                core_engine_error(
+                    "core context-pack interlocutor principal lookup failed",
+                    error,
+                )
+            })?;
+            let contact = if readable {
+                vault.get_counterparty_contact(&principal_id)
+            } else {
+                Ok(None)
+            };
+            let party = match contact {
                 Ok(Some(_)) => oneiron::InterlocutorPartyInput::ContactRef(principal_id),
                 // Companion principals are person/persona ids, not contact rows.
                 Ok(None) | Err(oneiron::Error::InvalidEntityType(_)) => {
@@ -129,8 +151,9 @@ pub(crate) fn resolve_core_interlocutor_set(
         parties,
         voice_session_ref,
     };
+    let read_rosters = read.is_unnarrowed_owner();
     vault
-        .resolve_interlocutors(&input)
+        .resolve_interlocutors_under(&input, read, read_rosters)
         .map(Some)
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack interlocutor resolution failed");

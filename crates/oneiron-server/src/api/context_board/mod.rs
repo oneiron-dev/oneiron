@@ -123,9 +123,12 @@ pub(crate) struct ContextBoardSession {
     #[schema(example = "v1")]
     api_version: String,
     /// Live entity counts keyed by numeric entity type; zero counts are omitted.
+    /// Always empty: a count may count only rows the caller's key reads, and
+    /// no key reads every row.
     #[schema(example = json!({ "16": 1 }))]
     counts: BTreeMap<String, u64>,
-    /// Latest learned-at timestamp across agent-visible entities.
+    /// Latest learned-at timestamp across agent-visible entities. Always
+    /// null, for the same reason.
     #[serde(rename = "last_activity")]
     #[schema(example = 1_770_000_000_u64)]
     last_activity: Option<u64>,
@@ -231,8 +234,11 @@ pub(crate) async fn context_board_hydrate(
     // same key the MEMORIES cursor store already uses.
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
-    let session = session_prefix(&server, auth.locality()).await?;
-    let notifications = pending_notifications(&server, caller)?;
+    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    // The vault's counts and latest activity span rows no key reads all of
+    // (another principal's claims), so every caller reads an empty inventory.
+    let session = empty_session_prefix();
+    let notifications = pending_notifications(&server, &read, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
         || current_hydration_budget(&server),
@@ -244,6 +250,11 @@ pub(crate) async fn context_board_hydrate(
         },
     );
 
+    let named_contacts = req
+        .retrieval
+        .as_ref()
+        .map(CoreContextPackRequest::named_contacts)
+        .unwrap_or_default();
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
             let memories = resolve_memories_request(
@@ -261,14 +272,26 @@ pub(crate) async fn context_board_hydrate(
         None => (None, None, None),
     };
 
-    let installed_packs: Vec<(String, String)> = server
+    // The pack inventory the rider folds and the session records is the
+    // caller's: a pack whose source row it cannot read is not installed.
+    let mut installed_packs: Vec<(String, String)> = Vec::new();
+    let mut pack_sources = Vec::new();
+    for row in server
         .vault
         .installed_packs()
         .map_err(|error| super::core_engine_error("pack inventory failed", error))?
-        .into_iter()
-        .map(|row| (row.pack_name, row.content_hash))
-        .collect();
-    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    {
+        let Ok(source) = oneiron::EntityId::from_hex(&row.source_id) else {
+            continue;
+        };
+        if read
+            .is_entity_readable(&source)
+            .map_err(|error| super::core_engine_error("pack inventory failed", error))?
+        {
+            installed_packs.push((row.pack_name, row.content_hash));
+            pack_sources.push(source);
+        }
+    }
     // The rider is folded from, and acknowledged into, this one session.
     let session_id = resolved_session_id(
         &server,
@@ -278,7 +301,7 @@ pub(crate) async fn context_board_hydrate(
     .await?;
     let reads = session_read_set(&server, caller, session_id.as_deref()).await?;
     // The authenticated principal's own proposal outcomes and connector
-    // changes ride the same line; this route already refuses narrowed slips.
+    // changes ride the same line, each only while the caller's read reads it.
     let own = auth
         .principal_ref()
         .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
@@ -292,7 +315,7 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
-            reads.fold_own_changes(&server.vault, own, auth.locality(), &mut changed, 16)?;
+            reads.fold_own_changes(&read, own, auth.locality(), &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()
@@ -435,7 +458,22 @@ pub(crate) async fn context_board_hydrate(
         }
     }
     // The rows this board was derived from, kept beside a keyed replay of it.
+    // A replay re-admits each row it named beyond its documents: every
+    // notification, rider row (those its overflow counts too), pack source,
+    // named or stamped contact and discovered capability.
+    let mut admit: Vec<_> = response
+        .notifications
+        .iter()
+        .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok())
+        .collect();
+    admit.extend(rider_admits(&changed_line));
+    admit.extend(pack_sources);
+    admit.extend(named_contacts);
+    if let Some(pack) = &response.pack {
+        admit.extend(pack.replay_admits());
+    }
     let mut served: Vec<_> = crate::device_local::changed_line_rows(&changed_line).collect();
+    served.extend(admit.iter().copied());
     if let Some(pack) = &response.pack {
         served.extend(
             pack.served_rows()
@@ -451,9 +489,27 @@ pub(crate) async fn context_board_hydrate(
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
     Ok((
-        axum::Extension(crate::idempotency::ServedRows(served)),
+        axum::Extension(crate::idempotency::ServedRows {
+            rows: served,
+            admit: Some(admit),
+        }),
         Json(response),
     ))
+}
+
+/// The rows a board's rider named or counted, each of which a replay of the
+/// board re-admits (`ChangedLine::named_rows`): every lifecycle row and its
+/// successor, every installed skill, every own proposal whose outcome it
+/// carried, and the key of every connector it mounted, those its overflow
+/// counts included. An erased proposal has no row left to admit, and a
+/// removed connector's key is one the reader was already shown.
+fn rider_admits(
+    line: &oneiron::context_board::ChangedLine,
+) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+    line.named_rows().filter_map(|id| {
+        let hex = id.rsplit_once(':').map_or(id, |(_, hex)| hex);
+        oneiron::EntityId::from_hex(hex).ok()
+    })
 }
 
 /// A standing session's response must fit its whole token budget.

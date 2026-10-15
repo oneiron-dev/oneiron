@@ -85,6 +85,19 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// Whether this read is the vault owner's own key
+    /// (`ScopedReadActorKey::reads_as_vault_owner`) with no world ceiling,
+    /// audience or peer read narrowing what it serves. Such a read admits
+    /// every row but a claim private to another principal; no read admits
+    /// every row, so none may count the vault's rows.
+    #[must_use]
+    pub fn is_unnarrowed_owner(&self) -> bool {
+        self.actor_key.reads_as_vault_owner()
+            && self.actor_key.worlds.is_none()
+            && self.audience.is_none()
+            && self.peer_reads.is_empty()
+    }
+
     /// Number of immutable room ledger snapshots loaded by this read handle.
     pub fn audience_ledger_reads(&self) -> Result<usize> {
         Ok(self
@@ -322,6 +335,28 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         self.peers_read_raw_in(txn, &self.peer_reads, id, raw)
+    }
+
+    /// Whether membership may stand in for this read's own grant on `id`,
+    /// in `txn`: the credential presented narrows no read axis (worlds,
+    /// facets, entity types, audience, sensitivity), no records or channel
+    /// caveat leaves `id` out, and this caller's locality reads it.
+    /// Membership replaces an actor's grant on its room; it never widens the
+    /// credential it was presented with, so a narrowed one needs a grant.
+    pub(crate) fn reaches_by_membership_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let reads_every_row = self.actor_key.authority_scope().is_none_or(|scope| {
+            crate::federation::Scope {
+                verbs: crate::federation::ScopeAxis::All,
+                ..scope.clone()
+            } == crate::federation::Scope::top()
+        });
+        Ok(reads_every_row
+            && self.credential_allows_id(id)
+            && !self.device_withholds_in(txn, id, None)?)
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {

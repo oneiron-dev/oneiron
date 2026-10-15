@@ -1,7 +1,6 @@
 //! Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter.
 
 use super::super::API_LEVEL;
-use super::super::is_agent_visible_entity_type;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 use oneiron::HydrationBudget;
@@ -11,9 +10,7 @@ use oneiron::UnprocessedItem;
 use oneiron::context_board::caller_marker_contains;
 use oneiron::context_board::notification_body_json;
 use oneiron::context_board::notification_scoped_to_caller;
-use oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use oneiron::registry::ENTITY_TYPE_NOTIFICATION;
-use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -21,61 +18,24 @@ pub(crate) const PREFIX_NOTIFICATION_LIMIT: usize = 128;
 
 pub(crate) const PREFIX_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 
-/// The vault's inventory as a caller at `locality` may learn it: one off
-/// this device counts and dates no row a device-local world keeps
-/// (DEC-0005).
-pub(crate) async fn session_prefix(
-    server: &SyncServer,
-    locality: oneiron::claim::CallerLocality,
-) -> Result<SessionContext, ApiError> {
-    let mut counts = BTreeMap::new();
-
-    for entity_type in u8::MIN..=u8::MAX {
-        if !is_agent_visible_entity_type(entity_type) {
-            continue;
-        }
-
-        let count = server
-            .vault
-            .count_entities_by_type_at(entity_type, locality)
-            .inspect_err(|e| {
-                tracing::error!(error = %e, entity_type, "session prefix count scan failed");
-            })
-            .map_err(|_| ApiError::internal_server_error("session prefix count scan failed"))?;
-
-        if count == 0 {
-            continue;
-        }
-
-        counts.insert(entity_type.to_string(), count);
-    }
-
-    let last_activity = if counts.is_empty() {
-        None
-    } else {
-        server
-            .vault
-            .latest_learned_at_excluding_entity_types_at(
-                &[ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_AUTHORITY_LOG],
-                locality,
-            )
-            .inspect_err(|e| {
-                tracing::error!(error = %e, "session prefix activity summary failed");
-            })
-            .map_err(|_| {
-                ApiError::internal_server_error("session prefix activity summary failed")
-            })?
-    };
-
-    Ok(SessionContext {
+/// The session prefix every caller reads: no count and no activity date. A
+/// count may count only rows its reader's key reads, and the vault's counts
+/// and dates do not, so no row a key cannot read moves it (F16).
+pub(crate) fn empty_session_prefix() -> SessionContext {
+    SessionContext {
         api_version: API_LEVEL.to_owned(),
-        counts,
-        last_activity,
-    })
+        counts: BTreeMap::new(),
+        last_activity: None,
+    }
 }
 
+/// The caller's pending notifications: those `read`, its own read, reads,
+/// whose recipient markers name it. A recipient marker targets delivery; it
+/// never grants a read the caller does not hold. Each body is the one the
+/// read admits, in the snapshot that admits it.
 pub(crate) fn pending_notifications(
     server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
     caller: &str,
 ) -> Result<Vec<NotificationItem>, ApiError> {
     let mut notifications = Vec::new();
@@ -92,7 +52,21 @@ pub(crate) fn pending_notifications(
         })
         .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
 
-    for (id, learned_at, raw_body) in rows {
+    let ids: Vec<_> = rows.into_iter().map(|(id, _, _)| id).collect();
+    let admitted = read
+        .get_entities_parts_with_receipt(&ids, None)
+        .inspect_err(|e| {
+            tracing::error!(kind = ?e.kind(), "pending notification admission failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?
+        .value;
+    for (id, parts) in ids.into_iter().zip(admitted) {
+        let Some((entity_type, learned_at, raw_body)) = parts else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_NOTIFICATION {
+            continue;
+        }
         let Some(body) = notification_body_json(&raw_body) else {
             continue;
         };

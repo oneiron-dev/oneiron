@@ -10,6 +10,36 @@ fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()
 }
 
+/// The vault's host root as a read: whole, or limited to one facet
+/// (FACET-READ). No row these fixtures write sits in a facet.
+fn host_root_read(
+    vault: &crate::Vault,
+    facet: Option<EntityId>,
+) -> crate::Result<crate::claim::ScopedRead<'_>> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"board facet root")?;
+    let mut slip = vault.ensure_host_root_slip(&issuer)?;
+    let proof = match facet {
+        None => vault.verified_host_root_slip(&issuer)?,
+        Some(facet) => {
+            let mut scope = Scope::top();
+            scope.facets = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]));
+            issuer.attenuate(
+                &mut slip,
+                crate::authority::SlipCaveat {
+                    scope: Some(scope),
+                    ..Default::default()
+                },
+            )?;
+            let binding = issuer.binding_proof(&slip, b"board facet")?;
+            vault.verify_capability_slip(&issuer.public_key(), &slip, b"board facet", &binding)?
+        }
+    };
+    Ok(vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"),
+    ))
+}
+
 #[test]
 fn worlds_filter_before_projection_and_counting() {
     let worlds = [1, 2, 3, 4].map(|n| WorldPresence {
@@ -63,9 +93,10 @@ fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
         rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge))],
         ..ChangedLine::default()
     };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
     session
         .fold_own_changes(
-            &vault,
+            &read,
             Some(id(7)),
             crate::claim::CallerLocality::OnDevice,
             &mut line,
@@ -156,8 +187,23 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
     }))
     .unwrap();
     let mut line = ChangedLine::default();
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), "host"]);
+    // FACET-READ: a read limited to a facet the claim does not sit in folds
+    // no outcome of it, as of a missing row; the same root, whole, folds one.
+    for (facet, rides) in [(Some(id(0x5F)), 0), (None, 1)] {
+        let mut folded = ChangedLine::default();
+        session.fold_own_changes(
+            &host_root_read(&vault, facet)?,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut folded,
+            16,
+        )?;
+        assert_eq!(folded.events.len(), rides, "{facet:?}: {folded:?}");
+    }
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
     session.fold_own_changes(
-        &vault,
+        &read,
         Some(id(7)),
         crate::claim::CallerLocality::OnDevice,
         &mut line,
@@ -227,10 +273,12 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
             )
         })
     };
+    crate::test_util::authorize_readers(&vault, &[&actor.to_hex()]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(actor.to_hex()).unwrap());
     let wake = |session: &mut SessionReadSet| -> crate::Result<usize> {
         let mut line = ChangedLine::default();
         session.fold_own_changes(
-            &vault,
+            &read,
             Some(actor),
             crate::claim::CallerLocality::OnDevice,
             &mut line,
@@ -259,4 +307,126 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
     assert_eq!(wake(&mut session)?, 0);
     assert_eq!(wake(&mut session)?, 0);
     Ok(())
+}
+
+/// F16 round 3 (Sol F2): a session's lifecycle rider names an agent's
+/// retraction only while the caller's read reads the agent. To a read that
+/// does not, the retraction is no change, as for a missing row.
+#[test]
+fn a_lifecycle_rider_names_no_retraction_its_reader_cannot_read() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let agent = crate::test_util::seed_agent_definition(&vault, id(0x31), "rider");
+    let mut session = SessionReadSet::default();
+    session.served(agent.to_hex(), ServedLifecycle::Active);
+    let mut definition = vault.get_agent_definition(&agent)?.expect("seeded agent");
+    definition.version.push_str("-retired");
+    definition.lifecycle_status = crate::claim::ClaimLifecycleStatus::Retracted;
+    vault.update_agent_definition(
+        &agent,
+        &definition,
+        crate::TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), "host"]);
+    let rows = |actor: u8| {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
+        session.refresh(&read, 16).map(|line| line.rows)
+    };
+    assert_eq!(rows(7)?, vec![(agent.to_hex(), ServedLifecycle::Retracted)]);
+    assert_eq!(
+        rows(8)?,
+        Vec::new(),
+        "a reader of no agent learns no retraction"
+    );
+    // FACET-READ: a read limited to a facet the agent does not sit in learns
+    // no retraction either; the same root, whole, does.
+    let root_rows = |facet| -> crate::Result<_> {
+        Ok(session.refresh(&host_root_read(&vault, facet)?, 16)?.rows)
+    };
+    assert_eq!(
+        root_rows(None)?,
+        vec![(agent.to_hex(), ServedLifecycle::Retracted)]
+    );
+    assert_eq!(root_rows(Some(id(0x5F)))?, Vec::new());
+    Ok(())
+}
+
+/// F16 round 4 (Sol F1 = Astra F1): a claim's lifecycle rider holds every
+/// condition of its reader's read but the claim's status. A retraction of a
+/// claim private to one principal rides to that principal alone; to another
+/// reader it is no change, as for a missing row.
+#[test]
+fn a_lifecycle_rider_names_no_retraction_of_a_claim_its_reader_cannot_read() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = id(0x32);
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let claim = id(0x33);
+    let mut body = crate::claim::ClaimBody::new(
+        "profile.orchid",
+        crate::claim::ClaimSubject::Entity(subject),
+        rmpv::Value::from("prefers orchids"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Retracted,
+    )?;
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("principal"),
+        rmpv::Value::Binary(id(9).as_bytes().to_vec()),
+    )]));
+    vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let mut session = SessionReadSet::default();
+    session.served(claim.to_hex(), ServedLifecycle::Active);
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), &id(9).to_hex()]);
+    let rows = |actor: u8| {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
+        session.refresh(&read, 16).map(|line| line.rows)
+    };
+    assert_eq!(rows(9)?, vec![(claim.to_hex(), ServedLifecycle::Retracted)]);
+    assert_eq!(
+        rows(7)?,
+        Vec::new(),
+        "another principal's reader learns no retraction"
+    );
+    Ok(())
+}
+
+/// F16 round 5 (Astra F2): an installed pack's row is the pack's name, and
+/// a name may read like a row ref (`agent:<hex>`). The rows a line names,
+/// rendered or counted past its cap, hold no pack name: a keyed replay
+/// re-admits each pack's source apart, never a row the name seems to name.
+#[test]
+fn a_pack_row_names_no_row_rendered_or_counted() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let session = SessionReadSet::default();
+    let mut line = ChangedLine {
+        rows: (0..17)
+            .map(|n| {
+                (
+                    format!("agent:{}", id(0x60 + n).to_hex()),
+                    ServedLifecycle::Installed(format!("hash-{n}")),
+                )
+            })
+            .collect(),
+        ..ChangedLine::default()
+    };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
+    session
+        .fold_own_changes(
+            &read,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )
+        .unwrap();
+    assert!(line.overflow >= 1, "{line:?}");
+    assert_eq!(line.named_rows().collect::<Vec<_>>(), Vec::<&str>::new());
 }

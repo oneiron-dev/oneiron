@@ -194,7 +194,7 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
             .unwrap();
         let mut line = crate::context_board::ChangedLine::default();
         session
-            .fold_own_changes(&vault, Some(owner), locality, &mut line, 16)
+            .fold_own_changes(&read, Some(owner), locality, &mut line, 16)
             .unwrap();
         assert_eq!(
             line.events.len(),
