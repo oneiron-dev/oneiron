@@ -121,6 +121,9 @@ pub struct MaintenanceReport {
     pub conversation_dags_migrated: u64,
     /// Conversations skipped because their received DAG topology is invalid.
     pub conversation_dags_skipped_invalid: Vec<EntityId>,
+    /// Federated facet stamps held ahead of their rows that this run retired:
+    /// held 30 days or more, or held under a grant that no longer confers.
+    pub held_facet_stamps_retired: u64,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -341,6 +344,12 @@ impl<'a> MaintenanceBuilder<'a> {
 
         // Terminal bounded pass keeps unattended critical-write attachments from remaining Auto.
         self.vault.expire_critical_write_confirms()?;
+
+        #[cfg(feature = "sync")]
+        {
+            report.held_facet_stamps_retired =
+                crate::sync::selector::retire_held_facet_stamps(self.vault)?;
+        }
 
         Ok(report)
     }

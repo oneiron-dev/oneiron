@@ -364,7 +364,7 @@ fn presence_is_not_membership() {
         SessionMode::Direct
     );
     vault
-        .set_session_mode(session, SessionMode::Council, actor)
+        .set_session_mode(session, SessionMode::Council, None, actor)
         .unwrap();
     vault.set_presence(session, &[bob], actor).unwrap();
     assert_eq!(

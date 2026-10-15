@@ -442,7 +442,7 @@ fn task_page_slot_in(
         // outcome this row has, so the projection reads it off the interrupted
         // register rather than rendering the row as a bare pause.
         let settled_ladder = match &task.state {
-            Some(TaskExecutionState::Interrupted { ladder }) => *ladder,
+            Some(TaskExecutionState::Interrupted { ladder, .. }) => *ladder,
             _ => None,
         };
         let (status, terminal_disposition) = match (&terminal, task.ttl) {

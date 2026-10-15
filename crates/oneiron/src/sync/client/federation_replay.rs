@@ -4,7 +4,7 @@ use super::base::SyncClient;
 use super::federated::map_federated_admission_err;
 use crate::sync::WindowKey;
 use crate::sync::federation_burst::{DeferredWork, FederationPeer, WorkKind};
-use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
+use crate::sync::selector::{FederationAdmissionRole, admit_peer_window_update};
 use crate::sync::transport::TransportError;
 
 impl SyncClient {
@@ -45,10 +45,10 @@ impl SyncClient {
         // The grant and the local claim gate are read again at the actual
         // admission door. Stored raw bytes are not trusted replay authority.
         // Admission authors deterministic local op ids from these exact bytes.
-        let admitted = admit_federated_window_update(&self.vault, &key, &work.payload, role)
-            .map_err(map_federated_admission_err)?;
-        let window = self.ensure_window(&work.window)?;
-        self.import_accepted_window_update(&work.window, &window, &admitted)?;
+        let admitted =
+            admit_peer_window_update(&self.vault, &key, &work.payload, role, peer.principal())
+                .map_err(map_federated_admission_err)?;
+        self.import_peer_update(&work.window, &key, &admitted, peer.grant())?;
         work.complete(&self.vault, &peer)
             .map_err(map_federated_admission_err)?;
         Ok(true)

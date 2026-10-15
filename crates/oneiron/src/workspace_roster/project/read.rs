@@ -364,3 +364,21 @@ impl<'a, 't> ProjectReader<'a, 't> {
         }))
     }
 }
+
+/// The facets a project's home room limits what is read through it: its
+/// project's own slice facet, as the read fold accepts the project (owner
+/// ruling FACET-READ). A MESSAGE or TURN said there sits in it. `None` is a
+/// room no project owns, or one whose project's slice names no facet.
+pub(crate) fn room_facets_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<ScopeAxis<ScopeId>>> {
+    let Some(project) = ROOM_PROJECT.get(&vault.store, txn, &room)? else {
+        return Ok(None);
+    };
+    Ok(vault
+        .visible_project_in_txn(txn, project)?
+        .and_then(|project| project.slice.facet)
+        .map(|facet| ScopeAxis::Some([ScopeId(facet)].into())))
+}

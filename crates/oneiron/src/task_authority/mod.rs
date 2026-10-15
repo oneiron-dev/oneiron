@@ -32,9 +32,13 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::side_table::{self, SideTable};
 #[cfg(test)]
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
+
+mod binding_generation;
+pub use binding_generation::{BindingGeneration, BindingId, MAX_GENERATION_BINDINGS};
 
 /// Strict body schema for authority facts. Version 1 is the only shape ever
 /// written; a row naming any other version is refused rather than guessed at.
@@ -50,9 +54,13 @@ const BODY_KEY_TASK_REF: &str = "task_ref";
 const BODY_KEY_KIND: &str = "kind";
 const BODY_KEY_ACTOR_REF: &str = "actor_ref";
 const BODY_KEY_ASSIGNED_REF: &str = "assigned_ref";
+const BODY_KEY_ACTOR_GENERATION: &str = "actor_generation";
+const BODY_KEY_ASSIGNED_GENERATION: &str = "assigned_generation";
 const BODY_KEY_OCCURRED_AT: &str = "occurred_at";
 
-/// Base v1 key count. HumanAssigned carries one additional assigned_ref.
+/// Base v1 key count. HumanAssigned carries one additional assigned_ref;
+/// ConsultAssignee carries each of assigned_ref and the two generations when
+/// it has one.
 const FACT_BODY_KEY_COUNT: usize = 7;
 
 /// Contract stored-weight prior for `scoped_to` edges (contracts.ts
@@ -68,7 +76,12 @@ const SCOPED_TO_DEFAULT_WEIGHT: f32 = match EdgeKind::ScopedTo.default_weight() 
 ///
 /// Owner proves who may act directly; cancellation and acknowledgement are
 /// events. HumanAssigned records a separate authenticated assignment door,
-/// never inferred from a caller-selected Owner id.
+/// never inferred from a caller-selected Owner id. ConsultAssignee records
+/// a consult's parties when it was minted (its asker, the party it was
+/// addressed to, and the binding generation each held), so the body's
+/// mutable `assignee` field is display and never admission. ConsentRequired
+/// records that an interruption asked for a human verdict, so the body's
+/// mutable `consent_required` flag is display and never a waiver.
 /// None of them is ever rewritten or deleted, so the set only grows.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,6 +90,8 @@ pub enum TaskAuthorityFactKind {
     Cancelled = 2,
     Acked = 3,
     HumanAssigned = 4,
+    ConsultAssignee = 5,
+    ConsentRequired = 6,
 }
 
 impl TaskAuthorityFactKind {
@@ -87,6 +102,8 @@ impl TaskAuthorityFactKind {
             Self::Cancelled => 2,
             Self::Acked => 3,
             Self::HumanAssigned => 4,
+            Self::ConsultAssignee => 5,
+            Self::ConsentRequired => 6,
         }
     }
 
@@ -97,6 +114,8 @@ impl TaskAuthorityFactKind {
             2 => Some(Self::Cancelled),
             3 => Some(Self::Acked),
             4 => Some(Self::HumanAssigned),
+            5 => Some(Self::ConsultAssignee),
+            6 => Some(Self::ConsentRequired),
             _ => None,
         }
     }
@@ -109,10 +128,18 @@ pub struct TaskAuthorityFact {
     /// read through, or the fact is refused.
     pub task_ref: EntityId,
     pub kind: TaskAuthorityFactKind,
-    /// Owner facts name the owner; Cancelled/Acked facts name who acted.
+    /// Owner facts name the owner; Cancelled/Acked/ConsentRequired facts
+    /// name who acted; ConsultAssignee facts name the consult's asker.
     pub actor_ref: EntityId,
-    /// Present only for HumanAssigned: the immutable agent H assigned.
+    /// HumanAssigned: the immutable agent H assigned. ConsultAssignee: the
+    /// party the consult was addressed to, absent for one addressed to the
+    /// Dreamer. Absent on every other kind.
     pub assigned_ref: Option<EntityId>,
+    /// ConsultAssignee only: the live bindings `actor_ref` held when the
+    /// consult was minted, absent when it held none.
+    pub actor_generation: Option<BindingGeneration>,
+    /// ConsultAssignee only: the same for `assigned_ref`.
+    pub assigned_generation: Option<BindingGeneration>,
     pub occurred_at: u64,
 }
 
@@ -140,6 +167,61 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
     pub(crate) human_assigner: Option<(EntityId, EntityId)>,
+    pub(crate) consult_parties: ConsultParties,
+    /// Set once any interruption of the consult asked for a human verdict.
+    pub(crate) consent_required: bool,
+}
+
+/// The parties a consult's ConsultAssignee facts name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a fold value read once per consult; boxing would cost the fold its Copy"
+)]
+pub(crate) enum ConsultParties {
+    /// No fact: nobody holds party standing. Only the consult's minting door
+    /// writes one.
+    #[default]
+    Unminted,
+    Minted(ConsultPartyFact),
+    /// Facts naming different parties: nobody holds party standing, rather
+    /// than one fact winning.
+    Forked,
+}
+
+/// One consult's parties and the binding generation each held when it was
+/// minted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConsultPartyFact {
+    asker: EntityId,
+    asker_generation: Option<BindingGeneration>,
+    assignee: Option<EntityId>,
+    assignee_generation: Option<BindingGeneration>,
+}
+
+impl ConsultPartyFact {
+    /// Two replicas minting the same consult name the same parties, and
+    /// converge on the bindings both recorded for each.
+    fn meet(self, other: Self) -> Self {
+        Self {
+            asker_generation: BindingGeneration::meet(
+                self.asker_generation,
+                other.asker_generation,
+            ),
+            assignee_generation: BindingGeneration::meet(
+                self.assignee_generation,
+                other.assignee_generation,
+            ),
+            ..self
+        }
+    }
+}
+
+/// An actor's standing as one of a consult's parties: the bindings it held
+/// when the consult was minted, one of which it must still hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConsultStanding {
+    pub(crate) generation: Option<BindingGeneration>,
 }
 
 impl TaskAuthorityFacts {
@@ -178,8 +260,52 @@ impl TaskAuthorityFacts {
                     _ => self.human_assigner = Some((fact.actor_ref, assigned)),
                 }
             }
+            TaskAuthorityFactKind::ConsultAssignee => {
+                let minted = ConsultPartyFact {
+                    asker: fact.actor_ref,
+                    asker_generation: fact.actor_generation,
+                    assignee: fact.assigned_ref,
+                    assignee_generation: fact.assigned_generation,
+                };
+                // A fork fails closed for the consult's parties alone: the
+                // owner's own cancellation still reads, as a restriction must.
+                self.consult_parties = match self.consult_parties {
+                    ConsultParties::Unminted => ConsultParties::Minted(minted),
+                    ConsultParties::Minted(held)
+                        if held.asker == minted.asker && held.assignee == minted.assignee =>
+                    {
+                        ConsultParties::Minted(held.meet(minted))
+                    }
+                    ConsultParties::Minted(_) | ConsultParties::Forked => ConsultParties::Forked,
+                };
+            }
+            TaskAuthorityFactKind::ConsentRequired => self.consent_required = true,
         }
         Ok(())
+    }
+
+    /// `actor`'s standing as one of the consult's parties: its asker or the
+    /// party it was addressed to, as its one ConsultAssignee fact names them.
+    /// A consult with no fact, a forked fact, or a fact whose asker is not
+    /// the task's proven owner gives nobody standing.
+    pub(crate) fn consult_standing(&self, actor: EntityId) -> Option<ConsultStanding> {
+        let ConsultParties::Minted(parties) = self.consult_parties else {
+            return None;
+        };
+        if self.owner_ref != Some(parties.asker) {
+            return None;
+        }
+        if parties.asker == actor {
+            Some(ConsultStanding {
+                generation: parties.asker_generation,
+            })
+        } else if parties.assignee == Some(actor) {
+            Some(ConsultStanding {
+                generation: parties.assignee_generation,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -253,6 +379,14 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
             Value::from(assigned.to_hex()),
         ));
     }
+    for (key, generation) in [
+        (BODY_KEY_ACTOR_GENERATION, fact.actor_generation),
+        (BODY_KEY_ASSIGNED_GENERATION, fact.assigned_generation),
+    ] {
+        if let Some(generation) = generation {
+            entries.push((Value::from(key), generation.encode()));
+        }
+    }
     let value = Value::Map(entries);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value)
@@ -280,10 +414,10 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         .ok_or(Error::Record(RecordError::InvalidTaskBody(
             "task authority fact body",
         )))?;
-    // The key set is EXACT: a base fact has seven keys and HumanAssigned
-    // carries exactly one additional agent id,
-    // so no unread field can ride along in a body two decoders would disagree
-    // about.
+    // The key set is EXACT: a base fact has seven keys, HumanAssigned
+    // carries exactly one additional agent id, and ConsultAssignee carries
+    // exactly the optional party and generation keys it has, so no unread
+    // field can ride along in a body two decoders would disagree about.
     let byte = |key| {
         fact_body_field(entries, key)?
             .as_u64()
@@ -319,26 +453,59 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
     let kind = TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?).ok_or(Error::Record(
         RecordError::InvalidTaskBody("task authority fact kind"),
     ))?;
-    let assigned_ref = if kind == TaskAuthorityFactKind::HumanAssigned {
-        if entries.len() != FACT_BODY_KEY_COUNT + 1 {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "task human assignment key set",
-            )));
+    let generation = |key| {
+        optional_fact_body_field(entries, key)?
+            .map(BindingGeneration::decode)
+            .transpose()
+    };
+    let (assigned_ref, actor_generation, assigned_generation) = match kind {
+        TaskAuthorityFactKind::HumanAssigned => {
+            if entries.len() != FACT_BODY_KEY_COUNT + 1 {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task human assignment key set",
+                )));
+            }
+            (Some(entity_ref(BODY_KEY_ASSIGNED_REF)?), None, None)
         }
-        Some(entity_ref(BODY_KEY_ASSIGNED_REF)?)
-    } else {
-        if entries.len() != FACT_BODY_KEY_COUNT {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "task authority fact key set",
-            )));
+        TaskAuthorityFactKind::ConsultAssignee => {
+            let assigned_ref = optional_fact_body_field(entries, BODY_KEY_ASSIGNED_REF)?
+                .map(|_| entity_ref(BODY_KEY_ASSIGNED_REF))
+                .transpose()?;
+            let actor_generation = generation(BODY_KEY_ACTOR_GENERATION)?;
+            let assigned_generation = generation(BODY_KEY_ASSIGNED_GENERATION)?;
+            let present = [
+                assigned_ref.is_some(),
+                actor_generation.is_some(),
+                assigned_generation.is_some(),
+            ];
+            if entries.len() != FACT_BODY_KEY_COUNT + present.iter().filter(|key| **key).count()
+                || (assigned_generation.is_some() && assigned_ref.is_none())
+            {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task consult party key set",
+                )));
+            }
+            (assigned_ref, actor_generation, assigned_generation)
         }
-        None
+        TaskAuthorityFactKind::Owner
+        | TaskAuthorityFactKind::Cancelled
+        | TaskAuthorityFactKind::Acked
+        | TaskAuthorityFactKind::ConsentRequired => {
+            if entries.len() != FACT_BODY_KEY_COUNT {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task authority fact key set",
+                )));
+            }
+            (None, None, None)
+        }
     };
     Ok(TaskAuthorityFact {
         task_ref: entity_ref(BODY_KEY_TASK_REF)?,
         kind,
         actor_ref: entity_ref(BODY_KEY_ACTOR_REF)?,
         assigned_ref,
+        actor_generation,
+        assigned_generation,
         occurred_at: fact_body_field(entries, BODY_KEY_OCCURRED_AT)?
             .as_u64()
             .ok_or(Error::Record(RecordError::InvalidTaskBody(
@@ -350,21 +517,173 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
 /// The single value stored under `name`, refusing a duplicated key — the same
 /// exact-field read `task_verb::wire_decode` uses for the primary TASK body.
 fn fact_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
+    optional_fact_body_field(entries, name)?.ok_or(Error::Record(RecordError::InvalidTaskBody(
+        "task authority fact key set",
+    )))
+}
+
+/// [`fact_body_field`] for a key a fact may omit.
+fn optional_fact_body_field<'a>(
+    entries: &'a [(Value, Value)],
+    name: &str,
+) -> Result<Option<&'a Value>> {
     let mut values = entries
         .iter()
         .filter(|(key, _)| key.as_str() == Some(name))
         .map(|(_, value)| value);
-    let value = values
-        .next()
-        .ok_or(Error::Record(RecordError::InvalidTaskBody(
-            "task authority fact key set",
-        )))?;
+    let value = values.next();
     if values.next().is_some() {
         return Err(Error::Record(RecordError::InvalidTaskBody(
             "task authority fact duplicate key",
         )));
     }
     Ok(value)
+}
+
+/// Whether `id` is a stored authority fact.
+pub(crate) fn is_task_authority_fact_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("task authority fact guard header"))?;
+    Ok(header.entity_type == ENTITY_TYPE_TASK
+        && raw.len() > ENTITY_METADATA_HEADER_LEN
+        && matches!(
+            task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]),
+            Ok(TaskRole::AuthorityFact)
+        ))
+}
+
+/// Tasks an authority fact of which was refused at admission because its id
+/// was deleted here before the fact arrived. Presence-only.
+const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
+
+/// A replicated row `id` refused because it was deleted here: when it is a
+/// task authority fact this vault does not hold, its task is marked, so the
+/// task's facts read as a refusal. A tombstone that reached this vault before
+/// a fact would otherwise make a cancellation or a consent requirement read
+/// as never made.
+#[cfg(feature = "sync")]
+pub(crate) fn note_suppressed_fact_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if entity_type != ENTITY_TYPE_TASK || is_task_authority_fact_in(store, wtxn, id)? {
+        return Ok(());
+    }
+    let Ok(fact) = decode_task_authority_fact_body(body) else {
+        return Ok(());
+    };
+    SUPPRESSED.put(store, wtxn, &fact.task_ref, &[1])
+}
+
+/// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
+/// header and body, that a local path removes because its id was deleted
+/// here: a fact the carrier holds that this vault never admitted marks its
+/// task, as admission would have.
+#[cfg(feature = "sync")]
+pub(crate) fn note_removed_carrier_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    carrier: &[u8],
+) -> Result<()> {
+    let Some(header) = EntityMetadataHeader::parse(carrier) else {
+        return Ok(());
+    };
+    note_suppressed_fact_in_txn(
+        store,
+        wtxn,
+        id,
+        header.entity_type,
+        &carrier[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
+/// [`note_suppressed_fact_in_txn`] for a door with no tombstone map: the
+/// row was deleted here when its id is fenced, as a replicated put reads it.
+#[cfg(feature = "sync")]
+pub(crate) fn note_fenced_fact_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &side_table::HexId(*id))? {
+        note_suppressed_fact_in_txn(store, wtxn, id, entity_type, body)?;
+    }
+    Ok(())
+}
+
+/// Whether `task` is marked as holding an authority fact this vault refused.
+pub(crate) fn fact_suppressed_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    task: &EntityId,
+) -> Result<bool> {
+    SUPPRESSED.contains(store, txn, task)
+}
+
+/// Marks the tasks a recovered canonical window names as holding a fact its
+/// source refused.
+#[cfg(feature = "sync")]
+pub(crate) fn restore_suppressed_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    tasks: &[[u8; 16]],
+) -> Result<()> {
+    for task in tasks {
+        SUPPRESSED.put(store, wtxn, &EntityId::from_bytes(*task)?, &[1])?;
+    }
+    Ok(())
+}
+
+fn fact_suppressed() -> Error {
+    Error::InvariantViolation("task authority fact suppressed")
+}
+
+/// A fact is read through its `fact --ScopedTo--> task` link, so removing
+/// the link, or the fact, would read as a requirement never made or a party
+/// never named, and let the next fact stand as the first. No door removes
+/// either; a hard delete of the subject takes the link with its row.
+pub(crate) fn reject_fact_link_delete(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+) -> Result<()> {
+    if kind == EdgeKind::ScopedTo && is_task_authority_fact_in(store, txn, src)? {
+        return Err(fact_removal_refused());
+    }
+    Ok(())
+}
+
+/// [`reject_fact_link_delete`] for the fact row itself.
+pub(crate) fn reject_fact_delete(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if is_task_authority_fact_in(store, txn, id)? {
+        return Err(fact_removal_refused());
+    }
+    Ok(())
+}
+
+pub(crate) fn fact_removal_refused() -> Error {
+    Error::Record(RecordError::InvalidTaskBody(
+        "task authority facts are immutable",
+    ))
 }
 
 impl Vault {
@@ -421,6 +740,11 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<TaskAuthorityFacts> {
+        // A fact this vault never admitted is not a fact never made: no
+        // cancellation, consent requirement or party is guessed past it.
+        if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
+            return Err(fact_suppressed());
+        }
         let mut facts = TaskAuthorityFacts::default();
         for (scanned, entry) in self
             .store
