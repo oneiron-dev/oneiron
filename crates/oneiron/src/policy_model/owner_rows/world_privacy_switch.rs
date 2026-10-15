@@ -71,6 +71,10 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
     ) -> Result<WorldPrivacyReceipt> {
+        // The world's key follows its settings in the same commit, when this
+        // install has a keystore to hold its machine secret (world privacy
+        // P6b). Its secret is read before the writer.
+        let secret = self.machine_secret_outside_txn().ok();
         // The release lock is taken under the writer and released only after
         // the commit is durable: a release verdict reading the settings waits
         // for it, and never needs the writer while it holds the read side.
@@ -81,6 +85,10 @@ impl Vault {
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let receipt = self.set_world_privacy_in_txn(txn, owner, origin, world, settings)?;
+            if let Some(secret) = &secret {
+                let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+                self.ensure_world_key_after_edit_in_txn(txn, actor, world, secret)?;
+            }
             Ok((release, receipt))
         })?;
         Ok(receipt)
@@ -97,8 +105,23 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
     ) -> Result<WorldPrivacyReceipt> {
+        self.set_world_privacy_under_in_txn(txn, owner, origin, world, settings, None)
+    }
+
+    /// [`Self::set_world_privacy_in_txn`] where `earlier`'s read gives
+    /// standing as well (an owner's re-assertion after a pin change).
+    pub(crate) fn set_world_privacy_under_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        origin: EditOrigin,
+        world: EntityId,
+        settings: WorldPrivacy,
+        earlier: Option<&crate::authority::AuthorityFold>,
+    ) -> Result<WorldPrivacyReceipt> {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let change = self.append_world_privacy_edit_in_txn(txn, actor, origin, world, settings)?;
+        let change = self
+            .append_world_privacy_edit_under_in_txn(txn, actor, origin, world, settings, earlier)?;
         let last = RECEIPTS
             .iter_rev_from(&self.store, txn, &[])?
             .next()

@@ -159,6 +159,16 @@ one. None of these changes the combiner's inputs or their order.
 - ML-KEM decapsulation rejects implicitly, so a tampered ciphertext shows up only as
   `OpenFailed`.
 
+### Seed keys
+
+`HybridSecretKey::from_seed(seed, label)` rebuilds a hybrid key that is kept as a single
+32-byte seed: a keystore slot or a recovery kit. HKDF-SHA256 with no salt expands the seed.
+Info `label || "/mlkem-1024"` gives the 64-byte ML-KEM seed (`d || z`), and
+`label || "/x25519"` gives the X25519 secret. This is the draft's single-seed expansion,
+with HKDF as the PRG. Each use has its own label, so one seed never yields the same key
+for two jobs. An all-zero seed is refused. `tests/envelope.rs` checks the expansion
+against an independent HKDF.
+
 ## Secret hygiene
 
 - Key types (`Kek`, `RecoverySecret`, `Passphrase`, `HybridSecretKey`, `SigningKey`)

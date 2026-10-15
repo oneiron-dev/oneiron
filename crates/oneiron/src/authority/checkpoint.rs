@@ -250,12 +250,16 @@ impl Vault {
         let now =
             authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
-        Ok(fold_authority_log_for_posture(
+        // The checkpoint is a subset of this vault's own log: the pin is this
+        // install's, read here, never one the checkpoint carries.
+        let pin = super::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
+        Ok(fold_pinned_authority_log_for_posture(
             &entries,
             &seen,
             now,
             &peers,
             self.privacy_posture(),
+            pin.as_ref(),
         ))
     }
     fn verify_checkpoint_one(

@@ -6,8 +6,8 @@ use ed25519_dalek::SigningKey;
 use loro::LoroDoc;
 
 use crate::authority::{
-    HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineEncryptionKey, MachineOwnership, MachineRole,
+    EditOrigin, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineRole,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -25,6 +25,7 @@ use crate::registry::{
 use crate::store::GateDecisionId;
 use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
 use crate::temporal::TimeRange;
+use crate::world_keys::{RecoveryRootId, RecoveryRootSeed};
 use crate::{EntityId, Result, Vault, VaultConfig};
 
 struct Host {
@@ -62,17 +63,19 @@ fn install() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+/// `install`'s request to join `vault_id`, with its own encryption key from a
+/// keystore of its own (world privacy P6b).
+fn own_request(vault_id: [u8; 32], install: &Vault) -> MachineEnrolmentRequest {
+    install.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let own = install.machine_encryption_key(vault_id).unwrap();
+    install.machine_enrolment_request(vault_id, own).unwrap()
+}
+
 /// The owner pairs `install` into `host` with `role`; the machine it joins as.
 fn enroll(host: &Host, install: &Vault, role: MachineRole) -> EntityId {
-    let request = install
-        .machine_enrolment_request(
-            host.vault_id,
-            MachineEncryptionKey {
-                suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-                key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-            },
-        )
-        .unwrap();
+    let request = own_request(host.vault_id, install);
     host.vault
         .enroll_machine(&host.issuer, &host.owner, &request, role)
         .unwrap();
@@ -452,6 +455,93 @@ fn a_local_enrolment_and_removal_move_the_stored_edges() {
         !shell_edge(&host.vault, loser, survivor),
         "a local removal takes it out of force"
     );
+    assert_eq!(
+        folded_state(&host.vault, loser),
+        EntityLifecycleState::Active
+    );
+}
+
+/// `seed`'s root, published on `host`'s vault by its own anchor, which marks
+/// `install` "yours"; the root's id.
+fn anchor_root(host: &Host, seed: &RecoveryRootSeed, install: Option<&Vault>) -> RecoveryRootId {
+    use crate::authority::{AuthorityOp, MachineProfile, OwnerRootRecord, anchor_signed_entry};
+    let root = seed.public(&host.vault_id).unwrap();
+    let mut ops = vec![AuthorityOp::OwnerRoot(OwnerRootRecord {
+        owner: host.owner.actor(),
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    })];
+    if let Some(install) = install {
+        let request = own_request(host.vault_id, install);
+        ops.push(AuthorityOp::MachineProfile(MachineProfile {
+            machine: request.machine,
+            owner: host.owner.actor(),
+            machine_key: request.machine_key,
+            encryption_key: request.encryption_key,
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 1,
+            machine_proof: request.machine_proof,
+            seen_world_edits: std::collections::BTreeSet::new(),
+        }));
+    }
+    for op in ops {
+        let fold = host.vault.authority_fold().unwrap();
+        let entry = anchor_signed_entry(&fold, &seed.anchor(), op, 2).unwrap();
+        host.vault
+            .put_authority_log_entry(&entry, TimeRange { start: 2, end: 2 }, 2)
+            .unwrap();
+    }
+    root.id
+}
+
+/// Whose seals count follows this install's pin (world privacy P6b), so a
+/// pin change alone decides the stored edges again, in the pin door's own
+/// transaction: a merge sealed by a machine only one root's anchor marks
+/// comes into force when this install pins that root, and goes out of force
+/// when it pins another, with no reopen and no row the door appends after
+/// the pin (no world to re-wrap). Fails before: the edges and the redirect
+/// moved only at the next authority write or open (Astra code-S2-R1 A1-F2).
+#[test]
+fn a_pin_change_alone_moves_the_stored_edges() {
+    let host = host();
+    host.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let (_dir, laptop) = install();
+    let (loser, survivor) = (EntityId::now(), EntityId::now());
+    merge_locally(&laptop, loser, survivor);
+    deliver_merge(&host.vault, &laptop, loser, survivor);
+    let marking = anchor_root(&host, &RecoveryRootSeed::generate().unwrap(), Some(&laptop));
+    let other = anchor_root(&host, &RecoveryRootSeed::generate().unwrap(), None);
+    assert!(
+        !shell_edge(&host.vault, loser, survivor),
+        "an anchor no pin trusts lends no standing"
+    );
+
+    let here = EditOrigin::ThisMachine;
+    host.vault
+        .pin_owner_root(&host.owner, here, marking)
+        .unwrap();
+    assert!(
+        shell_edge(&host.vault, loser, survivor),
+        "pinned to the marking root"
+    );
+    assert_eq!(host.vault.resolve_entity(&loser).unwrap(), vec![survivor]);
+    assert_eq!(
+        folded_state(&host.vault, loser),
+        EntityLifecycleState::Merged
+    );
+
+    host.vault.pin_owner_root(&host.owner, here, other).unwrap();
+    assert!(
+        !shell_edge(&host.vault, loser, survivor),
+        "pinned to another root"
+    );
+    assert_eq!(host.vault.resolve_entity(&loser).unwrap(), vec![loser]);
     assert_eq!(
         folded_state(&host.vault, loser),
         EntityLifecycleState::Active

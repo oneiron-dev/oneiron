@@ -2,9 +2,11 @@
 
 use core::fmt;
 
+use hkdf::Hkdf;
 use ml_kem::array::Array;
 use ml_kem::{DecapsulationKey1024, EncapsulationKey1024, KeyExport};
 use rand_core::TryCryptoRng;
+use sha2::Sha256;
 use zeroize::Zeroizing;
 
 use crate::codec::check_len;
@@ -269,6 +271,19 @@ impl HybridSecretKey {
         }
     }
 
+    /// Rebuilds a key kept as one 32-byte seed (a keystore slot, a recovery kit).
+    /// HKDF-SHA256 with no salt expands the seed under `label`: info `label || "/mlkem-1024"`
+    /// gives the 64-byte ML-KEM seed and `label || "/x25519"` the X25519 secret. Distinct
+    /// labels give unrelated keys from one seed. An all-zero seed is refused.
+    pub fn from_seed(seed: &[u8; 32], label: &[u8]) -> Result<Self> {
+        if seed == &[0u8; 32] {
+            return Err(Error::Primitive("zero seed"));
+        }
+        let key = from_seed_inner(seed, label);
+        zeroize::zeroize_stack::<SEED_KEY_STACK_WIPE>();
+        key
+    }
+
     /// The matching public key.
     pub fn public_key(&self) -> &HybridPublicKey {
         &self.public
@@ -282,3 +297,44 @@ impl HybridSecretKey {
         &self.x25519
     }
 }
+
+/// Stack bytes wiped after a key is built from its seed, one per build, as
+/// `record::sign` sizes its signers' wipes. Stack painting (`keys::tests`, x86_64 Linux,
+/// rustc 1.96, 2026-10-14): the build reached 41,848 bytes below its caller in a release
+/// build and 149,032 in a dev build (this crate at opt-level 0), so about 2.3x and 1.8x
+/// that.
+const SEED_KEY_STACK_WIPE: usize = if cfg!(debug_assertions) {
+    256 * 1024
+} else {
+    96 * 1024
+};
+
+/// Out of line, so the stack wipe in [`HybridSecretKey::from_seed`] covers its frames:
+/// the expanded seeds, and the copies the ML-KEM and X25519 constructors take by value
+/// (Wonder code-R3 W3-F2).
+#[inline(never)]
+fn from_seed_inner(seed: &[u8; 32], label: &[u8]) -> Result<HybridSecretKey> {
+    let mut mlkem_seed = Zeroizing::new([0u8; 64]);
+    let mut x25519 = Zeroizing::new([0u8; 32]);
+    expand_seed(seed, label, &mut mlkem_seed, &mut x25519)?;
+    Ok(HybridSecretKey::from_seeds(&mlkem_seed, &x25519))
+}
+
+fn expand_seed(
+    seed: &[u8; 32],
+    label: &[u8],
+    mlkem_seed: &mut [u8; 64],
+    x25519: &mut [u8; 32],
+) -> Result<()> {
+    let hkdf = Hkdf::<Sha256>::new(None, seed);
+    hkdf.expand_multi_info(&[label, b"/mlkem-1024"], mlkem_seed)
+        .and_then(|()| hkdf.expand_multi_info(&[label, b"/x25519"], x25519))
+        .map_err(|_| Error::Primitive("hkdf"))
+}
+
+#[cfg(all(
+    test,
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod tests;

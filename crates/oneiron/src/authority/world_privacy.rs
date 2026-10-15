@@ -44,14 +44,12 @@
 //! the main log without W's entries.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::machine_profile::{
-    acknowledged, counted_machine, derived_chains, derived_machine, mark_past,
-};
+use super::machine_standing::{InstallCounted, Standing, StandingView};
+use super::world_strength::{full_strength, read_under, world_meet};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -95,7 +93,7 @@ impl Default for EffectiveWorldPrivacy {
 impl EffectiveWorldPrivacy {
     /// Any world under a conflicted vault root: readable nowhere, editable by
     /// no one, with no sealed copies and no model order.
-    fn unknowable() -> Self {
+    pub(super) fn unknowable() -> Self {
         Self {
             read: EffectiveRead::Conflicted {
                 contenders: BTreeSet::new(),
@@ -119,9 +117,13 @@ pub struct FoldedWorld {
     /// Each live edit and the machine that signed it.
     pub live: BTreeMap<AuthorityEntryHash, EntityId>,
     pub effective: EffectiveWorldPrivacy,
-    /// The read the roster rule alone gives, the same on every install. Who
-    /// may edit the world is judged on it, never on `effective`.
+    /// The read the roster rule alone gives, the same on every install.
     pub roster_read: EffectiveRead,
+    /// `read_X` for this install's own trust (its pinned anchor while the
+    /// fold holds the root, else the roster): who may edit the world here,
+    /// judged on it and never on `effective` (world privacy P6b). A read
+    /// under another admitter is a fold under that admitter's pin.
+    pub local_read: EffectiveRead,
 }
 
 impl AuthorityFold {
@@ -143,7 +145,7 @@ impl AuthorityFold {
     /// live profile is an unknown destination.
     #[must_use]
     pub fn world_readable_on(&self, world: EntityId, destination: Destination) -> bool {
-        let is_mine = |machine: EntityId| self.machine(machine).is_some_and(FoldedMachine::is_mine);
+        let is_mine = |machine: EntityId| self.trusted_machine(machine).is_some();
         readable(&self.world_privacy(world).read, destination, is_mine)
     }
 
@@ -184,11 +186,56 @@ impl AuthorityFold {
         machine: EntityId,
         world: EntityId,
     ) -> Option<WorldEditStanding> {
+        self.world_edit_standing_by(machine, world)
+            .map(|(standing, _)| standing)
+    }
+
+    /// How `machine` may edit `world` now, and under which admitter's read:
+    /// this install's own trust alone, as every door judges (contract §4).
+    /// Another chain that admits the machine can make its edit valid on
+    /// every install, but never gives a door standing here (Astra code-S2-R1
+    /// A1-F3). The read is `read_X`, judged by the roster rule, as the fold
+    /// judges an edit's validity; the machine itself is judged as this
+    /// install counts it, which only refuses more.
+    pub(crate) fn world_edit_standing_by(
+        &self,
+        machine: EntityId,
+        world: EntityId,
+    ) -> Option<(WorldEditStanding, MachineAdmitter)> {
+        let local = self.local_admitter();
         edit_standing(
-            &self.world_roster_read(world),
+            &self.world_local_read(world),
             machine,
-            |id| self.machine(id).is_some_and(FoldedMachine::is_mine),
-            |id| self.machine(id).is_some_and(mine_by_roster),
+            |id| {
+                self.machine(id)
+                    .is_some_and(|folded| folded.trusted_under(&local).is_some())
+            },
+            |id| mine_by_roster(self, id, local),
+        )
+        .map(|standing| (standing, local))
+    }
+
+    /// The admitter this install trusts: its pinned anchor while the fold
+    /// holds the pinned root, else the roster.
+    #[must_use]
+    pub(crate) fn local_admitter(&self) -> MachineAdmitter {
+        self.pinned_root.map_or(MachineAdmitter::Roster, |pin| {
+            MachineAdmitter::Anchor(pin.anchor_key)
+        })
+    }
+
+    /// `read_X(world)` for this install's own trust (its pinned anchor while
+    /// the fold holds the pinned root, else the roster), which decides who
+    /// may edit it here. A conflicted vault root fails closed, as for the
+    /// settings.
+    #[must_use]
+    pub fn world_local_read(&self, world: EntityId) -> EffectiveRead {
+        if self.vault_root_is_conflicted() {
+            return EffectiveWorldPrivacy::unknowable().read;
+        }
+        self.worlds.get(&world).map_or_else(
+            || EffectiveWorldPrivacy::default().read,
+            |folded| folded.local_read.clone(),
         )
     }
 
@@ -206,26 +253,25 @@ impl AuthorityFold {
     }
 }
 
-/// Mine by the roster rule alone, as the fold judges standing at an edit's
-/// parents. This install's own projections (a revision gone stale here, a
-/// roster with no settled root) weaken an edit; they never decide whether it
-/// stands, so every install keeps the same edits, and a machine losing its
-/// standing here never turns a refused edit into an accepted one (Sol P2
-/// round 3, F1).
-pub(super) fn mine_by_roster(folded: &FoldedMachine) -> bool {
-    FoldedMachine {
-        stale: false,
-        admitter_unsettled: false,
-        floor_held: false,
-        ..folded.clone()
-    }
-    .is_mine()
+/// Mine under `T(admitter)` by the roster rule alone, as the fold judges
+/// standing at an edit's parents. This install's own projections (a chain
+/// gone stale or held here, a roster with no settled root) weaken an edit;
+/// they never decide whether it stands, so every install keeps the same
+/// edits, and a machine losing its standing here never turns a refused edit
+/// into an accepted one (Sol P2 round 3, F1).
+pub(super) fn mine_by_roster(
+    fold: &AuthorityFold,
+    id: EntityId,
+    admitter: MachineAdmitter,
+) -> bool {
+    fold.machine(id)
+        .is_some_and(|folded| folded.roster_view().trusted_under(&admitter).is_some())
 }
 
 /// `read` is the roster rule's. `is_mine` judges the editor, `named_mine` the
 /// machines the read names, both by the roster rule in the fold. The door
 /// judges its own machine as this install counts it, which only refuses more.
-fn edit_standing(
+pub(super) fn edit_standing(
     read: &EffectiveRead,
     machine: EntityId,
     is_mine: impl Fn(EntityId) -> bool,
@@ -281,14 +327,6 @@ fn readable(
     }
 }
 
-/// Whether this install counts a machine the roster rule admits as the
-/// owner's. Every one today; an owner anchor narrows it per install.
-pub(super) type MachineStanding<'a> = &'a dyn Fn(&FoldState, &FoldedMachine) -> bool;
-
-pub(super) fn every_admitted_machine(_: &FoldState, _: &FoldedMachine) -> bool {
-    true
-}
-
 /// The settings lattice one edit, or a meet of edits, stands for. Each part
 /// meets on its own (intersection, or, union, min, equality), so the meet is
 /// commutative, associative and idempotent in every grouping.
@@ -306,7 +344,7 @@ pub(super) struct PrivacyMeet {
 }
 
 impl PrivacyMeet {
-    fn of(settings: &WorldPrivacy) -> Self {
+    pub(super) fn of(settings: &WorldPrivacy) -> Self {
         let (named, mine_only) = match settings.read {
             ReadLocation::OneMachine(machine) => (Some(BTreeSet::from([machine])), false),
             ReadLocation::MyMachines => (None, true),
@@ -347,24 +385,36 @@ impl PrivacyMeet {
         }
     }
 
-    fn meet(&self, other: &Self) -> Self {
-        Self {
-            named: match (&self.named, &other.named) {
-                (None, named) | (named, None) => named.clone(),
-                (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
-            },
-            mine_only: self.mine_only || other.mine_only,
-            contenders: self.contenders.union(&other.contenders).copied().collect(),
-            sealed: self.sealed.min(other.sealed),
-            models: if self.models == other.models {
-                self.models.clone()
-            } else {
-                EffectiveModelOrder::Conflicted
-            },
+    pub(super) fn meet(&self, other: &Self) -> Self {
+        #[cfg(test)]
+        super::world_strength::WORLD_MEET_COPIES
+            .with(|copies| copies.set(copies.get() + self.contenders.len()));
+        let mut meet = self.clone();
+        meet.meet_with(other);
+        meet
+    }
+
+    /// [`Self::meet`] in place: the accumulated sets grow or shrink where
+    /// they are, so a walk over many edits copies none of them (Sol S2-R3
+    /// S3-F3).
+    pub(super) fn meet_with(&mut self, other: &Self) {
+        #[cfg(test)]
+        super::world_strength::WORLD_MEET_COPIES
+            .with(|copies| copies.set(copies.get() + other.contenders.len()));
+        match (&mut self.named, &other.named) {
+            (_, None) => {}
+            (named @ None, Some(right)) => *named = Some(right.clone()),
+            (Some(left), Some(right)) => left.retain(|machine| right.contains(machine)),
+        }
+        self.mine_only |= other.mine_only;
+        self.contenders.extend(other.contenders.iter().copied());
+        self.sealed = self.sealed.min(other.sealed);
+        if self.models != other.models {
+            self.models = EffectiveModelOrder::Conflicted;
         }
     }
 
-    fn effective(&self) -> EffectiveWorldPrivacy {
+    pub(super) fn effective(&self) -> EffectiveWorldPrivacy {
         let read = match &self.named {
             None if self.mine_only => EffectiveRead::MyMachines,
             None => EffectiveRead::Everywhere,
@@ -383,300 +433,26 @@ impl PrivacyMeet {
     }
 }
 
-/// Whose counting a world's meet follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Counting {
-    /// The roster rule alone, the same on every install: which edits stand.
-    Roster,
-    /// This install's, which only weakens: the settings this install reads.
-    Install,
-}
-
-/// One accepted edit of a world.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct FrontierEdit {
-    settings: WorldPrivacy,
-    machine: EntityId,
-    /// The live edits at the edit's parents, which it replaced.
-    replaced: BTreeSet<AuthorityEntryHash>,
-    /// This install did not count the machine at the edit's parents.
-    narrow_only: bool,
-    /// The machine's "yours" revision the edit was signed under.
-    mark: AuthorityEntryHash,
-    /// The machine's revisions in its mark's own past.
-    prior: Arc<BTreeSet<AuthorityEntryHash>>,
-    /// A later row of its signer reached this replica first, so it landed as
-    /// restriction only: it never counts at full strength (Astra #1430).
-    restriction_only: bool,
-    /// Two copies of it disagreed on its mark, past or what it replaced: it
-    /// never counts at full strength, it meets the default as well (Sol P2
-    /// round 11), and no machine may edit its world (`roster_read`).
-    disputed: bool,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct WorldFrontier {
-    /// The edits no later edit of the world has seen.
-    live: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
-    /// Every edit a later edit replaced, kept so an edit that only narrows
-    /// is judged against what it replaced.
-    superseded: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
-}
-
-impl FrontierEdit {
-    /// One edit folded twice (past a floor on one replica's pass, or crossed
-    /// on another) keeps what both copies grant: either copy's restriction,
-    /// what either replaced, the past both saw, and no full strength when
-    /// they disagree on anything else. Order-free (Sol P2 rounds 10-11).
-    fn meet(left: &Arc<Self>, right: &Arc<Self>) -> Arc<Self> {
-        if Arc::ptr_eq(left, right) || left == right {
-            return Arc::clone(left);
-        }
-        Arc::new(Self {
-            settings: left.settings.clone(),
-            machine: left.machine,
-            replaced: left.replaced.union(&right.replaced).copied().collect(),
-            narrow_only: left.narrow_only || right.narrow_only,
-            mark: left.mark.min(right.mark),
-            prior: Arc::new(left.prior.intersection(&right.prior).copied().collect()),
-            restriction_only: left.restriction_only || right.restriction_only,
-            disputed: left.disputed
-                || right.disputed
-                || left.mark != right.mark
-                || left.prior != right.prior
-                || left.replaced != right.replaced,
-        })
-    }
-}
-
-fn meet_copy(
-    edits: &mut BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
-    hash: AuthorityEntryHash,
-    edit: &Arc<FrontierEdit>,
-) {
-    edits
-        .entry(hash)
-        .and_modify(|held| *held = FrontierEdit::meet(held, edit))
-        .or_insert_with(|| Arc::clone(edit));
-}
-
-/// Joins two frontiers: an edit superseded on either side is superseded,
-/// and two copies of one edit meet.
-pub(super) fn merge_world_frontiers(
-    merged: &mut BTreeMap<EntityId, WorldFrontier>,
-    right: &BTreeMap<EntityId, WorldFrontier>,
-) {
-    for (world, frontier) in right {
-        let into = merged.entry(*world).or_default();
-        for (hash, edit) in &frontier.superseded {
-            meet_copy(&mut into.superseded, *hash, edit);
-        }
-        for (hash, edit) in &frontier.live {
-            meet_copy(&mut into.live, *hash, edit);
-        }
-        let moved: Vec<_> = into
-            .live
-            .keys()
-            .filter(|hash| into.superseded.contains_key(*hash))
-            .copied()
-            .collect();
-        for hash in moved {
-            if let Some(edit) = into.live.remove(&hash) {
-                meet_copy(&mut into.superseded, hash, &edit);
-            }
-        }
-    }
-}
-
-fn is_mine(state: &FoldState, machine: EntityId) -> bool {
-    derived_machine(state, machine).is_some_and(|folded| folded.is_mine())
-}
-
-/// Full strength while the edit's machine is the owner's, or when the owner
-/// acknowledged it when taking "yours" away (`machine_profile::acknowledged`),
-/// and this install counted the machine when the edit was made. A head that
-/// still says "yours" took nothing away: when it stops standing for another
-/// reason (its signer found in a host's custody) it acknowledges no edit (Sol
-/// P2 round 3, F2). An edit that landed as restriction only past a sequence
-/// floor never counts at full strength in the settings this install reads
-/// (Astra #1430), nor does any edit of a machine whose winning revision
-/// reached this install past its floor. Standing follows the roster rule
-/// alone, as a replica with no floor reads it, so a floor never grants a
-/// later edit standing (Sol P2 round 10, F1).
-fn full_strength(
+/// The fold's public view of every edited world: this install's settings,
+/// under its pin and holds, the roster's read, and the read of this
+/// install's own trust. No other admitter's read is evaluated here, so an
+/// anchor that signs none of a world's edits adds no work to it (contract
+/// §4's cost bound; Sol code-S2-R1 S1-F4, Astra A1-F4).
+pub(super) fn folded_worlds(
     state: &FoldState,
-    hash: &AuthorityEntryHash,
-    edit: &FrontierEdit,
-    counting: Counting,
-) -> bool {
-    let roster = counting == Counting::Roster;
-    let machine = if roster {
-        derived_machine(state, edit.machine)
-    } else {
-        counted_machine(state, edit.machine)
-    };
-    !edit.disputed
-        && (roster || !(edit.narrow_only || edit.restriction_only))
-        && machine.is_some_and(|folded| {
-            folded.is_mine()
-                || (!folded.conflicted
-                    && !folded.floor_held
-                    && !folded.profile.says_mine()
-                    && acknowledged(state, edit.machine, hash, &edit.mark, &edit.prior, roster)
-                    && (!folded.removed || folded.profile.role == MachineRole::Removed))
-        })
-}
-
-/// What one live edit contributes in the current state: its own settings at
-/// full strength; otherwise the meet of its settings and of every edit it
-/// replaced, each judged the same way, down to full-strength edits or the
-/// default. Iterative, so a long chain of offline edits cannot exhaust the
-/// stack.
-fn contribution(
-    state: &FoldState,
-    frontier: &WorldFrontier,
-    hash: AuthorityEntryHash,
-    edit: &FrontierEdit,
-    counting: Counting,
-) -> PrivacyMeet {
-    let mut meet = PrivacyMeet::of(&edit.settings);
-    if full_strength(state, &hash, edit, counting) {
-        return meet;
-    }
-    let mut visited = BTreeSet::from([hash]);
-    let mut pending = vec![edit];
-    while let Some(next) = pending.pop() {
-        if next.replaced.is_empty() || next.disputed {
-            meet = meet.meet(&PrivacyMeet::of(&WorldPrivacy::default()));
-        }
-        for replaced in &next.replaced {
-            if !visited.insert(*replaced) {
-                continue;
-            }
-            let Some(prior) = frontier
-                .superseded
-                .get(replaced)
-                .or_else(|| frontier.live.get(replaced))
-            else {
-                continue;
-            };
-            meet = meet.meet(&PrivacyMeet::of(&prior.settings));
-            if !full_strength(state, replaced, prior, counting) {
-                pending.push(prior);
-            }
-        }
-    }
-    meet
-}
-
-fn world_meet(state: &FoldState, world: EntityId, counting: Counting) -> PrivacyMeet {
-    let mut contributions = state.worlds.get(&world).into_iter().flat_map(|frontier| {
-        frontier
-            .live
-            .iter()
-            .map(|(hash, edit)| contribution(state, frontier, *hash, edit, counting))
-    });
-    let first = contributions
-        .next()
-        .unwrap_or_else(|| PrivacyMeet::of(&WorldPrivacy::default()));
-    contributions.fold(first, |meet, next| meet.meet(&next))
-}
-
-/// The read that decides who may edit `world`. Where two copies of one of
-/// its edits disagreed, each copy's view could admit a different editor, and
-/// the narrower meet of both can admit one neither copy did: no machine may
-/// edit it, as under a conflicted vault root (Sol P2 round 12, F1).
-fn roster_read(state: &FoldState, world: EntityId) -> EffectiveRead {
-    let disputed = state.worlds.get(&world).is_some_and(|frontier| {
-        frontier
-            .live
-            .values()
-            .chain(frontier.superseded.values())
-            .any(|edit| edit.disputed)
-    });
-    if disputed {
-        return EffectiveWorldPrivacy::unknowable().read;
-    }
-    world_meet(state, world, Counting::Roster).effective().read
-}
-
-fn may_edit(state: &FoldState, machine: EntityId, world: EntityId) -> bool {
-    let is_mine = |id| is_mine(state, id);
-    edit_standing(&roster_read(state, world), machine, is_mine, is_mine).is_some()
-}
-
-/// The `WorldPrivacy` transition, after the shape, signature, retired,
-/// sequence-floor, parent-merge and vault checks and before any roster check:
-/// its signer is a machine's install key, never a roster key. Validity and
-/// standing follow the roster rule, so every install keeps the same edits;
-/// `standing` only weakens one this install does not count.
-pub(super) fn apply_world_privacy(
-    state: &mut FoldState,
-    entry: &AuthorityLogEntry,
-    edit: &WorldPrivacyEdit,
-    hash: AuthorityEntryHash,
-    standing: MachineStanding<'_>,
-    restriction_only: bool,
-) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() || edit.world == crate::claim::base_world_id() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
-    let signer = entry.signer_key();
-    let Some(mark) = derived_chains(state, edit.machine)
-        .find(|folded| {
-            folded.is_mine() && *signer == AuthorityKey::Ed25519(folded.profile.machine_key)
-        })
-        .map(|folded| folded.entry)
-    else {
-        return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
-    };
-    if state
-        .seqs
-        .get(signer)
-        .is_some_and(|prior| entry.seq <= *prior)
-    {
-        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
-    }
-    if let ReadLocation::OneMachine(target) = edit.settings.read
-        && !is_mine(state, target)
-    {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
-    // Well signed but from a machine that cannot edit this world: valid and
-    // without effect, so it never stalls what descends from it.
-    if !may_edit(state, edit.machine, edit.world) {
-        state.refused_world_edits.insert(hash);
-        return Ok(());
-    }
-    let narrow_only = !counted_machine(state, edit.machine)
-        .is_some_and(|folded| !folded.floor_held && standing(state, &folded));
-    let prior = mark_past(state, edit.machine, &mark);
-    let frontier = state.worlds.entry(edit.world).or_default();
-    let seen = std::mem::take(&mut frontier.live);
-    let replaced = seen.keys().copied().collect();
-    frontier.superseded.extend(seen);
-    frontier.live.insert(
-        hash,
-        Arc::new(FrontierEdit {
-            settings: edit.settings.clone(),
-            machine: edit.machine,
-            replaced,
-            narrow_only,
-            mark,
-            prior,
-            restriction_only,
-            disputed: false,
-        }),
-    );
-    Ok(())
-}
-
-/// The fold's public view of every edited world.
-pub(super) fn folded_worlds(state: &FoldState) -> BTreeMap<EntityId, FoldedWorld> {
+    pin: Option<&PinnedRoot>,
+    counted: InstallCounted<'_>,
+) -> BTreeMap<EntityId, FoldedWorld> {
+    let standing = Standing::new(state, pin, counted);
     state
         .worlds
         .iter()
         .map(|(world, frontier)| {
+            let roster_read = read_under(&standing, *world, MachineAdmitter::Roster);
+            let local_read = match standing.local() {
+                MachineAdmitter::Roster => roster_read.clone(),
+                local => read_under(&standing, *world, local),
+            };
             (
                 *world,
                 FoldedWorld {
@@ -685,18 +461,32 @@ pub(super) fn folded_worlds(state: &FoldState) -> BTreeMap<EntityId, FoldedWorld
                         .iter()
                         .map(|(hash, edit)| (*hash, edit.machine))
                         .collect(),
-                    effective: world_meet(state, *world, Counting::Install).effective(),
-                    roster_read: roster_read(state, *world),
+                    effective: world_meet(&standing, *world, StandingView::Install).effective(),
+                    roster_read,
+                    local_read,
                 },
             )
         })
         .collect()
 }
 
+/// The world's settings revision in `state`: a digest of its live edits,
+/// the same on every install.
+pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevision {
+    PolicyRevision::of(
+        state
+            .worlds
+            .get(&world)
+            .into_iter()
+            .flat_map(|frontier| frontier.live.keys().copied()),
+    )
+}
+
 /// The world a per-world side entry belongs to; `None` for a main-log entry.
 pub(super) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
     match op {
         AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
+        AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
         _ => None,
     }
 }
@@ -724,24 +514,55 @@ pub(super) fn side_branch_violations(
 
 /// The heads a new main-log entry takes as parents: the valid main-log
 /// entries no valid main-log entry names. A side entry naming a main-log entry
-/// does not retire it as a head.
+/// does not retire it as a head. The rows of an anchor this install does not
+/// pin are left out and retire nothing, so no door here names them and a
+/// host's own roots never crowd a door's parents past the format bound
+/// (Astra S2-R2 A2-F4). Each such anchor's own heads come back beside, for
+/// the rows that anchor signs: only a main-log entry, which carries them, or
+/// that anchor's own row retires one, so another anchor naming them never
+/// takes an anchor's door off its own rows.
 pub(super) fn main_log_heads(
     entries: &[AuthorityLogEntry],
     valid: &BTreeSet<AuthorityEntryHash>,
-) -> BTreeSet<AuthorityEntryHash> {
+    anchored: &BTreeSet<AuthorityEntryHash>,
+    pinned_anchor: Option<[u8; 32]>,
+) -> (
+    BTreeSet<AuthorityEntryHash>,
+    BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>>,
+) {
     let mut main = BTreeSet::new();
     let mut named = BTreeSet::new();
+    let mut foreign: BTreeMap<[u8; 32], (BTreeSet<_>, BTreeSet<_>)> = BTreeMap::new();
     for entry in entries {
         let Ok(hash) = authority_entry_hash(entry) else {
             continue;
         };
-        if valid.contains(&hash) && side_world(&entry.op).is_none() {
-            main.insert(hash);
-            named.extend(entry.parent_hashes.iter().copied());
+        if !valid.contains(&hash) || side_world(&entry.op).is_some() {
+            continue;
+        }
+        match &entry.signer.public_key {
+            AuthorityKey::Ed25519(anchor)
+                if anchored.contains(&hash) && pinned_anchor != Some(*anchor) =>
+            {
+                let (heads, own_named) = foreign.entry(*anchor).or_default();
+                heads.insert(hash);
+                own_named.extend(entry.parent_hashes.iter().copied());
+            }
+            _ => {
+                main.insert(hash);
+                named.extend(entry.parent_hashes.iter().copied());
+            }
         }
     }
     main.retain(|hash| !named.contains(hash));
-    main
+    let foreign = foreign
+        .into_iter()
+        .filter_map(|(anchor, (mut heads, own_named))| {
+            heads.retain(|hash| !named.contains(hash) && !own_named.contains(hash));
+            (!heads.is_empty()).then_some((anchor, heads))
+        })
+        .collect();
+    (main, foreign)
 }
 
 /// The live world edits `machine` signed: what a new profile revision lists
@@ -763,15 +584,21 @@ pub(super) fn live_edits_by(
 /// The edits that never count at full strength on this install: each one
 /// valid without effect, and each live or replaced edit this install reads
 /// as narrowing only (Sol P2 round 18, F1).
-pub(super) fn held_edits(state: &FoldState, out: &mut BTreeSet<AuthorityEntryHash>) {
+pub(super) fn held_edits(
+    state: &FoldState,
+    pin: Option<&PinnedRoot>,
+    counted: InstallCounted<'_>,
+    out: &mut BTreeSet<AuthorityEntryHash>,
+) {
     out.extend(state.refused_world_edits.iter().copied());
+    let standing = Standing::new(state, pin, counted);
     for frontier in state.worlds.values() {
         out.extend(
             frontier
                 .live
                 .iter()
                 .chain(&frontier.superseded)
-                .filter(|(hash, edit)| !full_strength(state, hash, edit, Counting::Install))
+                .filter(|(hash, edit)| !full_strength(&standing, hash, edit, StandingView::Install))
                 .map(|(hash, _)| *hash),
         );
     }

@@ -32,7 +32,9 @@ pub(super) fn record_tier_floor(
 
 /// The rows `present` keeps whose signer falls below a floor a concurrent
 /// row among them set, or whose consent or quorum rested on a cosigner below
-/// it (H71), with why.
+/// it (H71), with why. An owner anchor's rows rest on no roster key, so a
+/// roster that also lists the anchor's public key at a low tier prunes none
+/// of them (Sol code-R2 S2-F3).
 pub(super) fn below_concurrent_tier_floors(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -54,7 +56,7 @@ pub(super) fn below_concurrent_tier_floors(
         .collect();
     states
         .iter()
-        .filter(|(hash, _)| present(hash))
+        .filter(|(hash, state)| present(hash) && !state.anchor_entries.contains(*hash))
         .filter_map(|(hash, state)| {
             let entry = &entries[hash];
             let signer = state.roster.get(entry.signer_key())?;

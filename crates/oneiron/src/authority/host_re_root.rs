@@ -107,7 +107,7 @@ impl Vault {
 
         self.re_root_authority_in_txn(
             &mut txn,
-            next.root_device(),
+            next.root_device(self.privacy_posture()),
             current.public_key(),
             |transcript| Ok(current.sign_slip(transcript)),
         )?;

@@ -44,8 +44,8 @@ struct CheckpointImage {
 
 impl CheckpointImage {
     /// A direct restore may land on any install, so the image's machine
-    /// identity stays with the install that minted it: the restored vault
-    /// joins as a new machine. So does a copy served beside a live vault,
+    /// identity, and the root it pins, stay with the install that minted it:
+    /// the restored vault joins as a new machine and opens unpinned. So does a copy served beside a live vault,
     /// whose authority it keeps; only a restore that takes that vault's
     /// place carries its identity (`restore_class`).
     fn drop_machine_identity(&mut self) {
@@ -603,6 +603,15 @@ impl Vault {
         }) {
             return Err(codec_error());
         }
+        // A signed authority row that fails its key-free checks (an owner
+        // root or a world-key record among them) is refused here as at every
+        // other write door, before any destination exists.
+        if image.databases["entities"]
+            .iter()
+            .any(|(_, blob)| malformed_entity_row(blob))
+        {
+            return Err(codec_error());
+        }
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -747,3 +756,16 @@ use test_hooks::{RestoreStep, fail_at, panic_if_armed};
 
 #[cfg(test)]
 mod tests;
+
+/// A row with no header, which the index rebuild refuses anyway, or an
+/// AUTHORITY_LOG row whose body the shared authority validator refuses, an
+/// empty one included: no authority row is a bodiless shell.
+fn malformed_entity_row(blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|header| {
+        header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+            && crate::authority::validate_authority_log_entry_body_bytes(
+                &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .is_err()
+    })
+}

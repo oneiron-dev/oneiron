@@ -132,6 +132,31 @@ pub enum SecretError {
         "artifact `{artifact}` is secret-tainted by a rotated or revoked record; publish refused (set secret.taint.allow_stale_publish to override)"
     )]
     TaintedArtifactStale { artifact: String },
+    /// A world key, one of its wraps, or the recovery root was refused: a wrong
+    /// world, generation, owner, policy, recipient or suite, or a key this machine
+    /// may not hold. The reason is a fixed name, never key or envelope bytes.
+    #[error("world key refused: {0}")]
+    WorldKeyRefused(&'static str),
+    /// This install has no this-device-only keystore, so it can hold no machine
+    /// secret and open no world key.
+    #[error("no this-device-only keystore: {0}")]
+    KeystoreUnavailable(&'static str),
+    /// A kit seed this install cannot authenticate: fewer than two genuine
+    /// stored pieces, no fingerprint from one of the owner's machines, and no
+    /// owner confirmation. Refused before any write; the client words it.
+    #[error("the kit restore is not verified (root record {record:?})")]
+    UnverifiedKitRestore { root: [u8; 32], record: KitRecord },
+}
+
+/// What the vault records of a kit seed's root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KitRecord {
+    /// The seed's own root is stored.
+    Stored,
+    /// Other roots are stored, none of them the seed's.
+    Mismatch,
+    /// No root is stored.
+    None,
 }
 
 impl SecretError {
@@ -158,6 +183,9 @@ impl SecretError {
             Self::InvalidSecretRotationBody(_) => ErrorKind::InvalidSecretRotationBody,
             Self::TaintedArtifactStale { .. } => ErrorKind::TaintedArtifactStale,
             Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
+            Self::WorldKeyRefused(_) => ErrorKind::WorldKeyRefused,
+            Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
+            Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
         }
     }
 }

@@ -70,6 +70,9 @@ pub enum Purpose {
     FederationGrant = 8,
     GuestShare = 9,
     EscrowRecipient = 10,
+    /// One world's data key, wrapped to a machine or to the recovery root. The owner
+    /// binds the world and key generation in `key_id` and checks them on open.
+    WorldDek = 11,
 }
 
 impl Purpose {
@@ -85,6 +88,7 @@ impl Purpose {
             8 => Self::FederationGrant,
             9 => Self::GuestShare,
             10 => Self::EscrowRecipient,
+            11 => Self::WorldDek,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

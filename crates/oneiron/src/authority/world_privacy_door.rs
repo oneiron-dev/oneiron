@@ -55,27 +55,35 @@ impl Vault {
     }
 
     /// Signs and lands one edit in the caller's transaction. The caller has
-    /// revalidated the owner and holds the release lock.
-    pub(crate) fn append_world_privacy_edit_in_txn(
+    /// revalidated the owner and holds the release lock. With `earlier`, the
+    /// read folded under the admitter this machine was mine under before its
+    /// last pin change gives standing as well as the local read (an owner's
+    /// re-assertion, world privacy P6b).
+    pub(crate) fn append_world_privacy_edit_under_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         origin: EditOrigin,
         world: EntityId,
         settings: WorldPrivacy,
+        earlier: Option<&AuthorityFold>,
     ) -> Result<WorldPrivacyChange> {
         settings.validate()?;
         let machine = crate::identity::read_machine_id_in_txn(self, txn)?
             .ok_or_else(|| refused("this install is not one of the owner's machines"))?;
-        match origin {
-            EditOrigin::ThisMachine => {}
-            EditOrigin::Peer(PeerMachine::Proven(peer)) if peer == machine => {}
+        // A peer stands as this machine only with the key it proved on its
+        // connection, which must be this install's own.
+        let proven = match origin {
+            EditOrigin::ThisMachine => None,
+            EditOrigin::Peer(PeerMachine::Proven { machine: peer, key }) if peer == machine => {
+                Some(key)
+            }
             EditOrigin::Peer(_) => {
                 return Err(refused(
                     "a world's settings change only on a machine that holds it",
                 ));
             }
-        }
+        };
         if world == crate::claim::base_world_id()
             || self.get_entity_type_in_txn(txn, &world)? != Some(ENTITY_TYPE_WORLD)
         {
@@ -92,20 +100,40 @@ impl Vault {
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| refused("this install has no machine key"))?;
         let public_key = key.verifying_key().to_bytes();
+        if proven.is_some_and(|proven| proven != public_key) {
+            return Err(refused(
+                "a world's settings change only on a machine that holds it",
+            ));
+        }
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        if !fold
-            .machine(machine)
-            .is_some_and(|folded| folded.is_mine() && folded.profile.machine_key == public_key)
-        {
+        // Mine with this install's key in a fold's own trust set.
+        let keyed = |judged: &AuthorityFold| {
+            judged
+                .trusted_machine(machine)
+                .is_some_and(|trusted| trusted.profile.machine_key == public_key)
+        };
+        if !keyed(&fold) {
             return Err(refused(
                 "only a machine the owner marked as theirs edits a world",
             ));
         }
-        let standing = fold
-            .world_edit_standing(machine, world)
-            .ok_or_else(|| refused("this machine does not hold the world"))?;
+        // Standing comes from this install's own read, or, when the owner
+        // re-asserts, from the read of the admitter this machine was mine
+        // under before its last pin change, with this install's key there
+        // too. The edit names that admitter's chain heads.
+        let (standing, admitter, judged) = match fold.world_edit_standing_by(machine, world) {
+            Some((standing, admitter)) => (standing, admitter, &*fold),
+            None => earlier
+                .filter(|earlier| keyed(earlier))
+                .and_then(|earlier| {
+                    earlier
+                        .world_edit_standing_by(machine, world)
+                        .map(|(standing, admitter)| (standing, admitter, earlier))
+                })
+                .ok_or_else(|| refused("this machine does not hold the world"))?,
+        };
         if let ReadLocation::OneMachine(target) = settings.read
-            && !fold.machine(target).is_some_and(FoldedMachine::is_mine)
+            && fold.trusted_machine(target).is_none()
         {
             return Err(refused(
                 "a one-machine world lives only on the owner's machine",
@@ -191,14 +219,34 @@ impl Vault {
         // unrelated fenced row into a narrowing of a readable world (Wonder P2
         // round 4, W3); a hold resting on rows none of these carry refuses,
         // and the owner marks this machine again.
-        let head = |id: EntityId| fold.machine(id).map(|folded| folded.entry);
+        // A machine's rows are the heads of its chains in this install's
+        // trust set, where the edit's strength is judged, and in the trust
+        // set its standing comes from, where its validity is.
+        let local = fold.local_admitter();
+        let heads = |id: EntityId| {
+            let chain_heads = |judged: &AuthorityFold, admitter: MachineAdmitter| {
+                judged
+                    .machine(id)
+                    .map(|folded| {
+                        folded
+                            .trust_chains(&admitter)
+                            .into_iter()
+                            .map(|(_, chain)| chain.entry)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut rows = chain_heads(&fold, local);
+            rows.extend(chain_heads(judged, admitter));
+            rows
+        };
         let standing_rows: BTreeSet<AuthorityEntryHash> = match standing {
             WorldEditStanding::Holds => {
                 let mut rows: BTreeSet<_> = std::iter::once(machine)
                     .chain(target)
-                    .filter_map(&head)
+                    .flat_map(&heads)
                     .collect();
-                let authors: BTreeSet<_> = authors.into_iter().filter_map(&head).collect();
+                let authors: BTreeSet<_> = authors.into_iter().flat_map(&heads).collect();
                 if rows.union(&authors).count() <= MAX_PARENTS / 2 {
                     rows.extend(authors);
                 }
@@ -208,11 +256,24 @@ impl Vault {
                 fold.append_heads.clone()
             }
         };
+        // Each row this machine signs in the world names its previous one
+        // there, a settings edit or a key record, and each share names the
+        // one before it: one chain in one sequence scope, so a later row that
+        // arrives first vouches for the earlier (Astra #1422c).
+        let chain = super::scope_head(&fold, &signer, world);
         let author = |standing_rows: &BTreeSet<AuthorityEntryHash>| {
-            let mut live = live.iter().map(|(_, hash)| *hash);
             let mut seq = seq;
             let mut entries = Vec::new();
             let mut parents = standing_rows.clone();
+            parents.extend(chain);
+            // A live edit these parents already name, the chain most often,
+            // counts once (Astra #1422d F1).
+            let mut live = live
+                .iter()
+                .map(|(_, hash)| *hash)
+                .filter(|hash| !parents.contains(hash))
+                .collect::<Vec<_>>()
+                .into_iter();
             while parents.len() + live.len() > MAX_PARENTS {
                 if standing != WorldEditStanding::Holds && !picks_this_machine {
                     return Err(refused(
@@ -249,9 +310,8 @@ impl Vault {
         };
         let previous = fold.world_privacy(world);
         let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
-            super::world_privacy::orphaned_from(&fold.world_roster_read(world), |id| {
-                fold.machine(id)
-                    .is_some_and(super::world_privacy::mine_by_roster)
+            super::world_privacy::orphaned_from(&judged.world_local_read(world), |id| {
+                super::world_privacy::mine_by_roster(judged, id, admitter)
             })
         } else {
             BTreeSet::new()
@@ -370,30 +430,42 @@ impl Vault {
             crate::store::GateDecisionId::now(),
         )?;
         let machine = match self.local_machine()? {
-            Some(LocalMachine {
-                id,
-                profile: Some(profile),
-            }) if profile.is_mine() => id,
+            Some(LocalMachine { id, mine: true, .. }) => id,
             _ => {
                 let vault_id = self
                     .authority_fold()?
                     .vault_id
                     .ok_or_else(invalid_authority)?;
-                let request = self.machine_enrolment_request(
-                    vault_id,
-                    MachineEncryptionKey {
-                        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-                        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-                    },
-                )?;
+                // A request carries this install's own encryption key (world
+                // privacy P6b). With no keystore on the handle, a process-memory
+                // one lends it the key for the request alone, so the settings
+                // door below still runs with none, as before.
+                let keystore = &self.world_keys.keystore;
+                let lent = keystore
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_none();
+                if lent {
+                    self.install_device_keystore(std::sync::Arc::new(
+                        oneiron_keystore::MemoryKeystore::default(),
+                    ));
+                }
+                let request = self
+                    .machine_encryption_key(vault_id)
+                    .and_then(|own| self.machine_enrolment_request(vault_id, own));
+                if lent {
+                    *keystore
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
+                let request = request?;
                 self.enroll_machine(
                     issuer,
                     &owner,
                     &request,
                     MachineRole::Owned(MachineOwnership::Yours),
-                )?
-                .profile
-                .machine
+                )?;
+                request.machine
             }
         };
         let read = if keep {

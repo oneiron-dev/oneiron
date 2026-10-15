@@ -237,8 +237,8 @@ impl Vault {
     }
     /// The physical machine behind an authenticated mesh endpoint, in one
     /// snapshot: the endpoint names the MACHINE, the host-signed binding and
-    /// grant admit it, and the owner's live profile names the very key that
-    /// paired. The profile lives in the authority log, so the address bind
+    /// grant admit it, and the key the machine stands on here is the very key
+    /// that paired. The profile lives in the authority log, so the address bind
     /// that rewrote the row keeps it.
     pub fn mesh_peer_machine(
         &self,
@@ -253,13 +253,15 @@ impl Vault {
             .mesh_authority_in_txn(&txn, machine)?
             .map(|claims| claims.device_key);
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let profile = fold.machine(machine).filter(|folded| folded.is_live());
-        if !self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)?
-            || profile.is_none_or(|folded| paired != Some(folded.profile.machine_key))
-        {
-            return Ok(super::PeerMachine::Unknown);
+        match fold.machine_proof_key(machine) {
+            Some(key)
+                if paired == Some(key)
+                    && self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)? =>
+            {
+                Ok(super::PeerMachine::Proven { machine, key })
+            }
+            _ => Ok(super::PeerMachine::Unknown),
         }
-        Ok(super::PeerMachine::Proven(machine))
     }
     fn mesh_grant_permits_in_txn(
         &self,

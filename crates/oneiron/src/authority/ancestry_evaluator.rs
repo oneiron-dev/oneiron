@@ -47,7 +47,9 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
         AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::EnrollDevice { .. }
-        | AuthorityOp::FederationLifecycle(_) => true,
+        | AuthorityOp::FederationLifecycle(_)
+        // A root only admits an anchor; it restricts nothing.
+        | AuthorityOp::OwnerRoot(_) => true,
         // Grants that change neither the roster nor a machine's standing, and
         // the retired ceiling, which changes nothing: a removal is judged
         // without them as with them, and a withdrawal that needs one fails

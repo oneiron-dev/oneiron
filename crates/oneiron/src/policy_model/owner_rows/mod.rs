@@ -5,7 +5,7 @@ mod notifications;
 mod secret_scan_switch;
 mod world_privacy_switch;
 
-pub(crate) use authority::is_live_vault_owner_in_txn;
+pub(crate) use authority::{is_live_vault_owner_in_txn, owners_in_txn};
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
 pub use notifications::{
     PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,

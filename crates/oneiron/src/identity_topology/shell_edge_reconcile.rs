@@ -467,21 +467,36 @@ impl Vault {
     pub(crate) fn reconcile_identity_topology_on_open(&self) -> Result<()> {
         {
             let rtxn = self.store.env.read_txn()?;
-            if self
-                .store
-                .type_index
-                .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-                .next()
-                .is_none()
-            {
+            if !has_identity_topology_events(&self.store, &rtxn)? {
                 return Ok(());
             }
         }
         self.with_write_txn_grouped(|wtxn| {
-            if super::admission_disposition::mine_signers_changed_in_txn(&self.store, wtxn)? {
-                self.reconcile_identity_topology_edges_in_txn(wtxn)?;
-            }
-            Ok(())
+            self.reconcile_identity_topology_if_seals_moved_in_txn(wtxn)
         })
     }
+
+    /// Re-decides the stored shell edges in the caller's transaction when the
+    /// mine signers moved since the last reconcile: a door that changes this
+    /// install's pin changes them with no authority row of its own (H161
+    /// under world privacy P6b's pin).
+    pub(crate) fn reconcile_identity_topology_if_seals_moved_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        if has_identity_topology_events(&self.store, wtxn)?
+            && super::admission_disposition::mine_signers_changed_in_txn(&self.store, wtxn)?
+        {
+            self.reconcile_identity_topology_edges_in_txn(wtxn)?;
+        }
+        Ok(())
+    }
+}
+
+fn has_identity_topology_events(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+        .next()
+        .is_some())
 }

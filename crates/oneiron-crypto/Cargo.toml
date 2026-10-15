@@ -32,6 +32,11 @@ thiserror = { workspace = true }
 x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
 zeroize = { version = "=1.9.0", features = ["derive"] }
 
+[features]
+# The test-only stack painter (`stack_probe`) for another crate's tests, which paint
+# their own secret computations with it. Only dev-dependencies turn it on.
+stack-probe = []
+
 [dev-dependencies]
 getrandom = { version = "=0.4.3", features = ["sys_rng"] }
 hex = "0.4"

@@ -173,10 +173,7 @@ fn force_edge(vault: &Vault, src: EntityId, kind: EdgeKind, tgt: EntityId) {
 /// The owner pairs `writer` into `receiver`'s vault as their own machine, so
 /// `receiver` counts `writer`'s seals (H161).
 fn pair_as_mine(receiver: &Vault, writer: &Vault) {
-    use crate::authority::{
-        MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
-        MachineOwnership, MachineRole,
-    };
+    use crate::authority::{MachineOwnership, MachineRole};
     let issuer = crate::test_support::test_host_issuer();
     receiver.ensure_host_root_slip(&issuer).expect("host root");
     let person = crate::vault::embedded_owner_actor_id().expect("owner id");
@@ -196,14 +193,15 @@ fn pair_as_mine(receiver: &Vault, writer: &Vault) {
         .expect("fold")
         .vault_id
         .expect("vault id");
+    // A request carries the writer's own encryption key (world privacy P6b).
+    writer.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let own = writer
+        .machine_encryption_key(vault_id)
+        .expect("own encryption key");
     let request = writer
-        .machine_enrolment_request(
-            vault_id,
-            MachineEncryptionKey {
-                suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-                key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
-            },
-        )
+        .machine_enrolment_request(vault_id, own)
         .expect("enrolment request");
     receiver
         .enroll_machine(

@@ -121,9 +121,13 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            root_anchors: BTreeMap::new(),
+            anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
+            world_keys: BTreeMap::new(),
+            refused_world_keys: BTreeSet::new(),
             key_admitters: BTreeMap::new(),
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
@@ -167,7 +171,7 @@ pub(super) fn fold_entry_state(
             entry,
             edit,
             hash,
-            context.machine_standing,
+            (context.pin, context.machine_standing),
             restriction_only,
         ) {
             return EntryFold::Invalid(issue);
@@ -175,7 +179,24 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    if let AuthorityOp::WorldKeyWraps(record) = &entry.op {
+        if let Err(issue) =
+            super::world_key_fold::apply_world_key_wraps(&mut state, entry, record, hash, context)
+        {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     let signer = entry.signer_key().clone();
+    if let Some(folded) =
+        super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash, restriction_only)
+    {
+        return match folded {
+            Ok(()) => EntryFold::Ready(state),
+            Err(issue) => EntryFold::Invalid(issue),
+        };
+    }
     if state
         .roster
         .get(&signer)
@@ -445,7 +466,9 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. }
         | AuthorityOp::MachineProfile(_)
-        | AuthorityOp::WorldPrivacy(_) => false,
+        | AuthorityOp::OwnerRoot(_)
+        | AuthorityOp::WorldPrivacy(_)
+        | AuthorityOp::WorldKeyWraps(_) => false,
     }
 }
 
@@ -459,6 +482,7 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerRoot(_)
     )
 }
 

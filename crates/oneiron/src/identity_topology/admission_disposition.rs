@@ -3,7 +3,7 @@
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use rmpv::Value;
 
-use crate::authority::{AuthorityFold, FoldedMachine};
+use crate::authority::AuthorityFold;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -272,12 +272,11 @@ impl SealTrust {
     }
 }
 
-/// The one reader of machine standing for seals: a live machine whose install
-/// key is `signer` and which the owner marked mine.
+/// The one reader of machine standing for seals: a machine mine under this
+/// install's pin whose trusted identity signs with `signer` (world privacy
+/// P6b: a chain this install does not trust never lends a machine its key).
 fn signer_is_mine(roster: &AuthorityFold, signer: &[u8; 32]) -> bool {
-    roster
-        .live_machine_by_key(signer)
-        .is_some_and(FoldedMachine::is_mine)
+    roster.mine_machine_by_key(signer).is_some()
 }
 
 /// Whether the mine signers differ from those the last authority write
@@ -296,9 +295,9 @@ pub(super) fn mine_signers_changed_in_txn(
     )?;
     let mut signers: Vec<[u8; 32]> = roster
         .machines
-        .values()
-        .map(|machine| machine.profile.machine_key)
-        .filter(|key| signer_is_mine(&roster, key))
+        .keys()
+        .filter_map(|machine| roster.trusted_machine(*machine))
+        .map(|trusted| trusted.profile.machine_key)
         .collect();
     signers.sort_unstable();
     signers.dedup();
