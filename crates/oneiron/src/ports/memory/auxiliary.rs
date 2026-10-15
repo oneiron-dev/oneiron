@@ -203,9 +203,6 @@ impl DependencyIndex for Memory {
         regenerated_at: u64,
         sources: &[SourceSpan],
     ) -> Result<bool> {
-        if sources.len() > 100_000 {
-            return Err(Error::IndexOverflow("regeneration sources"));
-        }
         let Some(stale_revision) = txn.stale_revision.get(dependent) else {
             return Ok(false);
         };

@@ -250,6 +250,16 @@ side_tables! {
     PORTS_DEPENDENCY: VaultMeta b"ports:dependency:v1:" Raw;
     /// Reverse dependency index. Key: id16 + id16 + u64be.
     PORTS_DEPENDENCY_REVERSE: VaultMeta b"ports:dependency_reverse:v1:" Raw;
+    /// What is left of one source's dependent walk: door, walked count, the last row walked, the
+    /// last row it covers, and the worlds its words sat in. Key: id16.
+    PORTS_DEPENDENT_WALK: VaultMeta b"ports:dependent_walk:v1:" Raw;
+    /// The OF-520 check a source's dependent walk raised past its threshold, once. Key: id16.
+    PORTS_DEPENDENT_WALK_CHECK: VaultMeta b"ports:dependent_walk_check:v1:" Named;
+    /// Device-local dependent walk batch and check threshold. Key: ().
+    PORTS_DEPENDENT_WALK_POLICY: VaultMeta b"ports:dependent_walk_policy:v1" Raw;
+    /// A dependency row its source's pending walk passes by: admitted after the mark, or withdrawn
+    /// early before a put rewrote its dependent. Key: id16 + u64be + id16.
+    PORTS_DEPENDENT_WALK_SETTLED: VaultMeta b"ports:dependent_walk_settled:v1:" Raw;
     /// Local id allocator floor. Key: ().
     PORTS_ID_FLOOR: VaultMeta b"ports:id_floor:v1" Raw;
     /// Stale derived entity marker. Key: id16.

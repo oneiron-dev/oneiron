@@ -1,5 +1,6 @@
 //! Source-prefix dependency index and deletion invalidation in the caller's transaction.
 use super::SourceSpan;
+use super::dependent_walk::DependentWalkDoor;
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
@@ -42,6 +43,7 @@ pub(crate) fn record_dependency_in_txn(
         return Err(Error::EntityNotFound);
     }
     let key = [source_prefix(source).as_slice(), dependent.as_bytes()].concat();
+    let admitted = store.vault_meta().get(txn, &key)?.is_none();
     store.vault_meta().put(txn, &key, &[])?;
     let reverse = [
         super::regeneration::reverse_prefix(dependent).as_slice(),
@@ -50,6 +52,9 @@ pub(crate) fn record_dependency_in_txn(
     ]
     .concat();
     store.vault_meta().put(txn, &reverse, &[])?;
+    if admitted {
+        super::dependent_walk::settle_admitted_in_txn(store, txn, source, dependent)?;
+    }
     Ok(())
 }
 pub(super) fn list_by_source(
@@ -64,11 +69,9 @@ fn scan_dependents(
     txn: &RoTxn<'_>,
     prefix: &[u8],
 ) -> Result<Vec<EntityId>> {
+    // A read never refuses for how many rows a source holds (rule 5).
     let mut result = std::collections::BTreeSet::new();
-    for (count, row) in store.vault_meta().prefix_iter(txn, prefix)?.enumerate() {
-        if count >= 100_000 {
-            return Err(Error::IndexOverflow("source dependents"));
-        }
+    for row in store.vault_meta().prefix_iter(txn, prefix)? {
         let (key, _) = row?;
         if key.len() != DEP.len() + 40 {
             return Err(Error::CorruptedIndex("source dependency key"));
@@ -82,11 +85,19 @@ fn scan_dependents(
     }
     Ok(result.into_iter().collect())
 }
+/// Whether `id` reads as withdrawn: marked stale, or a dependent a pending
+/// walk withdraws before its batch reaches it.
 pub(crate) fn stale_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    Ok(marked_stale_in(store, txn, id)?
+        || super::dependent_walk::pending_withdrawal_in(store, txn, id)?.is_some())
+}
+/// Whether a withdrawal has reached `id` itself. The walk judges its own
+/// progress by this, never by what a pending walk says.
+fn marked_stale_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(store.vault_meta().get(txn, &stale_key(id))?.is_some())
 }
 /// The worlds a deletion, or the loss of a source edge, withdrew epoch summary
@@ -94,6 +105,25 @@ pub(crate) fn stale_in_txn(
 /// trace once that source, its stamp or its edges are gone. `None` where
 /// nothing withdrew it.
 pub(crate) fn withdrawn_worlds_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<CarriedWorlds>> {
+    let recorded = recorded_withdrawn_in(store, txn, id)?;
+    // A pending walk withdraws an epoch summary for its source's worlds
+    // before its batch records them.
+    let pending = match super::dependent_walk::pending_withdrawal_in(store, txn, id)? {
+        Some(worlds) if worlds != CarriedWorlds::default() && epoch_summary_in(store, txn, id)? => {
+            worlds
+        }
+        _ => return Ok(recorded),
+    };
+    let mut worlds = recorded.unwrap_or_default();
+    worlds.absorb(&pending);
+    Ok(Some(worlds))
+}
+/// What the withdrawals that reached `id` recorded.
+fn recorded_withdrawn_in(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
@@ -115,7 +145,7 @@ pub(crate) fn record_withdrawn_in_txn(
     if *worlds == CarriedWorlds::default() || !epoch_summary_in(store, txn, id)? {
         return Ok(false);
     }
-    let mut recorded = withdrawn_worlds_in(store, txn, id)?.unwrap_or_default();
+    let mut recorded = recorded_withdrawn_in(store, txn, id)?.unwrap_or_default();
     if !recorded.absorb(worlds) {
         return Ok(false);
     }
@@ -177,7 +207,7 @@ pub(crate) fn keep_worlds_of_unmade_epoch_in_txn(
             == crate::compaction::StoredEpoch::No;
     keep_deleted_worlds_in_txn(store, txn, id)?;
     if unmade {
-        invalidate_source_in_txn(store, txn, id)?;
+        invalidate_source_in_txn(store, txn, id, DependentWalkDoor::UnmadeEpoch)?;
     }
     Ok(())
 }
@@ -195,7 +225,8 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
         return Ok(());
     }
     let worlds = carried_or_unknown(store, txn, source);
-    if stale_in_txn(store, txn, summary)? && !record_withdrawn_in_txn(store, txn, summary, &worlds)?
+    if marked_stale_in(store, txn, summary)?
+        && !record_withdrawn_in_txn(store, txn, summary, &worlds)?
     {
         return Ok(());
     }
@@ -215,7 +246,11 @@ fn carried_or_unknown(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> Carr
 /// withdrew every summary written from it, so a repeat (a peer's late
 /// tombstone) changes no record. A row that still stands is read, even an
 /// empty one: a deletion marker is intent, not proof of a capture.
-fn carried_now(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> Result<CarriedWorlds> {
+pub(super) fn carried_now(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<CarriedWorlds> {
     if super::EntityStoreRead::port_entity_raw(store, txn, source)?.is_none()
         && crate::deletion::row_deletion_marked(store, txn, source, None)?
     {
@@ -225,7 +260,11 @@ fn carried_now(store: &Store, txn: &RoTxn<'_>, source: &EntityId) -> Result<Carr
 }
 /// Whether `id` is an epoch summary in whatever form it is stored, a pointer
 /// no head stands for included (Astra 1384e).
-fn epoch_summary_in(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(super) fn epoch_summary_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
     match super::EntityStoreRead::port_entity_record(store, txn, id)? {
         Some(row) if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY => {
             Ok(crate::compaction::stored_epoch_in(store, txn, id, &row.body)?.may_be())
@@ -248,13 +287,24 @@ fn withdraw_in_txn(
     record_withdrawn_in_txn(store, txn, id, worlds)?;
     // An epoch summary copies the words of what it was written from, so it
     // is withdrawn with any of them, through nested epochs (agent-runtime-v1
-    // §d7), for the same worlds. A worklist, not recursion: no chain's depth
-    // reaches the stack. A stale one is walked again only when this adds a
-    // world to it.
-    let mut pending = epoch_dependents_in_txn(store, txn, id)?;
+    // §d7), for the same worlds.
+    let pending = epoch_dependents_in_txn(store, txn, id)?;
+    withdraw_epochs_in_txn(store, txn, pending, worlds)
+}
+
+/// Withdraws the epoch summaries in `pending` for `worlds`, and those written
+/// from them. A worklist, not recursion: no chain's depth reaches the stack.
+/// A stale one is not marked again, and is walked again only when this adds
+/// a world to it.
+pub(super) fn withdraw_epochs_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    mut pending: Vec<EntityId>,
+    worlds: &CarriedWorlds,
+) -> Result<()> {
     while let Some(next) = pending.pop() {
         let grew = record_withdrawn_in_txn(store, txn, &next, worlds)?;
-        let stale = stale_in_txn(store, txn, &next)?;
+        let stale = marked_stale_in(store, txn, &next)?;
         if stale && !grew {
             continue;
         }
@@ -316,45 +366,46 @@ fn epoch_dependents_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Res
     Ok(epochs)
 }
 /// An entity delete erases every source version; one document-prefix scan
-/// visits only its k dependency rows. No entity or edge table is scanned.
+/// visits only its k dependency rows, a batch at a time past the walk's
+/// batch row ([`super::dependent_walk`]). No entity or edge table is scanned,
+/// and no count refuses the walk.
 pub(crate) fn invalidate_source_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     document: &EntityId,
+    door: DependentWalkDoor,
+) -> Result<()> {
+    crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
+    super::dependent_walk::begin_in_txn(store, txn, document, door)
+}
+/// Withdraws one dependent of `document` for `worlds` and queues its
+/// regeneration; an EVENT that outlives its source stays.
+pub(super) fn withdraw_dependent_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    document: &EntityId,
+    dependent: &EntityId,
+    worlds: &CarriedWorlds,
 ) -> Result<()> {
     use super::JobQueue;
-    crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
-    let prefix = [DEP, document.as_bytes()].concat();
-    let dependents = scan_dependents(store, txn, &prefix)?;
-    // Where the deleted words sat, read while the row, its stamp and its
-    // edges still stand: an epoch summary it withdraws keeps them as its
-    // own. A source no one can place withdraws it for an unknown world, and
-    // the deletion goes on.
-    let worlds = if dependents.is_empty() {
-        CarriedWorlds::default()
-    } else {
-        carried_now(store, txn, document)?
-    };
-    for dependent in dependents {
-        if super::EntityStoreRead::port_entity_record(store, txn, &dependent)?
-            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
-            && crate::calendar::origin::survives_source_deletion(store, txn, dependent)?
-        {
-            continue;
-        }
-        withdraw_in_txn(store, txn, &dependent, &worlds)?;
-        let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
-        crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
-            txn,
-            crate::attempt_queue::EnqueueAttempt {
-                kind: "derived.regenerate".into(),
-                payload,
-                dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),
-                run_id: None,
-                now: 0,
-            },
-        )?;
+    if super::EntityStoreRead::port_entity_record(store, txn, dependent)?
+        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_EVENT)
+        && crate::calendar::origin::survives_source_deletion(store, txn, *dependent)?
+    {
+        return Ok(());
     }
+    withdraw_in_txn(store, txn, dependent, worlds)?;
+    let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
+    crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
+        txn,
+        crate::attempt_queue::EnqueueAttempt {
+            kind: "derived.regenerate".into(),
+            payload,
+            dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),
+            run_id: None,
+            now: 0,
+        },
+    )?;
     Ok(())
 }
 /// DerivedFrom is dependent→source. This hook also serves session overlays.

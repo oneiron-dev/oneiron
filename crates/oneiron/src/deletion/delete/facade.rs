@@ -56,6 +56,8 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
+        // The dependents past the first batch go before the delete returns.
+        self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
@@ -74,6 +76,8 @@ impl Vault {
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
+        // The dependents past the first batch go before the delete returns.
+        self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
@@ -91,6 +95,7 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
+        self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
