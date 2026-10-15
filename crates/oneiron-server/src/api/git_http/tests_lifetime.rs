@@ -285,8 +285,10 @@ fn pkt(payload: &str) -> String {
 async fn a_stalled_push_is_ended_and_the_next_push_waits_its_turn_behind_it() {
     let origin = origin(limits(4, 1_000)).await;
 
-    // A command line cut off mid-length: receive-pack waits for the rest,
-    // holding the repository coordinator it took before the backend started.
+    // A command line cut off mid-length. The origin reads a push's command
+    // section only once the push holds its repository's turn, its permit and
+    // the coordinator, before the backend starts (#1447); it waits there for
+    // the rest, and the stall ends at the idle limit, not a queue deadline.
     let mut stalled = rpc(&origin, "git-receive-pack", 4_096, b"00").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
