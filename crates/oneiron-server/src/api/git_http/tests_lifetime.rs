@@ -33,9 +33,11 @@ const LANDING_PATIENCE: Duration = Duration::from_secs(600);
 
 struct Origin {
     addr: SocketAddr,
-    headers: HeaderMap,
-    /// The token and binding stock git presents, as `-c` arguments.
-    git_auth: [String; 2],
+    /// Mints the pusher's credential afresh for each request: a binding
+    /// older than its window is refused, and a push of a few hundred refs
+    /// can outlast one.
+    server: Arc<SyncServer>,
+    token: String,
     oid: String,
     /// The vault's per-request door root, where a held report spills.
     door_root: std::path::PathBuf,
@@ -91,28 +93,11 @@ async fn origin_holding(limits: LimitsConfig, status_memory: Option<usize>) -> O
             .git_status_memory = bytes;
     }
     let door_root = smart_http::origin_door_root(&vault).expect("door root");
-    let request = axum::http::Request::builder()
-        .header(AUTHORIZATION, token)
-        .body(Body::empty())
-        .unwrap();
-    let headers = crate::test_credentials::bind_request(&server, request)
-        .headers()
-        .clone();
-    let git_auth = [
-        format!(
-            "http.extraHeader=Authorization: {}",
-            headers[AUTHORIZATION].to_str().unwrap()
-        ),
-        format!(
-            "http.extraHeader=X-Oneiron-Binding: {}",
-            headers["x-oneiron-binding"].to_str().unwrap()
-        ),
-    ];
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
     let addr = listener.local_addr().expect("address");
-    let routes = git_http_routes().with_state(server);
+    let routes = git_http_routes().with_state(Arc::clone(&server));
     let serving = tokio::spawn(async move {
         axum::serve(listener, routes).await.expect("serve");
     });
@@ -139,14 +124,50 @@ async fn origin_holding(limits: LimitsConfig, status_memory: Option<usize>) -> O
     .unwrap();
     Origin {
         addr,
-        headers,
-        git_auth,
+        server,
+        token,
         oid,
         door_root,
         source,
         _vault_dir: vault_dir,
         _serving: serving,
     }
+}
+
+impl Origin {
+    /// A fresh credential's headers.
+    fn headers(&self) -> HeaderMap {
+        mint_headers(&self.server, &self.token)
+    }
+
+    /// A fresh credential, as the `-c` arguments stock git presents.
+    fn git_auth(&self) -> [String; 2] {
+        mint_git_auth(&self.server, &self.token)
+    }
+}
+
+fn mint_headers(server: &SyncServer, token: &str) -> HeaderMap {
+    let request = axum::http::Request::builder()
+        .header(AUTHORIZATION, token)
+        .body(Body::empty())
+        .unwrap();
+    crate::test_credentials::bind_request(server, request)
+        .headers()
+        .clone()
+}
+
+fn mint_git_auth(server: &SyncServer, token: &str) -> [String; 2] {
+    let headers = mint_headers(server, token);
+    [
+        format!(
+            "http.extraHeader=Authorization: {}",
+            headers[AUTHORIZATION].to_str().unwrap()
+        ),
+        format!(
+            "http.extraHeader=X-Oneiron-Binding: {}",
+            headers["x-oneiron-binding"].to_str().unwrap()
+        ),
+    ]
 }
 
 fn commit(root: &Path, message: &str) {
@@ -177,7 +198,7 @@ fn limits(git_exchanges: usize, idle_ms: u64) -> LimitsConfig {
 /// `declared` body bytes. HTTP/1.0, so the response ends when the socket does.
 async fn rpc(origin: &Origin, service: &str, declared: usize, prefix: &[u8]) -> TcpStream {
     let mut head = format!("POST /git/demo.git/{service} HTTP/1.0\r\nhost: origin\r\n");
-    for (name, value) in &origin.headers {
+    for (name, value) in &origin.headers() {
         head.push_str(&format!("{name}: {}\r\n", value.to_str().unwrap()));
     }
     head.push_str(&format!(
@@ -218,7 +239,7 @@ async fn advertisement(origin: &Origin) -> (u16, Vec<u8>) {
     let mut head =
         "GET /git/demo.git/info/refs?service=git-upload-pack HTTP/1.0\r\nhost: origin\r\n"
             .to_owned();
-    for (name, value) in &origin.headers {
+    for (name, value) in &origin.headers() {
         head.push_str(&format!("{name}: {}\r\n", value.to_str().unwrap()));
     }
     head.push_str("\r\n");
@@ -236,7 +257,7 @@ fn push_change(
 ) -> tokio::task::JoinHandle<String> {
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
-    let [token, binding] = origin.git_auth.clone();
+    let [token, binding] = origin.git_auth();
     let target = format!("HEAD:refs/heads/{branch}");
     tokio::task::spawn_blocking(move || {
         std::fs::write(source.join("README.md"), format!("{text}\n")).expect("readme");
@@ -287,7 +308,7 @@ async fn a_stalled_push_is_ended_and_frees_the_repository_for_the_next() {
         .await
         .expect("the next push gets the repository once the stalled one ends")
         .unwrap();
-    let [token, binding] = origin.git_auth.clone();
+    let [token, binding] = origin.git_auth();
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
     let refs = tokio::task::spawn_blocking(move || {
@@ -381,7 +402,8 @@ async fn a_200_ref_push_lands() {
     let origin = origin(LimitsConfig::default()).await;
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
-    let [token, binding] = origin.git_auth.clone();
+    let [token, binding] = origin.git_auth();
+    let (server, recipe) = (Arc::clone(&origin.server), origin.token.clone());
     let (pushed, listed) = tokio::task::spawn_blocking(move || {
         std::fs::write(source.join("README.md"), "burst\n").expect("readme");
         stock_git(&source, &["add", "README.md"]);
@@ -392,6 +414,8 @@ async fn a_200_ref_push_lands() {
         let mut push: Vec<&str> = vec!["-c", &token, "-c", &binding, "push", &url];
         push.extend(targets.iter().map(String::as_str));
         stock_git(&source, &push);
+        // A fresh credential: landing two hundred refs can outlast the first.
+        let [token, binding] = mint_git_auth(&server, &recipe);
         let listed = stock_git(
             &source,
             &[
