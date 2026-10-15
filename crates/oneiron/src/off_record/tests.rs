@@ -632,6 +632,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     // Fail on the FIRST replay op: the builder's copied Put bodies are still
     // queued, so iterator teardown must scrub them without consuming them.
     overreaching.ops.rotate_right(1);
+    let initiator = crate::off_record::PromoteInitiator::owner(&vault, &owner).unwrap();
     let early_refusal = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
         vault.with_write_txn(|wtxn| {
             FloorWrites::new(&vault.store).promote(
@@ -639,7 +640,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 wtxn,
                 "sess-grant-scope",
                 &overreaching,
-                &crate::off_record::PromoteInitiator::owner(&owner),
+                &initiator,
                 2000,
             )
         })
@@ -654,7 +655,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 wtxn,
                 "sess-grant-scope",
                 &overreaching,
-                &crate::off_record::PromoteInitiator::owner(&owner),
+                &initiator,
                 2000,
             )
         })

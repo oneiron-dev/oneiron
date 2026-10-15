@@ -240,13 +240,14 @@ impl ProjectProposalCard {
     /// client-supplied replacement, and route the intent through the project gate.
     pub fn evaluate_action(
         &self,
+        vault: &Vault,
         request: &ConsentActionRequest,
         authenticated_owner: &AuthenticatedOwner,
     ) -> Result<ProjectMintIntent> {
         self.validate()?;
         ensure_component_request(&self.card_id, request)?;
         ensure_declared_action(&self.actions(), request)?;
-        ensure_authenticated_actor(&self.principal_ref, request, authenticated_owner)?;
+        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
         Ok(ProjectMintIntent {
             principal_ref: self.principal_ref.clone(),
             origin_component_id: self.card_id.clone(),
@@ -272,7 +273,7 @@ impl ProjectProposalCard {
         project: EntityId,
         now: u64,
     ) -> Result<crate::workspace_roster::ProjectRecord> {
-        let intent = self.evaluate_action(request, owner)?;
+        let intent = self.evaluate_action(vault, request, owner)?;
         vault.convert_thread_with_card(&intent, owner, project, now)
     }
 

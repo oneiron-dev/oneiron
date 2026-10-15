@@ -314,12 +314,12 @@ impl Vault {
         mode: PolicyNotificationMode,
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        actor.revalidate_in_txn(self, &txn)?;
-        let mut preference = preference_in(self, &txn, actor.actor())?;
+        let actor_id = actor.revalidate_in_txn(self, &txn)?;
+        let mut preference = preference_in(self, &txn, actor_id)?;
         preference.mode = mode;
         self.store.vault_meta.put(
             &mut txn,
-            &key(PREF, actor.actor().as_bytes()),
+            &key(PREF, actor_id.as_bytes()),
             &encode(&preference)?,
         )?;
         txn.commit()?;
@@ -337,12 +337,12 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        actor.revalidate_in_txn(self, &txn)?;
-        let mut preference = preference_in(self, &txn, actor.actor())?;
+        let actor_actor = actor.revalidate_in_txn(self, &txn)?;
+        let mut preference = preference_in(self, &txn, actor_actor)?;
         preference.digest_interval_seconds = interval_seconds;
         self.store.vault_meta.put(
             &mut txn,
-            &key(PREF, actor.actor().as_bytes()),
+            &key(PREF, actor_actor.as_bytes()),
             &encode(&preference)?,
         )?;
         txn.commit()?;
@@ -649,7 +649,7 @@ impl Vault {
         now: u64,
     ) -> Result<String> {
         let mut txn = self.store.env.write_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
         if !authority::holders_for_in_txn(
             self,
             &txn,
@@ -657,7 +657,7 @@ impl Vault {
             &PolicyRowScope::Vault,
             target.grant_target(),
         )?
-        .contains(&holder.actor())
+        .contains(&holder_actor)
         {
             return Err(super::denied());
         }
@@ -698,7 +698,7 @@ impl Vault {
         let event = PolicyChangedEvent {
             kind: "policy.changed".to_owned(),
             receipt_id: receipt_id.clone(),
-            author: holder.actor().to_hex(),
+            author: holder_actor.to_hex(),
             scope: None,
             target: Some(target),
             at: now,
