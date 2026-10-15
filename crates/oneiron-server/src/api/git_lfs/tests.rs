@@ -1,6 +1,7 @@
 //! LFS handler tests.
 
 use super::*;
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -993,21 +994,13 @@ async fn room_one_upload_has_claimed_on_the_disk_is_room_no_other_upload_can_tak
     // room as free (two uploads that both pass a free-space look and then
     // both write would take the disk below its reserve).
     const DECLARED: u64 = 256 * 1024 * 1024;
-    let free = crate::machine::free_disk_bytes(&std::env::temp_dir()).expect("free space read");
-    let Some(reserve) = free.checked_sub(3 * DECLARED) else {
-        eprintln!(
-            "under three declared uploads free in the temp dir; the floor is unprovable here"
-        );
-        return;
-    };
-    let config = SyncServerConfig {
-        limits: crate::config::LimitsConfig {
-            disk_reserve_bytes: reserve,
-            ..Default::default()
-        },
-        ..secret_config()
-    };
-    let (_dir, server) = test_server(config);
+    let (_dir, server) = test_server(secret_config());
+    // Shown, so what other work on the machine writes meanwhile moves
+    // nothing.
+    server
+        .transfers
+        .disk
+        .show_free(server.config.limits.disk_reserve_bytes + 3 * DECLARED);
     let token = writer_token();
     let first = hold_upload(&server, &token, DECLARED).await;
     assert!(
@@ -1412,8 +1405,9 @@ pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossi
 async fn a_spooled_upload_waits_for_room_in_memory_to_install() {
     use crate::wire_telemetry::LimitRow;
     let (_dir, server) = test_server(one_room_config());
-    // The only install room, held as an install in progress would hold it.
-    let held = server.transfers.hold_install_room();
+    // The installs' whole half, held as installs in progress would hold it.
+    let installs = server.transfers.lfs_installs();
+    let held = hold(&server, &installs, installs.total()).await;
     let bytes = b"a small object its install reads whole".to_vec();
     let waiting = {
         let server = Arc::clone(&server);
@@ -1434,6 +1428,354 @@ async fn a_spooled_upload_waits_for_room_in_memory_to_install() {
         .expect("the upload has its turn")
         .expect("upload task");
     assert_eq!(status, StatusCode::OK);
+}
+
+/// Holds `bytes` of `line`, as work in progress there would.
+async fn hold(server: &Arc<SyncServer>, line: &ByteLine, bytes: usize) -> HeldBytes {
+    line.reserve(bytes, PATIENCE, &server.transfers.questions)
+        .await
+        .expect("room on the line")
+}
+
+/// Waits until `waiting` pieces of work wait on `line`; `why` when they
+/// never do.
+async fn until_waiting(line: &ByteLine, waiting: usize, why: &str) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while line.waiting() < waiting {
+        assert!(std::time::Instant::now() < deadline, "{why}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Waits until nothing holds room on `line`; `why` when something still
+/// does.
+async fn until_released(line: &ByteLine, why: &str) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while line.held_bytes() > 0 {
+        assert!(std::time::Instant::now() < deadline, "{why}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// A GET of `oid`'s bytes.
+fn get_object(oid: LfsOid, token: &str) -> Request<Body> {
+    request(
+        "GET",
+        &object_uri(&oid.to_hex()),
+        Some(token),
+        Body::empty(),
+    )
+}
+
+/// A verify of `bytes` as stored.
+fn verify_object(bytes: &[u8], token: &str) -> Request<Body> {
+    let oid = LfsOid::digest(bytes).to_hex();
+    request(
+        "POST",
+        &format!("{}/verify", object_uri(&oid)),
+        Some(token),
+        Body::from(
+            serde_json::to_vec(&json!({"oid": oid, "size": bytes.len()})).expect("verify body"),
+        ),
+    )
+}
+
+/// Review r10 (Sol R10-2, Astra R10-1, P1): an install's credential scan
+/// decodes a structured object of up to 8 MiB into a tree of values, tens to
+/// hundreds of bytes each whatever each takes on the wire, and every install
+/// took the same fixed room, so concurrent installs of small objects could
+/// hold many times the row. An install now takes room by its object's size,
+/// at the most a decoded byte was measured to hold; past the half the rest
+/// wait their turn, then land.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_installs_hold_their_half_by_their_size_and_the_rest_wait_then_land() {
+    const UPLOADS: usize = 5;
+    const BYTES: usize = 8 * 1024 * 1024 - 1024;
+    // The most an install of an 8 MiB object was measured to hold, its scan
+    // decoding the costliest shape measured: 1,422 MiB, for one-element
+    // arrays nested 64 deep (job `measure-5`, on the fleet).
+    const MEASURED_PEAK: u64 = 1_423 * 1024 * 1024;
+    // By that measure, room in the half for two such installs at once.
+    let half = (2 * MEASURED_PEAK).max(crate::api::LFS_MEMORY_ROOM);
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_memory_bytes: 2 * half,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let installs = server.transfers.lfs_installs();
+    let held = hold(&server, &installs, installs.total()).await;
+    let bodies: Vec<Vec<u8>> = (0..UPLOADS)
+        .map(|n| {
+            let mut body = varied_bytes(BYTES);
+            body[0] = u8::try_from(n).expect("a byte");
+            body
+        })
+        .collect();
+    let token = writer_token();
+    let uploads: Vec<_> = bodies
+        .iter()
+        .map(|body| {
+            let server = Arc::clone(&server);
+            let token = token.clone();
+            let body = body.clone();
+            tokio::spawn(async move { put(&server, &token, &body).await })
+        })
+        .collect();
+    until_waiting(&installs, UPLOADS, "every spooled upload waits to install").await;
+
+    drop(held);
+    let waiting = installs.waiting();
+    assert!(
+        waiting >= UPLOADS - 2,
+        "no more install at once than the measure fits; {waiting} of {UPLOADS} wait"
+    );
+    let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sampler = {
+        let installs = Arc::clone(&installs);
+        let most = Arc::clone(&most);
+        tokio::spawn(async move {
+            loop {
+                most.fetch_max(installs.held_bytes(), std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+    };
+    for upload in uploads {
+        let status = tokio::time::timeout(4 * PATIENCE, upload)
+            .await
+            .expect("every waiting install has its turn")
+            .expect("upload task");
+        assert_eq!(status, StatusCode::OK);
+    }
+    sampler.abort();
+    assert!(most.load(std::sync::atomic::Ordering::SeqCst) <= installs.total());
+    for body in &bodies {
+        assert!(
+            server
+                .vault
+                .lfs_object(LfsOid::digest(body))
+                .expect("record read")
+                .is_some(),
+            "every upload landed"
+        );
+    }
+}
+
+/// Review r10 (Engine ruling): an install larger than its half is never
+/// refused. It waits, holding its transfer permit, until it can run alone;
+/// meanwhile reads take their room on the other half and permits of their
+/// own, and keep flowing. Once the half drains it lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_install_larger_than_its_half_waits_alone_while_reads_flow_then_lands() {
+    let (_dir, server) = test_server(one_room_config());
+    let installs = server.transfers.lfs_installs();
+    let token = writer_token();
+    let small = b"an object read while the large one waits".to_vec();
+    assert_eq!(put(&server, &token, &small).await, StatusCode::OK);
+    let large = varied_bytes(8 * 1024 * 1024 - 1024);
+    assert!(
+        super::streaming::install_room(large.len() as u64) > installs.total() as u64,
+        "an install larger than the half"
+    );
+    // A byte of the half, held as a small install in progress would.
+    let held = hold(&server, &installs, 1).await;
+    let waiting = {
+        let server = Arc::clone(&server);
+        let token = token.clone();
+        let large = large.clone();
+        tokio::spawn(async move { put(&server, &token, &large).await })
+    };
+    until_waiting(&installs, 1, "the large install waits for the half").await;
+
+    let (status, _, body) = route(&server, get_object(LfsOid::digest(&small), &token)).await;
+    assert_eq!((status, body), (StatusCode::OK, small.clone()));
+    let (status, _, body) = route(&server, verify_object(&small, &token)).await;
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(true))
+    );
+    assert!(!waiting.is_finished(), "the large install still waits");
+    assert_eq!(installs.waiting(), 1);
+
+    drop(held);
+    let status = tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .expect("the large install runs once the half drains")
+        .expect("upload task");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(installs.held_bytes(), 0, "it gave the whole half back");
+    let (status, _, body) = route(&server, get_object(LfsOid::digest(&large), &token)).await;
+    assert_eq!((status, body == large), (StatusCode::OK, true));
+}
+
+/// Every wait for room carries the queue deadline: a spooled upload whose
+/// install waits past it ends with nothing stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spooled_upload_that_waits_past_its_deadline_to_install_stores_nothing() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            queue_wait_timeout_ms: 400,
+            ..one_room_config().limits
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let installs = server.transfers.lfs_installs();
+    let held = hold(&server, &installs, installs.total()).await;
+    let bytes = b"an object whose install waits too long".to_vec();
+    let started = std::time::Instant::now();
+    let status = put(&server, &writer_token(), &bytes).await;
+    assert!(started.elapsed() >= std::time::Duration::from_millis(400));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        server
+            .vault
+            .lfs_object(LfsOid::digest(&bytes))
+            .expect("record read"),
+        None
+    );
+    assert_eq!(installs.waiting(), 0, "it left the line");
+    drop(held);
+}
+
+/// A chunk exchange of `body`, declaring its length as a client's does.
+fn sized_exchange(token: &str, body: Vec<u8>) -> Request<Body> {
+    let mut exchange = request(
+        "POST",
+        &format!("/git/{REPO}/info/lfs/chunks"),
+        Some(token),
+        Body::from(body.clone()),
+    );
+    exchange
+        .headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from(body.len()));
+    exchange
+}
+
+/// Review r10 (Sol R10-2, P1): an exchange decodes its request's selector
+/// into a tree of values, tens to hundreds of bytes each however few each
+/// takes on the wire, before the selector's shape is checked, and every
+/// exchange took the same fixed room. An exchange now takes room for its
+/// decode by the length its request declares, before it reads a byte; one
+/// larger than the half waits until it can run alone, and the row asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_exchange_takes_room_for_its_decode_by_the_length_it_declares() {
+    use crate::wire_telemetry::LimitRow;
+    // Room in the half for an exchange of a small request beside a byte held
+    // there, and not for one of a large request.
+    let half = crate::api::LFS_MEMORY_ROOM + 64 * 1024 * 1024;
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_memory_bytes: 2 * half,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let reads = server.transfers.lfs_reads();
+    let (want, token, _) = chunk_want(&server, &varied_bytes(100_000));
+    let held = hold(&server, reads, 1).await;
+    let (status, _, _) = route(&server, sized_exchange(&token, want)).await;
+    assert_eq!(status, StatusCode::OK, "a small request's exchange runs");
+
+    // An array of millions of nils, a value a byte, as large as a frame
+    // allows.
+    let nils = 7 * 1024 * 1024;
+    let mut selector = vec![0xdd];
+    selector.extend_from_slice(&u32::try_from(nils).expect("count").to_be_bytes());
+    selector.resize(5 + nils, 0xc0);
+    let large = {
+        let server = Arc::clone(&server);
+        let request = sized_exchange(&token, selector);
+        tokio::spawn(async move { route(&server, request).await.0 })
+    };
+    until_waiting(reads, 1, "the large request's exchange waits to run alone").await;
+    until_asked(&server, LimitRow::LfsMemoryBytes, "the row asks").await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!large.is_finished(), "it waits while a byte is held");
+
+    drop(held);
+    let status = tokio::time::timeout(PATIENCE, large)
+        .await
+        .expect("the large exchange runs once the half drains")
+        .expect("exchange task");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    until_released(reads, "the exchange gave its room back").await;
+}
+
+/// Review r10 (Sol R10-3, Astra R10-2, P1): a download or a verify reads its
+/// object's whole manifest, copies it, and keeps its references until its
+/// last byte is sent, and neither took room in `lfs_memory_bytes`, so slow
+/// downloads of large objects could hold gigabytes of manifests. Each now
+/// takes room for its manifest on the reads' half before its transfer
+/// permit: past the half it waits holding no permit, and a download keeps
+/// its room until its stream ends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn downloads_and_verifies_wait_for_their_manifests_room_holding_no_permit() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 1,
+            ..one_room_config().limits
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let bytes = varied_bytes(1_000_000);
+    let oid = LfsOid::digest(&bytes);
+    assert_eq!(put(&server, &token, &bytes).await, StatusCode::OK);
+    let reads = server.transfers.lfs_reads();
+    let held = hold(&server, reads, reads.total()).await;
+    let download = {
+        let server = Arc::clone(&server);
+        let request = get_object(oid, &token);
+        tokio::spawn(async move { route(&server, request).await })
+    };
+    let verify = {
+        let server = Arc::clone(&server);
+        let request = verify_object(&bytes, &token);
+        tokio::spawn(async move { route(&server, request).await })
+    };
+    until_waiting(reads, 2, "the download and the verify wait for room").await;
+    // With one transfer permit, an upload still lands: the reads in line
+    // hold none.
+    assert_eq!(
+        put(&server, &token, b"an upload beside the waiting reads").await,
+        StatusCode::OK
+    );
+    assert!(!download.is_finished() && !verify.is_finished());
+
+    drop(held);
+    let (status, _, body) = download.await.expect("download task");
+    assert_eq!((status, body == bytes), (StatusCode::OK, true));
+    let (status, _, body) = verify.await.expect("verify task");
+    assert_eq!(
+        (status, json_body(&body)["ok"].clone()),
+        (StatusCode::OK, json!(true))
+    );
+
+    // A download nobody reads keeps its manifest's room until its stream
+    // ends.
+    until_released(reads, "the reads gave their room back").await;
+    let unread = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(crate::test_credentials::bind_request(
+            &server,
+            get_object(oid, &token),
+        ))
+        .await
+        .expect("route response");
+    assert_eq!(unread.status(), StatusCode::OK);
+    let room = crate::api::Transfers::read_room(&server.vault, oid).expect("room");
+    assert_eq!(reads.held_bytes() as u64, room);
+    let read = to_bytes(unread.into_body(), usize::MAX)
+        .await
+        .expect("download body");
+    assert_eq!(read, bytes);
+    until_released(reads, "the room goes with the stream").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

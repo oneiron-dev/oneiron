@@ -323,7 +323,10 @@ async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
     }
     let wait = Duration::from_secs(60);
     let questions = Arc::new(LimitQuestions::default());
-    let budget = Arc::new(BodyBudget::new(LARGE_BODIES_BYTES));
+    let budget = Arc::new(ByteLine::new(
+        LimitRow::EmbedderBodyBytes,
+        LARGE_BODIES_BYTES,
+    ));
     let crossings = || {
         questions
             .latest(LimitRow::EmbedderBodyBytes)
@@ -721,7 +724,7 @@ async fn an_answer_row_smaller_than_the_models_largest_answer_is_never_served_un
 
     // The first claim into an empty row of fewer bytes is not granted.
     let questions = LimitQuestions::default();
-    let row = BodyBudget::answers(largest - 1);
+    let row = ByteLine::new(LimitRow::EmbedderAnswerBytes, largest - 1);
     let claim = row
         .reserve(largest, Duration::from_secs(1), &questions)
         .await;
