@@ -73,6 +73,10 @@ pub enum RecordError {
     InvalidFederationGrantBody(&'static str),
     #[error("invalid authority log body: {0}")]
     InvalidAuthorityLogBody(&'static str),
+    /// A pairing link's scope the vault refuses: a facet limit on the vault
+    /// owner, or a write facet outside the link's facets.
+    #[error("invalid pairing scope: {0}")]
+    InvalidPairingScope(&'static str),
     /// Context-pack assembly found a cross-record anomaly before surfacing output.
     #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
     ContextPackValidation { id: EntityId, reason: &'static str },
@@ -226,6 +230,7 @@ impl RecordError {
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,
             Self::InvalidConversationDag(_) => ErrorKind::InvalidConversationDag,
             Self::InvalidScopeSummary(_) => ErrorKind::InvalidScopeSummary,
+            Self::InvalidPairingScope(_) => ErrorKind::InvalidPairingScope,
             Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
             Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
             Self::StreamLimit { .. } => ErrorKind::StreamLimit,

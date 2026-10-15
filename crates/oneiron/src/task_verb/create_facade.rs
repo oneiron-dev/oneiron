@@ -144,6 +144,8 @@ impl Memory<'_> {
                         kind: TaskAuthorityFactKind::HumanAssigned,
                         actor_ref: owner_ref,
                         assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
+                        actor_generation: None,
+                        assigned_generation: None,
                         occurred_at: now,
                     },
                 )?;
@@ -319,9 +321,39 @@ impl Memory<'_> {
                 kind: TaskAuthorityFactKind::Owner,
                 actor_ref: owner_ref,
                 assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
                 occurred_at: now,
             },
         )?;
+        // A consult's parties bear its authority (they move the ladder and
+        // counter), so they are fixed here, beside the Owner fact, with the
+        // binding generation each holds now. Every consult has this fact,
+        // a Dreamer-addressed one naming its asker alone, so a second fact
+        // naming anyone else is a fork. A later rewrite of the body's
+        // `assignee` changes what the board shows, never who may act.
+        if validated.kind == TaskKind::Consult {
+            let vault = self.vault();
+            let assignee = validated.assignee.and_then(TaskAssignee::entity_ref);
+            let actor_generation = vault.actor_binding_generation_in_txn(wtxn, owner_ref)?;
+            let assigned_generation = match assignee {
+                Some(assignee) => vault.actor_binding_generation_in_txn(wtxn, assignee)?,
+                None => None,
+            };
+            put_task_authority_fact_in_txn(
+                vault,
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref,
+                    kind: TaskAuthorityFactKind::ConsultAssignee,
+                    actor_ref: owner_ref,
+                    assigned_ref: assignee,
+                    actor_generation,
+                    assigned_generation,
+                    occurred_at: now,
+                },
+            )?;
+        }
         Ok(task_ref)
     }
 

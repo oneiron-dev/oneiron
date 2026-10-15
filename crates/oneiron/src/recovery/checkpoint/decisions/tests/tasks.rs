@@ -79,6 +79,8 @@ fn mint(
                 kind,
                 actor_ref: actor,
                 assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
                 occurred_at: 10,
             },
         )
@@ -136,7 +138,16 @@ pub(super) fn task_authority() -> Result<Case> {
     put_person(&vault, owner)?;
     put_task(&vault, task, owner)?;
     let cancelled = mint(&vault, task, TaskAuthorityFactKind::Cancelled, owner)?;
-    vault.delete_edge(&cancelled, EdgeKind::ScopedTo, &task)?;
+    // No door unlinks a fact: this is its link arriving after its row.
+    vault.with_write_txn(|txn| {
+        crate::ports::EdgeStoreStaging::port_remove_edge_rows(
+            &vault.store,
+            txn,
+            &cancelled,
+            EdgeKind::ScopedTo,
+            &task,
+        )
+    })?;
     Case::after_backup(
         "task owners and cancellations",
         (dir, vault),
@@ -334,6 +345,34 @@ pub(super) fn agent_ceilings() -> Result<Case> {
         (dir, vault),
         |vault| put_agent(vault, entity(0x93), None, true),
         move |vault| vault.delete_entity(&parent).map(drop),
+    )
+}
+
+/// An agent id keeps its pin across a delete (H215). A definition narrowed
+/// since the backup and then deleted is one a restore would bring back at
+/// the ceiling it held before; an agent made since changes nothing.
+pub(super) fn agent_id_pins() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let agent = entity(0x94);
+    put_agent(&vault, agent, None, false)?;
+    Case::after_backup(
+        "agent id pins",
+        (dir, vault),
+        |vault| put_agent(vault, entity(0x95), None, false),
+        move |vault| {
+            let mut narrowed = vault
+                .get_agent_definition(&agent)?
+                .ok_or(Error::EntityNotFound)?;
+            narrowed.version = "2".to_owned();
+            narrowed.ceiling = AgentCeiling::Proposed;
+            vault.update_agent_definition(
+                &agent,
+                &narrowed,
+                TimeRange { start: 11, end: 11 },
+                11,
+            )?;
+            vault.batch().delete(&agent).commit()
+        },
     )
 }
 

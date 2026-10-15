@@ -264,6 +264,53 @@ fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> 
     Ok(())
 }
 
+/// H215 (Astra R5 F1): an agent id stays one across a delete, but a signed
+/// authority entry's id is its content's. A definition put at that id first,
+/// whether it is still there or was deleted, keeps the entry out no more than
+/// any other row there does, and a restore that keeps this vault's authority
+/// takes the entry back at that id (Sol and Astra R6 F1).
+#[cfg(feature = "sync")]
+#[test]
+fn authority_log_put_lands_at_an_id_an_agent_held() -> Result<()> {
+    for deleted in [false, true] {
+        let (_dir, vault) = open_test_vault();
+        let genesis = authority_genesis_fixture(98);
+        let derived = crate::authority::authority_log_entity_id(&genesis)?;
+        let (_, mut squatter) = vault
+            .get_seeded_agent_definition_by_logical_id("sys.herald")?
+            .expect("the seeded herald");
+        squatter.agent_id = "oneiron.agent.custom".to_owned();
+        squatter.version = "1".to_owned();
+        squatter.logical_id = None;
+        squatter.display_name = None;
+        squatter.source = crate::claim::ClaimSource::Imported;
+        squatter.ceiling = crate::agent_def::AgentCeiling::Proposed;
+        vault.put_agent_definition(&derived, &squatter, test_time_range(1, 1), 1)?;
+        if deleted {
+            vault.batch().delete(&derived).commit()?;
+        }
+        let id = vault.put_authority_log_entry(&genesis, test_time_range(2, 2), 2)?;
+        assert_eq!(id, derived);
+        assert_eq!(
+            vault.get_authority_log_entry(&id)?,
+            Some(genesis.clone()),
+            "deleted first: {deleted}"
+        );
+        let backups = crate::test_support::restore_tempdir();
+        let image = backups.path().join("image");
+        vault.snapshot_checkpoint(&image, 100)?;
+        let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &backups.path().join("restored"),
+            vault.config.clone(),
+            &vault,
+            1_000,
+        )?;
+        assert_eq!(restored.get_authority_log_entry(&id)?, Some(genesis));
+    }
+    Ok(())
+}
+
 /// ONE-1604-D1 (fix-leg 1, P2-a — chokepoint half): the local write door
 /// applies the same dominance as the replicated one. A cross-type squatter at
 /// a derived AUTHORITY_LOG key is evicted WITH its indexes — a stale type_index or

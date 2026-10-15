@@ -293,6 +293,7 @@ impl Vault {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::federation::reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
+        crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         guard_topology_delete_request_in_txn(&self.store, txn, id, decoded)?;
         let settled = match decoded.request_id.as_ref() {
@@ -346,7 +347,9 @@ impl Vault {
                 IdentityTopologyRejection::ActiveMergeParticipantDeletion { .. }
             )) | Error::InvariantViolation(
                 "cleanup archives cannot be replayed as deletion intent"
-            ) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
+            ) | Error::Record(crate::error::RecordError::InvalidTaskBody(
+                "task authority facts are immutable"
+            )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
         )
     }
 

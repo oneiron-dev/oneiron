@@ -110,6 +110,8 @@ mod compact;
 mod finalize;
 mod run;
 
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use self::compact::compact_window_for_test;
 pub(crate) use self::run::run_hard_erase_sweep;
 
 #[cfg(test)]

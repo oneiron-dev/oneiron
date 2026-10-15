@@ -993,6 +993,8 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
                     kind: crate::task_authority::TaskAuthorityFactKind::Owner,
                     actor_ref: intruder,
                     assigned_ref: None,
+                    actor_generation: None,
+                    assigned_generation: None,
                     occurred_at: 121,
                 },
             )
@@ -1198,7 +1200,7 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
             now: 121,
         })
         .expect("fail task");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 130).expect("backup");
 

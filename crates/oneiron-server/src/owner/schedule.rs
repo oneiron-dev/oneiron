@@ -26,6 +26,10 @@ pub(crate) struct OwnerHost {
     pub(crate) every: Option<Duration>,
     /// One backup at a time, whether the schedule or the owner asked.
     pub(crate) backup_lock: Mutex<()>,
+    /// Where a test's rehearsals make their scratch copy in place of the
+    /// system temp directory, which its host may share with other accounts.
+    #[cfg(test)]
+    pub(crate) rehearse_temp: Option<PathBuf>,
 }
 
 impl OwnerHost {
@@ -50,6 +54,8 @@ impl OwnerHost {
                 && config.privacy_posture == oneiron::HostingPrivacyPosture::SelfHostLocal)
                 .then(|| Duration::from_secs(backup.every_hours.saturating_mul(3_600))),
             backup_lock: Mutex::new(()),
+            #[cfg(test)]
+            rehearse_temp: None,
         }
     }
 
@@ -88,13 +94,23 @@ impl OwnerHost {
         file: Option<&str>,
     ) -> OwnerResult<Rehearsal> {
         self.with_chosen(file, |chosen| {
-            Ok(backup::rehearse(
+            Ok(backup::rehearse_in(
+                &self.rehearse_temp(),
                 &chosen.path,
                 self.vault_config.clone(),
                 None,
                 &vault.side_restore_source()?,
             )?)
         })
+    }
+
+    /// The directory a rehearsal's scratch copy is made in and removed from.
+    fn rehearse_temp(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(temp) = &self.rehearse_temp {
+            return temp.clone();
+        }
+        std::env::temp_dir()
     }
 
     fn with_chosen<T>(
@@ -181,8 +197,8 @@ mod tests {
         every: Duration,
         keep: usize,
     ) -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
-        let dir = tempfile::tempdir().unwrap();
-        let backups = tempfile::tempdir().unwrap();
+        let dir = oneiron::test_support::restore_tempdir();
+        let backups = oneiron::test_support::restore_tempdir();
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let host = OwnerHost {
@@ -191,6 +207,7 @@ mod tests {
             backups: BackupPlan::new(dir.path(), backups.path().to_path_buf(), keep),
             every: Some(every),
             backup_lock: Mutex::new(()),
+            rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
         };
         let server = SyncServer::new(vault, SyncServerConfig::default())
             .unwrap()
@@ -242,7 +259,7 @@ mod tests {
 
     #[test]
     fn a_backup_waits_for_the_rehearsal_of_the_file_it_would_prune() {
-        let (_dir, _backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
+        let (_dir, backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
         let host = Arc::clone(server.owner_host.as_ref().unwrap());
         let only = host.take(server.vault(), None).unwrap().backup;
         let rehearsal = host
@@ -257,8 +274,13 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(500));
                 assert!(!racing.is_finished(), "the backup waited");
                 let source = server.vault().side_restore_source()?;
-                let rehearsal =
-                    backup::rehearse(&chosen.path, host.vault_config.clone(), None, &source);
+                let rehearsal = backup::rehearse_in(
+                    backups.path(),
+                    &chosen.path,
+                    host.vault_config.clone(),
+                    None,
+                    &source,
+                );
                 Ok((rehearsal?, racing))
             })
             .unwrap();
