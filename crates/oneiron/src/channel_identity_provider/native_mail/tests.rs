@@ -68,7 +68,15 @@ fn set_holder_mail_policy(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
-    )
+    )?;
+    declare_reputation_normal(vault)
+}
+
+/// The fixture's provider reputation is the owner's own evidence: with no rule
+/// naming it, each head resolves critical, waits for the owner's confirmation,
+/// and never earns autonomy.
+fn declare_reputation_normal(vault: &Vault) -> Result<()> {
+    crate::test_util::declare_predicates_normal(vault, &["channel_identity.reputation."])
 }
 
 #[test]
@@ -262,6 +270,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     assert!(!vault.graduation_offers()?.contains(&scope));
     assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
 
+    declare_reputation_normal(&vault)?;
     let reputation = IdentityReputation {
         complaint_rate: 0.0015,
         bounce_rate: 0.0,

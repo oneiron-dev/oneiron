@@ -208,14 +208,13 @@ fn a_held_reaction_is_sent_once_after_its_clear_and_never_otherwise() {
         } else {
             CriticalWriteConfirmDisposition::Clear
         };
-        let (genesis, confirm) =
+        // The room's vault is rooted under the test host, the owner's own
+        // device here, so the answer is signed under that root.
+        let (_, confirm) =
             crate::test_util::critical_confirm_owner_entry(&pending, disposition, 0x5a);
         slack
             .vault
-            .put_authority_log_entries(&[
-                (genesis, TimeRange { start: 1, end: 1 }, 1),
-                (confirm, TimeRange { start: 2, end: 2 }, 2),
-            ])
+            .log_host_op_for_test(&crate::test_util::test_host_issuer(), confirm.op)
             .unwrap();
         let settled = slack
             .vault

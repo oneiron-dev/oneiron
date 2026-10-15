@@ -152,7 +152,9 @@ pub(crate) mod tests {
         let wire = GitWire::new(&vault).expect("wire");
         let repo = open_repo(&wire, &root, &base);
         let repo_id = repo_id_of(&vault, &repo);
-        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next);
+        let mut ask = request(&vault, &repo, repo_id, Some(base.clone()), next);
+        // `request` already wrote its fixture provenance; this test starts from an absent id.
+        ask.provenance_claim_id = EntityId::now();
         let body = origin_publication_intent_claim(&ask).unwrap();
         let refused = vault
             .put_claim(

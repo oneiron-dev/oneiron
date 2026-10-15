@@ -150,6 +150,10 @@ fn concurrent_admin_rulings_merge_through_replicated_claims() -> Result<()> {
     let (_dir, left, owner, admin) = fixture();
     let (_other_dir, right) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    // Left keeps the seeded manifest, whose rule names rulings normal. Without
+    // that rule here, left's replicated ruling waits for right's owner to
+    // confirm it, and right acts on its own ruling alone.
+    crate::test_util::declare_predicates_normal(&right, &[super::rulings::RULING_PREDICATE])?;
     let creation = left.initialize_shared_vault(
         &owner,
         42,

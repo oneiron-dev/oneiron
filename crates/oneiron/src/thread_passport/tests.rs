@@ -22,6 +22,19 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     open_test_vault_with(cfg)
 }
 
+/// A vault that receives passports from another device. With no rule naming
+/// them, an imported passport or alias resolves critical and waits for this
+/// device's owner to confirm it, and the thread graph never acts on a held row.
+fn replicating_test_vault() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = test_vault();
+    crate::test_util::declare_predicates_normal(
+        &vault,
+        &[PREDICATE_THREAD_PASSPORT, PREDICATE_THREAD_ALIAS],
+    )
+    .expect("declare the passport predicates");
+    (dir, vault)
+}
+
 /// Creates a live `ChannelIdentity` record so passports have a legal subject.
 fn seed_identity(vault: &Vault, id: EntityId, address: &str) {
     let identity = ChannelIdentity::requested(
