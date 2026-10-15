@@ -436,6 +436,9 @@ impl Vault {
                     Err(err) => Rows::Discard(Err(E::from(err))),
                 }
             })?;
+        // The host's write is durable: scan checks raised since the last
+        // write are kept now, in a write of their own (no scan opens one).
+        self.keep_waiting_scan_checks();
         self.store.notify_attempt_observers();
         if proactivity_changed {
             self.store.notify_proactivity_changes();
