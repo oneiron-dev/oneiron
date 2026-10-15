@@ -149,7 +149,12 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         .apply_receive_pack_update(&repo, outcome)
         .expect("replay after reopen");
     assert!(again.replayed);
-    assert_eq!(again.receipt.record_key, replay.receipt.record_key);
+    match (&again.receipt, &replay.receipt) {
+        (ReceivePackCertificate::Wire(again), ReceivePackCertificate::Wire(first)) => {
+            assert_eq!(again.record_key, first.record_key);
+        }
+        other => panic!("a replayed push lands through its wire record: {other:?}"),
+    }
     assert!(git(&root, &["for-each-ref", "refs/heads/declined"]).is_empty());
 }
 

@@ -260,9 +260,10 @@ pub struct OriginPublicationReceipt {
     pub ref_was_already_applied: bool,
     /// What the git wire said about the ref effect this call drove.
     ///
-    /// `None` when no CAS was driven at all, which is only the terminally
-    /// REFUSED record: a `Failed` or `Conflicted` publication is never retried,
-    /// so re-asking for it re-drives nothing.
+    /// `None` when no CAS was driven at all: the terminally REFUSED record (a
+    /// `Failed` or `Conflicted` publication is never retried, so re-asking for
+    /// it re-drives nothing), or a request
+    /// [resolved to its owner](OriginPublicationAnswer::ResolvedToOwner).
     ///
     /// A `Published` record whose live ref has since moved answers
     /// [`GitWireCommitOutcome::Rejected`] here while the record still reads
@@ -270,6 +271,21 @@ pub struct OriginPublicationReceipt {
     /// re-drive of it was refused because the repository moved on. The
     /// advertisement projection already omits such a row.
     pub wire: Option<GitWireCommitOutcome>,
+    /// Whose publication answered the request.
+    pub answer: OriginPublicationAnswer,
+}
+
+/// Whose publication answered one publication request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginPublicationAnswer {
+    /// The request's own publication.
+    Own,
+    /// An earlier `Published` publication of the same move, made under
+    /// another source, whose value the ref already carried and whose proof
+    /// covers everything the request needs. No ref effect ran, no publication
+    /// was minted, and the owner's record and permit are unchanged; the
+    /// request's own source stays its record.
+    ResolvedToOwner,
 }
 
 impl OriginPublicationReceipt {

@@ -60,14 +60,27 @@ pub(super) struct CasIntentKey {
 
 impl CasIntentKey {
     pub(super) fn new(record: &OriginPublicationRecord) -> Self {
+        Self::of_move(
+            record.repo_id,
+            &record.ref_name,
+            record.expected_old_oid.as_ref(),
+            &record.new_oid,
+        )
+    }
+
+    /// The key of one move: `ref_name` from `expected_old_oid` to `new_oid`.
+    pub(super) fn of_move(
+        repo_id: EntityId,
+        ref_name: &GitRefName,
+        expected_old_oid: Option<&GitOid>,
+        new_oid: &GitOid,
+    ) -> Self {
         Self {
-            repo_id: record.repo_id,
-            ref_name: record.ref_name.as_str().to_owned(),
-            expected_old_oid: record
-                .expected_old_oid
-                .as_ref()
+            repo_id,
+            ref_name: ref_name.as_str().to_owned(),
+            expected_old_oid: expected_old_oid
                 .map_or_else(String::new, |oid| oid.as_str().to_owned()),
-            new_oid: record.new_oid.as_str().to_owned(),
+            new_oid: new_oid.as_str().to_owned(),
         }
     }
 }

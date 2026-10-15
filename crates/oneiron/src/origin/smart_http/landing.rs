@@ -20,7 +20,8 @@ use crate::git_wire::{
 };
 use crate::origin::lfs::{LfsPointerIntent, lfs_repo_id};
 use crate::origin::publication::{
-    OriginPublicationReceipt, OriginPublicationRequest, OriginPublicationStatus,
+    OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::temporal::TimeRange;
@@ -39,11 +40,25 @@ pub struct ReceivePackAttribution {
 /// The durable record of one landing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivePackLanding {
-    /// The first certified ref's receipt. A multi-ref landing is not atomic;
+    /// What certified the first ref. A multi-ref landing is not atomic;
     /// success means every ref certified, but failure never rolls earlier refs back.
-    pub receipt: GitWireReceipt,
+    pub receipt: ReceivePackCertificate,
     /// Whether a durable terminal record answered without re-running git.
     pub replayed: bool,
+}
+
+/// What certified one landed ref.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceivePackCertificate {
+    /// The journaled ref effect the landing drove or replayed.
+    Wire(GitWireReceipt),
+    /// The `Published` publication that had already made this ref's move.
+    /// The backend left the ref at its value, its proof covers the push, and
+    /// no ref effect ran for it: the push's own outcome stays its record.
+    ResolvedToOwner {
+        /// The owner's publication id.
+        publication_id: EntityId,
+    },
 }
 
 /// Whether the repository already carries every observed value.
@@ -227,7 +242,7 @@ impl Vault {
         authority: Option<&OriginAuthorityStamp>,
         learned_at: u64,
     ) -> Result<ReceivePackLanding> {
-        let mut certified: Option<GitWireReceipt> = None;
+        let mut certified: Option<ReceivePackCertificate> = None;
         let mut replayed = true;
         for update in &outcome.ref_updates {
             if let Some(attribution) = attribution {
@@ -300,7 +315,7 @@ impl Vault {
         attribution: Option<&ReceivePackAttribution>,
         authority: Option<&OriginAuthorityStamp>,
         learned_at: u64,
-    ) -> Result<(GitWireReceipt, bool)> {
+    ) -> Result<(ReceivePackCertificate, bool)> {
         let ref_name = GitRefName::parse_full(update.name.clone())?;
         let attribution = match attribution {
             Some(attribution) => *attribution,
@@ -375,7 +390,17 @@ fn certified_refs(outcome: &ReceivePackOutcome) -> Vec<ObservedRef> {
 fn landing_from_publication(
     name: &str,
     receipt: &OriginPublicationReceipt,
-) -> Result<(GitWireReceipt, bool)> {
+) -> Result<(ReceivePackCertificate, bool)> {
+    if receipt.answer == OriginPublicationAnswer::ResolvedToOwner
+        && receipt.record.status == OriginPublicationStatus::Published
+    {
+        return Ok((
+            ReceivePackCertificate::ResolvedToOwner {
+                publication_id: receipt.record.publication_id,
+            },
+            true,
+        ));
+    }
     if let Some(reason) = receipt.wire_rejection() {
         return Err(Error::Code(CodeError::ReceivePackLandingRefused {
             reason: format!("{reason:?}"),
@@ -399,10 +424,14 @@ fn landing_from_publication(
 }
 
 /// The receipt and replay flag of one journaled ref effect, or a refusal.
-fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(GitWireReceipt, bool)> {
+fn landed_wire_outcome(outcome: GitWireCommitOutcome) -> Result<(ReceivePackCertificate, bool)> {
     match outcome {
-        GitWireCommitOutcome::Applied(receipt) => Ok((receipt, false)),
-        GitWireCommitOutcome::Replayed(receipt) => Ok((receipt, true)),
+        GitWireCommitOutcome::Applied(receipt) => {
+            Ok((ReceivePackCertificate::Wire(receipt), false))
+        }
+        GitWireCommitOutcome::Replayed(receipt) => {
+            Ok((ReceivePackCertificate::Wire(receipt), true))
+        }
         GitWireCommitOutcome::Rejected { reason, .. } => {
             Err(Error::Code(CodeError::ReceivePackLandingRefused {
                 reason: format!("{reason:?}"),

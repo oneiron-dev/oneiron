@@ -23,8 +23,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
+use oneiron::git_wire::GitWireReceipt;
 use oneiron::origin::smart_http::{
-    self, DoorSeam, DoorWindowVerdict, ServeReport, ServeRequest, ServeSink,
+    self, DoorSeam, DoorWindowVerdict, ReceivePackCertificate, ReceivePackLanding, ServeReport,
+    ServeRequest, ServeSink,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -86,6 +88,16 @@ fn binary_payload() -> Vec<u8> {
     bytes.extend_from_slice(b"TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz");
     bytes.extend_from_slice(&[0x00, 0x7f, 0x80]);
     bytes
+}
+
+/// The journaled ref effect that certified a landing's first ref.
+fn wire_receipt(landing: &ReceivePackLanding) -> &GitWireReceipt {
+    match &landing.receipt {
+        ReceivePackCertificate::Wire(receipt) => receipt,
+        other @ ReceivePackCertificate::ResolvedToOwner { .. } => {
+            panic!("the landing ran no ref effect of its own: {other:?}")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +503,7 @@ fn git_smart_http_landed_door_hook_clean_push_lands() {
     let landing = last.landing.as_ref().expect("landing");
     assert!(!landing.replayed, "the first landing is not a replay");
     assert!(
-        landing.receipt.observed_after.iter().any(|observed| {
+        wire_receipt(landing).observed_after.iter().any(|observed| {
             observed.name.as_str() == "refs/heads/main"
                 && observed.oid.as_ref().map(oneiron::git_wire::GitOid::as_str)
                     == Some(head.as_str())
@@ -557,7 +569,7 @@ fn git_smart_http_delete_only_push_is_journaled_like_any_other_landing() {
     );
     let landing = report.landing.as_ref().expect("landing");
     assert!(
-        landing.receipt.observed_after.iter().any(|observed| {
+        wire_receipt(landing).observed_after.iter().any(|observed| {
             observed.name.as_str() == "refs/heads/feature" && observed.oid.is_none()
         }),
         "the receipt certifies the ref as absent, which is what the push did"
@@ -993,7 +1005,8 @@ fn git_smart_http_replayed_receive_pack_outcome_is_noop_without_duplicate_oplog_
         "a replayed outcome is answered from the durable record"
     );
     assert_eq!(
-        replay.receipt.record_key, first.receipt.record_key,
+        wire_receipt(&replay).record_key,
+        wire_receipt(first).record_key,
         "the replay writes no second record"
     );
 }
