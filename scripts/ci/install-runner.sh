@@ -44,6 +44,7 @@ if [ ! -f .runner ]; then
   : "${RUNNER_TOKEN:?set RUNNER_TOKEN to a fresh registration token (environment only)}"
   ./config.sh --url https://github.com/oneiron-dev/oneiron --token "$RUNNER_TOKEN" --name "$NAME" --labels "$LABELS" --work _work --unattended --replace >/tmp/runner-config.log 2>&1 || { tail -5 /tmp/runner-config.log; exit 1; }
 fi
-cp "$HOOK_SRC" job-started.sh && chmod 0755 job-started.sh
+cp "$HOOK_SRC" job-started.sh
+chmod 0755 job-started.sh
 { echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=$DIR/job-started.sh"; echo "CARGO_TARGET_DIR=$TDIR"; echo "CARGO_INCREMENTAL=0"; echo "PATH=$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"; [ -n "$TMP" ] && { mkdir -p "$TMP"; echo "TMPDIR=$TMP"; }; } > .env
 echo "configured $(cat .runner | tr -d '\n' | cut -c1-120)"

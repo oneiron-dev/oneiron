@@ -365,13 +365,34 @@ def fork_runs(head_repo="someone/oneiron-fork", draft=False):
     return reached
 
 
-def _hook(event, repository=REPO):
+REFUSED = "refused"
+
+
+def _hook(event, repository=REPO, event_name="pull_request"):
+    """Runs the hook under a stand-in Runner.Worker (a shell by that name that
+    runs one more command after it). REFUSED when the hook killed it, else the
+    hook's exit code. The stand-in is the hook's nearest worker ancestor, so a
+    refusal here never reaches a real runner's worker running these tests."""
     with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / "Runner.Worker"
+        fake.symlink_to(shutil.which("bash"))
         path = Path(tmp) / "event.json"
+        marker = Path(tmp) / "next-step-ran"
         if event is not None:
             path.write_text(json.dumps(event))
-        env = {**os.environ, "GITHUB_EVENT_PATH": str(path), "GITHUB_REPOSITORY": repository}
-        return subprocess.run(["bash", str(HOOK)], env=env, capture_output=True, text=True).returncode
+        env = {
+            **os.environ,
+            "GITHUB_EVENT_PATH": str(path),
+            "GITHUB_REPOSITORY": repository,
+            "GITHUB_EVENT_NAME": event_name,
+        }
+        script = f'bash "{HOOK}"; status=$?; touch "{marker}"; exit $status'
+        done = subprocess.run([str(fake), "-c", script], env=env, capture_output=True, text=True)
+        if done.returncode == -9:
+            assert not marker.exists(), "the worker ran a step after the refusal"
+            return REFUSED
+        assert marker.exists(), done
+        return done.returncode
 
 
 class RunnerHookTests(unittest.TestCase):
@@ -381,22 +402,37 @@ class RunnerHookTests(unittest.TestCase):
         return {"action": "opened", "pull_request": {"head": {"repo": head and {"full_name": head}}}}
 
     def test_fork_pull_request_events_are_refused(self):
-        self.assertEqual(_hook(self.pr("someone/oneiron-fork")), 1)
+        self.assertEqual(_hook(self.pr("someone/oneiron-fork")), REFUSED)
         # pull_request_review and pull_request_target payloads carry the PR too.
-        self.assertEqual(_hook({"review": {}, **self.pr("someone/oneiron-fork")}), 1)
+        self.assertEqual(_hook({"review": {}, **self.pr("someone/oneiron-fork")}, event_name="pull_request_review"), REFUSED)
         # A deleted fork has no head repo.
-        self.assertEqual(_hook(self.pr(None)), 1)
-        self.assertEqual(_hook({"pull_request": None}), 1)
+        self.assertEqual(_hook(self.pr(None)), REFUSED)
+        self.assertEqual(_hook({"pull_request": None}), REFUSED)
 
-    def test_unreadable_event_payload_is_refused(self):
-        self.assertEqual(_hook(None), 1)
+    def test_unreadable_and_unattributable_events_are_refused(self):
+        self.assertEqual(_hook(None), REFUSED)
+        self.assertEqual(_hook([]), REFUSED)
+        self.assertEqual(_hook({"pull_request": {"head": "someone/oneiron-fork"}}), REFUSED)
+        # A PR-class event must name its pull request; a merge-queue run may
+        # carry fork changes and is never attributed to one repository.
+        self.assertEqual(_hook({}, event_name="pull_request_review"), REFUSED)
+        self.assertEqual(
+            _hook({"merge_group": {"head_ref": "refs/heads/gh-readonly-queue/main/pr-1"}}, event_name="merge_group"),
+            REFUSED,
+        )
 
     def test_in_repo_pull_requests_and_trusted_events_run(self):
         self.assertEqual(_hook(self.pr(REPO)), 0)
         self.assertEqual(_hook(self.pr(REPO.upper())), 0)
-        self.assertEqual(_hook({"ref": "refs/heads/main", "before": "0" * 40}), 0)
-        self.assertEqual(_hook({"schedule": "0 18 * * *"}), 0)
-        self.assertEqual(_hook({"inputs": {}}), 0)
+        self.assertEqual(_hook({"ref": "refs/heads/main", "before": "0" * 40}, event_name="push"), 0)
+        self.assertEqual(_hook({"schedule": "0 18 * * *"}, event_name="schedule"), 0)
+        self.assertEqual(_hook({"inputs": {}}, event_name="workflow_dispatch"), 0)
+
+    def test_a_refusal_kills_the_runner_worker_before_its_next_step(self):
+        # The runner runs `always()` steps after a failed hook, so a refusal
+        # must stop the worker itself: the stand-in never runs its next step.
+        self.assertEqual(_hook(self.pr("someone/oneiron-fork")), REFUSED)
+        self.assertEqual(_hook(self.pr(REPO)), 0)
 
     def test_installer_wires_the_hook_outside_the_checkout(self):
         home = Path(tempfile.mkdtemp())
