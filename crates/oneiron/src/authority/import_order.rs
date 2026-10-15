@@ -148,6 +148,7 @@ fn consent_order(
 /// Indices of `entries` (hash, row) in the order a sync pass hands them to
 /// the store door: parents first, each signer's rows by sequence, the
 /// structure's rows first, then the order given.
+#[cfg(any(test, feature = "sync"))]
 pub(crate) fn authority_stage_order(
     entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Vec<usize> {

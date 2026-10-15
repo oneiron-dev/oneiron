@@ -148,8 +148,8 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
-pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub(crate) use owner_roots::anchor_signed_entry;
+pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use slip::*;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
@@ -167,6 +167,7 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+#[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]
 pub(crate) use log_budget::with_authority_doors_open_for_test;
