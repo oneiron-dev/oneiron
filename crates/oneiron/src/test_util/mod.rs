@@ -342,6 +342,31 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
         .expect("owner binding");
 }
 
+/// A proof this vault authenticated, with no credential, for a live PERSON
+/// who does not own it: what a native host can mint for any person it knows.
+/// An owner door refuses it; a person-tier door takes it for that person's
+/// own rows.
+pub(crate) fn non_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("a live person");
+    vault
+        .authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("a non-owner person's proof")
+}
+
 /// An owner proof another vault authenticated for `actor` under `principal`,
 /// with `actor` a live PERSON there as in the vault under test: what a door
 /// of that vault must refuse. The other vault's `TempDir` and handle come

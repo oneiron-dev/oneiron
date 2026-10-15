@@ -2132,6 +2132,28 @@ mod foreign_owner_proof {
     }
 }
 
+/// F18 tier flip: autonomy mints standing grants on the owner's authority,
+/// so a live person who does not own this vault sets none.
+mod non_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_non_owner_persons_proof_applies_no_autonomy() {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        let person = crate::test_util::non_owner_proof(&vault);
+        assert_eq!(
+            vault
+                .apply_channel_identity_autonomy(&request, &person)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        vault
+            .apply_channel_identity_autonomy(&request, &owner)
+            .unwrap();
+    }
+}
+
 mod revoked_owner_credential {
     use super::*;
 
