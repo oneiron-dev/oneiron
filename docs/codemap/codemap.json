@@ -25698,7 +25698,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 9,
+      "mod": 10,
       "re-export": 1
      }
     },
@@ -25719,7 +25719,7 @@
      "path": "src/origin/publication/publication_codec.rs",
      "purpose": "Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 5
      }
     },
@@ -25730,7 +25730,7 @@
      "path": "src/origin/publication/publication_journal.rs",
      "purpose": "Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -25744,7 +25744,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/publication/publication_protocol.rs",
@@ -25787,7 +25787,7 @@
      "path": "src/origin/publication/publication_types.rs",
      "purpose": "Pinned constants, protocol enums with string tables, and request/record/receipt/report types",
      "surface": {
-      "const": 11,
+      "const": 10,
       "enum": 3,
       "fn": 9,
       "struct": 4
@@ -25808,6 +25808,23 @@
       "enum": 1,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OriginScan",
+      "OriginScanCheck"
+     ],
+     "path": "src/origin/scan_check.rs",
+     "purpose": "Origin scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -25975,7 +25992,7 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -26050,6 +26067,14 @@
      "notable": [],
      "path": "src/origin/smart_http/push_cert_tests.rs",
      "purpose": "Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/scan_cap_tests.rs",
+     "purpose": "No origin scan refuses for how many rows it reads (rule 5): a repository keeps taking pushes, advertisements…",
      "surface": {}
     },
     {
@@ -41264,7 +41289,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 51,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41812,8 +41837,8 @@
    },
    "over_bar": 40,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2530,
-   "test_files": 826
+   "source_files": 2531,
+   "test_files": 827
   },
   "oneiron-android": {
    "files": [
