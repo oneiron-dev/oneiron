@@ -831,15 +831,25 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
 
     let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
     let first_project = first_doc.project_id;
-    // No imported claim lands `Auto` under the shipped policy: the owner
-    // approves each derived claim, so it reads as a live fact.
+    // No derived claim lands `Auto` without the owner's word, and a vault
+    // with no stored manifest parks none in the tray: the fixture stands in
+    // for the owner's approval of each, at its own times, so it reads as a
+    // live fact. A Proposed one is not queryable.
     let approve = |ids: &BTreeSet<EntityId>| -> Result<()> {
         for id in ids {
-            let body = vault.get_claim(id)?.ok_or(crate::Error::EntityNotFound)?;
-            vault.approve_inbox_member_with_edit_at(
+            let raw = vault.get_raw(id)?.ok_or(crate::Error::EntityNotFound)?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(crate::Error::CorruptedIndex("entity header"))?;
+            let mut body = vault.get_claim(id)?.ok_or(crate::Error::EntityNotFound)?;
+            body.approval = ClaimApprovalStatus::Approved;
+            vault.put_claim(
                 id,
-                &crate::claim::encode_claim_body(&body)?,
-                crate::unix_seconds_now(),
+                &body,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
             )?;
         }
         Ok(())

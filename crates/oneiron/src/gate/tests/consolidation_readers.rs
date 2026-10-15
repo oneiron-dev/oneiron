@@ -4,6 +4,8 @@ use crate::Vault;
 use crate::gate::ConsolidationReader;
 use std::collections::BTreeSet;
 
+mod reserved;
+
 fn reader_body() -> ClaimBody {
     public_stamped(source_trust_claim(ClaimSource::UserStated))
 }
@@ -679,6 +681,15 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         Err(error) => Err(error),
                     }
                 })?;
+            }
+            ConsolidationReader::ProviderPrior => reserved::provider_prior(&vault, reader)?,
+            ConsolidationReader::CriticOutcome => reserved::critic_outcome(reader)?,
+            ConsolidationReader::CriticReliability => reserved::critic_reliability(reader)?,
+            ConsolidationReader::ProviderConfidence => {
+                reserved::provider_confidence(&vault, claim, reader)?;
+            }
+            ConsolidationReader::PprCommunity => {
+                reserved::ppr_community(&vault, claim, control, reader)?;
             }
         }
     }

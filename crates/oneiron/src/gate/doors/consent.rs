@@ -150,6 +150,7 @@ pub(in crate::gate) fn gate_decision_matches_pending_candidate(
         && record.read_frontier_hash == expected.read_frontier_hash
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(super) fn enforce_claim_gate_decision_with_consent(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,

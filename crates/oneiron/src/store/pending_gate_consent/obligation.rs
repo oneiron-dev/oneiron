@@ -56,7 +56,9 @@ impl Store {
     }
 
     /// Opens `claim_id`'s obligation on the item `opened_by` parked, unless
-    /// one is open already: an open one keeps the item it names.
+    /// one is open already: an open one keeps the item it names. Opening or
+    /// closing one moves the graph version, since a held claim connects no
+    /// community and a cached community snapshot must not outlive the change.
     pub(crate) fn open_owner_answer_obligation_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -79,7 +81,8 @@ impl Store {
                 item: owner_answer_item_hash(diff_handle),
                 demotes_peer_revisions: false,
             },
-        )
+        )?;
+        crate::ppr::increment_graph_version(self, wtxn)
     }
 
     pub(crate) fn put_owner_answer_obligation_in_txn(
@@ -100,7 +103,9 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<()> {
-        OBLIGATION.delete(self, wtxn, claim_id)?;
+        if OBLIGATION.delete(self, wtxn, claim_id)? {
+            crate::ppr::increment_graph_version(self, wtxn)?;
+        }
         Ok(())
     }
 }

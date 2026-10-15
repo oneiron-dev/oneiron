@@ -16,7 +16,7 @@ pub(in crate::store) use self::keys::{
     pending_gate_consent_upper_bound, string_index_prefix,
 };
 pub(crate) use self::obligation::owner_answer_item_hash;
-pub(crate) use self::records::{OwnerAnswerObligationRecord, PENDING_GATE_CONSENT_VERSION};
+pub(crate) use self::records::PENDING_GATE_CONSENT_VERSION;
 pub(in crate::store) use self::records::decode_pending_gate_consent;
 pub use self::records::{PendingGateConsentGroup, PendingGateConsentRecord};
 pub(crate) use self::tray::TrayRemoval;

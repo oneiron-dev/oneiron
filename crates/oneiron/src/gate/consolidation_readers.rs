@@ -9,14 +9,14 @@ use crate::vault::Vault;
 /// it as a prior, ranks a candidate by it, counts it as evidence, or counts it
 /// toward waking a Dreamer pass. Each asks
 /// [`claim_consolidation_eligible_in_txn`] before it reads a head, so a
-/// critical claim whose owner confirmation is outstanding reaches none of
-/// them (ARCH-0026 §G3). A write its owner authored in person attaches no
-/// confirmation, so it is eligible at once. A reserved predicate never carries
-/// one either: its owning door writes it past the criticality ladder, and a
-/// replicated one attaches none. Readers that consume only reserved heads
-/// (provider priors under `actor.*`, skill reliability and hub provenance
-/// under `skill.*`) are therefore not on this list. The invariant check walks
-/// this list.
+/// critical claim whose owner-answer obligation is open reaches none of them
+/// (ARCH-0026 §G3). A write its owner authored in person attaches no
+/// confirmation, so it is eligible at once. Readers of reserved heads and of
+/// critic calibration ask too: a reserved predicate's own door attaches no
+/// confirmation, but its head can land on a claim id whose obligation is
+/// still open, and only the owner's answer closes that. A restrictive read,
+/// a closure or a supersession is no consolidation and never asks. The
+/// invariant check walks this list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConsolidationReader {
     /// Affect VAD consolidation of one claim.
@@ -52,11 +52,24 @@ pub(crate) enum ConsolidationReader {
     StateIndexSignal,
     /// A new record the Dreamer wake policy counts toward a pass.
     WakeCount,
+    /// A provider's confidence prior (`actor.confidence_prior`), the trust
+    /// multiplier entity resolution ranks candidates by.
+    ProviderPrior,
+    /// The calibration an anchored review outcome trains its next posterior
+    /// from (`critic_reliability.*`).
+    CriticOutcome,
+    /// The calibration that weights a critic's review (`critic_reliability.*`).
+    CriticReliability,
+    /// A provider-attributed claim whose confidence the resolution waterfall
+    /// scores.
+    ProviderConfidence,
+    /// A claim vertex of the PPR community graph, the retrieval prior.
+    PprCommunity,
 }
 
 impl ConsolidationReader {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::ClaimVad,
         Self::CopingOutcome,
         Self::VadAnnotation,
@@ -73,6 +86,11 @@ impl ConsolidationReader {
         Self::DerivedSupport,
         Self::StateIndexSignal,
         Self::WakeCount,
+        Self::ProviderPrior,
+        Self::CriticOutcome,
+        Self::CriticReliability,
+        Self::ProviderConfidence,
+        Self::PprCommunity,
     ];
 
     const fn code(self) -> &'static str {
@@ -93,6 +111,11 @@ impl ConsolidationReader {
             Self::DerivedSupport => "derived_support",
             Self::StateIndexSignal => "state_index_signal",
             Self::WakeCount => "wake_count",
+            Self::ProviderPrior => "provider_prior",
+            Self::CriticOutcome => "critic_outcome",
+            Self::CriticReliability => "critic_reliability",
+            Self::ProviderConfidence => "provider_confidence",
+            Self::PprCommunity => "ppr_community",
         }
     }
 }
