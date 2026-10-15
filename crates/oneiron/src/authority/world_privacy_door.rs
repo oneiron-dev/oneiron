@@ -262,11 +262,18 @@ impl Vault {
         // arrives first vouches for the earlier (Astra #1422c).
         let chain = super::scope_head(&fold, &signer, world);
         let author = |standing_rows: &BTreeSet<AuthorityEntryHash>| {
-            let mut live = live.iter().map(|(_, hash)| *hash);
             let mut seq = seq;
             let mut entries = Vec::new();
             let mut parents = standing_rows.clone();
             parents.extend(chain);
+            // A live edit these parents already name, the chain most often,
+            // counts once (Astra #1422d F1).
+            let mut live = live
+                .iter()
+                .map(|(_, hash)| *hash)
+                .filter(|hash| !parents.contains(hash))
+                .collect::<Vec<_>>()
+                .into_iter();
             while parents.len() + live.len() > MAX_PARENTS {
                 if standing != WorldEditStanding::Holds && !picks_this_machine {
                     return Err(refused(

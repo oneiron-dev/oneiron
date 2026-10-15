@@ -68,10 +68,11 @@ pub enum Withheld {
     /// machine merges the world's settings, a re-run of the door wraps it
     /// where this machine still reads the world.
     FrontierWide,
-    /// Only machines removed here signed the key's counted records, and this
-    /// machine signed none: it is never current, and no door here wraps it
-    /// again, since that record would make it current. A kit restore lists it
-    /// as usable instead (the Engine's Q2 on Astra #1422c).
+    /// Only machines removed here signed the key's counted records, or the
+    /// new pin removes one of the signers it stood on under the old pin, and
+    /// this machine signed none: no door here wraps it again, since that
+    /// record would make it current. A kit restore lists it as usable instead
+    /// (the Engine's Q2 on Astra #1422c; Astra #1422d F2).
     SignerRemoved,
 }
 
@@ -310,18 +311,29 @@ impl Vault {
                 && fold.world_privacy(world).read != EffectiveRead::Everywhere
                 && fold.world_readable_on(world, Destination::Machine(me))
         };
-        // A key that only removed machines signed counted records of, before
-        // the pin moved and after, gets no record here unless this machine
-        // signed one itself: this door's record would make it current (the
-        // Engine's Q2 on Astra #1422c). It is still opened, and a kit restore
-        // keeps it usable. A key that counts under the old pin alone, its
-        // signers left out of the new one, is not such a key.
-        let stands_in = |fold: &AuthorityFold, id: &WorldKeyId| {
-            fold.world_key(id)
-                .is_some_and(|key| fold.world_key_stands(key))
-        };
+        // A key gets a record here only if it stands under the new pin, or
+        // stood under the old one and the new pin removes none of its
+        // signers, or this machine signed one of its records itself: this
+        // door's record would make it current (the Engine's Q2 on Astra
+        // #1422c). So a key whose signers the new pin leaves out keeps its
+        // wraps, and the old trust set's silence never overrides a removal
+        // in the new one (Astra #1422d F2). Such a key is still opened, and
+        // a kit restore keeps it usable.
         let stands = |id: &WorldKeyId| {
-            start.own_keys.contains(id) || stands_in(&start.old, id) || stands_in(&mid, id)
+            let stands_in = |fold: &AuthorityFold| {
+                fold.world_key(id)
+                    .is_some_and(|key| fold.world_key_stands(key))
+            };
+            let none_removed = || {
+                [&start.old, &mid]
+                    .into_iter()
+                    .filter_map(|fold| fold.world_key(id))
+                    .flat_map(|key| key.signers.iter())
+                    .all(|machine| mid.signer_stands(*machine))
+            };
+            start.own_keys.contains(id)
+                || stands_in(&mid)
+                || (stands_in(&start.old) && none_removed())
         };
         let my_public = door.secret.secret.public_key().clone();
         let mut seq = SequenceCounter::new();

@@ -11,6 +11,9 @@ use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
 use super::*;
+use crate::world_keys::{
+    PolicyRevision, WorldKey, WorldKeyBinding, machine_secret, seal_world_key,
+};
 use crate::{Vault, VaultConfig};
 
 /// A replica of the host's history so far that then stores `rows` in this
@@ -1599,4 +1602,91 @@ fn a_vouch_never_widens_the_install_view() {
         );
     }
     assert!(widened.is_empty(), "the vouch widened: {widened:?}");
+}
+
+/// A record of a fresh key of the start's world, signed by the laptop at its
+/// first sequence on `parents` and wrapped to a recovery root alone.
+fn laptop_key_record(
+    start: &Start,
+    parents: Vec<AuthorityEntryHash>,
+) -> (AuthorityLogEntry, WorldKeyId) {
+    let vault_id = start.host.vault_id;
+    let key = WorldKey::mint(start.world, FIRST_GENERATION).unwrap();
+    let to = WrapRecipient::RecoveryRoot(RecoveryRootId([9; 32]));
+    let binding = WorldKeyBinding {
+        vault_id,
+        key: *key.id(),
+        owner: start.host.owner.actor(),
+        policy: PolicyRevision::of([hash(&start.mine)]),
+        commitment: key.commitment(),
+    };
+    let secret = machine_secret(
+        &oneiron_keystore::MemoryKeystore::new(),
+        vault_id,
+        *EntityId::now().as_bytes(),
+    )
+    .unwrap();
+    let envelope = seal_world_key(&binding, to, secret.public_key(), &key).unwrap();
+    let record = WorldKeyWrapsRecord {
+        key: *key.id(),
+        commitment: binding.commitment,
+        owner: binding.owner,
+        policy: binding.policy,
+        machine: start.laptop.0,
+        wraps: vec![(to, envelope.to_bytes())],
+    };
+    let entry = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            parents,
+            AuthorityOp::WorldKeyWraps(record),
+            authority_key_from_ed(&start.laptop.1),
+            2,
+        ),
+        &start.laptop.1,
+    );
+    (entry, *key.id())
+}
+
+/// The Engine on Astra #1422d, the key-domain negative control: a "yours"
+/// revision only a vouch admits, a key record under it, then a removal. The
+/// owner revokes slip G, and slip L beside it. P marks the laptop "yours"
+/// over G alone, and the laptop records a world key J under P. The owner
+/// then removes the laptop over P (D) and re-roots over D and L (H). A
+/// replica that stores G before L counts J. One that stores L first keeps G
+/// below its floor, so only H's vouch admits G and P: both folds end the
+/// laptop's chain at D, but P is held where J stands, and J never counts.
+#[test]
+fn a_key_record_under_a_revision_only_a_vouch_admits_never_counts() {
+    let start = Start::new(142);
+    let g = start.revoke(start.seq + 1, start.heads(), 37);
+    let l = start.revoke(start.seq + 2, start.heads(), 38);
+    let p = start.owner_row(
+        start.seq + 3,
+        vec![hash(&g)],
+        AuthorityOp::MachineProfile(start.yours(2)),
+    );
+    let (j, key) = laptop_key_record(&start, vec![hash(&p), hash(&start.mine)]);
+    let d = start.owner_row(
+        start.seq + 4,
+        vec![hash(&p)],
+        start.answer(start.laptop.0, MachineRole::Removed, 2, BTreeSet::new()),
+    );
+    let h = start.re_root(
+        start.seq + 5,
+        vec![hash(&d), hash(&l)],
+        b"world floor key control root",
+    );
+    for (first, counts) in [(&g, true), (&l, false)] {
+        let second = if counts { &l } else { &g };
+        let (_dir, replica) = replica_storing(&start.host, &[first, second, &p, &j, &d, &h]);
+        let fold = replica.authority_fold().unwrap();
+        for row in [&g, &l, &p, &j, &d, &h] {
+            assert!(fold.valid_entries.contains(&hash(row)), "G first: {counts}");
+        }
+        assert!(fold.machines[&start.laptop.0].head().removed);
+        assert_eq!(fold.world_key(&key).is_some(), counts);
+        assert_eq!(!fold.refused_world_keys.contains(&hash(&j)), counts);
+    }
 }

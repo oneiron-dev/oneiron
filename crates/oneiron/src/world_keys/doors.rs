@@ -448,8 +448,21 @@ impl Vault {
         if base.union(&authors).count() <= MAX_PARENTS / 2 {
             base.extend(authors);
         }
-        if base.len() > RECORD_PARENTS {
-            self.world_keys.frontier_wide(world, base.len() + 1);
+        // Each record names its signer's previous row of the world beside
+        // these: the first names the scope head, which counts once when it is
+        // already a live edit here, and each later one the record before it
+        // (Astra #1422d F1).
+        let chain = seq.chain(fold, signing, world);
+        let named = |parents: &BTreeSet<AuthorityEntryHash>,
+                     rows: &BTreeSet<AuthorityEntryHash>,
+                     first: bool| {
+            let chained = !first
+                || chain.is_some_and(|chain| !parents.contains(&chain) && !rows.contains(&chain));
+            parents.union(rows).count() + usize::from(chained)
+        };
+        let base_named = named(&base, &BTreeSet::new(), true);
+        if base_named > MAX_PARENTS {
+            self.world_keys.frontier_wide(world, base_named);
             return Ok(Err(FrontierWide(
                 "the world's key rests on more rows than one record names: merge this world's \
                  settings from one machine that sees every edit, then retry",
@@ -463,18 +476,18 @@ impl Vault {
                 WrapRecipient::Machine(id) => standing_rows(fold, *id),
                 WrapRecipient::RecoveryRoot(_) => BTreeSet::new(),
             };
-            let full = |parents: &BTreeSet<_>, wraps: &Vec<_>| {
-                parents.union(&rows).count() > RECORD_PARENTS || wraps.len() == WORLD_KEY_WRAPS_MAX
+            let full = |parents: &BTreeSet<_>, wraps: &Vec<_>, first: bool| {
+                named(parents, &rows, first) > MAX_PARENTS || wraps.len() == WORLD_KEY_WRAPS_MAX
             };
-            if full(&parents, &wraps) && !wraps.is_empty() {
+            if full(&parents, &wraps, chunks.is_empty()) && !wraps.is_empty() {
                 chunks.push((
                     std::mem::replace(&mut parents, base.clone()),
                     std::mem::take(&mut wraps),
                 ));
             }
-            if full(&parents, &wraps) {
+            if full(&parents, &wraps, chunks.is_empty()) {
                 self.world_keys
-                    .frontier_wide(world, parents.union(&rows).count() + 1);
+                    .frontier_wide(world, named(&parents, &rows, chunks.is_empty()));
                 return Ok(Err(FrontierWide(
                     "a recipient's standing and the world's edits are more rows than one record \
                      names: merge this world's settings from one machine that sees every edit, \

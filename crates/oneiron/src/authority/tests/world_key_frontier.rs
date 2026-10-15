@@ -332,3 +332,85 @@ fn a_skipped_pre_wrap_keeps_the_key_for_a_re_run() {
     );
     assert!(held.wraps.contains_key(&to_second));
 }
+
+/// Astra #1422d F1: the settings door counts each parent once. This machine
+/// signs E, making the world its own, and machine B signs, concurrently
+/// with E, as many edits making it B's as fill one entry beside E and the
+/// main log's heads. No key record follows E, so E is this machine's last
+/// row of the world. The owner resolves the conflict to B here in one edit,
+/// with no move here first: E, the edit's chain parent, is one of the live
+/// edits. Fails before: the door counted E twice, as the chain and as a
+/// live edit, and refused the request for count.
+#[test]
+fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
+    use super::world_privacy::{edit_by, enrol_here, land, other_machine, read_of};
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    let (other, other_key) = other_machine(&host, 69, MachineRole::Owned(MachineOwnership::Yours));
+    let here_key = {
+        let txn = host.vault.store.env.read_txn().unwrap();
+        crate::identity::read_machine_signing_key_in_txn(&host.vault, &txn)
+            .unwrap()
+            .unwrap()
+    };
+    let heads = host.vault.authority_fold().unwrap().append_heads.len();
+    let mut concurrent = vec![edit_by(
+        &host,
+        here,
+        &here_key,
+        world,
+        settings(ReadLocation::OneMachine(here)),
+    )];
+    concurrent.extend((0..MAX_PARENTS - heads - 1).map(|ts| {
+        let mut entry = edit_by(
+            &host,
+            other,
+            &other_key,
+            world,
+            settings(ReadLocation::OneMachine(other)),
+        );
+        entry.ts = u64::try_from(ts).unwrap();
+        sign_ed(entry, &other_key)
+    }));
+    land(&host, &concurrent);
+    let fold = host.vault.authority_fold().unwrap();
+    assert_eq!(fold.append_heads.len(), heads);
+    assert_eq!(fold.worlds[&world].live.len(), MAX_PARENTS - heads);
+    assert_eq!(
+        read_of(&host, world),
+        EffectiveRead::Conflicted {
+            contenders: BTreeSet::from([here, other]),
+        }
+    );
+
+    host.vault
+        .set_world_privacy_as(
+            &host.owner,
+            EditOrigin::ThisMachine,
+            world,
+            settings(ReadLocation::OneMachine(other)),
+        )
+        .unwrap();
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(other));
+    let fold = host.vault.authority_fold().unwrap();
+    let [resolved]: [_; 1] = fold.worlds[&world]
+        .live
+        .keys()
+        .copied()
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    let by_here: Vec<_> = super::world_privacy::stored_entries(&host.vault)
+        .into_iter()
+        .filter(
+            |entry| matches!(&entry.op, AuthorityOp::WorldPrivacy(edit) if edit.machine == here),
+        )
+        .collect();
+    assert_eq!(by_here.len(), 2);
+    let entry = by_here
+        .iter()
+        .find(|entry| authority_entry_hash(entry).unwrap() == resolved)
+        .unwrap();
+    assert_eq!(entry.parent_hashes.len(), MAX_PARENTS);
+}

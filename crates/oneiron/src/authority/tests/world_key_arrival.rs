@@ -269,6 +269,19 @@ impl Graph {
         seq: u64,
         parents: Vec<AuthorityEntryHash>,
     ) -> (AuthorityLogEntry, WorldKeyId) {
+        let to_root = WrapRecipient::RecoveryRoot(self.root.root);
+        self.forged_key(like, seq, parents, to_root, self.root.recovery.public_key())
+    }
+
+    /// [`Self::backdated_key`], wrapped to `to` alone with `public`.
+    pub(super) fn forged_key(
+        &self,
+        like: &AuthorityLogEntry,
+        seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        to: WrapRecipient,
+        public: &oneiron_crypto::HybridPublicKey,
+    ) -> (AuthorityLogEntry, WorldKeyId) {
         let AuthorityOp::WorldKeyWraps(record) = &like.op else {
             panic!("a key record");
         };
@@ -278,7 +291,6 @@ impl Graph {
                 break key;
             }
         };
-        let to_root = WrapRecipient::RecoveryRoot(self.root.root);
         let binding = WorldKeyBinding {
             vault_id: like.vault_id.unwrap(),
             key: *key.id(),
@@ -286,12 +298,11 @@ impl Graph {
             policy: record.policy,
             commitment: key.commitment(),
         };
-        let envelope =
-            seal_world_key(&binding, to_root, self.root.recovery.public_key(), &key).unwrap();
+        let envelope = seal_world_key(&binding, to, public, &key).unwrap();
         let record = WorldKeyWrapsRecord {
             key: *key.id(),
             commitment: key.commitment(),
-            wraps: vec![(to_root, envelope.to_bytes())],
+            wraps: vec![(to, envelope.to_bytes())],
             ..record.clone()
         };
         (

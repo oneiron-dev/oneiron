@@ -3,14 +3,17 @@
 //! install saw of the machine in the world is refused, a row above it lands
 //! as honest late arrival does, and either way a key is current only while
 //! a machine not removed here signed one of its counted records. No honest
-//! row, and no re-wrap door, lends such a key that standing.
+//! row, and no re-wrap door, lends such a key that standing (Astra #1422d
+//! F2), and no such row conflicts a key a standing machine signed or hides
+//! its envelopes (F3).
+use super::machine_identity::host;
 use super::world_chain_reads::hash;
 use super::world_key_arrival::{Graph, graph, over};
-use super::world_key_doors::{Fresh, fresh_install};
-use super::world_privacy::settings;
-use super::world_reissue::{admit, set_on, sync};
+use super::world_key_doors::{Fresh, fresh_install, own_request};
+use super::world_privacy::{settings, world_row};
+use super::world_reissue::{admit, issue, set_on, sync};
 use super::*;
-use crate::world_keys::WorldKeyStatus;
+use crate::world_keys::{Withheld, WorldKeyStatus};
 
 const HERE: EditOrigin = EditOrigin::ThisMachine;
 const AT: TimeRange = TimeRange { start: 3, end: 3 };
@@ -231,5 +234,214 @@ fn a_settings_edit_never_clears_a_key_records_floor() {
     assert_eq!(
         fold.current_world_key(graph.world).map(|key| key.id),
         Some(graph.key)
+    );
+}
+
+/// Astra #1422d F2. The roster admits A and B, and B pins no root. A makes
+/// the world `MyMachines` and mints K for A and B. The owner publishes R; R
+/// anchors A, A pins it, and R's anchor removes A. B stores it all. Someone
+/// holding A's install key mints J above K on K's record, wrapped to B
+/// alone. On B, still on the roster, A stands and J is current. B pins R,
+/// under which A is removed: B writes no record of J or of K, reports both
+/// withheld, and neither is current. A signer the new pin leaves out keeps
+/// its pre-wraps (world_reissue's
+/// `a_left_out_recipient_anchors_itself_back_from_records_another_signed`).
+/// Fails before: J stood under the old pin, so the door wrapped it to R from
+/// B, and B's record made J current under R.
+#[test]
+fn a_re_pin_never_wraps_a_key_whose_signers_the_new_pin_removed() {
+    let host = host();
+    let world = world_row(&host);
+    let [issuer, a, b] = [(); 3].map(|()| fresh_install(&host));
+    for install in [&a, &b] {
+        host.vault
+            .enroll_machine(
+                &host.issuer,
+                &host.owner,
+                &own_request(&install.vault),
+                MachineRole::Owned(MachineOwnership::Yours),
+            )
+            .unwrap();
+    }
+    for to in [&issuer, &a, &b] {
+        sync(&host.vault, &to.vault);
+    }
+    set_on(&a, world, ReadLocation::MyMachines);
+    sync(&a.vault, &issuer.vault);
+    let root = issue(&issuer, &[]);
+    admit(&issuer, &root, &a);
+    sync(&a.vault, &issuer.vault);
+    let key = a
+        .vault
+        .authority_fold()
+        .unwrap()
+        .current_world_key(world)
+        .unwrap()
+        .id;
+    let graph = Graph {
+        host,
+        world,
+        issuer,
+        root,
+        a,
+        b,
+        key,
+    };
+    let removal = graph.removal(&graph.issuer.vault);
+    graph
+        .issuer
+        .vault
+        .put_authority_log_entry(&removal, AT, 3)
+        .unwrap();
+    sync(&graph.issuer.vault, &graph.b.vault);
+    let rows = graph.rows_by(&graph.b.vault, graph.a.machine());
+    let minted = rows
+        .iter()
+        .find(|entry| matches!(entry.op, AuthorityOp::WorldKeyWraps(_)))
+        .unwrap();
+    let after = rows.last().unwrap().seq + 1;
+    let b = graph.b.machine();
+    let public = oneiron_crypto::HybridPublicKey::from_bytes(
+        &graph
+            .b
+            .vault
+            .machine_encryption_key(graph.host.vault_id)
+            .unwrap()
+            .key,
+    )
+    .unwrap();
+    let (forged, j) = graph.forged_key(
+        minted,
+        after,
+        over(minted),
+        WrapRecipient::Machine(b),
+        &public,
+    );
+    graph
+        .b
+        .vault
+        .put_authority_log_entry(&forged, AT, 3)
+        .unwrap();
+    let fold = graph.b.vault.authority_fold().unwrap();
+    assert_eq!(fold.current_world_key(world).map(|key| key.id), Some(j));
+
+    let report = graph
+        .b
+        .vault
+        .pin_owner_root(&graph.b.owner, HERE, graph.root.root)
+        .unwrap();
+    assert_eq!(report.withheld.len(), 2, "{:?}", report.withheld);
+    for id in [key, j] {
+        assert!(report.withheld.contains(&(id, Withheld::SignerRemoved)));
+    }
+    assert!(graph.rows_by(&graph.b.vault, b).is_empty());
+    let fold = graph.b.vault.authority_fold().unwrap();
+    assert!(fold.world_key(&j).is_some());
+    assert!(fold.current_world_key(world).is_none());
+}
+
+/// Astra #1422d F3. B wraps K to C, so a machine R never removes signed K.
+/// R's anchor removes A, and someone holding A's install key copies K2 with
+/// another commitment, R's envelope kept, on K2 above A's floor. A fresh
+/// install that holds it all restores R from the kit: the copy counts, but
+/// K is not conflicted, stays current through B, and the kit opens it.
+/// Fails before: the copy conflicted K, and the restore withheld it.
+#[test]
+fn a_removed_machines_copy_of_a_key_never_conflicts_it() {
+    let (graph, _c) = graph_with_c();
+    let rows = graph.rows_by(&graph.issuer.vault, graph.a.machine());
+    let (k2, k3) = (&rows[1], &rows[2]);
+    let removal = graph.removal(&graph.issuer.vault);
+    let AuthorityOp::WorldKeyWraps(record) = &k2.op else {
+        panic!("A's second row is K's record");
+    };
+    let copy = graph.signed_as_a(
+        k2,
+        k3.seq + 1,
+        vec![hash(k2)],
+        AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
+            commitment: [0x5c; 32],
+            ..record.clone()
+        }),
+    );
+    let by_b = &graph.rows_by(&graph.issuer.vault, graph.b.machine())[0];
+    let install = graph.receiver(&[&rows[0], k2, k3, by_b, &removal, &copy]);
+    let restore = install
+        .vault
+        .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+        .unwrap();
+    assert!(restore.usable.contains(&graph.key));
+    let fold = install.vault.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&hash(&copy)));
+    assert!(!fold.refused_world_keys.contains(&hash(&copy)));
+    assert!(!fold.world_key(&graph.key).unwrap().conflicted);
+    assert_eq!(
+        fold.current_world_key(graph.world).map(|key| key.id),
+        Some(graph.key)
+    );
+}
+
+/// The Engine on Astra #1422d F3: a removed machine's records never push a
+/// genuine envelope out. R's anchor removes A, and someone holding A's
+/// install key signs four copies of K2 on K2's parents above A's floor, each
+/// with R's envelope broken and a hash below K2's. A fresh install that
+/// holds them restores R from the kit: R's slots still hold K2's envelope,
+/// and the kit opens K. Fails before: the copies tied K2 on ancestry and
+/// took R's four slots by hash, so the kit lost K.
+#[test]
+fn a_removed_machines_flood_of_envelopes_never_hides_a_genuine_one() {
+    let graph = graph();
+    let rows = graph.rows_by(&graph.issuer.vault, graph.a.machine());
+    let (k2, k3) = (&rows[1], &rows[2]);
+    let removal = graph.removal(&graph.issuer.vault);
+    let AuthorityOp::WorldKeyWraps(record) = &k2.op else {
+        panic!("A's second row is K's record");
+    };
+    let to_root = WrapRecipient::RecoveryRoot(graph.root.root);
+    let flood: Vec<_> = (1..=u8::MAX)
+        .filter_map(|flip| {
+            let wraps = record
+                .wraps
+                .iter()
+                .map(|(to, envelope)| {
+                    let mut envelope = envelope.clone();
+                    if *to == to_root {
+                        let last = envelope.len() - 1;
+                        envelope[last] ^= flip;
+                    }
+                    (*to, envelope)
+                })
+                .collect();
+            let copy = graph.signed_as_a(
+                k2,
+                k3.seq + 1,
+                k2.parent_hashes.clone(),
+                AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
+                    wraps,
+                    ..record.clone()
+                }),
+            );
+            (hash(&copy) < hash(k2)).then_some(copy)
+        })
+        .take(4)
+        .collect();
+    assert_eq!(flood.len(), 4);
+    let mut arrival = vec![&rows[0], k2, k3, &removal];
+    arrival.extend(&flood);
+    let install = graph.receiver(&arrival);
+    let restore = install
+        .vault
+        .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+        .unwrap();
+    assert!(restore.usable.contains(&graph.key));
+    let fold = install.vault.authority_fold().unwrap();
+    for copy in &flood {
+        assert!(fold.valid_entries.contains(&hash(copy)));
+        assert!(!fold.refused_world_keys.contains(&hash(copy)));
+    }
+    assert!(
+        fold.world_key(&graph.key).unwrap().wraps[&to_root]
+            .iter()
+            .any(|wrap| wrap.entry == hash(k2))
     );
 }

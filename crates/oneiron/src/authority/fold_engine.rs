@@ -556,6 +556,35 @@ pub(super) fn fold_authority_log_once(
             }
         }
     }
+    let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        super::machine_claims::folded_machines(state, retirements.unsettled())
+    });
+    // A key is judged in this install's final trust set: the pin while the
+    // fold holds its root, as the install sets it, else the roster.
+    let world_keys = merged.as_ref().map_or_else(BTreeMap::new, |state| {
+        let local = context
+            .pin
+            .filter(|pin| {
+                state
+                    .root_anchors
+                    .get(&pin.anchor_key)
+                    .is_some_and(|ids| ids.contains(&pin.id))
+            })
+            .map_or(MachineAdmitter::Roster, |pin| {
+                MachineAdmitter::Anchor(pin.anchor_key)
+            });
+        let stands = |machine: crate::EntityId| {
+            machines
+                .get(&machine)
+                .is_some_and(|folded: &FoldedMachine| {
+                    folded
+                        .trust_chains(&local)
+                        .iter()
+                        .all(|(_, chain)| !chain.removed)
+                })
+        };
+        super::world_key_fold::folded_world_keys(state, &by_hash, &stands)
+    });
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, context.consent_arm)
     });
@@ -620,9 +649,7 @@ pub(super) fn fold_authority_log_once(
             state.federation_grant_bindings.clone()
         }),
         actor_bindings,
-        machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            super::machine_claims::folded_machines(state, retirements.unsettled())
-        }),
+        machines,
         pinned_root: None,
         root_anchors: merged
             .as_ref()
@@ -640,9 +667,7 @@ pub(super) fn fold_authority_log_once(
         install: merged.as_ref().map_or_else(InstallBound::default, |state| {
             super::install_fold::held_back(state, context.pin, context.machine_standing)
         }),
-        world_keys: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            super::world_key_fold::folded_world_keys(state, &by_hash)
-        }),
+        world_keys,
         refused_world_keys: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
