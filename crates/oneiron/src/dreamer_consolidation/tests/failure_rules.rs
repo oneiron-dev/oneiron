@@ -121,6 +121,7 @@ fn execute_with_sink(
     sink: &mut dyn ConsolidationSink,
 ) -> Result<DreamerAttemptExecution> {
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend,
         guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -168,6 +169,7 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
         (true, false, false, None, None, true),
     ] {
         let (_dir, vault) = open_vault();
+        let proof = crate::test_util::embedded_owner_proof(&vault);
         super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
         set_manifest_failure_policy(&vault, true, true, "holder_override_capped_at_vault")?;
         let store = DreamerRunnerStore::new(&vault);
@@ -239,7 +241,7 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
                 "resident-rule-session",
                 crate::off_record::OffRecordBackendClass::Local,
             )?;
-            session.flip_on_record()?;
+            session.flip_on_record_as(&proof)?;
             HostSelfDispatcher::for_off_record_session(&session, author, "resident-chat-rule")?
                 .dispatch(call)?
         } else {

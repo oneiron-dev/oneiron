@@ -287,6 +287,10 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
             (Value::from("authority_key"), key_value(authority_key)),
             (Value::from("epoch"), Value::from(*epoch)),
         ]),
+        AuthorityOp::MachineProfile(profile) => {
+            super::machine_profile::machine_profile_value(profile)
+        }
+        AuthorityOp::WorldPrivacy(edit) => super::world_privacy::world_privacy_value(edit),
     }
 }
 

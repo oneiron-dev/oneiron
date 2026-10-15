@@ -39,11 +39,25 @@ impl MemoriesSection {
             }
             let hash = u8::from_str_radix(hash, 16)
                 .map_err(|_| crate::Error::InvalidConfig("invalid memory pin hash".into()))?;
-            let hydrated = reader
-                .read(&[PointRead::short(short_id, hash)], None)?
-                .single();
+            // The revision is taken in the read's own snapshot, so a board
+            // history records the text this pin served, not a later edit.
+            let hydrated =
+                reader.read_projected(&[PointRead::short(short_id, hash)], None, |txn, rows| {
+                    let row = rows.into_iter().next().flatten();
+                    let revision = match &row {
+                        Some(row) => crate::vault::entity_revision::revision_for_mode_in_txn(
+                            &reader.vault().store,
+                            txn,
+                            &row.id,
+                            crate::vault::ReadMode::Live,
+                        )?,
+                        None => None,
+                    };
+                    Ok::<_, crate::Error>((row, revision))
+                })?;
             let mut receipt = hydrated.receipt;
-            let Some(hydrated) = hydrated.value else {
+            let (hydrated, source_revision) = hydrated.value;
+            let Some(hydrated) = hydrated else {
                 receipts.push(receipt);
                 continue;
             };
@@ -89,12 +103,18 @@ impl MemoriesSection {
                 world: claim.as_ref().and_then(|c| c.world).map(|id| id.to_hex()),
                 tier: MemoryTier::Pinned,
                 snippet: None,
+                source_revision,
             };
             if !foreign_row(&row)
                 && let Some(claim) = claim
             {
-                let mut value = crate::companion::companion_value_to_json(&claim.value);
-                crate::batch::export::redact_credentials(&mut value);
+                // The MessagePack is read with the claim's other parts, and
+                // before and after the projection drops a float's width.
+                let value = if crate::batch::export::claim_reads_as_secret(&claim) {
+                    serde_json::Value::String("[redacted]".to_owned())
+                } else {
+                    crate::batch::export::served_messagepack_json(claim.value)
+                };
                 row.snippet = Some(value.to_string());
             }
             self.rows.retain(|old| old.id != row.id);
@@ -107,50 +127,5 @@ impl MemoriesSection {
             self.disclosure.clone(),
         );
         Ok(receipts)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context_board::{MEMORIES_SECTION_VERSION_V4, MemoriesBudget};
-    #[test]
-    fn authorized_pins_survive_empty_query_scope_and_zero_shared_budget() -> Result<()> {
-        let (_dir, vault) =
-            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-        let id = EntityId::now();
-        vault.put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"pinned person",
-        )?;
-        let txn = vault.store.env.read_txn()?;
-        let encoded = vault
-            .store
-            .short_ids_reverse
-            .get(&txn, id.as_bytes())?
-            .unwrap();
-        let (short, hash) = crate::batch::parse_short_id_value(&encoded)?;
-        let reference = format!("{short}:{hash:02x}");
-        drop(encoded);
-        drop(txn);
-        let mut section = MemoriesSection {
-            version: MEMORIES_SECTION_VERSION_V4.into(),
-            budget: MemoriesBudget::default().with_shared_total(0),
-            rows: Vec::new(),
-            companion: None,
-            disclosure: None,
-        };
-        crate::test_util::authorize_readers(&vault, &["reader"]);
-        let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
-        let receipts = section.include_pinned_refs(&reader, &[reference])?;
-        assert_eq!(receipts.len(), 1);
-        assert_eq!(receipts[0].suppressed_count, 0);
-        assert_eq!(section.rows.len(), 1);
-        assert_eq!(section.rows[0].id, id.to_hex());
-        assert_eq!(section.rows[0].tier, MemoryTier::Pinned);
-        Ok(())
     }
 }

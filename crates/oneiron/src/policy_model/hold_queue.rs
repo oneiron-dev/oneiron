@@ -110,8 +110,9 @@ impl Vault {
         HOLD_QUEUE.put(&self.store, txn, &hold_key(&queue_ref), &item)?;
         Ok(queue_ref)
     }
-    pub(super) fn policy_hold_for_verdict(
+    pub(super) fn policy_hold_for_verdict_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
     ) -> Result<Option<HeldPolicyItem>> {
@@ -121,8 +122,7 @@ impl Vault {
         let Some(key) = queue_ref(request, verdict) else {
             return Ok(None);
         };
-        let txn = self.store.env.read_txn()?;
-        HOLD_QUEUE.get(&self.store, &txn, &hold_key(&key))
+        HOLD_QUEUE.get(&self.store, txn, &hold_key(&key))
     }
     pub fn policy_holds(&self, limit: usize) -> Result<Vec<HeldPolicyItem>> {
         let txn = self.store.env.read_txn()?;
@@ -144,11 +144,12 @@ impl Vault {
             return Err(Error::InvalidConfig("not a policy hold reference".into()));
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        let principal_ref = owner.principal_ref_in_txn(self, &txn)?;
         let mut item = HOLD_QUEUE
             .get(&self.store, &txn, &hold_key(reference))?
             .ok_or(Error::CorruptedIndex("missing policy hold"))?;
-        if item.human != owner.principal_ref() || item.resolution.is_some() {
+        if item.human != principal_ref || item.resolution.is_some() {
             return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
         if crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?
@@ -179,7 +180,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: "human".to_owned(),
-                actor_ref: Some(owner.actor().to_hex()),
+                actor_ref: Some(actor.to_hex()),
                 content_kind: "policy_hold".to_owned(),
                 policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,
@@ -200,8 +201,8 @@ impl Vault {
         held_before: u64,
         limit: usize,
     ) -> Result<usize> {
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+        self.with_write_txn_grouped(|txn| {
+            let principal_ref = owner.principal_ref_in_txn(self, txn)?;
             let frontier =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
             let mut keys = Vec::new();
@@ -210,7 +211,7 @@ impl Vault {
                     break;
                 }
                 let (key, item) = row?;
-                if item.human == owner.principal_ref()
+                if item.human == principal_ref
                     && item.held_at < held_before
                     && (item.resolution.is_some() || item.policy_frontier != frontier)
                 {

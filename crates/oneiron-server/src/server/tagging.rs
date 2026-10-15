@@ -94,12 +94,15 @@ impl SyncServer {
                     }
                 }
                 Ok(Err(error)) => {
-                    tracing::warn!(?error, "tagging pass failed; backing off");
+                    tracing::warn!(kind = ?error.kind(), "tagging pass failed; backing off");
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
                 Err(error) => {
-                    tracing::error!(%error, "tagging pass task ended; worker stopping");
+                    tracing::error!(
+                        panicked = error.is_panic(),
+                        "tagging pass task ended; worker stopping"
+                    );
                     return;
                 }
             }
@@ -146,8 +149,7 @@ impl SyncServer {
                 .with_backoff(TaggingBackoff {
                     first_secs: config.retry_backoff_secs,
                     max_secs: config.max_retry_backoff_secs,
-                })
-                .with_label_kinds(config.label_kinds());
+                });
             match reconciler.release_stale_leases() {
                 Ok(0) => {}
                 Ok(released) => tracing::info!(
@@ -157,7 +159,7 @@ impl SyncServer {
                 // The reconciler keeps them and its next pass releases them;
                 // every other marker is served meanwhile.
                 Err(error) => tracing::warn!(
-                    ?error,
+                    kind = ?error.kind(),
                     "tagging markers left leased by a stopped worker are released on the next pass"
                 ),
             }
@@ -171,7 +173,10 @@ impl SyncServer {
                 None
             }
             Err(error) => {
-                tracing::error!(%error, "tagging worker start task failed");
+                tracing::error!(
+                    panicked = error.is_panic(),
+                    "tagging worker start task failed"
+                );
                 None
             }
         }

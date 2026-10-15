@@ -23,7 +23,7 @@ use crate::registry::{
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::retrieval_quality::RetrievalQualityReport;
-use crate::store::{RetrievalRunId, RetrievalSignal, Store};
+use crate::store::{RetrievalRunId, RetrievalSignal, StoreRead};
 use crate::temporal::TemporalAnchorMode;
 
 // Referenced only by the intra-doc links below; `cfg(doc)` keeps it out of
@@ -118,12 +118,20 @@ pub(super) const PPR_DAMPING: f32 = 0.15;
 pub(super) const ADAPTIVE_ROUNDS: usize = 3;
 pub(super) const PER_SCAN_CAP_FACTOR: usize = 4;
 pub(super) const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
+/// A scoped temporal channel widens to at most this multiple of the rows it
+/// was asked for, and to at least [`TEMPORAL_WIDENING_FLOOR`] (ARCH-0004
+/// #temporal-bound). The floor is the smallest that kept a reader whose
+/// scope holds 0.5% of the vault exact in every call measured at 10k and
+/// 100k records; the golden test `scoped_temporal_widening_stops_at_its_bound`
+/// holds both.
+pub(super) const TEMPORAL_WIDENING_MULTIPLE: usize = 8;
+pub(super) const TEMPORAL_WIDENING_FLOOR: usize = 4_000;
 pub(super) const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
 // RET-01 only gates context-pack assembly. These are deliberately
 // conservative: the vector floor needs an absent keyword signal too, while
 // the score-gap check only compares raw cosine scores from the same channel.
-pub(super) const CONTEXT_PACK_MIN_VECTOR_SIMILARITY: f32 = 0.3;
-pub(super) const CONTEXT_PACK_MEDIOCRE_VECTOR_SIMILARITY: f32 = 0.5;
+// The floor and the strong-match score belong to the embedding space
+// (`Vault::vector_evidence`).
 pub(super) const CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO: f32 = 0.1;
 pub(super) const CONTEXT_PACK_SCORE_GAP_EPSILON: f32 = f32::EPSILON;
 pub(super) const CONTEXT_PACK_ANOMALOUS_REPEAT_RUN: usize = 32;
@@ -138,6 +146,12 @@ pub(super) struct TemporalSearchConfig {
     pub(super) anchor_mode: TemporalAnchorMode,
     pub(super) adaptive: bool,
     pub(super) limit: usize,
+    /// A scoped call's widening: the rows the channel collects, scores and
+    /// returns before the scope narrows them to `limit`. The window grows
+    /// until it can fill them, but sigma settles once the window can fill
+    /// `limit`, as an unscoped call's does, so a scope never changes sigma.
+    /// `None` means `limit`.
+    pub(super) widened: Option<usize>,
     /// Query-derived occurred restriction. Applied before temporal scan caps
     /// and score truncation; host-supplied temporal modes leave this unset.
     pub(super) query_occurred_range: Option<(u64, u64)>,
@@ -156,10 +170,35 @@ pub(super) struct EntityMetadata {
     pub(super) learned_at: u64,
 }
 
-pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::Store, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
+pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
     + Send
     + Sync
     + 'a;
+
+/// What a run does with a MESSAGE hit
+/// (`PipelineBuilder::fold_messages_into_turns`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnFold {
+    /// Every hit stands as itself.
+    Off,
+    /// A MESSAGE hit becomes its TURN when the run admits the turn; any other
+    /// message stays as itself.
+    Fold,
+    /// As [`Self::Fold`], and a MESSAGE that found no admitted turn leaves the
+    /// run: the caller admits messages only as the way to their turns.
+    TurnsOnly,
+}
+
+impl TurnFold {
+    /// The mode's name in replay inputs and the fork hash.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Fold => "fold",
+            Self::TurnsOnly => "turns_only",
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
@@ -188,6 +227,14 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// `AnyOf` fails the run closed before the first candidate is scanned and
     /// the candidate-scan twin stays a pure predicate.
     pub(super) corpus_scope: &'a CorpusScope,
+    /// The device-local worlds, read once per run, when the run reads for a
+    /// caller off this device: no candidate a device-local world keeps enters
+    /// the run (DEC-0005), so no count, reason or budget sees it. `None` for
+    /// a caller on this device.
+    pub(super) device_local: Option<&'a BTreeSet<EntityId>>,
+    /// The run's deadline. While a channel stage is open every candidate the
+    /// scope gate reads is one of its checkpoints.
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
 }
 
 #[derive(Default)]
@@ -214,6 +261,11 @@ pub(super) struct ClaimStatusGateCache {
     pub(super) include_stale: bool,
     /// Authenticated, transaction-local diary admission for this retrieval run.
     pub(super) private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
+    /// The device-local worlds a caller off this device reads nothing of. A
+    /// row they keep is no claim-status decision of this run: it is dropped
+    /// before the gate reads it, memoized nowhere and counted nowhere
+    /// (DEC-0005).
+    pub(super) device_local: Option<std::sync::Arc<BTreeSet<EntityId>>>,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
     #[cfg(test)]
     pub(super) body_loads: usize,
@@ -222,8 +274,14 @@ pub(super) struct ClaimStatusGateCache {
 pub(crate) struct PipelineOutput {
     pub(crate) vector_completed: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
+    /// The ids whose words a reranker scored at their pin in `revisions`.
+    /// Those words are what the pack serves, never a later projection.
+    pub(crate) words_bound: std::collections::HashSet<EntityId>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
+    /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
+    /// first. Empty unless the run folds messages into their turns.
+    pub(crate) cited_messages: HashMap<EntityId, Vec<EntityId>>,
     pub(crate) capabilities: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,
@@ -234,6 +292,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) empty_reason: Option<EmptyReason>,
     pub(crate) telemetry_run_id: Option<RetrievalRunId>,
     pub(crate) signals: Vec<RetrievalSignal>,
+    /// Temporal phrases read from the query and what the run did with each.
+    pub(crate) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
 }
 
 #[derive(Debug, Clone)]
@@ -260,30 +320,90 @@ pub struct RetrievalWithPendingVectors<T> {
     pub run_id: Option<RetrievalRunId>,
 }
 
+impl ClaimStatusGateCache {
+    /// Whether a device-local world keeps `id` from this run.
+    pub(super) fn keeps_device_local(
+        &self,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match self.device_local.as_deref() {
+            Some(flagged) => crate::settings::device_local_keeps_among(store, txn, flagged, id),
+            None => Ok(false),
+        }
+    }
+
+    /// A gate of its own for a probe or a bounded scan, under this run's
+    /// stale, diary and device-local terms, with no decision carried over.
+    pub(super) fn fresh(&self, include_stale: bool) -> Self {
+        Self {
+            include_stale,
+            private_note_ids: self.private_note_ids.clone(),
+            device_local: self.device_local.clone(),
+            ..Self::default()
+        }
+    }
+}
+
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
-    /// scoped caller's final admission gate.
-    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+    /// scoped caller's final admission gate. Nor does a TASK outside the
+    /// worlds or facets of the `credential` the run retrieves under, nor any
+    /// other row outside its facets (owner ruling FACET-READ), nor a row of
+    /// the `device_local` worlds a caller off this device reads nothing of.
+    pub(super) fn countable_suppressed(
+        &self,
+        vault: &crate::Vault,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        credential: Option<&crate::federation::Scope>,
+        device_local: Option<&std::collections::BTreeSet<EntityId>>,
+    ) -> Result<usize> {
         let mut count = 0;
         for id in &self.read_suppressed {
+            if let Some(flagged) = device_local
+                && crate::settings::device_local_keeps_among(store, txn, flagged, id)?
+            {
+                continue;
+            }
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
                 continue;
             };
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
-            count += usize::from(crate::note::countable_read_suppression(
-                header.entity_type,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            ));
+            let outside = match credential {
+                Some(credential) if header.entity_type == crate::registry::ENTITY_TYPE_TASK => {
+                    !crate::federation::record_scope::task_inside_credential(
+                        store, txn, *id, &raw, credential,
+                    )?
+                }
+                Some(credential) => !crate::federation::facet_read::facets_admit_in(
+                    vault,
+                    store,
+                    txn,
+                    *id,
+                    &raw,
+                    &credential.facets,
+                )?,
+                None => false,
+            };
+            count += usize::from(
+                !outside
+                    && crate::note::countable_read_suppression(
+                        header.entity_type,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                    ),
+            );
         }
         Ok(count)
     }
 
     pub(super) fn get(
         &mut self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityMetadata>> {
@@ -458,6 +578,16 @@ impl WorldAuthoritySet {
     #[must_use]
     pub fn worlds(&self) -> &BTreeSet<EntityId> {
         &self.worlds
+    }
+
+    /// What both sets admit. It holds no more worlds than either, so it
+    /// stays inside the cap.
+    #[must_use]
+    pub(crate) fn meet(&self, other: &Self) -> Self {
+        Self {
+            include_base: self.include_base && other.include_base,
+            worlds: self.worlds.intersection(&other.worlds).copied().collect(),
+        }
     }
 
     /// Membership of an ordinary claim world, or base reality for non-claims.

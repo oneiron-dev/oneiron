@@ -13,7 +13,7 @@ pub(crate) const COUNT_KEY: &[u8] = b"count";
 /// `hnsw_neighbors` DB (ONE-325). Vaults without the marker keep the legacy
 /// asymmetric behavior (full-scan delete, full-rebuild refresh) until the
 /// one-time migration runs via `maintain().rebuild_hnsw()`.
-pub(super) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
+pub(crate) const SYMMETRIC_LINKS_KEY: &[u8] = b"symmetric_links";
 
 pub(super) const SYMMETRIC_LINKS_ENABLED: u8 = 1;
 

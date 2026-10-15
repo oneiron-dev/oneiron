@@ -80,6 +80,37 @@ pub(super) fn events_in(
     }
     Ok(output)
 }
+/// One page of the documents this vault holds a signing draft for: the
+/// subjects of at most `limit` draft claims after `after`, in claim-id order,
+/// and the last claim the page read. The housekeeping pass walks the pages and
+/// feeds each to the expiry and seal sweeps, which take a caller's document
+/// list; a short page ends the walk.
+pub(crate) fn esign_document_page_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<(Vec<EntityId>, Option<EntityId>)> {
+    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+        &vault.store,
+        txn,
+        DRAFT_PREDICATE,
+        after,
+        limit,
+    )?;
+    let mut documents = std::collections::BTreeSet::new();
+    for id in &claims {
+        if let Some(body) = vault.get_claim_in_txn(txn, id)?
+            && let ClaimSubject::Entity(document) = body.subject
+        {
+            documents.insert(document);
+        }
+    }
+    let last = (claims.len() == limit)
+        .then(|| claims.last().copied())
+        .flatten();
+    Ok((documents.into_iter().collect(), last))
+}
 fn fold(rows: &[EsignEventRow]) -> Result<Option<EsignState>> {
     let Some(first) = rows.first() else {
         return Ok(None);
@@ -99,6 +130,17 @@ pub(super) fn state_in(
     document: EntityId,
 ) -> Result<EsignState> {
     fold(&events_in(vault, txn, document)?)?.ok_or_else(|| invalid("unknown signing document"))
+}
+/// Appends `Sent` in its own write, for a test that drives the ceremony
+/// from another crate (`crate::test_support`).
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn mark_sent_for_test(
+    vault: &Vault,
+    document: EntityId,
+    actor: EsignAuditActor,
+    now: u64,
+) -> Result<()> {
+    vault.with_write_txn(|txn| append(vault, txn, document, EsignEvent::Sent, actor, now).map(drop))
 }
 pub(super) fn append(
     vault: &Vault,
@@ -168,7 +210,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         validate_document(body, now)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if !events_in(self, txn, document)?.is_empty() {
                 return Err(invalid("document already exists"));
             }
@@ -232,7 +274,9 @@ pub(crate) fn reject_event_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+    // A put reaches this on any prior row, a custody record among them, whose
+    // body carries its value (ARCH-0069 S1): the copy is wiped.
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
         && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
         && let Ok(body) =

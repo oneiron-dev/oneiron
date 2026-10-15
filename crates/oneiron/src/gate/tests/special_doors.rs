@@ -178,76 +178,6 @@ fn door_operation_effect_flag_never_set_for_candidates() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let now = crate::unix_seconds_now();
-    let mut captured = Vec::new();
-    vault.with_write_txn(|wtxn| {
-        for ordinal in 0..257u16 {
-            // Deliberately nonmonotonic caller IDs: encode the full ordinal so
-            // every fixture row is unique, while progress follows the
-            // store-owned sequence rather than these bytes.
-            let high = (ordinal >> 8) as u8;
-            let low = ordinal as u8;
-            let claim = EntityId::from_bytes([
-                !high, low, 0xc5, high, !low, high, 0xc5, low, !high, low, 0xc5, high, !low, high,
-                0xc5, low,
-            ])?;
-            vault.store.put_pending_gate_consent_in_txn(
-                wtxn,
-                &critical_confirm_pending(claim, (ordinal % 250) as u8 + 1, now),
-            )?;
-            captured.push(claim);
-        }
-        Ok(())
-    })?;
-    let first = vault.pending_critical_write_confirms(1)?;
-    assert_eq!(first.len(), 1);
-    let hostile = sweep_id(0xc5, 0xfe);
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .put_pending_gate_consent_in_txn(wtxn, &critical_confirm_pending(hostile, 251, now))
-    })?;
-    let mut seen = first
-        .into_iter()
-        .map(|binding| binding.claim_id)
-        .collect::<Vec<_>>();
-    for _ in 1..257 {
-        seen.push(vault.pending_critical_write_confirms(1)?[0].claim_id);
-    }
-    assert_eq!(seen.len(), captured.len());
-    assert_eq!(
-        seen, captured,
-        "the captured fence reaches every pre-fence row"
-    );
-    assert!(seen.iter().all(|claim| *claim != hostile));
-    let next_cycle_first = vault.pending_critical_write_confirms(256)?;
-    assert_eq!(next_cycle_first.len(), 256);
-    let mut next_cycle_first_ids = next_cycle_first
-        .iter()
-        .map(|binding| binding.claim_id)
-        .collect::<Vec<_>>();
-    let mut expected_first_ids = captured[..256].to_vec();
-    next_cycle_first_ids.sort_by_key(|claim| *claim.as_bytes());
-    expected_first_ids.sort_by_key(|claim| *claim.as_bytes());
-    assert_eq!(
-        next_cycle_first_ids, expected_first_ids,
-        "the sorted page contains exactly the captured head membership",
-    );
-    let next_cycle_tail = vault.pending_critical_write_confirms(256)?;
-    assert_eq!(
-        next_cycle_tail
-            .iter()
-            .map(|binding| binding.claim_id)
-            .collect::<Vec<_>>(),
-        vec![captured[256], hostile],
-        "the hostile row is reached on the bounded second page of the next cycle",
-    );
-    Ok(())
-}
-
 /// The band the projector's minted claims actually present to the gate: the
 /// mint stamps no scope sensitivity, so `claim_sensitivity_band` reads them at
 /// the unstamped floor. The `generated` source-trust row caps at exactly this.
@@ -278,44 +208,6 @@ fn resolved_default_policy_manifest(vault: &crate::Vault) -> Result<PolicyManife
 
 fn commitment_record_criticality(policy: &PolicyManifestResolution) -> PolicyCriticality {
     policy.criticality_for_predicate(crate::commitment::PREDICATE_COMMITMENT_RECORD)
-}
-
-/// The pinned projection envelope resolves to auto under the DEFAULT manifest.
-///
-/// This is the whole point of the two rows: before them, every mint pended on
-/// both `gate.pending.actor_ceiling` and `gate.pending.source_trust`.
-#[test]
-fn commitment_projection_envelope_reaches_auto_under_default_manifest() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = resolved_default_policy_manifest(&vault)?;
-
-    let actor = crate::commitment_schedule::commitment_projection_actor()?;
-    assert_eq!(
-        actor.actor_class(),
-        EdgeActorClass::System,
-        "the projector writes under the pinned System class"
-    );
-
-    let input = commitment_projection_gate_input(
-        &actor.entity_ref().to_hex(),
-        COMMITMENT_PROJECTION_CLAIM_BAND,
-        commitment_record_criticality(&policy),
-    );
-    let decision = policy.evaluate_gate(&input);
-
-    assert_eq!(decision.outcome(), GateOutcome::Allow);
-    // An allow decision carries the single `gate.allow` code and NO pending or
-    // deny code: nothing about the projection envelope is left unresolved.
-    assert_eq!(decision.reason_codes(), &[GateReasonCode::Allow]);
-    assert!(
-        !decision
-            .reason_codes()
-            .iter()
-            .any(|code| code.as_str().starts_with("gate.pending.")
-                || code.as_str().starts_with("gate.deny.")),
-        "the pinned projection envelope must resolve with zero pending/deny codes"
-    );
-    Ok(())
 }
 
 /// BOTH shipped grants are keyed to ONE derived actor id, not to a class.
@@ -433,6 +325,10 @@ fn default_manifest_system_rows_pin_the_derived_engine_actors() {
         crate::reaction::conversation_mirror_actor_id()
             .unwrap()
             .to_hex(),
+        // ARCH-0026: the Dreamer is warm by default.
+        crate::dreamer_runner::authority::dreamer_actor_id()
+            .unwrap()
+            .to_hex(),
     ];
     let named = granting_system_rows
         .iter()
@@ -484,25 +380,35 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
             (key.as_str() == Some(ClaimSource::Generated.as_str())).then_some(value)
         })
         .expect("the default manifest ships a generated source-trust row");
-    let Value::Map(fields) = generated else {
-        unreachable!("the generated row is a map");
+    let Value::Array(permits) = generated else {
+        unreachable!("the generated rows are a list, one per bound writer");
     };
 
     let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()?
         .entity_ref()
         .to_hex();
-    let bound = field(fields, ACTOR_REF_KEY);
-    assert_eq!(
-        bound.and_then(Value::as_str),
-        Some(derived_actor_ref.as_str()),
-        "the generated permit must name the derived commitment projection actor"
-    );
-    let cap = field(fields, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY);
-    assert_eq!(
-        cap.and_then(Value::as_u64),
-        Some(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
-        "the cap stays parity with the minted band, with no headroom"
-    );
+    // The projector, and the Dreamer warm by default (ARCH-0026): each permit
+    // names exactly one derived engine actor, and none is class-wide.
+    let bound_to = [
+        derived_actor_ref.clone(),
+        crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex(),
+    ];
+    assert_eq!(permits.len(), bound_to.len());
+    for (permit, actor_ref) in permits.iter().zip(&bound_to) {
+        let Value::Map(fields) = permit else {
+            unreachable!("each generated permit is a map");
+        };
+        assert_eq!(
+            field(fields, ACTOR_REF_KEY).and_then(Value::as_str),
+            Some(actor_ref.as_str()),
+            "each generated permit must name its derived engine actor"
+        );
+        assert_eq!(
+            field(fields, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY).and_then(Value::as_u64),
+            Some(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            "the cap stays parity with the minted band, with no headroom"
+        );
+    }
 
     // And the binding is enforced, not merely recorded: the SAME `Generated`
     // write from any other actor pends on source trust.

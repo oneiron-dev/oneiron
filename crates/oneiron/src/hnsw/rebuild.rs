@@ -163,6 +163,7 @@ pub(crate) fn clear_hnsw_graph_in_txn(
     wtxn: &mut RwTxn<'_>,
 ) -> Result<()> {
     store.vectors().clear(wtxn)?;
+    crate::embed::clear_all_embedding_devices_in_txn(store, wtxn)?;
     store.hnsw_neighbors().clear(wtxn)?;
     store.hnsw_meta().delete(wtxn, COUNT_KEY)?;
     store.hnsw_meta().delete(wtxn, ENTRY_POINT_KEY)?;
@@ -210,16 +211,26 @@ pub(crate) fn collect_vector_ids(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<EntityId>> {
+    let parse = |key: &[u8]| {
+        parse_entity_id(key, ERR_VECTOR_KEY_BYTES).map_err(|e| match e {
+            Error::InvalidKey => Error::CorruptedIndex(ERR_VECTOR_KEY_BYTES),
+            other => other,
+        })
+    };
     let capacity = usize::try_from(store.vectors().len(txn)?).unwrap_or(0);
     let mut vector_ids = Vec::with_capacity(capacity);
     for entry in store.vectors().iter(txn)? {
         let (key, _) = entry?;
-        vector_ids.push(
-            parse_entity_id(&key, ERR_VECTOR_KEY_BYTES).map_err(|e| match e {
-                Error::InvalidKey => Error::CorruptedIndex(ERR_VECTOR_KEY_BYTES),
-                other => other,
-            })?,
-        );
+        vector_ids.push(parse(key.as_ref())?);
+    }
+    // A row a room hides is still a node of the graph the room inherits (see
+    // `load_vector`), so the room's rebuild keeps it, in key order.
+    let hidden = store.vectors().hidden_keys(txn)?;
+    if !hidden.is_empty() {
+        for key in hidden {
+            vector_ids.push(parse(key.as_slice())?);
+        }
+        vector_ids.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
     }
     Ok(vector_ids)
 }

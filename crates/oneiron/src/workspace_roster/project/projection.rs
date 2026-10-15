@@ -134,6 +134,10 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         if let Some(org) = &slip.claims.org_ref {
             ids.push(EntityId::from_hex(org).map_err(|_| invalid())?);
         }
+        // The holder is the actor the proof writes as; `host` names none.
+        if let Ok(holder) = EntityId::from_hex(&slip.claims.holder_ref) {
+            ids.push(holder);
+        }
         slip_scope_refs(&slip.claims.scope, &mut ids);
         for block in &slip.caveats {
             if let Some(scope) = &block.caveat.scope {
@@ -150,7 +154,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
             }
         }
         // An earlier authority state is a carrier too: its parents, leader,
-        // board and slice may not name a live off-record id either.
+        // board, roster and slice may not name a live off-record id either.
         let Some(anchor) = signed.anchor.as_deref() else {
             break;
         };
@@ -165,6 +169,7 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
         .parents
         .iter()
         .chain(&authority.board)
+        .chain(authority.roster.iter().flatten())
         .chain([&authority.leader, &authority.claims_scope_ref])
     {
         let id = EntityId::from_hex(value).map_err(|_| invalid())?;
@@ -242,7 +247,8 @@ pub(crate) fn reconcile_project_rooms(
     let mut room_ops = Vec::new();
     let mut origins = Vec::new();
     for id in touched {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -393,7 +399,8 @@ pub(crate) fn reconcile_project_rooms(
     }
     // Generic room writes cannot silently widen the derived membership/scope.
     for id in touched {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)

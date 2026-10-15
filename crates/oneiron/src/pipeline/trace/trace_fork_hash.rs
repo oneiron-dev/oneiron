@@ -95,6 +95,26 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_recency_weight_table(&mut hasher);
     fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
     fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
+    // RET-01 reads the embedding space's own evidence floors, and a folding
+    // run returns a matched MESSAGE as its TURN: both change the result.
+    let floors = builder.no_match_floors();
+    fork_hash_f32(&mut hasher, floors.pair.floor);
+    fork_hash_f32(&mut hasher, floors.pair.strong);
+    // EMBED-PACK: a kind's own floors in the run's space take the pair's
+    // place there; another space's judge nothing here.
+    let space = builder.vault.evidence_space();
+    fork_hash_str(&mut hasher, space);
+    let kinds = floors.keyed.get(space);
+    fork_hash_len(
+        &mut hasher,
+        kinds.map_or(0, std::collections::BTreeMap::len),
+    );
+    for (kind, kind_floors) in kinds.into_iter().flatten() {
+        fork_hash_u8(&mut hasher, *kind);
+        fork_hash_f32(&mut hasher, kind_floors.floor);
+        fork_hash_f32(&mut hasher, kind_floors.strong);
+    }
+    fork_hash_str(&mut hasher, builder.turn_fold.as_str());
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_opt_str(&mut hasher, builder.skill_executor.as_deref());
     fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
@@ -489,6 +509,11 @@ fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
     // Channel relevance entered the blend; replays keyed before it differ.
     fork_hash_f64(hasher, crate::fusion::RELEVANCE_LOG_WEIGHT);
     fork_hash_f32(hasher, crate::fusion::BLEND_SCORE_CEILING);
+    // EMBED-PACK: each ranked list's fusion scale is its top
+    // FUSION_LIST_LENGTH, and the phonetic list is scored over every
+    // candidate; replays keyed before either differ.
+    fork_hash_len(hasher, crate::fusion::FUSION_LIST_LENGTH);
+    fork_hash_str(hasher, "sparse:phonetic");
     // EMB-2: the funnel prefix changes vector-channel scoring space.
     fork_hash_u32(hasher, u32::from(fast_dims.unwrap_or(0)));
 }

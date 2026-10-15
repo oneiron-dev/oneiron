@@ -9,15 +9,26 @@ use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use std::collections::BTreeSet;
 
-impl EntityStore for Vault {
-    fn port_entity_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {
-        let Some(mut row) = self.port_entity_record(txn, id)? else {
+impl Vault {
+    /// [`EntityStore::port_entity_get`] read through `store`, a room's view
+    /// included. A NOTE's document, an entity document and an LFS chunk's
+    /// publication stay the vault's: they read its own store.
+    pub(crate) fn live_entity_in_txn(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityRecord>> {
+        let Some(mut row) = store.port_entity_record(txn, id)? else {
             return Ok(None);
         };
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
-        if self.port_tombstone_is_deleted(txn, id)? || stale_in_txn(&self.store, txn, id)? {
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&self.store, txn, id, row.entity_type)?
+            || store.port_deletion_state(txn, id)?.deleted
+            || stale_in_txn(store, txn, id)?
+        {
             return Ok(None);
         }
         if super::safe_read::body_is_stale(&row.body) {
@@ -34,6 +45,12 @@ impl EntityStore for Vault {
         row.body = crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
             .into_owned();
         Ok(Some(row))
+    }
+}
+
+impl EntityStore for Vault {
+    fn port_entity_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {
+        self.live_entity_in_txn(&self.store, txn, id)
     }
     fn port_entity_put(
         &self,

@@ -120,6 +120,18 @@ export class Oneiron {
     return new Oneiron(this.#call(() => this.#client.asActor(actorKey)))
   }
 
+  /**
+   * Returns a NEW handle whose every verb runs as a turn in a room.
+   *
+   * It names only the room. Each verb reads the room's roster as it stands at
+   * that call and runs inside that roster's Scope (ARCH-0067 §8); a verb that
+   * would read around the room fails with `BAD_REQUEST`, and so does
+   * rebinding the actor or naming another room.
+   */
+  inRoomTurn(roomRef: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.inRoomTurn(roomRef)))
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
@@ -137,11 +149,14 @@ export class Oneiron {
   /**
    * Recalls a memory pack.
    *
-   * `effort: "high"`, `"xhigh"`, or `"max"` is lease-gated and returns `LEASE_REQUIRED` until a
-   * lease-bearing constructor exists; this package neither mints nor
-   * simulates a lease.
+   * `effort: "high"`, `"xhigh"`, or `"max"` needs a lease this package never
+   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what
+   * the server serves (reranked on its `[models]` reranker, or unreranked and
+   * saying so). `effort: "call"` is call mode for live calls: light
+   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode
+   * deadline), answering with the best results ready, marked `partial`.
    */
-  recall(query: string, opts: RecallOptions = {}): MemoryPack { return this.#call(() => this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format)) }
+  recall(query: string, opts: RecallOptions = {}): MemoryPack { return this.#call(() => this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)) }
   /** Exports the live vault as toon (default), md, json, yaml, or txt. */
   export(format?: string): MemoryExport { return this.#call(() => this.#client.export({format: format}) as MemoryExport) }
   /** Governance receipts, newest first. */

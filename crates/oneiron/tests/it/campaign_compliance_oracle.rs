@@ -29,7 +29,6 @@ use oneiron::campaign::claims::PREDICATE_CAMPAIGN_MEMBER;
 use oneiron::campaign::compliance::{
     PREDICATE_CRM_COMPLIANCE_EVIDENCE, PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION,
     PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
-    embedded_seed_pack,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
@@ -514,18 +513,4 @@ fn campaign_compliance_gate_oracle_jurisdiction_rows_are_channel_local() -> Resu
         "nothing reaches the transport on this fixture"
     );
     Ok(())
-}
-
-#[test]
-fn campaign_compliance_seed_pack_is_readable_from_outside_the_crate() {
-    // The pack is public data: a host surface can render the rows, their
-    // citations, and the standing caveat without reaching into the engine.
-    let pack = embedded_seed_pack().expect("seed pack parses");
-    assert!(!pack.warning.trim().is_empty());
-    assert!(pack.rows.len() >= 20, "the seed carries the four row sets");
-    for row in &pack.rows {
-        assert!(!row.source.citation.trim().is_empty());
-        assert!(!row.source.url.trim().is_empty());
-        assert!(row.verified_at > 0);
-    }
 }

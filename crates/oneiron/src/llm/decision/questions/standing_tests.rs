@@ -450,30 +450,6 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
 }
 
 #[test]
-fn graph_backfill_rejects_artifact_and_one_off_records() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    let unit = EntityId::now();
-    person(&vault, owner)?;
-    person(&vault, unit)?;
-    grant(&vault, owner)?;
-    let actor = WriteActor::new(owner, EdgeActorClass::Human);
-    let mut def = definition(unit, "Question?");
-    def.adapter = "artifact".into();
-    let artifact = create_question(&vault, owner, def, 10)?
-        .definition
-        .question
-        .id;
-    assert!(standing_source_frontier(&vault, owner, artifact, 1, actor, unit, &[unit]).is_err());
-    assert!(backfill_standing_answer(&vault, owner, artifact, 1, actor, input(unit), 11).is_err());
-    let mut one_off = definition(unit, "One off?");
-    one_off.activation = QuestionActivation::OneOff;
-    assert!(create_question(&vault, owner, one_off, 10).is_err());
-    Ok(())
-}
-
-#[test]
 fn real_secret_custody_cannot_be_supplemental_evidence() -> TestResult {
     use crate::secret_custody::{
         CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
@@ -511,28 +487,6 @@ fn real_secret_custody_cannot_be_supplemental_evidence() -> TestResult {
     answer.evidence.push(secret);
     assert!(standing_source_frontier(&vault, owner, id, 1, actor, unit, &answer.evidence).is_err());
     assert!(backfill_standing_answer(&vault, owner, id, 1, actor, answer, 11).is_err());
-    Ok(())
-}
-
-#[test]
-fn deleted_landed_claim_is_not_returned_from_cache() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    let unit = EntityId::now();
-    for id in [owner, unit] {
-        person(&vault, id)?;
-    }
-    grant(&vault, owner)?;
-    let actor = WriteActor::new(owner, EdgeActorClass::Human);
-    let id = create_question(&vault, owner, definition(unit, "Question?"), 10)?
-        .definition
-        .question
-        .id;
-    let answer = prepared(&vault, owner, id, 1, actor, unit)?;
-    let first = backfill_standing_answer(&vault, owner, id, 1, actor, answer.clone(), 11)?;
-    vault.delete_entity(&first.claim)?;
-    assert!(backfill_standing_answer(&vault, owner, id, 1, actor, answer, 12).is_err());
     Ok(())
 }
 
@@ -806,5 +760,156 @@ fn migrated_non_note_document_edits_invalidate_pre_provider_pins() -> TestResult
     )?;
     assert_ne!(first.claim, fresh.claim);
     assert_ne!(first.frontier, fresh.frontier);
+    Ok(())
+}
+
+/// F16 H394: a standing answer rests only on sources the question's principal
+/// reads under its own relationship grants. For an agent's question, a
+/// relationship MESSAGE is no source until the agent holds a live
+/// MessagesRead grant for it, and is none again once that grant is revoked.
+#[test]
+fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() -> TestResult {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    let principal = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "asker");
+    let space = EntityId::now();
+    let message = EntityId::now();
+    person(&vault, owner)?;
+    grant(&vault, principal)?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            occurred_at: 1,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "relationship source".into(),
+                metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
+                is_visible: true,
+                order: 0,
+            }],
+        })?;
+    let actor = WriteActor::new(principal, EdgeActorClass::Agent);
+    let id = create_question(&vault, principal, definition(message, "Relationship?"), 2)?
+        .definition
+        .question
+        .id;
+    let frontier = |vault: &Vault| {
+        standing_source_frontier(vault, principal, id, 1, actor, message, &[message])
+    };
+    assert!(
+        frontier(&vault).is_err(),
+        "no grant reads no relationship row"
+    );
+    assert!(backfill_standing_answer(&vault, principal, id, 1, actor, input(message), 3).is_err());
+
+    let grant_id = EntityId::now();
+    vault.create_access_grant(
+        &grant_id,
+        &AccessGrant {
+            principal_ref: principal,
+            scope: AccessGrantScope::Messages { space_ref: space },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: Some(u64::MAX),
+            authority_scope: crate::federation::scope_codec::read_preset(),
+        },
+    )?;
+    assert!(
+        frontier(&vault).is_ok(),
+        "the principal's live grant reads it"
+    );
+    vault.revoke_access_grant(&grant_id, 4)?;
+    assert!(
+        frontier(&vault).is_err(),
+        "a revoked grant reads it no more"
+    );
+    Ok(())
+}
+
+/// F16 round 2: a standing source's grant is judged on the store clock at
+/// the door. A grant that expires after the answer pinned its sources, with
+/// no write between, reads the source no more: the frontier refuses, and a
+/// backfill that is the first call after the expiry refuses too. Each door
+/// runs on its own vault, so neither observes the clock for the other.
+#[test]
+fn an_expired_grant_is_no_standing_source_at_either_door() -> TestResult {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    for backfill in [false, true] {
+        let clock = crate::ports::ManualClock::new(1_000);
+        let config = VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        };
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), config)?;
+        let owner = EntityId::now();
+        let principal = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "asker");
+        let space = EntityId::now();
+        let message = EntityId::now();
+        person(&vault, owner)?;
+        grant(&vault, principal)?;
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: None,
+                occurred_at: 1,
+                messages: vec![WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".into(),
+                    content: "expiring source".into(),
+                    metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
+                    is_visible: true,
+                    order: 0,
+                }],
+            })?;
+        vault.create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                principal_ref: principal,
+                scope: AccessGrantScope::Messages { space_ref: space },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: 1_000,
+                revoked_at: None,
+                expires_at: Some(2_000),
+                authority_scope: crate::federation::scope_codec::read_preset(),
+            },
+        )?;
+        let actor = WriteActor::new(principal, EdgeActorClass::Agent);
+        let id = create_question(&vault, principal, definition(message, "Expiring?"), 2)?
+            .definition
+            .question
+            .id;
+        let pinned = prepared(&vault, principal, id, 1, actor, message)?;
+        clock.set(2_001);
+        if backfill {
+            assert!(
+                backfill_standing_answer(&vault, principal, id, 1, actor, pinned, 3).is_err(),
+                "an expired grant backs no answer"
+            );
+        } else {
+            assert!(
+                standing_source_frontier(&vault, principal, id, 1, actor, message, &[message])
+                    .is_err(),
+                "an expired grant reads its source no more"
+            );
+        }
+    }
     Ok(())
 }

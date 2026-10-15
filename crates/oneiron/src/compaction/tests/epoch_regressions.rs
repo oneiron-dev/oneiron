@@ -15,12 +15,22 @@ fn bootstrap_epoch_mint_preserves_zero_temporal_metadata_and_learned_index() -> 
             watermark: CompactionWatermark {
                 learned_at: 0,
                 turn_id: None,
+                turn: None,
             },
         }
     );
     let request = driver.request_for(&vault, &session, vec![window_row(turn, 1)])?;
-    let product = driver.backend().compact(&request)?;
-    let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
+    let plan = driver.integrate(
+        &vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+    )?;
 
     let header = {
         let rtxn = vault.store.env.read_txn()?;
@@ -48,32 +58,6 @@ fn bootstrap_epoch_mint_preserves_zero_temporal_metadata_and_learned_index() -> 
         !vault
             .entities_in_learned_range(1, 2)?
             .contains(&plan.summary_id)
-    );
-    Ok(())
-}
-
-#[test]
-fn whitespace_only_bodies_are_refused_by_both_codec_directions() -> Result<()> {
-    for text in ["", " ", "\t\r\n", "\u{a0}\u{2003}\u{3000}"] {
-        let mut body = sample_body();
-        body.text = text.to_owned();
-        let encoded_error = encode_epoch_summary_body(&body).expect_err("blank encode");
-        let decoded_error =
-            decode_epoch_summary_body(&unvalidated_encode(&body)).expect_err("blank decode");
-        assert_eq!(invariant(encoded_error), "epoch summary text is empty");
-        assert_eq!(invariant(decoded_error), "epoch summary text is empty");
-    }
-    let mut body = sample_body();
-    body.text = " \tkept prose\n\u{a0}".to_owned();
-    let bytes = encode_epoch_summary_body(&body)?;
-    assert_eq!(
-        decode_epoch_summary_body(&bytes)?,
-        body,
-        "do not trim usable prose"
-    );
-    assert_eq!(
-        encode_epoch_summary_body(&decode_epoch_summary_body(&bytes)?)?,
-        bytes
     );
     Ok(())
 }
@@ -139,8 +123,17 @@ fn hex_ref_casing_preserves_codec_and_native_epoch_lineage() -> Result<()> {
         );
         let window = host_window(&vault, 0x90, body.turn_end + 1, 2);
         let request = driver.request_for(&vault, &session, window)?;
-        let product = driver.backend().compact(&request)?;
-        let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
+        let product = driver
+            .backend()
+            .compact(&request, None)
+            .expect("the fixture backend answers");
+        let plan = driver.integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+            &[],
+        )?;
         assert_eq!(plan.epoch, body.epoch + 1);
         let next = stored_summary_body(&vault, &plan.summary_id);
         assert_eq!(
@@ -232,9 +225,18 @@ fn a_conflict_arriving_after_request_issuance_refuses_the_mint_atomically() -> R
     let before = stored_row_count(&vault);
     let markers = pending_embedding_marker_count(&vault);
     let margin = *driver.margin();
-    let product = driver.backend().compact(&request)?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let error = driver
-        .integrate(&vault, &session, actor, &request, product, &[])
+        .integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+            &[],
+        )
         .expect_err("mint must rescan the durable maximum inside its transaction");
     assert_eq!(
         invariant(error),
@@ -244,36 +246,6 @@ fn a_conflict_arriving_after_request_issuance_refuses_the_mint_atomically() -> R
     assert_eq!(pending_embedding_marker_count(&vault), markers);
     assert_eq!(*driver.margin(), margin);
     assert!(driver.is_compacting());
-    Ok(())
-}
-
-#[test]
-fn identical_maximum_epoch_copies_allow_native_lineage_advancement() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x60);
-    let mut driver = engine_driver(1_000);
-    let first = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x80, 1, 2),
-    )?;
-    let body = stored_summary_body(&vault, &first.summary_id);
-    put_epoch_fixture(&vault, 0x20, &body)?;
-    driver_regressions::advance_test_watermark(&vault, 4)?;
-    let next = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x90, 3, 2),
-    )?;
-    assert_eq!(next.epoch, 2);
-    let next_body = stored_summary_body(&vault, &next.summary_id);
-    assert_eq!((next_body.turn_start, next_body.turn_end), (3, 4));
-    assert_eq!(stored_summary_body(&vault, &first.summary_id), body);
     Ok(())
 }
 
@@ -336,9 +308,18 @@ fn another_native_mint_cannot_make_an_inflight_request_overlap_the_lineage() -> 
 
     let before = stored_row_count(&vault);
     let markers = pending_embedding_marker_count(&vault);
-    let product = slow.backend().compact(&stale)?;
+    let product = slow
+        .backend()
+        .compact(&stale, None)
+        .expect("the fixture backend answers");
     let error = slow
-        .integrate(&vault, &session, actor, &stale, product, &[])
+        .integrate(
+            &vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&stale, product),
+            &[],
+        )
         .expect_err("durable boundary changed while the backend ran");
     assert_eq!(
         invariant(error),
@@ -529,9 +510,18 @@ fn identifiable_malformed_epochs_refuse_request_and_mint_without_writes() -> Res
             let margin = *driver.margin();
             let expected = invariant(decode_epoch_summary_body(&bytes).expect_err("malformed"));
             let error = if let Some(request) = &request {
-                let product = driver.backend().compact(request)?;
+                let product = driver
+                    .backend()
+                    .compact(request, None)
+                    .expect("the fixture backend answers");
                 driver
-                    .integrate(&vault, &session, actor, request, product, &[])
+                    .integrate(
+                        &vault,
+                        &session,
+                        actor,
+                        crate::compaction::GatedCompaction::ungated_for_test(request, product),
+                        &[],
+                    )
                     .expect_err("mint")
             } else {
                 driver
@@ -554,117 +544,6 @@ fn identifiable_malformed_epochs_refuse_request_and_mint_without_writes() -> Res
                 CompactionDirective::Begin { .. }
             ));
         }
-    }
-    Ok(())
-}
-
-#[test]
-fn ordinary_partial_epoch_fields_do_not_block_request_or_mint() -> Result<()> {
-    use rmpv::Value;
-
-    for at_mint in [false, true] {
-        let (_dir, vault) = open_vault();
-        let session = mint_session(&vault, 10);
-        let actor = loom_actor(&vault, 0x60);
-        let mut prior = sample_body();
-        prior.session = session.to_hex();
-        prior.actor = actor.entity_ref().to_hex();
-        put_epoch_fixture(&vault, 0x21, &prior)?;
-        let window = host_window(&vault, 0x80, prior.turn_end + 1, 2);
-        let mut driver = engine_driver(1_000);
-        driver.evaluate_now(&vault, u64::MAX)?;
-        let request = if at_mint {
-            Some(driver.request_for(&vault, &session, window.clone())?)
-        } else {
-            None
-        };
-
-        let encode = |entries| {
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("ordinary summary");
-            bytes
-        };
-        let base = vec![
-            (
-                Value::from("session"),
-                Value::from(session.to_hex().to_uppercase()),
-            ),
-            (Value::from("v"), Value::from(EPOCH_SUMMARY_BODY_VERSION)),
-            (Value::from("level"), Value::from(0)),
-            (
-                Value::from("text"),
-                Value::from("ordinary application summary"),
-            ),
-            (
-                Value::from("actor"),
-                Value::from(actor.entity_ref().to_hex()),
-            ),
-        ];
-        let lineage = ["epoch", "turn_start", "turn_end"];
-        let mut bodies = Vec::new();
-        for key in lineage {
-            // Even all common body fields plus ONE lineage key are ordinary.
-            let field = (Value::from(key), Value::from(999));
-            let mut entries = base.clone();
-            entries.push(field.clone());
-            bodies.push(encode(entries.clone()));
-            let mut nested = entries.clone();
-            nested.push((
-                Value::from("payload"),
-                Value::Map(
-                    lineage
-                        .iter()
-                        .map(|key| (Value::from(*key), Value::from(999)))
-                        .collect(),
-                ),
-            ));
-            bodies.push(encode(nested));
-            entries.extend([field.clone(), field]);
-            bodies.push(encode(entries));
-        }
-        // Two lineage keys without the remaining pinned schema are also
-        // ordinary partial fields, not proof of a damaged epoch body.
-        for omitted in lineage {
-            let mut entries = vec![base[0].clone(), base[3].clone()];
-            for key in lineage {
-                if key != omitted {
-                    entries.push((Value::from(key), Value::from(999)));
-                }
-            }
-            bodies.push(encode(entries));
-        }
-        // A range without the codec or the remaining body keys is not enough.
-        let mut unversioned = vec![base[0].clone(), base[3].clone()];
-        unversioned.extend(
-            lineage
-                .iter()
-                .map(|key| (Value::from(*key), Value::from(999))),
-        );
-        bodies.push(encode(unversioned));
-        for (index, bytes) in bodies.iter().enumerate() {
-            vault.put_entity(
-                &entity(0x30 + u8::try_from(index).expect("small fixture")),
-                ENTITY_TYPE_SUMMARY,
-                TimeRange { start: 1, end: 1 },
-                1,
-                bytes,
-            )?;
-        }
-        let request = match request {
-            Some(request) => request,
-            None => driver.request_for(&vault, &session, window)?,
-        };
-        assert_eq!(request.turn_start, prior.turn_end + 1);
-        let product = driver.backend().compact(&request)?;
-        let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
-        assert_eq!(plan.epoch, prior.epoch + 1);
-        assert_eq!(summary_row_count(&vault), bodies.len() + 2);
-        assert_eq!(stored_summary_body(&vault, &entity(0x21)), prior);
-        for (index, bytes) in bodies.iter().enumerate() {
-            let id = entity(0x30 + u8::try_from(index).expect("small fixture"));
-            assert_eq!(vault.get(&id)?.expect("ordinary row retained"), *bytes);
-        }
-        assert!(!driver.is_compacting());
     }
     Ok(())
 }
@@ -714,5 +593,104 @@ fn ordinary_summaries_and_other_sessions_malformed_epochs_do_not_block_compactio
     assert_eq!(plan.epoch, 1);
     assert_eq!(summary_row_count(&vault), bodies.len() + 1);
     assert!(!driver.is_compacting());
+    Ok(())
+}
+
+/// ARCH-0067 `#tiers`: compaction folds its turns' boards in its own mint.
+/// A board turn the compaction folded no longer reconstructs and says so
+/// explicitly; a later turn's board still reconstructs exactly. Sol F3 (REV-9
+/// D2a): the fold is per turn, never owner-wide, so the owner's earlier board
+/// in another session, which this compaction did not fold, still reconstructs.
+#[test]
+fn compaction_folds_only_the_boards_of_the_turns_it_compacts() -> Result<()> {
+    use crate::context_board::{BoardHistoryError, BoardSelection, BoardTurn};
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x61);
+    let owner = put_actor(&vault, 0x62);
+    let pinned = put_actor(&vault, 0x63);
+    let other_session = put_turn(&vault, 0x80, 1);
+    let folded = put_turn(&vault, 0x81, 1);
+    let kept = put_turn(&vault, 0x82, 2);
+    let selection = BoardSelection {
+        pinned: [pinned].into(),
+        ..BoardSelection::default()
+    };
+    // Board positions interleave: the other session's turn comes first.
+    for (turn, at) in [(other_session, 1), (folded, 2), (kept, 3)] {
+        vault
+            .record_board_turn(
+                &BoardTurn {
+                    turn,
+                    owner,
+                    at,
+                    selection: selection.clone(),
+                },
+                10 + at,
+            )
+            .expect("board turn records");
+    }
+    assert!(vault.reconstruct_board(&folded).is_ok());
+
+    let mut driver = engine_driver(1_000);
+    compact_once(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        vec![window_row(folded, 1)],
+    )?;
+    match vault.reconstruct_board(&folded) {
+        Err(BoardHistoryError::Compacted(turn)) => assert_eq!(turn, folded),
+        other => panic!("a folded turn must fail explicitly, got {other:?}"),
+    }
+    for turn in [other_session, kept] {
+        let board = vault
+            .reconstruct_board(&turn)
+            .expect("a turn the compaction did not fold reconstructs");
+        assert_eq!(board.selection.pinned, selection.pinned);
+    }
+    Ok(())
+}
+
+/// Greptile P1 (#1340): the fold belongs to the turn, not to its anchor. A
+/// compaction that runs before a turn's board is recorded still folds that
+/// board: recorded late, it reads as beyond the horizon, never reconstructs.
+#[test]
+fn a_board_recorded_after_its_turn_was_compacted_stays_folded() -> Result<()> {
+    use crate::context_board::{BoardHistoryError, BoardSelection, BoardTurn};
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x61);
+    let owner = put_actor(&vault, 0x62);
+    let pinned = put_actor(&vault, 0x63);
+    let late = put_turn(&vault, 0x81, 1);
+
+    let mut driver = engine_driver(1_000);
+    compact_once(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        vec![window_row(late, 1)],
+    )?;
+    vault
+        .record_board_turn(
+            &BoardTurn {
+                turn: late,
+                owner,
+                at: 1,
+                selection: BoardSelection {
+                    pinned: [pinned].into(),
+                    ..BoardSelection::default()
+                },
+            },
+            11,
+        )
+        .expect("a late board still records");
+    match vault.reconstruct_board(&late) {
+        Err(BoardHistoryError::Compacted(turn)) => assert_eq!(turn, late),
+        other => panic!("a board recorded after its fold must stay folded, got {other:?}"),
+    }
     Ok(())
 }

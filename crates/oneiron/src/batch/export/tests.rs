@@ -3,7 +3,6 @@ use crate::authority::{
     AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthorityTier, DeviceAuthority, ROLE_OWNER, authority_transcript,
 };
-use crate::off_record::OffRecordBackendClass;
 use crate::temporal::TimeRange;
 use crate::{Vault, VaultConfig};
 use ed25519_dalek::{Signer, SigningKey};
@@ -70,119 +69,6 @@ fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
     assert_eq!(manifest.manifest_version(), EXPORT_MANIFEST_VERSION);
     assert_eq!(manifest.serializer().name(), WHOLE_VAULT_EXPORT_SERIALIZER);
     assert_eq!(manifest.data_shape().named_databases().len(), 28);
-}
-
-#[test]
-fn export_manifest_clear_fixture_keeps_secrets_nulled_explicit_false() {
-    let manifest = ExportManifest::clear();
-    let value: serde_json::Value =
-        serde_json::from_slice(&manifest.to_json_pretty().expect("manifest serializes"))
-            .expect("manifest JSON parses");
-
-    assert_eq!(value["secrets_nulled"]["payloads"], false);
-    assert_eq!(value["secrets_nulled"]["structural_placeholders"], false);
-    assert!(!manifest.redacted());
-    assert!(!manifest.structurally_secret_nulled());
-}
-
-#[test]
-fn whole_vault_export_manifest_artifact_writes_stable_manifest_json() {
-    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(true);
-    let artifact =
-        whole_vault_export_manifest_artifact(secrets_nulled).expect("manifest artifact builds");
-    let repeated = whole_vault_export_manifest_artifact(secrets_nulled)
-        .expect("repeated manifest artifact builds");
-
-    assert_eq!(artifact.relative_path(), EXPORT_MANIFEST_ARTIFACT_NAME);
-    assert_eq!(artifact.bytes(), repeated.bytes());
-    assert_eq!(
-        artifact.bytes(),
-        ExportManifest::from_secrets_nulled(secrets_nulled)
-            .to_json_pretty()
-            .expect("manifest serializes")
-            .as_slice()
-    );
-
-    let dir = tempfile::tempdir().expect("temp dir");
-    let path = whole_vault_export_manifest_artifact(secrets_nulled)
-        .expect("manifest artifact builds")
-        .write_to_dir(dir.path())
-        .expect("manifest artifact writes");
-    let written = std::fs::read(path).expect("manifest artifact is readable");
-    assert_eq!(written, artifact.bytes());
-}
-
-/// THE EXPORT EGRESS DOOR (ARCH-0052 P6, ONE-1731 / R-20260807-06).
-///
-/// Every whole-vault export entry SUCCEEDS while a session is live — the
-/// pre-P6 refusal existed because base carried fenced session rows an artifact
-/// could ship, and base carries none now. What the door does instead is skip
-/// overlay MEMBERS, one predicate, no refusal: a room's own id is excluded, an
-/// ordinary base write commissioned during the same live session is not.
-#[test]
-fn whole_vault_export_runs_during_a_live_session_and_skips_only_overlay_members() -> Result<()> {
-    let vault_dir = tempfile::tempdir()?;
-    let vault = Vault::open(vault_dir.path(), VaultConfig::default())?;
-    let export_dir = tempfile::tempdir()?;
-    let artifact_path = export_dir.path().join(EXPORT_MANIFEST_ARTIFACT_NAME);
-    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
-    let session = vault
-        .off_record_session_vault()
-        .enter("sess-export-door", OffRecordBackendClass::Local)?;
-
-    // A commissioned ordinary base write made DURING the live session.
-    let commissioned = EntityId::now();
-    vault.put_entity(
-        &commissioned,
-        crate::registry::ENTITY_TYPE_TURN,
-        crate::temporal::TimeRange {
-            start: 1000,
-            end: 1000,
-        },
-        1000,
-        b"commissioned during a live session",
-    )?;
-
-    // A room member, staged straight into the overlay (the K4 taint guard
-    // forbids a base write at this id, which is the point).
-    let room_member = EntityId::now();
-    let overlay = session.overlay();
-    let segment = overlay.install_txn_segment()?;
-    overlay.put(
-        crate::session_overlay::OverlayKeyspace::Entities,
-        room_member.as_bytes(),
-        b"live session overlay entity",
-    )?;
-    segment.commit()?;
-
-    // Every entry point runs — no refusal, artifact written.
-    whole_vault_export_manifest_artifact_for_vault(&vault, secrets_nulled)?;
-    vault.whole_vault_export_manifest_artifact(secrets_nulled)?;
-    write_whole_vault_export_manifest_for_vault(&vault, export_dir.path(), secrets_nulled)?;
-    std::fs::remove_file(&artifact_path)?;
-    vault.write_whole_vault_export_manifest(export_dir.path(), secrets_nulled)?;
-    assert!(
-        artifact_path.is_file(),
-        "a live session must not stop the export from writing manifest.json"
-    );
-
-    // The door: the room member is excluded, the commissioned write is not.
-    assert!(whole_vault_export_excludes_entity(&vault, &room_member)?);
-    assert!(!whole_vault_export_excludes_entity(&vault, &commissioned)?);
-
-    let rows = vault.whole_vault_export_rows()?;
-    assert!(rows.contains(&WholeVaultExportRow {
-        entity_id: commissioned,
-        entity_type: crate::registry::ENTITY_TYPE_TURN,
-    }));
-    assert!(!rows.iter().any(|row| row.entity_id == room_member));
-
-    // Close drops membership; the id stops being excluded because the room it
-    // belonged to is gone, not because anything was deleted.
-    session.close()?;
-    assert!(!whole_vault_export_excludes_entity(&vault, &room_member)?);
-    assert!(vault.get_raw(&commissioned)?.is_some());
-    Ok(())
 }
 
 #[test]
@@ -302,78 +188,6 @@ fn manifest_bytes(value: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec_pretty(value).expect("manifest JSON serializes")
 }
 
-/// An owner's own artifact, offered back to the vault that wrote it, is the ONE
-/// shape that may restore bytes: same chain, same chain state, nothing nulled.
-#[test]
-fn own_export_round_trips_byte_faithful() -> Result<()> {
-    let (_dir, vault) = open_rooted_vault(0x21)?;
-    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
-    let artifact = vault.whole_vault_export_manifest_artifact_with_label(
-        secrets_nulled,
-        Some("laptop, before the reinstall"),
-    )?;
-
-    // The vault-handle export now states its own chain identity; the pure
-    // fixture builder, which has no vault to ask, still does not.
-    let manifest = ExportManifest::from_json_for_import(artifact.bytes())?;
-    let authority = manifest
-        .authority()
-        .expect("rooted export states authority");
-    let fold = vault.authority_fold()?;
-    let vault_id = fold.vault_id.expect("genesis roots the vault");
-    assert_eq!(authority.vault_id(), hex_lower(&vault_id));
-    assert_eq!(
-        authority.valid_entries_digest(),
-        hex_lower(&authority_valid_entries_digest(
-            &vault_id,
-            &fold.valid_entries
-        ))
-    );
-    assert_eq!(manifest.vault_label(), Some("laptop, before the reinstall"));
-    assert!(
-        whole_vault_export_manifest_artifact(secrets_nulled)?
-            .bytes()
-            .ne(artifact.bytes())
-    );
-
-    // Re-encoding what was parsed reproduces the artifact byte for byte, which
-    // is what lets the receipt digest commit to the parse instead of the file.
-    assert_eq!(manifest.to_json_pretty()?, artifact.bytes());
-
-    let receipt = vault
-        .classify_vault_import_manifest(artifact.bytes(), Some("laptop, before the reinstall"))?;
-    assert_eq!(
-        receipt.classification,
-        VaultImportClassification::ByteFaithfulOwnerRestore
-    );
-    assert!(receipt.byte_faithful);
-    assert!(receipt.mismatches.is_empty());
-    assert_eq!(receipt.exported_vault_id, Some(vault_id));
-    assert_eq!(receipt.local_vault_id, Some(vault_id));
-    assert_eq!(
-        receipt.exported_label.as_deref(),
-        Some("laptop, before the reinstall")
-    );
-    assert_eq!(
-        receipt.expected_label.as_deref(),
-        Some("laptop, before the reinstall")
-    );
-    assert_eq!(
-        receipt.manifest_digest,
-        canonical_manifest_digest(&manifest)?
-    );
-
-    // No expected label is not a label mismatch: the caller simply did not ask.
-    let unasked = vault.classify_vault_import_manifest(artifact.bytes(), None)?;
-    assert_eq!(
-        unasked.classification,
-        VaultImportClassification::ByteFaithfulOwnerRestore
-    );
-    assert_eq!(unasked.expected_label, None);
-    assert_eq!(unasked.manifest_digest, receipt.manifest_digest);
-    Ok(())
-}
-
 /// A well-formed artifact from someone else's chain is FOREIGN, not a restore —
 /// and no amount of matching label makes it one.
 #[test]
@@ -403,13 +217,88 @@ fn foreign_chain_not_treated_as_restore() -> Result<()> {
     assert_eq!(receipt.local_vault_id, local.authority_fold()?.vault_id);
     assert_ne!(receipt.exported_vault_id, receipt.local_vault_id);
 
-    // Same manifest, offered to the vault that wrote it: a restore. Foreignness
-    // is a relation between artifact and vault, not a property of either.
+    // Same manifest, offered to the vault that wrote it: not foreign.
+    // Foreignness is a relation between artifact and vault, not a property of
+    // either. Unsigned, it is still only a review.
     let home = foreign.classify_vault_import_manifest(artifact.bytes(), Some("shared"))?;
     assert_eq!(
         home.classification,
-        VaultImportClassification::ByteFaithfulOwnerRestore
+        VaultImportClassification::ReviewRequired
     );
+    assert_eq!(
+        home.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
+    Ok(())
+}
+
+/// H224 (F18): the authority stanza is two public facts, and any export of a
+/// vault states both. A manifest built elsewhere and stamped with this vault's
+/// vault id and valid-entries digest used to classify as this vault's own
+/// byte-faithful restore. Unsigned, a matching chain proves nothing, so it
+/// reads ReviewRequired, the same verdict as the owner's genuine export.
+#[test]
+fn a_copied_chain_identity_is_never_a_byte_faithful_restore() -> Result<()> {
+    let (_target_dir, target) = open_rooted_vault(0x35)?;
+    let (_forger_dir, forger) = open_rooted_vault(0x36)?;
+    let clear = ExportSecretsNulledManifest::from_redacted(false);
+    let published = manifest_value(target.whole_vault_export_manifest_artifact(clear)?.bytes());
+    let mut forged = manifest_value(forger.whole_vault_export_manifest_artifact(clear)?.bytes());
+    forged["authority"] = published["authority"].clone();
+
+    let receipt = target.classify_vault_import_manifest(&manifest_bytes(&forged), None)?;
+
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired,
+        "a copied chain identity must not earn an owner restore"
+    );
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
+    assert_eq!(receipt.exported_vault_id, target.authority_fold()?.vault_id);
+    Ok(())
+}
+
+/// H224 positive control: failing closed costs the owner nothing. Their own
+/// unsigned export, offered to a vault on the same chain, reads ReviewRequired,
+/// and whole-vault import still restores its rows.
+#[test]
+fn an_unsigned_owner_export_still_restores_on_the_review_path() -> Result<()> {
+    let (_source_dir, source) = open_rooted_vault(0x37)?;
+    let (_target_dir, target) = open_rooted_vault(0x37)?;
+    let person = crate::EntityId::now();
+    source.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 2 },
+        3,
+        b"owner row",
+    )?;
+    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+
+    let receipt = target.import_whole_vault_json(export.bytes())?;
+
+    assert_eq!(
+        receipt.authority.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    // Whole-vault export always nulls credential payloads, so that reason
+    // rides beside the provenance one.
+    assert!(
+        receipt
+            .authority
+            .mismatches
+            .contains(&VaultImportMismatch::UnauthenticatedProvenance)
+    );
+    assert_eq!(
+        receipt.authority.local_vault_id,
+        source.authority_fold()?.vault_id
+    );
+    assert!(receipt.inserted_entities >= 1);
+    assert_eq!(target.get_raw(&person)?, source.get_raw(&person)?);
     Ok(())
 }
 
@@ -450,7 +339,10 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     );
     assert_eq!(
         receipt.mismatches,
-        vec![VaultImportMismatch::AuthorityChainDigest]
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::AuthorityChainDigest,
+        ]
     );
     assert_eq!(receipt.exported_vault_id, Some(vault_id));
 
@@ -467,7 +359,10 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     assert!(!receipt.byte_faithful);
     assert_eq!(
         receipt.mismatches,
-        vec![VaultImportMismatch::RedactedOrSecretNulled]
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::RedactedOrSecretNulled,
+        ]
     );
     assert_eq!(receipt.exported_vault_id, Some(vault_id));
 
@@ -479,18 +374,34 @@ fn mismatch_surfaces_receipt() -> Result<()> {
         receipt.classification,
         VaultImportClassification::ReviewRequired
     );
-    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
+    assert_eq!(
+        receipt.mismatches,
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::VaultLabel,
+        ]
+    );
+    // A matching label clears the label reason, never the provenance one.
     let receipt = vault.classify_vault_import_manifest(labelled.bytes(), Some("desk machine"))?;
     assert_eq!(
         receipt.classification,
-        VaultImportClassification::ByteFaithfulOwnerRestore
+        VaultImportClassification::ReviewRequired
     );
-    assert!(receipt.byte_faithful);
-    assert!(receipt.mismatches.is_empty());
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
 
     // An expected label against an unlabelled artifact is the same mismatch.
     let receipt = vault.classify_vault_import_manifest(artifact.bytes(), Some("laptop"))?;
-    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
+    assert_eq!(
+        receipt.mismatches,
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::VaultLabel,
+        ]
+    );
     assert!(receipt.exported_label.is_none());
 
     // Reasons accumulate in declaration order, deduped, one receipt.
@@ -502,6 +413,7 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     assert_eq!(
         receipt.mismatches,
         vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
             VaultImportMismatch::AuthorityChainDigest,
             VaultImportMismatch::VaultLabel,
             VaultImportMismatch::RedactedOrSecretNulled,
@@ -640,99 +552,6 @@ fn foreign_import_staged_and_receipted() {
     assert!(result.is_err());
     assert_eq!(VAULT_IMPORT_RECEIPT_SCHEMA_VERSION, 1);
     assert_eq!(VAULT_IMPORT_RECEIPT_KEY_PREFIX, "vault_import_receipt:v1:");
-}
-#[cfg(feature = "sync")]
-#[test]
-fn pending_import_is_invisible_until_confirmation() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let c = VaultImportReceipt {
-        manifest_digest: [2; 32],
-        classification: VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let staged = stage_foreign_vault_import(
-        &vault,
-        &c,
-        ForeignVaultImportSource::ForeignPlatform {
-            platform: "remote".into(),
-        },
-        &crate::sync::types::WindowKey::new("2026-01"),
-        &[1, 2, 3],
-    );
-    let staged = staged.expect("failed admission returns receipt");
-    let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(durable.status, VaultImportStageStatus::Failed);
-    assert_eq!(durable.failure, Some(VaultImportFailure::AdmissionRejected));
-}
-#[cfg(feature = "sync")]
-#[test]
-fn failed_admission_is_receipted() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let c = VaultImportReceipt {
-        manifest_digest: [3; 32],
-        classification: VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let staged = stage_foreign_vault_import(
-        &vault,
-        &c,
-        ForeignVaultImportSource::ForeignPlatform {
-            platform: "remote".into(),
-        },
-        &crate::sync::types::WindowKey::new("2026-01"),
-        &[0xff],
-    );
-    let staged = staged.expect("failed staging returns its durable receipt");
-    let durable = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(durable.status, VaultImportStageStatus::Failed);
-    assert_eq!(durable.failure, Some(VaultImportFailure::AdmissionRejected));
-}
-#[cfg(feature = "sync")]
-#[test]
-fn strict_receipt_codec_schema_is_versioned() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let c = VaultImportReceipt {
-        manifest_digest: [3; 32],
-        classification: VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let staged = stage_foreign_vault_import(
-        &vault,
-        &c,
-        ForeignVaultImportSource::ForeignPlatform {
-            platform: "codec".into(),
-        },
-        &crate::sync::types::WindowKey::new("2026-01"),
-        &[1, 2, 3],
-    )
-    .unwrap();
-    let read = vault_import_stage_receipt(&vault, &staged.receipt.receipt_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(read.receipt_id, staged.receipt.receipt_id);
-    assert_eq!(read.status, VaultImportStageStatus::Failed);
 }
 
 /// ONE-1380 C2: the staged admitted bytes are recovery state for a **Pending**

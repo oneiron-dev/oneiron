@@ -53,7 +53,7 @@ pub(crate) use refinement_admission::{
 #[cfg(test)]
 pub(crate) use refinement_custody::refinement_carriers_for_holder_in_txn;
 pub(crate) use refinement_custody::{
-    erase_refinement_custody_in_txn, refinement_custody_exists_in_txn,
+    erase_refinement_custody_in_txn, refinement_carrier_payload, refinement_custody_exists_in_txn,
     remove_refinement_carrier_in_txn, retire_refinement_holder_in_txn,
     stage_refinement_carrier_put, validate_refinement_carrier_put,
 };
@@ -61,7 +61,8 @@ pub(crate) use refinement_custody::{
 pub(crate) use refinement_custody::{refinement_carrier_holder, refinement_carrier_matches_id};
 pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
-    SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge,
+    SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback,
+    UsefulUpstreamJudge,
 };
 
 #[cfg(test)]

@@ -18,6 +18,9 @@ pub struct AskBandLabel {
 /// Called with newly admitted labels only, for one principal and class.
 /// Implementations must be bounded and side-effect free: the write transaction
 /// holds the band state until the proposed revision is validated and stored.
+/// That transaction may be one group commit shared with other writes:
+/// `revise` must not call into the vault or wait on anything a vault caller
+/// can hold while it writes, or the vault's writer deadlocks.
 pub trait AskBandPolicy {
     fn revise(&self, current: DecisionBand, labels: &[AskBandLabel]) -> Result<DecisionBand>;
 }

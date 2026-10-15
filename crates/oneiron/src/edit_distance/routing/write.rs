@@ -45,7 +45,7 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         model_version,
     };
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         // The binding is read in the transaction that writes it. An earlier
         // snapshot could only say the receipt was unfolded THEN, so two folds
         // of one receipt would both read "absent" and both count it — the

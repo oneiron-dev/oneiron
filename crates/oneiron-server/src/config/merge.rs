@@ -8,16 +8,22 @@ use anyhow::Context;
 use oneiron::{HostingPrivacyPosture, SyncConfigField, SyncProtocolValidation};
 use serde::Deserialize;
 
-use super::backup::{BackupConfigOverride, lookup_backup_override};
+use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
+use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
+use super::import::ImportConfigOverride;
+use super::limits::LimitsConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
 };
+use super::models::{ModelsConfig, ModelsFile};
 use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneironer_override};
+use super::recall::{RecallConfigOverride, lookup_recall_override};
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
+use super::trusted_proxy::parse_trusted_proxies;
 use crate::runtime::{
     RuntimeConfigOverride, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleTargetOverride,
 };
@@ -77,6 +83,7 @@ impl EnvConfig {
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
@@ -107,6 +114,8 @@ impl EnvConfig {
         values.embedder = lookup_embedder_override(&mut lookup)?;
         values.oneironer = lookup_oneironer_override(&mut lookup)?;
         values.backup = lookup_backup_override(&mut lookup)?;
+        values.feedback = lookup_feedback_override(&mut lookup)?;
+        values.recall = lookup_recall_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -124,6 +133,37 @@ pub fn resolve_serve_config(args: &ServeArgs) -> anyhow::Result<ServeConfig> {
     resolve_serve_config_with_sources(args, EnvConfig::from_process()?, default_config_path())
 }
 
+/// The `[backup]` settings alone: the config file's section, then the
+/// environment, the way `resolve_serve_config` layers them. A command that
+/// only reports on backups (`doctor`) uses this so a server setting it never
+/// reads cannot stop it.
+pub fn resolve_backup_config(args: &ServeArgs) -> anyhow::Result<BackupConfig> {
+    let env_path = std::env::var_os("ONEIRON_CONFIG").map(PathBuf::from);
+    let explicit = args.config.is_some() || env_path.is_some();
+    let mut backup = BackupConfig::default();
+    match args
+        .config
+        .clone()
+        .or(env_path)
+        .or_else(default_config_path)
+    {
+        Some(path) if path.exists() => {
+            if let Some(over) = load_backup_section(&path)? {
+                backup.apply_override(over);
+            }
+        }
+        Some(path) if explicit => {
+            anyhow::bail!("config file {} does not exist", path.display());
+        }
+        _ => {}
+    }
+    if let Some(over) = lookup_backup_override(&mut |key| std::env::var(key).ok())? {
+        backup.apply_override(over);
+    }
+    backup.validate()?;
+    Ok(backup)
+}
+
 /// The existing server configuration layers, from vault policy to holder.
 /// Their order is structural; the embedder policy row chooses which parent
 /// constrains the holder's automatic device candidates.
@@ -135,6 +175,21 @@ pub(super) enum ConfigLayer {
 }
 
 pub fn resolve_serve_config_with_sources(
+    args: &ServeArgs,
+    env: EnvConfig,
+    default_config_path: Option<PathBuf>,
+) -> anyhow::Result<ServeConfig> {
+    let resolved = layer_serve_config(args, env, default_config_path)?;
+    // Same-source or higher-precedence references remain for validation to
+    // refuse rather than silently fixing a contradictory self-host request.
+    validate_serve_config(&resolved)?;
+    Ok(resolved)
+}
+
+/// The file, environment and flag layers merged, before the checks that
+/// hold the result to one vault ([`resolve_serve_config_with_sources`]). A
+/// command with no vault reads what a layered section says through this.
+pub(crate) fn layer_serve_config(
     args: &ServeArgs,
     env: EnvConfig,
     default_config_path: Option<PathBuf>,
@@ -189,9 +244,6 @@ pub fn resolve_serve_config_with_sources(
     if let Some(embedder) = resolved.embedder.as_mut() {
         super::embedder_space::settle_local_space(embedder, space_naming)?;
     }
-    // Same-source or higher-precedence references remain for validation to
-    // refuse rather than silently fixing a contradictory self-host request.
-    validate_serve_config(&resolved)?;
     Ok(resolved)
 }
 
@@ -226,6 +278,10 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         oneironer.validate()?;
     }
     config.backup.validate()?;
+    config.feedback.validate()?;
+    config.recall.validate()?;
+    config.limits.validate()?;
+    config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -353,12 +409,37 @@ pub fn default_config_path() -> Option<PathBuf> {
     })
 }
 
+/// The config file's `[backup]` table alone: a mistyped setting elsewhere in
+/// the file does not stop it being read.
+fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverride>> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read config file {}", path.display()))?;
+    let mut table: toml::Table =
+        toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
+    table
+        .remove("backup")
+        .map(|section| {
+            section
+                .try_into()
+                .with_context(|| format!("parse [backup] in config file {}", path.display()))
+        })
+        .transpose()
+}
+
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read config file {}", path.display()))?;
-    let config: FileServeConfig =
+    let mut config: FileServeConfig =
         toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
-    Ok(config.into())
+    let models = config
+        .models
+        .take()
+        .map(|models| models.resolve(path.parent()))
+        .transpose()
+        .with_context(|| format!("config file {}", path.display()))?;
+    let mut values = PartialServeConfig::from(config);
+    values.models = models;
+    Ok(values)
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -373,6 +454,7 @@ struct FileServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
@@ -397,6 +479,11 @@ struct FileServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    feedback: Option<FeedbackConfigOverride>,
+    recall: Option<RecallConfigOverride>,
+    limits: Option<LimitsConfigOverride>,
+    import: Option<ImportConfigOverride>,
+    models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -415,6 +502,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
@@ -439,6 +527,11 @@ impl From<FileServeConfig> for PartialServeConfig {
             embedder: value.embedder,
             oneironer: value.oneironer,
             backup: value.backup,
+            feedback: value.feedback,
+            recall: value.recall,
+            limits: value.limits,
+            import: value.import,
+            models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -458,6 +551,7 @@ struct PartialServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
@@ -482,6 +576,12 @@ struct PartialServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    feedback: Option<FeedbackConfigOverride>,
+    recall: Option<RecallConfigOverride>,
+    limits: Option<LimitsConfigOverride>,
+    import: Option<ImportConfigOverride>,
+    /// `[models]` is file-only: it is too structured for env or argv.
+    models: Option<ModelsConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -500,6 +600,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
@@ -536,6 +637,11 @@ impl fmt::Debug for PartialServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("feedback", &self.feedback)
+            .field("recall", &self.recall)
+            .field("limits", &self.limits)
+            .field("import", &self.import)
+            .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -573,6 +679,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.trusted_proxies {
+            resolved.trusted_proxies = parse_trusted_proxies(&normalize_list(value))?;
         }
         if let Some(value) = self.lease_vault_id {
             resolved.lease_vault_id = value;
@@ -629,7 +738,7 @@ impl PartialServeConfig {
             resolved.max_entity_blob = value;
         }
         if let Some(value) = self.max_lfs_object_bytes {
-            resolved.max_lfs_object_bytes = Some(value);
+            resolved.max_lfs_object_bytes = value;
         }
         if let Some(value) = self.max_bulk_decompressed {
             resolved.max_bulk_decompressed = value;
@@ -654,6 +763,21 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.backup {
             resolved.backup.apply_override(value);
+        }
+        if let Some(value) = self.feedback {
+            resolved.feedback.apply_override(value);
+        }
+        if let Some(value) = self.recall {
+            resolved.recall.apply_override(value);
+        }
+        if let Some(value) = self.limits {
+            resolved.limits.apply_override(value);
+        }
+        if let Some(value) = self.import {
+            resolved.import.apply_override(value);
+        }
+        if let Some(value) = self.models {
+            resolved.models = Some(value);
         }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
@@ -688,6 +812,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
@@ -713,6 +838,11 @@ impl From<&ServeArgs> for PartialServeConfig {
             oneironer: Some(OneironerConfigOverride::from(&value.oneironer))
                 .filter(|over| !over.is_empty()),
             backup: None,
+            feedback: None,
+            recall: None,
+            limits: None,
+            import: None,
+            models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

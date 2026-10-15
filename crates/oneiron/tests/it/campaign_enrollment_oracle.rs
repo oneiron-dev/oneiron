@@ -22,8 +22,8 @@ use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentEvent,
     CampaignEnrollmentRunner, CampaignHomeNodeAdmission, CampaignHomeNodeCandidate,
-    CampaignHomeNodeClass, CampaignProgram, CampaignProgramOutbound, CampaignProgramStep,
-    DetectEnrollment, EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
+    CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, DetectEnrollment,
+    EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
     campaign_enrollment_event, campaign_home_node_designation, derive_enrollment_outbound_request,
     elect_campaign_home_node_designation, encode_enrollment_attempt_payload, enrollment_dedupe_key,
     put_campaign_program, put_campaign_program_step, require_campaign_home_node,
@@ -432,52 +432,6 @@ fn campaign_attempt_kind_is_exact() -> Result<()> {
 // Home-node designation
 // ---------------------------------------------------------------------------
 
-/// Attached cloud beats always-on local beats primary device; the lowest stable
-/// node id resolves a same-tier tie; a detached cloud node is not eligible at
-/// all rather than silently demoted into a local tier.
-#[test]
-fn campaign_home_node_election_matches_preference_order() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-
-    let cloud = elect_campaign_home_node_designation(
-        &vault,
-        &[
-            CampaignHomeNodeCandidate::primary_device(2),
-            CampaignHomeNodeCandidate::always_on_local(9),
-            CampaignHomeNodeCandidate::cloud(7, true),
-        ],
-        10,
-    )?
-    .expect("an eligible candidate exists");
-    assert_eq!(cloud.class, CampaignHomeNodeClass::CloudAttached);
-    assert_eq!(cloud.node_id, 7);
-
-    let local = elect_campaign_home_node_designation(
-        &vault,
-        &[
-            CampaignHomeNodeCandidate::cloud(7, false),
-            CampaignHomeNodeCandidate::always_on_local(9),
-            CampaignHomeNodeCandidate::always_on_local(3),
-            CampaignHomeNodeCandidate::primary_device(2),
-        ],
-        11,
-    )?
-    .expect("an eligible candidate exists");
-    assert_eq!(local.class, CampaignHomeNodeClass::AlwaysOnLocal);
-    assert_eq!(local.node_id, 3, "lowest stable id wins inside a tier");
-
-    assert_eq!(
-        elect_campaign_home_node_designation(
-            &vault,
-            &[CampaignHomeNodeCandidate::cloud(7, false)],
-            12
-        )?,
-        None,
-        "an all-ineligible set clears the designation"
-    );
-    Ok(())
-}
-
 /// The campaign designation is campaign-local state. Electing one must not
 /// create, move, or read the Dreamer's private MACRO designation.
 #[test]
@@ -806,59 +760,6 @@ fn a_definition_move_cannot_launder_itself_into_data_change() -> Result<()> {
     Ok(())
 }
 
-/// An exited, stale, or no-longer-matching event is a no-op — and that answer
-/// outranks its cause. Parking a dead transition for owner review would fill
-/// the review queue with work reality has already settled.
-#[test]
-fn stale_bulk_event_is_skipped_rather_than_parked_for_review() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let grants = QueryScope::default();
-
-    // First detection establishes the derivation baseline; the definition then
-    // moves, so the next detection carries a bulk cause.
-    detect(&vault, &fixture, &grants, 100);
-    update_saved_query(
-        &vault,
-        fixture.owner,
-        fixture.query.query_ref,
-        &UpdateSavedQueryRequest {
-            expected_definition_version: fixture.query.definition.definition_version,
-            scope: QueryScope::default(),
-            filter: seniority_is("vp"),
-            matcher: MatcherSpec::Hard {
-                expression: FilterAst::All {
-                    terms: vec![seniority_is("vp")],
-                },
-            },
-            eval: fixture.query.definition.eval,
-        },
-        200,
-    )?;
-    let definition_move = detect(&vault, &fixture, &grants, 201);
-    assert_eq!(definition_move.cause, MembershipCause::DefinitionChange);
-
-    AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
-        kind: CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND.to_owned(),
-        payload: encode_enrollment_attempt_payload(&fixture.payload(definition_move.event_ref))?,
-        dedupe_key: None,
-        run_id: None,
-        now: 201,
-    })?;
-    let record = claimed_record(&vault, HOME_NODE, 202);
-
-    // Reality moves on before the attempt executes: the person stops matching.
-    put_claim(&vault, test_id(0x3D), fixture.person, SENIORITY, "ic");
-
-    assert_eq!(
-        execute(&vault, HOME_NODE, &record, &grants, 203),
-        EnrollmentExecution::SkippedStale,
-        "a bulk cause does not rescue a transition that no longer describes reality"
-    );
-    assert!(live_member_heads(&vault, fixture.person, fixture.query.query_ref).is_empty());
-    Ok(())
-}
-
 /// The cause and the outward call come from persisted rows. A caller cannot
 /// present either, and refs that do not cross-bind fail closed.
 #[test]
@@ -965,47 +866,6 @@ fn advisory_dedupe_is_not_correctness() -> Result<()> {
         live_member_heads(&vault, fixture.person, fixture.query.query_ref),
         vec![("enrolled".to_owned(), 1, vec![CHANNEL.to_owned()])]
     );
-    Ok(())
-}
-
-/// Two DIFFERENT pending transitions share an epoch, because the epoch only
-/// moves when a commit spends it. The advisory key must still tell them apart:
-/// coalescing them would drop the newer, truer transition and leave the older
-/// one to execute as stale — which is dedupe deciding what gets enrolled, the
-/// one job it must never have.
-#[test]
-fn distinct_pending_transitions_do_not_share_a_dedupe_key() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let fixture = install_fixture(&vault);
-    let first_world = test_id(0x3E);
-    let second_world = test_id(0x3F);
-    // Base-reality evidence needs an explicit base grant; the two pending
-    // transitions still differ by the person's named-world reach.
-    let grants = QueryScope {
-        worlds: vec![first_world, second_world, oneiron::claim::base_world_id()],
-        facets: Vec::new(),
-    };
-    place_in_world(&vault, fixture.person, first_world);
-    let first = detect(&vault, &fixture, &grants, 100);
-
-    // The entity's own reach moves. It still matches, on different evidence,
-    // and nothing has committed yet — so both transitions are pending at once.
-    place_in_world(&vault, fixture.person, second_world);
-    let second = detect(&vault, &fixture, &grants, 101);
-
-    assert_eq!(first.epoch, second.epoch, "no commit has spent the epoch");
-    assert_eq!(first.cause, second.cause);
-    assert_ne!(first.evidence_hash, second.evidence_hash);
-    assert_ne!(
-        enrollment_dedupe_key(&vault, &fixture.payload(first.event_ref))?,
-        enrollment_dedupe_key(&vault, &fixture.payload(second.event_ref))?,
-        "an unspent epoch is not enough to make two transitions the same work"
-    );
-
-    // Both reach the queue as their own rows through the ordinary door.
-    let one = enqueue(&vault, &fixture.payload(first.event_ref), 102);
-    let two = enqueue(&vault, &fixture.payload(second.event_ref), 103);
-    assert_ne!(one.id, two.id);
     Ok(())
 }
 

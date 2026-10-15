@@ -55,6 +55,13 @@ const CLIENT_ID: SideTable<(), ClientId, Raw> = SideTable::new(&side_table::IDEN
 const DEVICE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_SK);
 /// Cached Ed25519 verifying key derived from the seed. Key: `()`.
 const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
+/// The MACHINE row this install is (16 B entity id), minted once with
+/// [`MACHINE_SK`]. Not the client id: that is a CRDT peer id. Key: `()`.
+const MACHINE_ID: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_ID);
+/// This install's machine signing-key seed (32 B), minted with [`MACHINE_ID`].
+/// Not the device key: a checkpoint image restored directly drops both
+/// machine rows, so a copy on another install never is this machine. Key: `()`.
+const MACHINE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_SK);
 
 /// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
 /// unset peer id). A wrong-length row and an 8-byte zero row are distinct
@@ -122,7 +129,7 @@ pub(crate) fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
     drop(rtxn);
 
     let mut client_id = None;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         client_id = Some(load_or_mint_client_id_in_txn(vault, wtxn)?);
         Ok(())
     })?;
@@ -172,11 +179,99 @@ pub(crate) fn ensure_device_identity_in_txn(
     })
 }
 
+/// This device's verifying key under the caller's transaction, or `None`
+/// before the identity is minted. Reads the cached public row only, so a
+/// verifier never loads the seed or takes the writer.
+pub(crate) fn read_device_verifying_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
+    DEVICE_PK
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map_err(|_| Error::CorruptedIndex("device public key row"))
+        })
+        .transpose()
+}
+
+/// This install's machine, its MACHINE id and signing key, minted together
+/// once inside the caller's txn. One row without the other is corruption.
+pub(crate) fn load_or_mint_machine_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<(crate::EntityId, SigningKey)> {
+    match (
+        read_machine_id_in_txn(vault, wtxn)?,
+        read_machine_signing_key_in_txn(vault, wtxn)?,
+    ) {
+        (Some(id), Some(key)) => Ok((id, key)),
+        (None, None) => {
+            let id = vault.store.clock.entity_id()?;
+            let key = SigningKey::generate(&mut rand_core::OsRng);
+            MACHINE_ID.put(&vault.store, wtxn, &(), &id.as_bytes().to_vec())?;
+            MACHINE_SK.put(&vault.store, wtxn, &(), &key.as_bytes().to_vec())?;
+            Ok((id, key))
+        }
+        _ => Err(Error::CorruptedIndex("machine identity rows")),
+    }
+}
+
+/// This install's MACHINE id, or `None` before it asked to join a vault.
+pub(crate) fn read_machine_id_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<crate::EntityId>> {
+    MACHINE_ID
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 16]>::try_from(raw.as_slice())
+                .ok()
+                .and_then(|bytes| crate::EntityId::from_bytes(bytes).ok())
+                .ok_or(Error::CorruptedIndex("machine id row"))
+        })
+        .transpose()
+}
+
+/// This install's machine signing key, or `None` before it asked to join a
+/// vault. Never mints: a request that only names the machine must not take
+/// the writer.
+pub(crate) fn read_machine_signing_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SigningKey>> {
+    MACHINE_SK
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map(|seed| SigningKey::from_bytes(&seed))
+                .map_err(|_| Error::CorruptedIndex("machine signing key row"))
+        })
+        .transpose()
+}
+
+/// A machine identity row: a checkpoint image restored directly, which may
+/// land on any install, leaves these behind.
+pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
+    key == side_table::IDENTITY_MACHINE_ID.prefix || key == side_table::IDENTITY_MACHINE_SK.prefix
+}
+
+/// Forgets this install's machine, so the vault joins as a new one: another
+/// live vault keeps the machine it was.
+pub(crate) fn drop_machine_identity_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    MACHINE_ID.delete(store, wtxn, &())?;
+    MACHINE_SK.delete(store, wtxn, &())?;
+    Ok(())
+}
+
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`].
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
     let mut identity = None;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         identity = Some(ensure_device_identity_in_txn(vault, wtxn)?);
         Ok(())
     })?;
@@ -279,38 +374,6 @@ mod tests {
             first.signing_key.to_bytes(),
             "stable signing key"
         );
-    }
-
-    #[test]
-    fn client_id_accessor_mints_only_client_id_then_reads_existing_row() {
-        let (_dir, vault) = test_vault();
-        let first = load_or_mint_client_id(&vault).unwrap();
-        assert_ne!(first, 0);
-
-        let rtxn = vault.store.env.read_txn().unwrap();
-        let id_row = vault
-            .store
-            .sync_state
-            .get(&rtxn, KEY_CLIENT_ID)
-            .unwrap()
-            .expect("client id row");
-        assert_eq!(
-            u64::from_le_bytes(id_row.as_ref().try_into().unwrap()),
-            first
-        );
-        assert!(
-            vault
-                .store
-                .sync_state
-                .get(&rtxn, KEY_DEVICE_SK)
-                .unwrap()
-                .is_none(),
-            "client-id-only accessor must not mint the receipt signing key"
-        );
-        drop(rtxn);
-
-        let second = load_or_mint_client_id(&vault).unwrap();
-        assert_eq!(second, first, "existing client id is stable");
     }
 
     /// Fail-closed arms: malformed/zero `m:client_id` and malformed

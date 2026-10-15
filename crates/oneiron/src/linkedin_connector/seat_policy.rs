@@ -411,6 +411,12 @@ impl LinkedInSeatPolicyDecision {
         Self::blocked(LinkedInSeatPolicyAction::Hold, reason_code, receipt_fields)
     }
 
+    /// The verdict for a LinkedIn effect dispatched with no current seat
+    /// facts: the kill switch, caps and cadence never ran, so it is held.
+    pub(crate) fn seat_policy_missing() -> Self {
+        Self::hold("linkedin.seat_policy_missing", BTreeMap::new())
+    }
+
     fn suppress(reason_code: &str, receipt_fields: BTreeMap<String, String>) -> Self {
         Self::blocked(
             LinkedInSeatPolicyAction::Suppress,

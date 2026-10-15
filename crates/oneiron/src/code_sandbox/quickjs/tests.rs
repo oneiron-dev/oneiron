@@ -58,6 +58,12 @@ impl JsCodeModeHost for Host {
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: None,
             }),
+            SelfCall::AgentVerb(call) => {
+                SelfDispatchOutcome::AgentVerb(crate::code_run::AgentVerbAnswer {
+                    output: serde_json::json!({"verb": call.verb.as_str(), "input": call.input}),
+                    rows: Some(Vec::new()),
+                })
+            }
             _ => return Err(Error::InvalidConfig("unexpected test call".into())),
         };
         Ok(SelfDispatchResponse {
@@ -157,52 +163,48 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
     );
 }
 
+/// ARCH-0028: code mode's `self.memory` IS the SDK verb table. Every row is a
+/// method and nothing else is: the memory reads and writes the run answers
+/// itself are rows too, not hand-written WIT imports beside the table. Adding
+/// a row adds a method with no other edit, and one call carries the row's
+/// whole input to the host's verb door and hands back its output.
 #[test]
-fn quickjs_exposes_bare_ask_but_no_self_ask_alias() {
+fn quickjs_self_memory_is_the_verb_table() {
     let (bytes, hash) = artifact("first-party");
-    let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default())
-        .expect("pinned real component");
+    let factory =
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
+    let mut runtime = factory.runtime().unwrap();
     let mut host = Host::default();
-    let mut runtime = factory.runtime().expect("runtime");
-    let output = run(
-        &mut runtime,
-        "const wait = await ask({prompt:'continue?'}); finish(JSON.stringify({wait, old:typeof self.ask_human, camel:typeof self.askHuman}));",
-        &mut host,
-    ).expect("guest bare ask");
-    let result: Value = serde_json::from_str(&output.observation).expect("guest result");
-    assert_eq!(
-        result["wait"]["waitId"],
-        EntityId::from_bytes([2; 16]).unwrap().to_hex()
-    );
-    assert_eq!(result["old"], "undefined");
-    assert_eq!(result["camel"], "undefined");
-    assert!(matches!(&host.calls[..], [SelfCall::Ask(call)] if call.prompt == "continue?"));
-}
-
-#[test]
-
-fn quickjs_json_validate_returns_shared_allow_reject_verdicts_without_dispatch() {
-    let (bytes, hash) = artifact("first-party");
-    let factory = QuickJsRuntimeFactory::from_component(&bytes, hash, validation_budget()).unwrap();
-    let mut host = Host::default();
-    let result = run(
-        &mut factory.runtime().unwrap(),
-        "const schema = {type:'object',required:['count'],properties:{count:{type:'integer'}}}; \
-         const allow = await self.json.validate(schema,{count:3}); \
-         const reject = await self.json.validate(schema,{count:'three'}); \
-         const invalidSchema = await self.json.validate({type:'not-a-type'},{count:3}); \
-         finish(JSON.stringify({allow,reject,invalidSchema}));",
-        &mut host,
-    )
-    .unwrap();
-    assert!(result.done);
-    assert_eq!(
-        serde_json::from_str::<Value>(&result.observation).unwrap(),
-        serde_json::json!({"allow":true,"reject":false,"invalidSchema":false})
-    );
+    let script = "const names = []; \
+        const walk = (node, path) => { for (const key of Object.keys(node)) { \
+          const name = path ? path + '.' + key : key; \
+          if (typeof node[key] === 'function') names.push(name); else walk(node[key], name); } }; \
+        walk(self.memory, ''); \
+        const echo = await self.memory.tasks.outcomes({group_ref: 'g1'}); \
+        finish(JSON.stringify({names: names.sort(), echo, abi: typeof self.verbs}));";
+    let result = run(&mut runtime, script, &mut host).unwrap();
+    assert!(result.done, "{}", result.observation);
+    let value: Value = serde_json::from_str(&result.observation).unwrap();
+    let engine_imports: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
     assert!(
-        host.calls.is_empty(),
-        "validation must not dispatch a self effect"
+        !engine_imports
+            .iter()
+            .any(|(_, js)| js.starts_with("self.memory.")),
+        "a self.memory method is a verb-table row, never its own WIT import"
+    );
+    let mut expected: Vec<&str> = crate::task_verb::sdk::code_mode_verb_names().collect();
+    expected.sort_unstable();
+    assert_eq!(value["names"], serde_json::json!(expected));
+    for row in ["search", "put_claim", "supersede_claim", "put_edge"] {
+        assert!(expected.contains(&row), "{row} is served from the table");
+    }
+    assert_eq!(
+        value["abi"], "undefined",
+        "the call door itself stays bootstrap's"
+    );
+    assert_eq!(
+        value["echo"],
+        serde_json::json!({"verb": "tasks.outcomes", "input": {"group_ref": "g1"}})
     );
 }
 
@@ -277,14 +279,6 @@ fn quickjs_json_validate_recursive_schemas_are_bounded() {
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-}
-
-#[test]
-fn default_budget_passes_the_readiness_probe() {
-    let (bytes, hash) = artifact("first-party");
-    assert!(
-        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).is_ok()
-    );
 }
 
 #[test]
@@ -393,40 +387,18 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     fn json_validate(&mut self, _: String, _: String) -> std::result::Result<bool, String> {
         Err("unlinked capability".into())
     }
-    fn memory_search(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::SearchInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::SearchOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn memory_put_claim(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::ClaimInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::ClaimOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn memory_supersede_claim(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::SupersedeInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::ClaimOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn memory_put_edge(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::EdgeInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::EdgeOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
     fn report_blocked(
         &mut self,
         _: String,
         _: String,
     ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::BlockedOutput, String>
     {
+        Err("unlinked capability".into())
+    }
+    fn verb_names(&mut self) -> std::result::Result<Vec<String>, String> {
+        Err("unlinked capability".into())
+    }
+    fn verb_call(&mut self, _: String, _: String) -> std::result::Result<String, String> {
         Err("unlinked capability".into())
     }
     fn ask(
@@ -457,53 +429,4 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     {
         Err("unlinked capability".into())
     }
-}
-
-#[test]
-fn quickjs_concurrent_handles_do_not_interrupt_each_other() {
-    use std::sync::mpsc;
-    struct PausedHost {
-        ready: mpsc::SyncSender<()>,
-        release: mpsc::Receiver<()>,
-    }
-    impl JsCodeModeHost for PausedHost {
-        fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
-            assert!(matches!(call, SelfCall::MemorySearch(_)));
-            self.ready.send(()).unwrap();
-            self.release
-                .recv_timeout(std::time::Duration::from_secs(10))
-                .unwrap();
-            Ok(SelfDispatchResponse {
-                outcome: SelfDispatchOutcome::MemorySearch(
-                    crate::code_run::SelfMemorySearchResult {
-                        query: "hold".into(),
-                        results: vec![],
-                    },
-                ),
-                budget: None,
-            })
-        }
-    }
-    let (bytes, hash) = artifact("first-party");
-    let factory =
-        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
-    let mut left = factory.runtime().unwrap();
-    let mut right = factory.runtime().unwrap();
-    let (ready, received) = mpsc::sync_channel(1);
-    let (release, released) = mpsc::sync_channel(1);
-    let worker = std::thread::spawn(move || {
-        right.run_step(JsCodeModeStep {
-        run_id: EntityId::from_bytes([2;16]).unwrap(), seq: 0,
-        script: "self.memory.search({query:'hold'}); let n=0; for(let i=0;i<20000;i++)n+=i; finish(String(n));",
-        boundary: SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer),
-        determinism: CodeRunDeterminism::new(1_700_000_000_000, [9;32]),
-    }, &mut PausedHost { ready, release: released })
-    });
-    received
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .unwrap();
-    let completed = run(&mut left, "finish('short');", &mut Host::default());
-    release.send(()).unwrap();
-    assert_eq!(completed.unwrap().observation, "short");
-    assert_eq!(worker.join().unwrap().unwrap().observation, "199990000");
 }

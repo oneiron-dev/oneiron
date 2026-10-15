@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use oneiron::{
     code_run::SelfEffect, code_sandbox::SANDBOX_WIT_WORLD_NAME,
     code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxGuestTier,
-    code_sandbox::SandboxImportClass,
+    code_sandbox::SandboxImportClass, task_verb::sdk::RunVerb,
 };
 
 // Which FILES count as production is decided once, in the shared scanner
@@ -69,6 +69,8 @@ fn raw_escape_ident(ident: &str) -> bool {
         ident,
         "with_write_txn"
             | "try_with_write_txn"
+            | "with_write_txn_grouped"
+            | "try_with_write_txn_grouped"
             | "put_edge"
             | "put_vector"
             | "sync_state_put"
@@ -296,12 +298,12 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&row)?)?;".to_owned()}, 3),
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &new_key, &encode(&new)?)?;".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &old_key, &encode(&old)?)?;".to_owned()}, 1),
-        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn".to_owned(),line:"let result = self.vault.try_with_write_txn(|txn| {".to_owned()}, 1),
-        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn".to_owned(),line:"self.vault.try_with_write_txn(|txn| {".to_owned()}, 3),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn_grouped".to_owned(),line:"let result = self.vault.try_with_write_txn_grouped(|txn| {".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/control_keys.rs".to_owned(),ident:"try_with_write_txn_grouped".to_owned(),line:"self.vault.try_with_write_txn_grouped(|txn| {".to_owned()}, 3),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put".to_owned(),line:"self.vault.sync_state_put(MANIFEST, &encode(thresholds)?)".to_owned()}, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"sync_state_put_in_write_txn".to_owned(),line:".sync_state_put_in_write_txn(txn, &key, &encode(&question)?)?;".to_owned()}, 1),
-        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"with_write_txn".to_owned(),line:"self.vault.with_write_txn(|txn| {".to_owned()}, 1),
+        (RawHit { path: "crates/oneiron-server/src/wire_telemetry.rs".to_owned(),ident:"with_write_txn_grouped".to_owned(),line:"self.vault.with_write_txn_grouped(|txn| {".to_owned()}, 1),
         (
             RawHit {
                 path: "crates/oneiron-napi/src/lib/vault.rs".to_owned(),
@@ -348,8 +350,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (
             RawHit {
                 path: "crates/oneiron-server/src/auth.rs".to_owned(),
-                ident: "with_write_txn".to_owned(),
-                line: "Ok(vault.with_write_txn(|txn| {".to_owned(),
+                ident: "with_write_txn_grouped".to_owned(),
+                line: "Ok(vault.with_write_txn_grouped(|txn| {".to_owned(),
             },
             1,
         ),
@@ -386,8 +388,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (
             RawHit {
                 path: "crates/oneiron-server/src/server/leases.rs".to_owned(),
-                ident: "with_write_txn".to_owned(),
-                line: "if let Err(err) = self.vault.with_write_txn(|wtxn| {".to_owned(),
+                ident: "with_write_txn_grouped".to_owned(),
+                line: "if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {".to_owned(),
             },
             1,
         ),
@@ -396,23 +398,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (
             RawHit {
                 path: "crates/oneiron-server/src/api/booking/subject.rs".to_owned(),
-                ident: "with_write_txn".to_owned(),
-                line: ".with_write_txn(|txn| {".to_owned(),
-            },
-            1,
-        ),
-        // MCP proposed-control-record write (ONE-1936). This is NOT a raw
-        // write bypassing a stamper: the transaction wraps the write-verb
-        // target guard and a stamped `batch_in().claim_candidate(...)`, which
-        // carries the same `WriteEnvelope` the unguarded `batch()` path did.
-        // The explicit transaction is REQUIRED — guarding the target in one
-        // transaction and writing the proposal in another recreates the
-        // grounding-read race the ticket closes.
-        (
-            RawHit {
-                path: "crates/oneiron-server/src/api/mcp_gateway/facade_verbs/mod.rs".to_owned(),
-                ident: "with_write_txn".to_owned(),
-                line: ".with_write_txn(|wtxn| {".to_owned(),
+                ident: "with_write_txn_grouped".to_owned(),
+                line: ".with_write_txn_grouped(|txn| {".to_owned(),
             },
             1,
         ),
@@ -424,8 +411,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (
             RawHit {
                 path: "crates/oneiron-server/src/managed/vault_gates.rs".to_owned(),
-                ident: "with_write_txn".to_owned(),
-                line: ".with_write_txn(|txn| {".to_owned(),
+                ident: "with_write_txn_grouped".to_owned(),
+                line: ".with_write_txn_grouped(|txn| {".to_owned(),
             },
             1,
         ),
@@ -440,8 +427,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (
             RawHit {
                 path: "crates/oneiron-server/src/usage/ledger.rs".to_owned(),
-                ident: "try_with_write_txn".to_owned(),
-                line: ".try_with_write_txn(|txn| -> Result<_, UsageError> {".to_owned(),
+                ident: "try_with_write_txn_grouped".to_owned(),
+                line: ".try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {".to_owned(),
             },
             2,
         ),
@@ -464,8 +451,8 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (
             RawHit {
                 path: "crates/oneiron-server/src/usage/limit.rs".to_owned(),
-                ident: "try_with_write_txn".to_owned(),
-                line: ".try_with_write_txn(|txn| -> Result<(), UsageError> {".to_owned(),
+                ident: "try_with_write_txn_grouped".to_owned(),
+                line: ".try_with_write_txn_grouped(|txn| -> Result<(), UsageError> {".to_owned(),
             },
             1,
         ),
@@ -486,13 +473,14 @@ fn of060_f2_extra_booking_write_txn_is_not_pinned() {
     let tree = SourceTree::read(&repo.join("crates"));
     let expected = f2_expected_raw_escape_hits();
     let booking_path = "crates/oneiron-server/src/api/booking/subject.rs";
-    let approved_line = ".with_write_txn(|txn| {";
+    let approved_line = ".with_write_txn_grouped(|txn| {";
     let approved_hits = raw_escape_hits(booking_path, &production_source(approved_line));
     assert_eq!(approved_hits.len(), 1);
     assert_eq!(expected.get(&approved_hits[0]), Some(&1));
 
     // Even an identical second call exceeds the pin. A different line in the
-    // same file or the same line in another booking file must also fail F2.
+    // same file (here the hosts' door) or the same line in another booking
+    // file must also fail F2.
     for (rel, extra_line) in [
         (booking_path, approved_line),
         (booking_path, ".with_write_txn(|extra_txn| {"),
@@ -535,9 +523,19 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
         assert!(
             write_imports
                 .insert(
-                    import.name(),
+                    import.name().to_owned(),
                     import.write_trap_effect().expect("named write trap"),
                 )
+                .is_none(),
+            "write-import names must be unique",
+        );
+    }
+    // The memory writes reach the guest as verb-table rows the run answers
+    // itself, each its own named, gated effect: the same closed set.
+    for verb in RunVerb::ALL.iter().filter(|verb| verb.writes()) {
+        assert!(
+            write_imports
+                .insert(format!("self.memory.{}", verb.as_str()), verb.effect())
                 .is_none(),
             "write-import names must be unique",
         );
@@ -545,16 +543,26 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
     assert_eq!(
         write_imports,
         BTreeMap::from([
-            ("self.memory.put_claim", SelfEffect::MemoryPutClaim),
             (
-                "self.memory.supersede_claim",
+                "self.memory.put_claim".to_owned(),
+                SelfEffect::MemoryPutClaim
+            ),
+            (
+                "self.memory.supersede_claim".to_owned(),
                 SelfEffect::MemorySupersedeClaim,
             ),
-            ("self.memory.put_edge", SelfEffect::MemoryPutEdge),
-            ("self.report_blocked", SelfEffect::ReportBlocked),
+            ("self.memory.put_edge".to_owned(), SelfEffect::MemoryPutEdge),
+            ("self.report_blocked".to_owned(), SelfEffect::ReportBlocked),
         ]),
         "OF-060 P3: write imports must map exactly to authorized memory effects and the blocked-report receipt",
     );
+    for verb in RunVerb::ALL {
+        assert_ne!(
+            verb.effect(),
+            SelfEffect::MemoryWriteFixture,
+            "OF-060 P3: a run row must not expose the fixture write effect",
+        );
+    }
 
     for tier in [
         SandboxGuestTier::FirstPartyDreamer,

@@ -1,12 +1,22 @@
 //! RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block.
 
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::export::write_door_refuses_body;
+use crate::claim::{ClaimBody, claim_surfaceable};
+use crate::context_pack::same_claim_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::builder::PipelineBuilder;
+use crate::pipeline::filters::pipeline_candidate_matches_filters_and_gate;
 use crate::pipeline::trace::retrieval_trace_top_scores;
-use crate::pipeline::types::{ClaimStatusGateCache, ScoredEntity};
+use crate::pipeline::types::{
+    ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity, TurnFold,
+};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankCandidate;
 use crate::store::{RetrievalScoreComponent, RetrievalSignal};
+use crate::vault::entity_revision::TurnText;
+use crate::vault::{ReadMode, RevisionRef};
 use std::collections::HashMap;
 
 /// The read-only faces the rerank ladder draws on.
@@ -17,16 +27,51 @@ pub(super) struct RerankLadderInputs<'a> {
     pub(super) ladder_scores: Option<&'a HashMap<EntityId, f32>>,
     pub(super) blend_access_factors: &'a HashMap<EntityId, f32>,
     pub(super) blend_components: &'a HashMap<EntityId, Vec<RetrievalScoreComponent>>,
-    pub(super) claim_gate: &'a ClaimStatusGateCache,
+    pub(super) filter_config: PipelineFilterConfig<'a>,
     pub(super) rerank_query: Option<&'a str>,
     pub(super) capture_retrieval_trace: bool,
     pub(super) trace_candidate_limit: usize,
 }
 
-/// What the rerank hook produced; both are `None` when it did not run.
+/// What the rerank hook produced; both options are `None`, and the map
+/// empty, when it did not run.
+#[derive(Default)]
 pub(super) struct RerankApplied {
     pub(super) merged_components: Option<HashMap<EntityId, Vec<RetrievalScoreComponent>>>,
     pub(super) reranked_trace_scores: Option<Vec<ScoredEntity>>,
+    /// For a reranker that binds words, the revision of the words each block
+    /// candidate was scored at, and each TURN a scored MESSAGE folds into.
+    /// The run serves those rows at these, so a TURN shows the words its
+    /// score is for, not those its messages hold by the time it is read.
+    pub(super) words_revisions: HashMap<EntityId, RevisionRef>,
+}
+
+/// What a binding reranker's candidate is bound to (see [`RerankCandidate`]).
+#[derive(Clone, Default)]
+struct BoundWords {
+    revision: Option<RevisionRef>,
+    turn: Option<(EntityId, RevisionRef)>,
+    /// A CLAIM's body as its pinned row holds it: the bytes the write door
+    /// judged and the run serves, not the gate's live body.
+    claim: Option<ClaimBody>,
+    /// A row with no revision that holds its words: a MESSAGE whose text
+    /// moved into its entity document, a TURN whose messages show none, a
+    /// MESSAGE that folds into such a TURN, or a row with no revision at all;
+    /// or a row with words the write door refuses (stored while the owner's
+    /// secret scan was off), a TURN with a message whose body it refuses, or
+    /// a claim whose pinned body the run would not serve. Its words would be
+    /// read later, at whatever they had become, or are words the run
+    /// withholds, so no model is sent them. The run does not rerank it.
+    unscored: bool,
+}
+
+impl BoundWords {
+    const UNSCORED: Self = Self {
+        revision: None,
+        turn: None,
+        claim: None,
+        unscored: true,
+    };
 }
 
 impl PipelineBuilder<'_> {
@@ -52,11 +97,15 @@ impl PipelineBuilder<'_> {
     // is 1.0 this is the legacy ladder.
     pub(super) fn apply_rerank_ladder(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         scores: &mut [ScoredEntity],
+        metadata_cache: &mut EntityMetadataCache,
+        claim_gate: &mut ClaimStatusGateCache,
         inputs: RerankLadderInputs<'_>,
     ) -> Result<RerankApplied> {
         let mut rerank_merged_components = None;
         let mut reranked_trace_scores = None;
+        let mut words_revisions = HashMap::new();
         // Empty block: reranking zero candidates is a semantic no-op —
         // never invoke the host impl, so an otherwise-empty retrieval
         // cannot fail on reranker behavior and no needless work happens
@@ -67,7 +116,31 @@ impl PipelineBuilder<'_> {
             && !self.deadline_reached()
         {
             let query = inputs.rerank_query.unwrap_or_default();
-            let block_len = options.top_n.min(scores.len());
+            let mut block_len = options.top_n.min(scores.len());
+            // Only a reranker whose scores are for the words reads them, and
+            // a deadline that comes meanwhile skips the stage.
+            let mut bound = Vec::new();
+            let mut tail_len = 0;
+            if reranker.binds_words() {
+                bound.reserve(block_len);
+                for scored in &scores[..block_len] {
+                    if self.deadline_reached() {
+                        return Ok(RerankApplied::default());
+                    }
+                    bound.push(self.bound_words(
+                        rtxn,
+                        &scored.id,
+                        inputs.filter_config,
+                        metadata_cache,
+                        claim_gate,
+                    )?);
+                }
+                (bound, tail_len) = set_aside_unscored(&mut scores[..block_len], bound);
+                block_len -= tail_len;
+                if block_len == 0 {
+                    return Ok(RerankApplied::default());
+                }
+            }
             let block_ids: Vec<EntityId> =
                 scores[..block_len].iter().map(|scored| scored.id).collect();
             let mut ladder = Vec::with_capacity(block_len);
@@ -84,21 +157,41 @@ impl PipelineBuilder<'_> {
                 ladder.push(base);
             }
             ladder.sort_unstable_by(|left, right| right.total_cmp(left));
-            let candidates: Vec<RerankCandidate<'_>> = scores[..block_len]
-                .iter()
-                .enumerate()
-                .map(|(index, scored)| RerankCandidate {
+            let mut candidates: Vec<RerankCandidate<'_>> = Vec::with_capacity(block_len);
+            for (index, scored) in scores[..block_len].iter().enumerate() {
+                // A binding reranker reads a claim at its pin; any other the
+                // gate's body.
+                let (claim, revision, turn) = match bound.get(index) {
+                    Some(words) => (words.claim.as_ref(), words.revision, words.turn),
+                    None => (
+                        claim_gate
+                            .decisions
+                            .get(&scored.id)
+                            .and_then(|decision| decision.as_ref()),
+                        None,
+                        None,
+                    ),
+                };
+                candidates.push(RerankCandidate {
                     id: scored.id,
                     score: scored.score,
                     rank: (index + 1).min(u32::MAX as usize) as u32,
-                    claim: inputs
-                        .claim_gate
-                        .decisions
-                        .get(&scored.id)
-                        .and_then(|decision| decision.as_ref()),
+                    claim,
+                    revision,
+                    turn,
+                });
+            }
+            let rerank_scores = reranker.rerank(query, &candidates)?;
+            words_revisions = candidates
+                .iter()
+                .flat_map(|candidate| {
+                    candidate
+                        .revision
+                        .map(|revision| (candidate.id, revision))
+                        .into_iter()
+                        .chain(candidate.turn)
                 })
                 .collect();
-            let rerank_scores = reranker.rerank(query, &candidates)?;
             drop(candidates);
             if rerank_scores.len() != block_len {
                 return Err(Error::InvariantViolation(
@@ -142,6 +235,8 @@ impl PipelineBuilder<'_> {
                         score: rerank_scores[old_pos],
                     });
             }
+            let (reranked, rest) = scores.split_at_mut(block_len);
+            cap_set_aside(reranked, &mut rest[..tail_len]);
 
             // Rerank components append AFTER the blend components in each
             // entity's vector (pinned merge order; no dedup, no re-sort).
@@ -161,6 +256,221 @@ impl PipelineBuilder<'_> {
         Ok(RerankApplied {
             merged_components: rerank_merged_components,
             reranked_trace_scores,
+            words_revisions,
         })
     }
+
+    /// The revision of the words `id` holds in this transaction (see
+    /// [`RerankCandidate::revision`]), a claim's body at it, and, for a
+    /// MESSAGE the run folds into a TURN it admits, that TURN's (see
+    /// [`RerankCandidate::turn`]). A row with no revision that holds its
+    /// words is not reranked, nor is a row with words the write door refuses
+    /// (see [`BoundWords::unscored`]).
+    fn bound_words(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        filter_config: PipelineFilterConfig<'_>,
+        metadata_cache: &mut EntityMetadataCache,
+        claim_gate: &mut ClaimStatusGateCache,
+    ) -> Result<BoundWords> {
+        let kind = metadata_cache
+            .get(&self.read, rtxn, id)?
+            .map(|meta| meta.entity_type);
+        if kind == Some(ENTITY_TYPE_TURN) {
+            let text = self.turn_text(rtxn, id, true)?;
+            // Words the write door refuses are sent to no model, nor are the
+            // words of a message whose body it refuses, the body they are
+            // read from (CodeRabbit on #1433), nor words a TURN with none to
+            // pin may hold by the time they are read.
+            let Some(text) = text.filter(|text| {
+                !text.messages.iter().any(|(_, words, body)| {
+                    body.is_empty()
+                        || write_door_refuses_body(body)
+                        || write_door_refuses_body(words.as_bytes())
+                })
+            }) else {
+                return Ok(BoundWords::UNSCORED);
+            };
+            return Ok(BoundWords {
+                revision: Some(text.revision),
+                ..BoundWords::default()
+            });
+        }
+        let revision = match self
+            .vault
+            .indexed_revision_from_in_txn(&self.read, rtxn, id)
+        {
+            Ok(revision) => revision,
+            Err(Error::EntityNotFound) => None,
+            Err(error) => return Err(error),
+        };
+        // A streamed or edited MESSAGE holds its words in its entity
+        // document, which its row revision does not pin; a build without
+        // `sync` reads no document, but still sees that it has one. A row the
+        // write door refuses is sent to no model.
+        let Some(revision) = revision else {
+            return Ok(BoundWords::UNSCORED);
+        };
+        if kind == Some(ENTITY_TYPE_MESSAGE)
+            && crate::vault::entity_revision::message_has_document_in_txn(self.vault, rtxn, id)?
+        {
+            return Ok(BoundWords::UNSCORED);
+        }
+        let indexed = crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
+            self.vault,
+            &self.read,
+            rtxn,
+            id,
+            ReadMode::Indexed,
+        )?;
+        let body = indexed
+            .as_deref()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..));
+        if body.is_some_and(write_door_refuses_body) {
+            return Ok(BoundWords::UNSCORED);
+        }
+        // A claim is scored at the body its pin holds (Sol R31 F1). One that
+        // does not decode there, or whose body there the run would not serve
+        // (CodeRabbit on #1426), is not reranked: its words go to no model.
+        let claim = if kind == Some(ENTITY_TYPE_CLAIM) {
+            let decoded = body.and_then(|body| crate::claim::decode_claim_body(body, true).ok());
+            match (indexed.as_deref(), decoded) {
+                (Some(raw), Some(claim))
+                    if self.pin_served(rtxn, id, raw, &claim, claim_gate)? =>
+                {
+                    Some(claim)
+                }
+                _ => return Ok(BoundWords::UNSCORED),
+            }
+        } else {
+            None
+        };
+        let mut words = BoundWords {
+            revision: Some(revision),
+            claim,
+            ..BoundWords::default()
+        };
+        if kind != Some(ENTITY_TYPE_MESSAGE) || self.turn_fold == TurnFold::Off {
+            return Ok(words);
+        }
+        // The fold's own rule: a MESSAGE stands as its TURN when the run
+        // admits that TURN.
+        let Some(turn) = super::turn_fold::turn_of(&self.read, rtxn, id, metadata_cache)? else {
+            return Ok(words);
+        };
+        if !pipeline_candidate_matches_filters_and_gate(
+            &self.read,
+            rtxn,
+            &turn,
+            filter_config,
+            metadata_cache,
+            claim_gate,
+        )? {
+            return Ok(words);
+        }
+        match self
+            .turn_text(rtxn, &turn, false)?
+            .map(|text| text.revision)
+        {
+            Some(revision) => words.turn = Some((turn, revision)),
+            None => return Ok(BoundWords::UNSCORED),
+        }
+        Ok(words)
+    }
+
+    /// Whether the run serves claim `id` at its pin, the row `pinned_raw`
+    /// whose body is `pinned`, as hydration judges a pin. A pin that is not
+    /// the live row (a stale row reads as none live) stands only behind a
+    /// live body the gate admitted that is surfaceable, whatever the run's
+    /// filter admits (the history rule; Sol and Astra R22 on this branch: a
+    /// stale body equal to the pinned one passed). Then the pinned body is
+    /// the gate's, or one surfaceable with live support.
+    fn pin_served(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        pinned_raw: &[u8],
+        pinned: &ClaimBody,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<bool> {
+        let admitted = claim_gate.decisions.get(id).and_then(Option::as_ref);
+        let live = self.vault.live_entity_in_txn(&self.read, rtxn, id)?;
+        if live.map(|row| row.encode()).as_deref() != Some(pinned_raw)
+            && !admitted.is_some_and(claim_surfaceable)
+        {
+            return Ok(false);
+        }
+        if admitted.is_some_and(|admitted| same_claim_body(admitted, pinned)) {
+            return Ok(true);
+        }
+        Ok(claim_surfaceable(pinned)
+            && crate::claim::has_live_support_in_txn(&self.read, rtxn, pinned)?)
+    }
+
+    /// The words `turn` holds in this transaction, under the text revision
+    /// that commits to the state of every message they come from, with each
+    /// message's body when they are to be sent (`release`); `None` when its
+    /// messages show none.
+    fn turn_text(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+        release: bool,
+    ) -> Result<Option<TurnText>> {
+        Ok(crate::vault::entity_revision::served_turn_text_in_txn(
+            self.vault,
+            &self.read,
+            rtxn,
+            turn,
+            ReadMode::Indexed,
+            release,
+        )?
+        .filter(|text| !text.messages.is_empty()))
+    }
 }
+
+/// Sets aside the block's rows that do not hold their words (see
+/// [`BoundWords::unscored`]): they are not reranked, and their words bind
+/// nothing. They move after the rows that are reranked, each group in its
+/// first-stage order. Returns the kept rows' words and how many were set
+/// aside.
+fn set_aside_unscored(
+    block: &mut [ScoredEntity],
+    bound: Vec<BoundWords>,
+) -> (Vec<BoundWords>, usize) {
+    if !bound.iter().any(|words| words.unscored) {
+        return (bound, 0);
+    }
+    let (kept, unscored): (Vec<_>, Vec<_>) = block
+        .iter()
+        .copied()
+        .zip(bound)
+        .partition(|(_, words)| !words.unscored);
+    for (slot, (scored, _)) in block.iter_mut().zip(kept.iter().chain(&unscored)) {
+        *slot = *scored;
+    }
+    (
+        kept.into_iter().map(|(_, words)| words).collect(),
+        unscored.len(),
+    )
+}
+
+/// The rows set aside step down from the weakest reranked score, keeping
+/// their order, so a later sort keeps them below every reranked row.
+fn cap_set_aside(reranked: &[ScoredEntity], set_aside: &mut [ScoredEntity]) {
+    let mut cap = reranked
+        .iter()
+        .map(|scored| scored.score)
+        .fold(f32::INFINITY, f32::min);
+    for scored in set_aside {
+        if cap > 0.0 {
+            cap = cap.next_down();
+        }
+        cap = cap.min(scored.score);
+        scored.score = cap;
+    }
+}
+
+#[cfg(test)]
+mod tests;

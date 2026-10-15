@@ -45,8 +45,13 @@ pub struct ExportAuthorityManifest {
 /// What an import manifest is, relative to the vault it is offered to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultImportClassification {
-    /// Same chain, same chain state, nothing nulled: the owner's own artifact
-    /// coming home.
+    /// Same chain, same chain state, nothing nulled, and provenance proved: the
+    /// owner's own artifact coming home.
+    ///
+    /// No export is signed yet, so no manifest earns this today: every
+    /// same-chain artifact carries [`VaultImportMismatch::UnauthenticatedProvenance`]
+    /// and reads [`Self::ReviewRequired`]. It is reserved for a manifest whose
+    /// signer this vault can verify.
     ByteFaithfulOwnerRestore,
     /// A well-formed chain identity that is not this vault's. Never a restore.
     ForeignAuthorityChain,
@@ -69,6 +74,11 @@ pub enum VaultImportMismatch {
     LocalAuthorityMissing,
     /// Both sides state a root and they differ.
     AuthorityVaultId,
+    /// Both sides state the same root, but nothing proves the manifest came
+    /// from this chain: the vault id and the valid-entries digest are public
+    /// facts anyone holding one export can copy. Fail-closed until manifests
+    /// are signed by a key this vault can verify.
+    UnauthenticatedProvenance,
     /// Same root, different set of valid authority entries.
     AuthorityChainDigest,
     /// The manifest's label is not the label the caller expected.
@@ -118,6 +128,13 @@ struct AuthorityChainIdentity {
 /// comparing. Then the authority chain decides identity, and only then do the
 /// label and the secret-nulling flags get a say — a label can never promote a
 /// foreign chain, and a matching chain can never excuse nulled content.
+///
+/// A matching chain is a claim, not a proof: the manifest is unsigned, and its
+/// vault id and digest can be copied from any export of this vault. So a
+/// same-chain artifact always carries
+/// [`VaultImportMismatch::UnauthenticatedProvenance`] and reads
+/// [`VaultImportClassification::ReviewRequired`]. Whole-vault import treats the
+/// verdict as advisory, so the owner's own export still restores.
 pub fn classify_vault_import_manifest(
     vault: &Vault,
     manifest_bytes: &[u8],
@@ -152,6 +169,7 @@ pub fn classify_vault_import_manifest(
     let mut foreign_chain = false;
     if let (Some(exported), Some(local)) = (exported_authority, local_authority) {
         if exported.vault_id == local.vault_id {
+            mismatches.insert(VaultImportMismatch::UnauthenticatedProvenance);
             if exported.valid_entries_digest != local.valid_entries_digest {
                 mismatches.insert(VaultImportMismatch::AuthorityChainDigest);
             }

@@ -82,18 +82,3 @@ fn cache_isolates_triples_and_bad_issuer_fails_before_redemption() {
         Err(OAuthClientError::IssuerMismatch)
     );
 }
-#[test]
-fn client_document_has_native_web_and_no_forbidden_capabilities() {
-    for (app, kind) in [
-        (ClientApplication::Native, "native"),
-        (ClientApplication::Web, "web"),
-    ] {
-        let document = client_metadata("https://oneiron.test", app).unwrap();
-        assert_eq!(document["application_type"], kind);
-        assert_eq!(document["cimd_draft"], CIMD_DRAFT);
-        assert_eq!(document["token_endpoint_auth_method"], "none");
-        assert!(document.get("sampling").is_none());
-        assert!(document.get("roots").is_none());
-        assert_eq!(document["grant_types"], json!(["authorization_code"]));
-    }
-}

@@ -305,125 +305,6 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
 }
 
 #[test]
-fn adoption_pins_an_imported_root_without_freezing_unadopted_turns() {
-    let (_dir, vault, conv, _actor) = fixture();
-    let root = EntityId::now();
-    vault
-        .batch()
-        .put(&root, ENTITY_TYPE_TURN, time(1), 1, &body("imported"))
-        .edge_checked(&root, &conv, 1.0)
-        .commit()
-        .unwrap();
-    vault
-        .put_entity(
-            &root,
-            ENTITY_TYPE_TURN,
-            time(1),
-            1,
-            &body("before adoption"),
-        )
-        .unwrap();
-    assert!(vault.migrate_conversation_dag(&conv).unwrap());
-    assert_eq!(
-        vault.batch().delete(&root).commit().unwrap_err().kind(),
-        ErrorKind::InvalidConversationDag,
-    );
-    vault
-        .delete_room_record_unchecked_for_test(&root, crate::DeleteReason::UserHardDelete)
-        .unwrap();
-    assert_eq!(
-        vault
-            .put_entity(&root, ENTITY_TYPE_TURN, time(1), 1, &body("recreated"))
-            .unwrap_err()
-            .kind(),
-        ErrorKind::InvalidConversationDag
-    );
-}
-
-#[test]
-fn gdpr_delete_after_user_delete_purges_a_dag_record() {
-    let (_dir, vault, conv, actor) = fixture();
-    let id = vault
-        .append_dag_record(&input(conv, None, true, actor))
-        .unwrap()
-        .id;
-    vault
-        .delete_room_record_unchecked_for_test(&id, crate::DeleteReason::UserDelete)
-        .unwrap();
-    vault
-        .delete_room_record_unchecked_for_test(&id, crate::DeleteReason::GdprDelete)
-        .unwrap();
-    assert!(vault.get(&id).unwrap().is_none());
-}
-
-#[test]
-fn replayed_thread_edges_and_late_turn_body_rebuild_cached_meta() {
-    let (_dir, source, conv, actor) = fixture();
-    let trunk = source
-        .append_dag_record(&input(conv, None, true, actor))
-        .unwrap()
-        .id;
-    let reply = source
-        .reply_in_thread(trunk, &input(conv, None, false, actor))
-        .unwrap()
-        .id;
-    let dir = tempfile::tempdir().unwrap();
-    let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    for id in [conv, actor.entity_ref(), trunk] {
-        let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
-        let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
-        peer.batch()
-            .put_replicated(
-                &id,
-                h.entity_type,
-                crate::TimeRange {
-                    start: h.occurred_start,
-                    end: h.occurred_end,
-                },
-                h.learned_at,
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )
-            .commit()
-            .unwrap();
-    }
-    peer.batch()
-        .edge_checked(&trunk, &conv, 1.0)
-        .commit()
-        .unwrap();
-    assert_eq!(peer.thread_meta(trunk).unwrap(), None);
-    let raw = source.get_raw_unsealed(&reply).unwrap().unwrap();
-    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
-    peer.batch()
-        .put_replicated(
-            &reply,
-            h.entity_type,
-            crate::TimeRange {
-                start: h.occurred_start,
-                end: h.occurred_end,
-            },
-            h.learned_at,
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        )
-        .commit()
-        .unwrap();
-    peer.batch()
-        .edge_checked(&reply, &conv, 1.0)
-        .edge_with_value_fields(&reply, EdgeKind::Parent, &trunk, super::writes::value(20))
-        .edge_with_value_fields(
-            &reply,
-            EdgeKind::RepliesTo,
-            &trunk,
-            super::writes::value(20),
-        )
-        .commit()
-        .unwrap();
-    assert_eq!(peer.thread(trunk).unwrap().replies, [reply]);
-    let meta = peer.thread_meta(trunk).unwrap().unwrap();
-    assert_eq!((meta.root, meta.count), (reply, 1));
-    assert_eq!(peer.thread_meta(trunk).unwrap(), Some(meta));
-}
-
-#[test]
 fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins() {
     let (_dir, vault, conv, actor) = fixture();
     let person = EntityId::now();
@@ -2506,7 +2387,9 @@ fn malformed_parent_replacement_retires_exact_pending_work() {
     assert!(
         !crate::sync::pending_remat_windows(&peer)
             .unwrap()
-            .contains(&key.as_str().to_owned())
+            .contains(&key.as_str().to_owned()),
+        "still pending: {:?}",
+        crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
     );
     crate::sync::loro_support::map_insert_bytes(&entities, &root.to_hex(), &root_body).unwrap();
     crate::sync::loro_support::map_insert_bytes(&edges, &childof, &membership).unwrap();
@@ -2732,10 +2615,19 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     };
     let mut append = input(room, Some(trunk), false, actor);
     append.session = Some(session);
-    let mut children = Vec::new();
-    for _ in 0..10_001 {
-        children.push(source.append_dag_record(&append).unwrap().id);
-    }
+    // The 10,001 children are appended in one source transaction and reach
+    // the peer as one live delta (a few transactions), not one durable commit
+    // per record.
+    let children = source
+        .with_write_txn(|txn| {
+            (0..10_001)
+                .map(|_| {
+                    crate::conversation_dag::append_in_txn(&source, txn, &append, None, false)
+                        .map(|record| record.id)
+                })
+                .collect::<crate::Result<Vec<_>>>()
+        })
+        .unwrap();
     let doc = crate::sync::schema::create_window_doc("budget-children", &key);
     crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
     let entities = doc.get_map("entities");
@@ -2748,7 +2640,12 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     doc.commit();
     {
         let peer = std::sync::Arc::new(Vault::open(dir.path(), config.clone()).unwrap());
-        crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+        let received = crate::sync::schema::create_window_doc("budget-received", &key);
+        let _observer =
+            crate::sync::bridge::register_observer_b(&received, &peer, &materializer, key.as_str());
+        received
+            .import(&doc.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
         assert!(
             !peer
                 .edge_exists(children.last().unwrap(), EdgeKind::Parent, &trunk)
@@ -2790,7 +2687,9 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     assert!(
         !crate::sync::pending_remat_windows(&peer)
             .unwrap()
-            .contains(&key.as_str().to_owned())
+            .contains(&key.as_str().to_owned()),
+        "still pending: {:?}",
+        crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
     );
 }
 

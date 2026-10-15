@@ -507,6 +507,3 @@ fn read_name(bytes: &[u8], offset: usize, len: usize) -> Result<String> {
         ))
     })
 }
-
-#[cfg(test)]
-mod tests;

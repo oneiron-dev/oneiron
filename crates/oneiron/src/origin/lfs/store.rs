@@ -193,6 +193,19 @@ impl Vault {
             .map(|record| record.with_oid(oid)))
     }
 
+    /// The bytes every recorded LFS object declares, deleted ones still
+    /// awaiting reclamation included: what the object plane holds on disk,
+    /// before chunk sharing. A storage quota is judged against it.
+    pub fn lfs_object_bytes(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        OBJECTS
+            .iter_from(&self.store, &txn, &[])?
+            .try_fold(0_u64, |total, row| {
+                let (_, record) = row?;
+                Ok(total.saturating_add(record.size_bytes))
+            })
+    }
+
     /// Whether a live object has this exact declared size.
     pub fn has_lfs_object(&self, oid: LfsOid, size: u64) -> Result<bool> {
         Ok(self.lfs_object(oid)?.is_some_and(|o| o.size_bytes == size))
@@ -256,7 +269,7 @@ impl Vault {
             ref_name: ref_name.to_owned(),
             oid,
         };
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if super::lifecycle::DELETED.contains(&self.store, wtxn, &oid)?
                 || !OBJECTS.contains(&self.store, wtxn, &oid)?
             {
@@ -280,7 +293,7 @@ impl Vault {
         ref_name: &str,
     ) -> Result<u64> {
         let prefix = ref_scan_prefix(&repo_id, ref_name);
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let keys = REFS.scan_keys(&self.store, wtxn, &prefix)?;
             let removed = u64::try_from(keys.len())
                 .map_err(|_| Error::ArithmeticOverflow("lfs ref row count exceeds u64"))?;

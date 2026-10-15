@@ -395,12 +395,12 @@ pub(super) fn set_head_in_txn(
 impl Vault {
     /// Appends one immutable TURN and atomically updates topology and membership.
     pub fn append_dag_record(&self, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn(|txn| append_in_txn(self, txn, input, None, false))
+        self.with_write_txn_grouped(|txn| append_in_txn(self, txn, input, None, false))
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.
     pub fn move_head(&self, conversation: &EntityId, record: &EntityId) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             migrate_in_txn(self, txn, conversation)?;
             set_head_in_txn(self, txn, conversation, *record)
         })
@@ -421,7 +421,7 @@ impl Vault {
 
     /// Reads a coherent root-first page; never returns a truncated safety walk.
     pub fn main_line(&self, conversation: &EntityId, page: DagPageRequest) -> Result<DagPage> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             migrate_in_txn(self, txn, conversation)?;
             let head = read_id(&self.store, txn, HEAD, conversation)?;
             let path = graph::canonical_chain(&self.store, txn, conversation)?;
@@ -464,7 +464,7 @@ impl Vault {
 
     /// Rebuilds local canonical marks from HEAD without changing HEAD state.
     pub fn rebuild_conversation_canonical(&self, conversation: &EntityId) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             migrate_in_txn(self, txn, conversation)?;
             let records = edge_ids(
                 &self.store,

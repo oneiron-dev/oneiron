@@ -19,28 +19,50 @@ use super::types::{
 /// Passing a null, zero-length buffer is accepted. Passing a mutated buffer,
 /// an already-freed buffer, or memory allocated outside this crate is undefined
 /// behavior by the C ABI contract.
+///
+/// # Safety
+///
+/// `buffer` is the empty value or one this crate returned, unchanged and not
+/// yet freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_buffer_free(buffer: OneironBuffer) -> OneironStatus {
+pub unsafe extern "C" fn oneiron_buffer_free(buffer: OneironBuffer) -> OneironStatus {
     ffi_guard(|| free_vec(buffer.ptr, buffer.len, buffer.cap))
 }
 
 /// Free a Rust-owned edge array returned by this crate.
+///
+/// # Safety
+///
+/// `array` is the empty value or one this crate returned, unchanged and not
+/// yet freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_edge_info_array_free(array: OneironEdgeInfoArray) -> OneironStatus {
+pub unsafe extern "C" fn oneiron_edge_info_array_free(
+    array: OneironEdgeInfoArray,
+) -> OneironStatus {
     ffi_guard(|| free_vec(array.ptr, array.len, array.cap))
 }
 
 /// Free a Rust-owned scored entity array returned by this crate.
+///
+/// # Safety
+///
+/// `array` is the empty value or one this crate returned, unchanged and not
+/// yet freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_scored_entity_array_free(
+pub unsafe extern "C" fn oneiron_scored_entity_array_free(
     array: OneironScoredEntityArray,
 ) -> OneironStatus {
     ffi_guard(|| free_vec(array.ptr, array.len, array.cap))
 }
 
 /// Free a Rust-owned subtree entry array returned by this crate.
+///
+/// # Safety
+///
+/// `array` is the empty value or one this crate returned, unchanged and not
+/// yet freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_subtree_entry_array_free(
+pub unsafe extern "C" fn oneiron_subtree_entry_array_free(
     array: OneironSubtreeEntryArray,
 ) -> OneironStatus {
     ffi_guard(|| free_vec(array.ptr, array.len, array.cap))
@@ -52,8 +74,14 @@ pub extern "C" fn oneiron_subtree_entry_array_free(
 /// be null only when `dict_search_paths_len == 0`; otherwise it must point to
 /// an array of UTF-8 `OneironByteSlice` values. On success `out_vault` receives
 /// an opaque handle that must be released exactly once with `oneiron_vault_free`.
+///
+/// # Safety
+///
+/// `path_ptr` covers `path_len` readable bytes. A non-null
+/// `dict_search_paths` covers `dict_search_paths_len` slices, each covering
+/// its own readable bytes. A non-null `out_vault` is writable.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_open(
+pub unsafe extern "C" fn oneiron_vault_open(
     path_ptr: *const u8,
     path_len: usize,
     dimensions: usize,
@@ -88,6 +116,9 @@ pub extern "C" fn oneiron_vault_open(
                             )
                         })?;
                     let dimensions = config.dimensions;
+                    // Crash output never carries world text: the engine's hook goes in before
+                    // any vault opens (owner ruling 2026-10-14, fix 6).
+                    oneiron::panic_report::install_panic_hook();
                     let vault = engine(Vault::open(&path, config))?;
                     let handle = Box::into_raw(Box::new(OneironVault {
                         vault: Arc::new(vault),
@@ -103,9 +134,13 @@ pub extern "C" fn oneiron_vault_open(
 }
 
 /// Free an opaque vault handle returned by `oneiron_vault_open`.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open` that no other
+/// call is using and that is never used again.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_free(vault: *mut OneironVault) -> OneironStatus {
+pub unsafe extern "C" fn oneiron_vault_free(vault: *mut OneironVault) -> OneironStatus {
     ffi_guard(|| {
         if vault.is_null() {
             return OneironStatus::NullArg;
@@ -124,8 +159,14 @@ pub extern "C" fn oneiron_vault_free(vault: *mut OneironVault) -> OneironStatus 
 /// without repairing, rebuilding, or changing on-disk layout. On success,
 /// `out_buffer` receives Rust-owned bytes that must be released with
 /// `oneiron_buffer_free`.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. Each non-null input pointer covers its length in readable
+/// values and each non-null out pointer is writable, for the whole call.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_health_json(
+pub unsafe extern "C" fn oneiron_vault_health_json(
     vault: *mut OneironVault,
     out_buffer: *mut OneironBuffer,
 ) -> OneironStatus {
@@ -143,8 +184,14 @@ pub extern "C" fn oneiron_vault_health_json(
 }
 
 /// Store an entity blob.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. Each non-null input pointer covers its length in readable
+/// values and each non-null out pointer is writable, for the whole call.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_put_entity(
+pub unsafe extern "C" fn oneiron_vault_put_entity(
     vault: *mut OneironVault,
     id_ptr: *const u8,
     id_len: usize,
@@ -180,8 +227,14 @@ pub extern "C" fn oneiron_vault_put_entity(
 ///
 /// `entities` may be null only when `entities_len == 0`. Each payload pointer
 /// inside the array must be non-null for its byte length.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. A non-null `entities` covers `entities_len` inputs, and
+/// each input's `data` covers its own readable bytes, for the whole call.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_batch_put_entities(
+pub unsafe extern "C" fn oneiron_vault_batch_put_entities(
     vault: *mut OneironVault,
     entities: *const OneironEntityInput,
     entities_len: usize,
@@ -220,8 +273,14 @@ pub extern "C" fn oneiron_vault_batch_put_entities(
 /// Returns `OneironStatus::NotFound` if the entity does not exist. On success,
 /// `out_buffer` receives Rust-owned bytes that must be released with
 /// `oneiron_buffer_free`.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. Each non-null input pointer covers its length in readable
+/// values and each non-null out pointer is writable, for the whole call.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_get_entity(
+pub unsafe extern "C" fn oneiron_vault_get_entity(
     vault: *mut OneironVault,
     id_ptr: *const u8,
     id_len: usize,
@@ -245,8 +304,14 @@ pub extern "C" fn oneiron_vault_get_entity(
 /// Delete an entity by ID.
 ///
 /// `out_existed` receives `1` if the entity existed and `0` otherwise.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. Each non-null input pointer covers its length in readable
+/// values and each non-null out pointer is writable, for the whole call.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_delete_entity(
+pub unsafe extern "C" fn oneiron_vault_delete_entity(
     vault: *mut OneironVault,
     id_ptr: *const u8,
     id_len: usize,
@@ -268,8 +333,14 @@ pub extern "C" fn oneiron_vault_delete_entity(
 /// Check whether an entity exists.
 ///
 /// `out_exists` receives `1` if the entity exists and `0` otherwise.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. Each non-null input pointer covers its length in readable
+/// values and each non-null out pointer is writable, for the whole call.
 #[unsafe(no_mangle)]
-pub extern "C" fn oneiron_vault_entity_exists(
+pub unsafe extern "C" fn oneiron_vault_entity_exists(
     vault: *mut OneironVault,
     id_ptr: *const u8,
     id_len: usize,

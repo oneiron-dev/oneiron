@@ -1,0 +1,294 @@
+[
+ {
+  "title": "Kyoto in April",
+  "create_time": 1757840000.123,
+  "update_time": 1757840180.0,
+  "mapping": {
+   "client-created-root": {
+    "id": "client-created-root",
+    "message": null,
+    "parent": null,
+    "children": [
+     "sys-1"
+    ]
+   },
+   "sys-1": {
+    "id": "sys-1",
+    "parent": "client-created-root",
+    "children": [
+     "u-1"
+    ],
+    "message": {
+     "id": "sys-1",
+     "author": {
+      "role": "system",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": null,
+     "update_time": null,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       ""
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {
+      "is_visually_hidden_from_conversation": true
+     },
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "u-1": {
+    "id": "u-1",
+    "parent": "sys-1",
+    "children": [
+     "a-1"
+    ],
+    "message": {
+     "id": "u-1",
+     "author": {
+      "role": "user",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840010.25,
+     "update_time": null,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "Ana here. I'm planning a trip to Kyoto in early April. When do the cherry blossoms on the Philosopher's Path usually peak?"
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "a-1": {
+    "id": "a-1",
+    "parent": "u-1",
+    "children": [
+     "t-1"
+    ],
+    "message": {
+     "id": "a-1",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840015.5,
+     "update_time": null,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "They usually peak in the first week of April, a few days after the Kamo River trees."
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "t-1": {
+    "id": "t-1",
+    "parent": "a-1",
+    "children": [
+     "t-1r"
+    ],
+    "message": {
+     "id": "t-1",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840016.0,
+     "update_time": null,
+     "content": {
+      "content_type": "code",
+      "language": "unknown",
+      "text": "search(\"Kyoto sakura forecast\")"
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "browser",
+     "channel": null
+    }
+   },
+   "t-1r": {
+    "id": "t-1r",
+    "parent": "t-1",
+    "children": [
+     "a-2"
+    ],
+    "message": {
+     "id": "t-1r",
+     "author": {
+      "role": "tool",
+      "name": "browser",
+      "metadata": {}
+     },
+     "create_time": 1757840018.0,
+     "update_time": null,
+     "content": {
+      "content_type": "tether_browsing_display",
+      "result": "Forecast: full bloom 2 April",
+      "summary": null
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "a-2": {
+    "id": "a-2",
+    "parent": "t-1r",
+    "children": [
+     "u-2"
+    ],
+    "message": {
+     "id": "a-2",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840020.0,
+     "update_time": null,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "This year's forecast puts full bloom around 2 April, so arrive by the 1st."
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "u-2": {
+    "id": "u-2",
+    "parent": "a-2",
+    "children": [
+     "a-3",
+     "a-3b"
+    ],
+    "message": {
+     "id": "u-2",
+     "author": {
+      "role": "user",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840100.0,
+     "update_time": null,
+     "content": {
+      "content_type": "multimodal_text",
+      "parts": [
+       {
+        "content_type": "image_asset_pointer",
+        "asset_pointer": "file-service://file-Itinerary01",
+        "size_bytes": 48211,
+        "width": 1024,
+        "height": 768,
+        "fovea": null,
+        "metadata": null
+       },
+       "Here is my itinerary photo. Does a day trip to Osaka on day three make sense?"
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "a-3": {
+    "id": "a-3",
+    "parent": "u-2",
+    "children": [],
+    "message": {
+     "id": "a-3",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840105.0,
+     "update_time": null,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "Yes: Osaka is fifteen minutes away by Shinkansen, so a day trip is easy."
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   },
+   "a-3b": {
+    "id": "a-3b",
+    "parent": "u-2",
+    "children": [],
+    "message": {
+     "id": "a-3b",
+     "author": {
+      "role": "assistant",
+      "name": null,
+      "metadata": {}
+     },
+     "create_time": 1757840180.0,
+     "update_time": null,
+     "content": {
+      "content_type": "text",
+      "parts": [
+       "Day three in Osaka works well; the JR Special Rapid takes about thirty minutes and needs no reservation."
+      ]
+     },
+     "status": "finished_successfully",
+     "end_turn": true,
+     "weight": 1.0,
+     "metadata": {},
+     "recipient": "all",
+     "channel": null
+    }
+   }
+  },
+  "moderation_results": [],
+  "current_node": "a-3b",
+  "plugin_ids": null,
+  "conversation_id": "6a1f0c3e-2b44-4d1e-9a51-7f0e2c9b1a01",
+  "conversation_template_id": null,
+  "gizmo_id": null,
+  "is_archived": false,
+  "safe_urls": [],
+  "default_model_slug": "gpt-4o",
+  "id": "6a1f0c3e-2b44-4d1e-9a51-7f0e2c9b1a01"
+ }
+]

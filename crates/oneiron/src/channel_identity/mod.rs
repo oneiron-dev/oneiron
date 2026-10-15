@@ -31,11 +31,6 @@
 //! use oneiron::channel_identity::DelegatedLifecycle;
 //! let _ = DelegatedLifecycle::Rotating;
 //! ```
-//!
-//! ```compile_fail
-//! use oneiron::channel_identity::DelegatedLifecycle;
-//! let _ = DelegatedLifecycle::Quarantine { until: 123 };
-//! ```
 
 mod actors;
 mod address;

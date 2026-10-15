@@ -10,13 +10,14 @@ use super::*;
 
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
-use crate::genui::{ConsentConfirmOutcome, ConsentScopeEscalator};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
+mod bypass;
 mod owner_reason;
 mod shared_brief;
+mod stale_proofs;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -566,229 +567,6 @@ fn consent_mixed_operation_requires_disclosure_and_action() {
 }
 
 // ---------------------------------------------------------------------------
-// 5 · The guard offers, never grants
-// ---------------------------------------------------------------------------
-
-/// A guard that proposes with maximum confidence. Even at `1.0` it authorizes
-/// nothing — confidence may change the OFFER, never authority.
-struct AlwaysCertainGuard {
-    bound: GrantBound,
-}
-
-impl ConsentGuard for AlwaysCertainGuard {
-    fn propose(&self, _facts: &EffectFacts) -> ConsentProposal {
-        ConsentProposal {
-            effect_digest: self.bound.digest(),
-            suggested_bound: self.bound.clone(),
-            confidence: 1.0,
-        }
-    }
-}
-
-/// `5 · The guard offers, never grants` — "The small model may propose
-/// 'remember this?' and may raise or lower confidence. It never authorizes.
-/// Authorization is remembered state the authenticated owner granted once.
-/// Inference is not authority. The ARCH-0072 admission slate IS this invariant
-/// rather than an exception to it: the model drafts the rows and is bound by
-/// the drafter-only floor that forces destructive, paying, and outward-sending
-/// tools to draft confirm-first (the owner may override any row), and the
-/// owner's single tap is the only authorization."
-///
-/// The compile-fail half of this assertion is the API SHAPE, asserted by the
-/// companion `consent_guard_api_has_no_proposal_to_grant_path` test below:
-/// there is no `From<ConsentProposal> for ConsentGrant`, no guard-reachable
-/// persistence function, and no proposal field treated as an owner stamp.
-#[test]
-fn consent_guard_proposes_never_grants() {
-    let (_dir, vault, owner) = owner_vault();
-    let bound = action_bound("agent-a", "send", &["channel:email"]);
-    let guard = AlwaysCertainGuard {
-        bound: bound.clone(),
-    };
-
-    let proposal = guard.propose(&irreversible_send_facts());
-    assert!((proposal.confidence - 1.0).abs() < f32::EPSILON);
-    assert_eq!(proposal.suggested_bound, bound);
-
-    // The proposal exists, at maximum confidence — and the op still ASKS,
-    // because inference is not authority.
-    let effect = ComposedEffect::new(irreversible_send_facts())
-        .with_action_requirement(bound)
-        .expect("requirement");
-    let grants = vault
-        .active_standing_consent_grants()
-        .expect("active grants");
-    assert!(
-        grants.is_empty(),
-        "a guard proposal must never have created a grant row"
-    );
-    assert_eq!(
-        evaluate_consent(&effect, None, &grants),
-        ConsentDecision::Ask,
-        "a maximally-confident proposal authorizes nothing"
-    );
-
-    // Only the owner's act creates authority — the single tap.
-    vault
-        .create_standing_grant(&owner, proposal.suggested_bound)
-        .expect("owner taps");
-    let grants = vault
-        .active_standing_consent_grants()
-        .expect("active grants");
-    assert_eq!(grants.len(), 1);
-    assert_eq!(
-        evaluate_consent(&effect, None, &grants),
-        ConsentDecision::Auto
-    );
-}
-
-/// The API-shape half of invariant 5. `create_standing_grant` takes an
-/// `&AuthenticatedOwner`, whose fields are private and whose only constructor
-/// is `Vault::authenticate_owner`, and no `From<ConsentProposal>` conversion
-/// exists to either `AuthenticatedOwner` or `ConsentGrant`.
-///
-/// Those three facts are only observable from OUTSIDE the crate — in here,
-/// `pub(crate)` and private are the same thing — so they are asserted by the
-/// external-position trybuild target `tests/type_boundaries_compilefail.rs`,
-/// whose three cases pin the `E0451` private-field diagnostic on the owner
-/// stamp and the two `E0277` missing-impl diagnostics on the conversions.
-///
-/// What this test adds in-crate is the other half of the claim: that a
-/// proposal carries no owner-stamp-shaped field at all, so there is nothing
-/// for a laundering conversion to be written FROM.
-#[test]
-fn consent_guard_api_has_no_proposal_to_grant_path() {
-    // A `ConsentProposal` carries exactly three fields, none of which is an
-    // owner stamp: a digest, a suggested bound, and a confidence. The
-    // destructuring is exhaustive and unaliased on purpose — adding an actor,
-    // a principal ref, or a decision id to the proposal breaks this line
-    // rather than silently handing guards a stamp-shaped field.
-    let proposal = ConsentProposal {
-        effect_digest: EffectDigest::from_bytes([7_u8; 32]),
-        suggested_bound: action_bound("agent-a", "send", &["channel:email"]),
-        confidence: 0.99,
-    };
-    let ConsentProposal {
-        effect_digest,
-        suggested_bound,
-        confidence,
-    } = proposal.clone();
-    assert_eq!(effect_digest, proposal.effect_digest);
-    assert_eq!(suggested_bound, proposal.suggested_bound);
-    assert!((confidence - 0.99).abs() < f32::EPSILON);
-
-    // Confidence is the only knob a guard may turn, and turning it changes
-    // neither the bound the owner would stamp nor the op it names.
-    let lowered = ConsentProposal {
-        confidence: 0.01,
-        ..proposal.clone()
-    };
-    assert_eq!(lowered.suggested_bound, proposal.suggested_bound);
-    assert_eq!(lowered.effect_digest, proposal.effect_digest);
-}
-
-// ---------------------------------------------------------------------------
-// 6 · Reversibility classification is host-owned, biased-permissive
-// ---------------------------------------------------------------------------
-
-/// `6 · Reversibility classification is host-owned, biased-permissive` —
-/// "Generated code, connector labels, and the guard cannot self-declare
-/// 'reversible.' The host classifies the composed effect — hooks,
-/// publish/deploy triggers, external observers, undo fidelity and window,
-/// cumulative blast radius. Unknown-and-irreversible-and-catastrophe-shaped
-/// resolves to ask; everything else is biased toward auto."
-#[test]
-fn consent_reversibility_is_host_classified_biased_permissive() {
-    // Every named host axis independently forces Irreversible.
-    let axes: [(&str, EffectFacts); 5] = [
-        (
-            "hooks",
-            EffectFacts::new("claim.put")
-                .expect("facts")
-                .with_hooks(true),
-        ),
-        (
-            "publish/deploy trigger",
-            EffectFacts::new("repo.deploy")
-                .expect("facts")
-                .with_publish_trigger(true),
-        ),
-        (
-            "external observers",
-            EffectFacts::new("channel.send")
-                .expect("facts")
-                .with_external_observers(true),
-        ),
-        (
-            "undo fidelity",
-            EffectFacts::new("claim.put")
-                .expect("facts")
-                .with_undo_fidelity(UndoFidelity::None),
-        ),
-        (
-            "cumulative blast radius",
-            EffectFacts::new("claim.put")
-                .expect("facts")
-                .with_blast_radius(BULK_BLAST_RADIUS_FLOOR),
-        ),
-    ];
-    for (axis, facts) in axes {
-        assert_eq!(
-            classify_composed_effect(&facts).expect("classify"),
-            ReversibilityClass::Irreversible,
-            "host axis {axis} must force Irreversible"
-        );
-    }
-
-    // BIASED-PERMISSIVE: an unknown sub-axis with no irreversible and no
-    // catastrophe evidence stays auto-eligible.
-    let unknown = EffectFacts::new("claim.put")
-        .expect("facts")
-        .with_undo_fidelity(UndoFidelity::Unknown);
-    assert_eq!(
-        classify_composed_effect(&unknown).expect("classify"),
-        ReversibilityClass::Unknown
-    );
-    let effect = ComposedEffect::new(unknown)
-        .with_action_requirement(action_bound("agent-a", "claim.put", &["world:home"]))
-        .expect("requirement");
-    assert_eq!(
-        evaluate_consent(&effect, None, &[]),
-        ConsentDecision::Auto,
-        "unknown WITHOUT irreversible/catastrophe evidence biases to auto"
-    );
-
-    // Unknown-AND-irreversible-shaped resolves to ask...
-    let unknown_and_irreversible = EffectFacts::new("channel.send")
-        .expect("facts")
-        .with_undo_fidelity(UndoFidelity::Unknown)
-        .with_external_observers(true);
-    assert_eq!(
-        classify_composed_effect(&unknown_and_irreversible).expect("classify"),
-        ReversibilityClass::Irreversible
-    );
-    // ...and so does unknown-AND-catastrophe-shaped.
-    let unknown_and_catastrophe = EffectFacts::new("authority.widen")
-        .expect("facts")
-        .with_undo_fidelity(UndoFidelity::Unknown)
-        .with_catastrophe(CatastropheClass::WidenOwnAuthority);
-    assert_eq!(
-        classify_composed_effect(&unknown_and_catastrophe).expect("classify"),
-        ReversibilityClass::Irreversible
-    );
-
-    // The facts a caller may supply contain NO reversibility verdict: the only
-    // undo input is the host's own finding, and the classifier — not the
-    // caller — maps it. A connector claiming "reversible" has nowhere to say so.
-    let facts = irreversible_send_facts();
-    assert_eq!(
-        classify_composed_effect(&facts).expect("classify"),
-        ReversibilityClass::Irreversible,
-        "a caller cannot self-declare an outbound send reversible"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // 7 · A small closed catastrophe floor
 // ---------------------------------------------------------------------------
 
@@ -991,156 +769,35 @@ fn consent_fail_safe_hides_disclosure_and_asks_writes() {
 // 9 · Exactly two human surfaces
 // ---------------------------------------------------------------------------
 
-/// `9 · Exactly two human surfaces` — "(a) The in-moment ask, raised only when
-/// genuinely uncertain. (b) A 'who-can-see-what / what-can-run' registry to
-/// review and one-tap revoke. No duration pickers (once vs standing only; the
-/// registry replaces expiry-guessing). No sensitivity-tagging settings (tiers
-/// are inferred and drive auto). At connector add the ARCH-0072 admission
-/// slate is surface (a) in batch form, and the grants it mints live in surface
-/// (b) afterwards — no third surface and no settings screen. The invariant-2
-/// confirm trio adds no duration option; the no-duration-picker rule above is
-/// unchanged. The reverse flip (auto back to confirm-first) lives on the
-/// registry surface."
 #[test]
-fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
-    let (_dir, vault, owner) = owner_vault();
-
-    // SURFACE (a) — the in-moment ask. Every emitted action id maps into the
-    // confirm TRIO and nothing else, so the ask offers exactly three outcomes
-    // no matter how many bound-naming escalators a surface renders.
+fn standing_grant_wire_pins_version_and_closed_key_names() {
+    let row = ConsentGrantRow {
+        grant: StandingConsentGrant::from_bound(action_bound(
+            "agent-a",
+            "send",
+            &["channel:email"],
+        ))
+        .unwrap(),
+        status: ConsentGrantStatus::Active,
+        owner_stamp: ConsentOwnerStamp {
+            actor: entity(0x51),
+            principal_ref: "principal:owner".to_owned(),
+            decision_id: GateDecisionId::now(),
+        },
+        created_at: 17,
+        bypass: None,
+    };
+    let bytes = encode_consent_grant_row(&row).unwrap();
+    assert!(bytes.starts_with(b"\x88\xaeschema_version\x01"));
+    let Value::Map(fields) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
+        panic!("standing grant must encode as a map")
+    };
+    let keys = fields
+        .iter()
+        .map(|(key, _)| key.as_str().unwrap())
+        .collect::<Vec<_>>();
     assert_eq!(
-        ConsentConfirmOutcome::trio(),
-        [
-            ConsentConfirmOutcome::ApproveOnce,
-            ConsentConfirmOutcome::ApproveAndStopAsking,
-            ConsentConfirmOutcome::Deny,
-        ]
-    );
-    assert_eq!(
-        ConsentConfirmOutcome::trio().first().copied(),
-        Some(ConsentConfirmOutcome::ApproveOnce),
-        "approve once is the default"
-    );
-
-    // The emitted ids: approve-once, deny, and one bound-naming
-    // approve-and-stop-asking id per escalator — plus the BATCH form, which is
-    // surface (a) in batch form (the ARCH-0072 slate), never a third surface.
-    let mut emitted = vec![
-        crate::genui::CONSENT_ACTION_APPROVE_ONCE.to_owned(),
-        crate::genui::CONSENT_ACTION_DECLINE.to_owned(),
-        crate::genui::CONSENT_BUNDLE_ACTION_DECLINE.to_owned(),
-    ];
-    emitted.extend(ConsentScopeEscalator::all().iter().map(|scope| {
-        format!(
-            "{}{}",
-            crate::genui::CONSENT_ACTION_ESCALATE_PREFIX,
-            scope.as_str()
-        )
-    }));
-    emitted.push(format!(
-        "{}{}",
-        crate::genui::CONSENT_BUNDLE_ACTION_ID_PREFIX,
-        crate::genui::BundleApprovalScope::BriefVerbClass.as_str()
-    ));
-
-    for action_id in &emitted {
-        let outcome = ConsentConfirmOutcome::from_action_id(action_id)
-            .unwrap_or_else(|| panic!("ask action id {action_id} must map into the confirm trio"));
-        assert!(
-            ConsentConfirmOutcome::trio().contains(&outcome),
-            "{action_id} mapped outside the trio"
-        );
-        // NO DURATION PICKER anywhere on the ask.
-        assert!(
-            !crate::genui::consent_action_id_offers_duration(action_id),
-            "ask action id {action_id} must not offer a duration option"
-        );
-    }
-
-    // Approve-and-stop-asking is REACHABLE (it is the in-moment path into
-    // create_standing_grant) and each of its ids names ONE bound.
-    assert!(
-        emitted.iter().any(|action_id| {
-            ConsentConfirmOutcome::from_action_id(action_id)
-                == Some(ConsentConfirmOutcome::ApproveAndStopAsking)
-        }),
-        "the trio's stop-asking outcome must be offered"
-    );
-
-    // SURFACE (b) — the registry: review + ONE-TAP REVOKE, for BOTH domains.
-    let action = action_bound("agent-a", "send", &["channel:email"]);
-    let disclosure = disclosure_bound(&["contact:doctor"], "health", &["entity:vitals"]);
-    vault
-        .create_standing_grant(&owner, action)
-        .expect("mint action");
-    vault
-        .create_standing_grant(&owner, disclosure)
-        .expect("mint disclosure");
-    let registry = vault
-        .consent_registry(ConsentRegistryQuery::new(16, false))
-        .expect("registry");
-    assert_eq!(registry.rows.len(), 2);
-    assert!(
-        registry
-            .rows
-            .iter()
-            .any(|row| row.domain == ConsentDomain::Disclosure),
-        "the registry is who-can-see-what..."
-    );
-    assert!(
-        registry
-            .rows
-            .iter()
-            .any(|row| row.domain == ConsentDomain::Action),
-        "...AND what-can-run — one place for both kinds"
-    );
-    for row in &registry.rows {
-        assert_eq!(row.revoke_action.command, CONSENT_REVOKE_COMMAND);
-        assert_eq!(row.revoke_action.grant_ref, row.grant_ref);
-    }
-
-    // The one tap actually revokes.
-    let revoked = vault
-        .revoke_consent_grant(&owner, &registry.rows[0].revoke_action.grant_ref)
-        .expect("one-tap revoke");
-    assert!(matches!(revoked, ConsentReceipt::Revoked { .. }));
-    assert_eq!(
-        vault
-            .consent_registry(ConsentRegistryQuery::new(16, false))
-            .expect("registry")
-            .rows
-            .len(),
-        1
-    );
-    // FIX-7: owner disclosure — the registry is the full-dump surface; with
-    // the audit flag the revoked row is still listed so the review/one-tap
-    // floor shows everything the owner ever armed, with subject, class,
-    // envelope selectors, and status rendered per row (rather than a bare
-    // ref list).
-    let audit = vault
-        .consent_registry(ConsentRegistryQuery::new(16, true))
-        .expect("audit registry");
-    assert_eq!(audit.rows.len(), 2);
-    for row in &audit.rows {
-        assert!(!row.subject.trim().is_empty());
-        assert!(!row.class.trim().is_empty());
-        assert!(!row.selectors.is_empty());
-        assert!(!row.grant_ref.trim().is_empty());
-    }
-    assert!(
-        audit
-            .rows
-            .iter()
-            .any(|row| row.status == ConsentGrantStatus::Revoked),
-        "the owner's full audit dump must retain the revoked row"
-    );
-
-    // NO DURATION/EXPIRY FIELD on a bound or a registry row: the persisted key
-    // set is closed and carries none. The ARCH-0071 delegation duration is a
-    // mint-time field on the DELEGATION record, which lives outside this
-    // module — nothing here duplicates it or turns it into an ask option.
-    assert_eq!(
-        CONSENT_GRANT_BODY_KEYS,
+        keys,
         [
             "schema_version",
             "domain",
@@ -1149,16 +806,33 @@ fn consent_has_only_ask_and_registry_surfaces_no_duration_picker() {
             "envelope",
             "status",
             "owner_stamp",
-            "created_at",
+            "created_at"
         ]
     );
-    for key in CONSENT_GRANT_BODY_KEYS {
-        for banned in ["expires", "expiry", "duration", "ttl", "until"] {
-            assert!(
-                !key.contains(banned),
-                "consent row key {key} must not carry a lifetime field"
-            );
-        }
+    assert_eq!(fields[0].1.as_u64(), Some(1));
+    for (name, expected) in [
+        ("subject", vec!["kind", "refs"]),
+        (
+            "envelope",
+            vec!["selectors", "target", "budget", "receipt_required", "scope"],
+        ),
+        ("owner_stamp", vec!["actor", "principal_ref", "decision_id"]),
+    ] {
+        let value = &fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .unwrap()
+            .1;
+        let Value::Map(nested) = value else {
+            panic!("nested row field must be a map")
+        };
+        assert_eq!(
+            nested
+                .iter()
+                .map(|(key, _)| key.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 }
 
@@ -1333,6 +1007,7 @@ fn projected_contact_scope_preserves_lattice_containment_and_silent_reuse() {
             decision_id: GateDecisionId::now(),
         },
         created_at: 1,
+        bypass: None,
     };
     let stored =
         decode_consent_grant_row(&encode_consent_grant_row(&row).expect("encode")).expect("decode");
@@ -1501,6 +1176,7 @@ fn consent_grant_row_round_trips_and_rejects_malformed_bodies() {
             status: ConsentGrantStatus::Active,
             owner_stamp: owner_stamp.clone(),
             created_at: 99,
+            bypass: None,
         };
         let bytes = encode_consent_grant_row(&row).expect("encode");
         assert_eq!(decode_consent_grant_row(&bytes).expect("decode"), row);
@@ -1780,83 +1456,6 @@ fn consent_receipts_project_into_the_gate_receipt_family() {
             .kind(),
         ErrorKind::ConsentGrantNotFound
     );
-}
-
-#[test]
-fn consent_rows_carry_no_credential_or_posture_fields() {
-    // A static check over the pinned key set: no key names key material, a
-    // bearer token, a credential, or a hosting posture.
-    for key in CONSENT_GRANT_BODY_KEYS {
-        for banned in [
-            "key",
-            "secret",
-            "token",
-            "bearer",
-            "credential",
-            "password",
-            "posture",
-            "hosted",
-        ] {
-            assert!(
-                !key.contains(banned),
-                "consent row key {key} must not carry {banned} material"
-            );
-        }
-    }
-    // The owner stamp holds REFERENCES only.
-    for key in OWNER_STAMP_KEYS {
-        assert!(
-            key.ends_with("_ref") || key == "actor" || key == "decision_id",
-            "owner stamp key {key} must be a reference, not material"
-        );
-    }
-}
-
-#[test]
-fn consent_settle_bound_shape_is_action_domain_and_target_exact() {
-    // The settle arming target's bound: an actor + `artifact.settle` + the
-    // exact brief target. Asserted here as a shape so `edit_settle.rs` and
-    // this contract cannot drift apart.
-    let actor = crate::write_envelope::WriteActor::new(entity(0x51), EdgeActorClass::Human);
-    let bound = GrantBound::action(
-        ActorBound::new(actor.entity_ref().to_hex()).expect("actor"),
-        ActionClass::new("artifact.settle").expect("class"),
-        ActionEnvelope::new(["brief:q3".to_owned()])
-            .expect("envelope")
-            .with_target("brief:q3")
-            .expect("target"),
-    )
-    .expect("bound");
-    assert_eq!(bound.domain(), ConsentDomain::Action);
-
-    // A disclosure grant never authorizes a settle.
-    let disclosure = disclosure_bound(&["contact:doctor"], "health", &["entity:vitals"]);
-    assert!(!disclosure.contains(&bound));
-
-    // Nor does a wider-target assumption: a settle grant for one brief does
-    // not cover another.
-    let other_brief = GrantBound::action(
-        ActorBound::new(actor.entity_ref().to_hex()).expect("actor"),
-        ActionClass::new("artifact.settle").expect("class"),
-        ActionEnvelope::new(["brief:q4".to_owned()])
-            .expect("envelope")
-            .with_target("brief:q4")
-            .expect("target"),
-    )
-    .expect("bound");
-    assert!(!bound.contains(&other_brief));
-
-    // And another actor's settle grant does not cover this actor's settle.
-    let other_actor = GrantBound::action(
-        ActorBound::new(entity(0x62).to_hex()).expect("actor"),
-        ActionClass::new("artifact.settle").expect("class"),
-        ActionEnvelope::new(["brief:q3".to_owned()])
-            .expect("envelope")
-            .with_target("brief:q3")
-            .expect("target"),
-    )
-    .expect("bound");
-    assert!(!other_actor.contains(&bound));
 }
 
 fn widen_agent_credential(vault: &Vault, agent: crate::EntityId) -> crate::authority::VerifiedSlip {

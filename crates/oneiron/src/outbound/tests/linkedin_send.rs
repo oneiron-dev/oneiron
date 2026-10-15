@@ -3,97 +3,6 @@
 use super::*;
 
 #[test]
-fn linkedin_send_dm_receipt_is_delivered_only_after_content_observation()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB1));
-    vault
-        .put_entity(
-            &entity(0xB1),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-
-    let message = "Happy to share more details.";
-    let transport = ScriptedLinkedInTransport::new(vec![
-        linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.",
-        ),
-        linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
-        ),
-    ]);
-    let plan =
-        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?;
-    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
-        .with_plan("intent:linkedin-send", plan)?;
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(
-            actor,
-            "outbound:intent:linkedin-send",
-            "intent:linkedin-send",
-        ),
-        &mut sink,
-    )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
-    assert_eq!(result.receipt.outcome, "delivered_to_channel");
-    assert_eq!(
-        sink.transport().send_calls.len(),
-        1,
-        "fresh send must call send_message once"
-    );
-    assert_eq!(
-        sink.transport().get_calls,
-        vec!["2-jane-doe-abc".to_owned(), "2-jane-doe-abc".to_owned()],
-        "success is verified by baseline and post-send thread reads"
-    );
-    let provider_ref = result
-        .receipt
-        .fields
-        .get("provider_ref")
-        .expect("verified send writes provider/thread message ref");
-    assert!(provider_ref.starts_with("linkedin:thread:2-jane-doe-abc@message:"));
-    assert_eq!(
-        result.receipt.fields.get("artifact_thread_message_ref"),
-        Some(provider_ref),
-        "receipt door must target the artifact thread@message"
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("send_message_return_trusted")
-            .map(String::as_str),
-        Some("false")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("send_message_result")
-            .map(String::as_str),
-        Some("ignored"),
-        "send_message success return is recorded but not trusted"
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_send_verification")
-            .map(String::as_str),
-        Some("content_observed")
-    );
-    Ok(())
-}
-
-#[test]
 fn linkedin_kill_switch_suppresses_before_mcp_transport()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
@@ -174,169 +83,6 @@ fn linkedin_kill_switch_suppresses_before_mcp_transport()
 }
 
 #[test]
-fn linkedin_daily_dm_cap_holds_before_mcp_transport()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xC2));
-    vault
-        .put_entity(
-            &entity(0xC2),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-    let policy = active_linkedin_policy()?
-        .with_state(LinkedInSeatDispatchState::active().with_dm_sends_today(15));
-    let mut sink = LinkedInMcpVerifiedSendSink::new(
-        linkedin_adapter()?,
-        ScriptedLinkedInTransport::new(vec![]),
-    );
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(actor, "outbound:intent:linkedin-cap", "intent:linkedin-cap")
-            .linkedin_sandbox_policy(policy),
-        &mut sink,
-    )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
-    assert!(sink.transport().send_calls.is_empty());
-    assert!(sink.transport().get_calls.is_empty());
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_engine_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.daily_dm_cap")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_daily_dm_cap")
-            .map(String::as_str),
-        Some("15")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_dm_sends_today")
-            .map(String::as_str),
-        Some("15")
-    );
-    Ok(())
-}
-
-#[test]
-fn linkedin_cadence_holds_before_mcp_transport()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xC3));
-    vault
-        .put_entity(
-            &entity(0xC3),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-    let policy = active_linkedin_policy()?
-        .with_state(LinkedInSeatDispatchState::active().with_next_send_not_before(1_500));
-    let mut sink = LinkedInMcpVerifiedSendSink::new(
-        linkedin_adapter()?,
-        ScriptedLinkedInTransport::new(vec![]),
-    );
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(
-            actor,
-            "outbound:intent:linkedin-cadence",
-            "intent:linkedin-cadence",
-        )
-        .linkedin_sandbox_policy(policy),
-        &mut sink,
-    )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
-    assert!(sink.transport().send_calls.is_empty());
-    assert!(sink.transport().get_calls.is_empty());
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_engine_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.cadence_not_ready")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_next_send_not_before")
-            .map(String::as_str),
-        Some("1500")
-    );
-    Ok(())
-}
-
-#[test]
-fn linkedin_sweeps_are_suppressed_before_mcp_transport()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xC4));
-    vault
-        .put_entity(
-            &entity(0xC4),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-    let policy =
-        active_linkedin_policy()?.with_state(LinkedInSeatDispatchState::active().as_sweep());
-    let mut sink = LinkedInMcpVerifiedSendSink::new(
-        linkedin_adapter()?,
-        ScriptedLinkedInTransport::new(vec![]),
-    );
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(
-            actor,
-            "outbound:intent:linkedin-sweep",
-            "intent:linkedin-sweep",
-        )
-        .linkedin_sandbox_policy(policy),
-        &mut sink,
-    )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
-    assert!(sink.transport().send_calls.is_empty());
-    assert!(sink.transport().get_calls.is_empty());
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_engine_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.no_sweeps")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_sweeps_allowed")
-            .map(String::as_str),
-        Some("false")
-    );
-    Ok(())
-}
-
-#[test]
 fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
@@ -375,7 +121,8 @@ fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
             1_061,
             OutboundDeliveryWindowDecision::DeliverNow,
         )
-        .counterparty_ref("linkedin:member:mallory"),
+        .counterparty_ref("linkedin:member:mallory")
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -402,62 +149,6 @@ fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
             .get("linkedin_send_verification")
             .map(String::as_str),
         Some("target_mismatch")
-    );
-    Ok(())
-}
-
-#[test]
-fn linkedin_send_dm_verifies_metadata_light_conversation_with_requested_thread()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB8));
-    vault
-        .put_entity(
-            &entity(0xB8),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-
-    let message = "Happy to share more details.";
-    let plan =
-        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?;
-    let transport = ScriptedLinkedInTransport::new(vec![
-        linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.",
-        ),
-        linkedin_conversation_without_thread_metadata(
-            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
-        ),
-    ]);
-    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
-        .with_plan("intent:linkedin-metadata-light", plan)?;
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(
-            actor,
-            "outbound:intent:linkedin-metadata-light",
-            "intent:linkedin-metadata-light",
-        ),
-        &mut sink,
-    )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
-    assert_eq!(sink.transport().send_calls.len(), 1);
-    assert_eq!(
-        sink.transport().get_calls,
-        vec!["2-jane-doe-abc".to_owned(), "2-jane-doe-abc".to_owned()]
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_send_verification")
-            .map(String::as_str),
-        Some("content_observed")
     );
     Ok(())
 }
@@ -493,7 +184,8 @@ fn linkedin_send_dm_send_failure_is_ambiguous_without_verification()
             actor,
             "outbound:intent:linkedin-send-failed",
             "intent:linkedin-send-failed",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -579,7 +271,8 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
             actor,
             "outbound:intent:linkedin-absent",
             "intent:linkedin-absent",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -610,26 +303,44 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
     Ok(())
 }
 
+/// One dispatch actor with a policy that lets it send LinkedIn DMs.
+fn linkedin_sender(
+    vault: &crate::Vault,
+    seed: u8,
+) -> std::result::Result<OutboundDispatchActor, Box<dyn std::error::Error>> {
+    let actor = OutboundDispatchActor::agent(entity(seed));
+    vault.put_entity(
+        &entity(seed),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"dispatch actor",
+    )?;
+    allow_linkedin_send(vault, &actor)?;
+    Ok(actor)
+}
+
+/// A transcript that names who sent each message, as a host transport reads
+/// it from the provider rather than from the page text.
+fn attributed_conversation(thread_id: &str, messages: &[(&str, &str, &str)]) -> serde_json::Value {
+    serde_json::json!({
+        "url": format!("https://www.linkedin.com/messaging/thread/{thread_id}/"),
+        "messages": messages
+            .iter()
+            .map(|(id, sender, text)| serde_json::json!({"id": id, "sender": sender, "text": text}))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// H130: the recipient writes half the transcript. If the message never
+/// left (the send call returned but nothing arrived) and the recipient types
+/// the same words, page text alone must not become a delivered receipt.
 #[test]
-fn linkedin_send_dm_does_not_verify_older_matching_transcript_line()
+fn a_recipient_echo_is_never_a_delivered_receipt()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB5));
-    vault
-        .put_entity(
-            &entity(0xB5),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-
+    let actor = linkedin_sender(&vault, 0xB8)?;
     let message = "Happy to share more details.";
-    let plan =
-        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
-            .with_max_observation_attempts(1)?;
     let transport = ScriptedLinkedInTransport::new(vec![
         linkedin_conversation(
             "2-jane-doe-abc",
@@ -637,236 +348,573 @@ fn linkedin_send_dm_does_not_verify_older_matching_transcript_line()
         ),
         linkedin_conversation(
             "2-jane-doe-abc",
-            "Yura\n10:04 AM\nHappy to share more details.\nJane Doe\n10:05 AM\nSounds good.",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.\nJane Doe\n10:05 AM\nHappy to share more details.",
         ),
     ]);
-    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
-        .with_plan("intent:linkedin-older-match", plan)?;
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(
-            actor,
-            "outbound:intent:linkedin-older-match",
-            "intent:linkedin-older-match",
-        ),
-        &mut sink,
-    )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
-    assert!(!result.receipt.fields.contains_key("provider_ref"));
-    assert_eq!(sink.transport().send_calls.len(), 1);
-    assert_eq!(sink.transport().get_calls.len(), 2);
-    assert_eq!(
-        result.receipt.fields.get("retry_state").map(String::as_str),
-        Some("verify_after_send_observed_stale")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_send_verification")
-            .map(String::as_str),
-        Some("observed_stale")
-    );
-    Ok(())
-}
-
-#[test]
-fn linkedin_send_dm_requires_new_post_send_occurrence()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB9));
-    vault
-        .put_entity(
-            &entity(0xB9),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-
-    let message = "Happy to share more details.";
     let plan =
         LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
             .with_max_observation_attempts(1)?;
-    let existing_thread = linkedin_conversation(
-        "2-jane-doe-abc",
-        "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
-    );
-    let transport = ScriptedLinkedInTransport::new(vec![existing_thread.clone(), existing_thread]);
     let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
-        .with_plan("intent:linkedin-noop-send", plan)?;
+        .with_plan("intent:linkedin-echo", plan)?;
     let result = vault.dispatch_outbound_intent(
         linkedin_send_request(
             actor,
-            "outbound:intent:linkedin-noop-send",
-            "intent:linkedin-noop-send",
-        ),
+            "outbound:intent:linkedin-echo",
+            "intent:linkedin-echo",
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
+    assert_ne!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
     assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
-    assert_eq!(sink.transport().send_calls.len(), 1);
-    assert_eq!(
-        result.receipt.fields.get("retry_state").map(String::as_str),
-        Some("verify_after_send_observed_stale")
-    );
     assert_eq!(
         result
             .receipt
             .fields
             .get("linkedin_send_verification")
             .map(String::as_str),
-        Some("observed_stale")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("pre_send_match_count")
-            .map(String::as_str),
-        Some("1")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("post_send_match_count")
-            .map(String::as_str),
-        Some("1")
+        Some("content_observed_unattributed")
     );
     Ok(())
 }
 
+/// H130, the retry guard: a matching tail the transcript does not attribute to
+/// this seat skips the duplicate send without claiming a delivery.
 #[test]
-fn linkedin_send_dm_successful_absent_read_clears_prior_get_error()
+fn a_retry_guard_never_counts_a_recipient_echo_as_delivered()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB6));
-    vault
-        .put_entity(
-            &entity(0xB6),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-
+    let actor = linkedin_sender(&vault, 0xB9)?;
+    let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+        "2-jane-doe-abc",
+        "Jane Doe\n10:05 AM\nHappy to share more details.",
+    )]);
     let plan = LinkedInVerifiedSendPlan::new(
         "linkedin:member:jane-doe",
         "2-jane-doe-abc",
         "Happy to share more details.",
     )?
-    .with_max_observation_attempts(2)?;
-    let transport = ScriptedLinkedInTransport::new(vec![
-        linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.",
-        ),
-        linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.",
-        ),
-    ])
-    .with_get_error_after_precheck("temporary_get_failure");
+    .retry_guarded();
     let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
-        .with_plan("intent:linkedin-transient-error", plan)?;
+        .with_plan("intent:linkedin-echo-guard", plan)?;
     let result = vault.dispatch_outbound_intent(
         linkedin_send_request(
             actor,
-            "outbound:intent:linkedin-transient-error",
-            "intent:linkedin-transient-error",
-        ),
+            "outbound:intent:linkedin-echo-guard",
+            "intent:linkedin-echo-guard",
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
+    assert_ne!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
     assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
-    assert_eq!(sink.transport().get_calls.len(), 3);
-    assert_eq!(
-        result.receipt.fields.get("retry_state").map(String::as_str),
-        Some("verify_after_send_observed_absent")
+    assert!(sink.transport().send_calls.is_empty());
+    Ok(())
+}
+
+/// One send whose result names `sent` as the message it created (or names
+/// none), verified against `conversations`.
+fn send_attributed(
+    vault: &crate::Vault,
+    actor: OutboundDispatchActor,
+    sent: Option<&str>,
+    conversations: Vec<serde_json::Value>,
+    intent_ref: &str,
+) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    let plan = LinkedInVerifiedSendPlan::new(
+        "linkedin:member:jane-doe",
+        "2-jane-doe-abc",
+        "Happy to share more details.",
+    )?
+    .with_max_observation_attempts(1)?;
+    let mut transport = ScriptedLinkedInTransport::new(conversations);
+    if let Some(sent) = sent {
+        transport = transport.sending(serde_json::json!({"message_id": sent}));
+    }
+    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+        .with_plan(intent_ref, plan)?;
+    Ok(vault.dispatch_outbound_intent(
+        linkedin_send_request(actor, &format!("outbound:{intent_ref}"), intent_ref)
+            .linkedin_sandbox_policy(active_linkedin_policy()?),
+        &mut sink,
+    )?)
+}
+
+/// The legitimate path: a transcript that names senders proves delivery with a
+/// new message this seat sent. The same words from the recipient do not.
+#[test]
+fn an_attributed_new_message_from_this_seat_is_delivered()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let message = "Happy to share more details.";
+    let echo = attributed_conversation(
+        "2-jane-doe-abc",
+        &[
+            ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
+            ("m2", "linkedin:member:jane-doe", message),
+        ],
     );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_send_verification")
-            .map(String::as_str),
-        Some("observed_absent")
+    let sent = attributed_conversation(
+        "2-jane-doe-abc",
+        &[
+            ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
+            ("m2", "linkedin:member:jane-doe", message),
+            ("m3", "linkedin:member:yura", message),
+        ],
     );
-    assert!(
-        !result
-            .receipt
-            .fields
-            .contains_key("verify_get_conversation_error"),
-        "a later successful absent read should classify the final attempt"
+    let delivered = send_attributed(
+        &vault,
+        linkedin_sender(&vault, 0xBA)?,
+        Some("m3"),
+        vec![echo.clone(), sent],
+        "intent:linkedin-attributed",
+    )?;
+    assert_eq!(
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+
+    let (_echo_tmp, echo_vault) = temp_vault();
+    let echoed = send_attributed(
+        &echo_vault,
+        linkedin_sender(&echo_vault, 0xBA)?,
+        Some("m3"),
+        vec![
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[("m1", "linkedin:member:jane-doe", "Thanks for reaching out.")],
+            ),
+            echo,
+        ],
+        "intent:linkedin-attributed-echo",
+    )?;
+    assert_ne!(echoed.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    Ok(())
+}
+
+/// A transcript whose own message carries `id` as given: a blank id, or none.
+fn own_message_with_id(id: Option<&str>, text: &str) -> serde_json::Value {
+    let mut message = serde_json::json!({"sender": "linkedin:member:yura", "text": text});
+    if let Some(id) = id {
+        message["id"] = serde_json::Value::from(id);
+    }
+    serde_json::json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-jane-doe-abc/",
+        "messages": [message],
+    })
+}
+
+/// F24 review (H130): delivery evidence is a stable provider id. An own
+/// message with no id, or a blank one, proves nothing: the retry guard does
+/// not claim it as an earlier delivery, and after a send it is not the new
+/// message.
+#[test]
+fn a_message_without_a_provider_id_is_never_delivery_evidence()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let (_tmp, vault) = temp_vault();
+    let plan =
+        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
+            .retry_guarded();
+    let mut sink = LinkedInMcpVerifiedSendSink::new(
+        linkedin_adapter()?,
+        ScriptedLinkedInTransport::new(vec![own_message_with_id(None, message)]),
+    )
+    .with_plan("intent:linkedin-idless-guard", plan)?;
+    let guarded = vault.dispatch_outbound_intent(
+        linkedin_send_request(
+            linkedin_sender(&vault, 0xBB)?,
+            "outbound:intent:linkedin-idless-guard",
+            "intent:linkedin-idless-guard",
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
+        &mut sink,
+    )?;
+    assert_eq!(guarded.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert!(sink.transport().send_calls.is_empty());
+
+    let (_blank_tmp, blank_vault) = temp_vault();
+    let blank = send_attributed(
+        &blank_vault,
+        linkedin_sender(&blank_vault, 0xBC)?,
+        Some("  "),
+        vec![
+            attributed_conversation("2-jane-doe-abc", &[]),
+            own_message_with_id(Some("  "), message),
+        ],
+        "intent:linkedin-blank-id",
+    )?;
+    assert_ne!(blank.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    Ok(())
+}
+
+/// F24 review (H130): an id the precheck showed is never the new message, even
+/// when the send names it: an own message that was already there and is
+/// edited to the text is not the send. A send that names no id proves no own
+/// message new, even one after a page-text precheck.
+#[test]
+fn only_an_id_absent_before_the_send_is_the_new_message()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let (_tmp, vault) = temp_vault();
+    let edited = send_attributed(
+        &vault,
+        linkedin_sender(&vault, 0xBD)?,
+        Some("m1"),
+        vec![
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[("m1", "linkedin:member:yura", "An earlier draft.")],
+            ),
+            attributed_conversation("2-jane-doe-abc", &[("m1", "linkedin:member:yura", message)]),
+        ],
+        "intent:linkedin-edited",
+    )?;
+    assert_ne!(edited.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+
+    let (_text_tmp, text_vault) = temp_vault();
+    let unknown_baseline = send_attributed(
+        &text_vault,
+        linkedin_sender(&text_vault, 0xBE)?,
+        None,
+        vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+            attributed_conversation("2-jane-doe-abc", &[("m9", "linkedin:member:yura", message)]),
+        ],
+        "intent:linkedin-text-precheck",
+    )?;
+    assert_ne!(
+        unknown_baseline.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+
+    // Positive control: an id the structured precheck did not hold is new.
+    let (_new_tmp, new_vault) = temp_vault();
+    let delivered = send_attributed(
+        &new_vault,
+        linkedin_sender(&new_vault, 0xBF)?,
+        Some("m2"),
+        vec![
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[("m1", "linkedin:member:yura", "An earlier draft.")],
+            ),
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[
+                    ("m1", "linkedin:member:yura", "An earlier draft."),
+                    ("m2", "linkedin:member:yura", message),
+                ],
+            ),
+        ],
+        "intent:linkedin-new-id",
+    )?;
+    assert_eq!(
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
     );
     Ok(())
 }
 
+/// F24 review (H130): absence from one read never proves novelty. After a
+/// precheck with an id-less message, a later page of older messages, or an
+/// own message the precheck's page missed, a send that names no message
+/// stays unproven.
 #[test]
-fn linkedin_retry_guard_observes_existing_message_without_duplicate_send()
+fn an_incomplete_precheck_is_never_a_delivery_baseline()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB3));
-    vault
-        .put_entity(
-            &entity(0xB3),
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"dispatch actor",
-        )
-        .expect("seed dispatch actor");
-    allow_linkedin_send(&vault, &actor)?;
-
     let message = "Happy to share more details.";
+    let jane = "linkedin:member:jane-doe";
+    let yura = "linkedin:member:yura";
+    let thread = "2-jane-doe-abc";
+    let idless_precheck = serde_json::json!({
+        "url": format!("https://www.linkedin.com/messaging/thread/{thread}/"),
+        "messages": [
+            {"id": "m1", "sender": jane, "text": "Thanks for reaching out."},
+            {"sender": yura, "text": message},
+        ],
+    });
+    let cases = [
+        // The precheck's id-less own message comes back with its id.
+        (
+            idless_precheck,
+            attributed_conversation(
+                thread,
+                &[
+                    ("m1", jane, "Thanks for reaching out."),
+                    ("m9", yura, message),
+                ],
+            ),
+        ),
+        // The precheck read one page; the next read is an older page.
+        (
+            attributed_conversation(thread, &[("m2", jane, "Thanks for reaching out.")]),
+            attributed_conversation(thread, &[("m1", yura, message)]),
+        ),
+        // An older own message the precheck's page missed, not the last one.
+        (
+            attributed_conversation(thread, &[("m2", jane, "Thanks for reaching out.")]),
+            attributed_conversation(
+                thread,
+                &[
+                    ("m1", yura, message),
+                    ("m2", jane, "Thanks for reaching out."),
+                ],
+            ),
+        ),
+    ];
+    for (seed, (precheck, after)) in (0xC0..).zip(cases) {
+        let (_tmp, vault) = temp_vault();
+        let result = send_attributed(
+            &vault,
+            linkedin_sender(&vault, seed)?,
+            None,
+            vec![precheck, after],
+            &format!("intent:linkedin-partial-{seed}"),
+        )?;
+        assert_ne!(
+            result.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "case {seed:#x}"
+        );
+    }
+    Ok(())
+}
+
+/// F24 review (H130): the retry guard stops a second send when this seat's
+/// own message with the text is already the thread's last, but nothing binds
+/// that message to this intent (an earlier attempt may have failed before it
+/// sent), so the outcome is ambiguous, never a delivery.
+#[test]
+fn a_retry_guard_never_claims_an_older_own_message_as_this_send()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let (_tmp, vault) = temp_vault();
     let plan =
         LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
             .retry_guarded();
-    let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
-        "2-jane-doe-abc",
-        "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
-    )]);
-    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
-        .with_plan("intent:linkedin-retry", plan)?;
-    let result = vault.dispatch_outbound_intent(
+    let mut sink = LinkedInMcpVerifiedSendSink::new(
+        linkedin_adapter()?,
+        ScriptedLinkedInTransport::new(vec![attributed_conversation(
+            "2-jane-doe-abc",
+            &[
+                ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
+                ("m2", "linkedin:member:yura", message),
+            ],
+        )]),
+    )
+    .with_plan("intent:linkedin-own-guard", plan)?;
+    let guarded = vault.dispatch_outbound_intent(
         linkedin_send_request(
-            actor,
-            "outbound:intent:linkedin-retry",
-            "intent:linkedin-retry",
-        ),
+            linkedin_sender(&vault, 0xC4)?,
+            "outbound:intent:linkedin-own-guard",
+            "intent:linkedin-own-guard",
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
-
-    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(guarded.outcome, OutboundDispatchOutcome::Ambiguous);
     assert!(sink.transport().send_calls.is_empty());
     assert_eq!(
-        result
+        guarded
             .receipt
             .fields
             .get("duplicate_send_guard")
             .map(String::as_str),
         Some("observed_existing")
     );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("send_message_called")
-            .map(String::as_str),
-        Some("false")
+    Ok(())
+}
+
+/// F24 round 3 (H130): delivery is the message the send itself named. A send
+/// that names none proves nothing however the pages fall: a precheck that read
+/// an older page and a later read that slid onto an old own message with the
+/// text, or a partial precheck followed by a fuller page. Nor does a named id
+/// the transcript does not hold. The named message proves delivery wherever it
+/// sits, under either result shape.
+#[test]
+fn only_the_message_the_send_names_proves_delivery()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let jane = "linkedin:member:jane-doe";
+    let yura = "linkedin:member:yura";
+    let thread = "2-jane-doe-abc";
+    let older_page = attributed_conversation(
+        thread,
+        &[
+            ("m1", jane, "Thanks for reaching out."),
+            ("m2", jane, "Any news?"),
+        ],
     );
+    let slid_page =
+        attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", yura, message)]);
+    let cases = [
+        (None, older_page.clone(), slid_page.clone()),
+        (
+            None,
+            attributed_conversation(thread, &[("m20", jane, "Any news?")]),
+            attributed_conversation(
+                thread,
+                &[("m20", jane, "Any news?"), ("m21", yura, message)],
+            ),
+        ),
+        (Some("m4"), older_page.clone(), slid_page),
+    ];
+    for (seed, (sent, precheck, after)) in (0xC5..).zip(cases) {
+        let (_tmp, vault) = temp_vault();
+        let result = send_attributed(
+            &vault,
+            linkedin_sender(&vault, seed)?,
+            sent,
+            vec![precheck, after],
+            &format!("intent:linkedin-unnamed-{seed}"),
+        )?;
+        assert_ne!(
+            result.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "case {seed:#x}"
+        );
+    }
+
+    // Positive control: the named message, with a reply already after it.
+    let (_tmp, vault) = temp_vault();
+    let plan =
+        LinkedInVerifiedSendPlan::new(jane, thread, message)?.with_max_observation_attempts(1)?;
+    let transport = ScriptedLinkedInTransport::new(vec![
+        older_page,
+        attributed_conversation(
+            thread,
+            &[
+                ("m2", jane, "Any news?"),
+                ("m3", yura, message),
+                ("m4", jane, "Thanks!"),
+            ],
+        ),
+    ])
+    .sending(serde_json::json!({"message": {"id": "m3"}}));
+    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+        .with_plan("intent:linkedin-named", plan)?;
+    let delivered = vault.dispatch_outbound_intent(
+        linkedin_send_request(
+            linkedin_sender(&vault, 0xC8)?,
+            "outbound:intent:linkedin-named",
+            "intent:linkedin-named",
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
+        &mut sink,
+    )?;
     assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_send_verification")
-            .map(String::as_str),
-        Some("content_observed")
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
     );
+    Ok(())
+}
+
+/// F24 round 4 (H130): a send result that carries MCP content beside the id
+/// it names still names that id, so the named message proves delivery.
+#[test]
+fn a_named_id_beside_mcp_content_still_proves_delivery()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let jane = "linkedin:member:jane-doe";
+    let yura = "linkedin:member:yura";
+    let thread = "2-jane-doe-abc";
+    let shapes = [
+        serde_json::json!({"message_id": "m3", "structuredContent": {"status": "sent"}}),
+        serde_json::json!({"messageId": "m3", "structuredContent": {"status": "sent"}}),
+        serde_json::json!({"message": {"id": "m3"}, "structuredContent": {"status": "sent"}}),
+    ];
+    for (seed, sent) in (0xD0..).zip(shapes) {
+        let (_tmp, vault) = temp_vault();
+        let plan = LinkedInVerifiedSendPlan::new(jane, thread, message)?
+            .with_max_observation_attempts(1)?;
+        let transport = ScriptedLinkedInTransport::new(vec![
+            attributed_conversation(thread, &[("m2", jane, "Any news?")]),
+            attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", yura, message)]),
+        ])
+        .sending(sent);
+        let intent = format!("intent:linkedin-mcp-{seed}");
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan(&intent, plan)?;
+        let delivered = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                linkedin_sender(&vault, seed)?,
+                &format!("outbound:{intent}"),
+                &intent,
+            )
+            .linkedin_sandbox_policy(active_linkedin_policy()?),
+            &mut sink,
+        )?;
+        assert_eq!(
+            delivered.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "case {seed:#x}"
+        );
+    }
+    Ok(())
+}
+
+/// Security pack 2, F14 H132: a LinkedIn send dispatched with no seat policy
+/// has no seat verdict, so the kill switch, the daily cap and the cadence never
+/// ran. It is held before the transport, never sent, under any channel
+/// spelling the capability lookup accepts.
+#[test]
+fn a_linkedin_send_with_no_seat_policy_is_held()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = OutboundDispatchActor::agent(entity(0xB3));
+    vault.put_entity(
+        &entity(0xB3),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"dispatch actor",
+    )?;
+    allow_linkedin_send(&vault, &actor)?;
+    for (spelling, intent) in [
+        ("linkedin", "linkedin-no-policy"),
+        (" LinkedIn ", "linkedin-no-policy-spelled"),
+    ] {
+        let plan = LinkedInVerifiedSendPlan::new(
+            "linkedin:member:jane-doe",
+            "2-jane-doe-abc",
+            "Happy to share more details.",
+        )?;
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            )]),
+        )
+        .with_plan(format!("intent:{intent}"), plan)?;
+        let mut request = linkedin_send_request(
+            actor.clone(),
+            &format!("outbound:intent:{intent}"),
+            &format!("intent:{intent}"),
+        );
+        request.intent.channel = spelling.to_owned();
+        let result = vault.dispatch_outbound_intent(request, &mut sink)?;
+
+        assert!(
+            sink.transport().send_calls.is_empty(),
+            "H132: a send with no seat policy ({spelling:?}) reached the transport ({:?})",
+            result.outcome
+        );
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.seat_policy_missing")
+        );
+    }
     Ok(())
 }

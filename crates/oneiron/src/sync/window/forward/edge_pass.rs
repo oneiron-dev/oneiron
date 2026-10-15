@@ -2,7 +2,7 @@
 
 use super::super::bridge;
 use super::super::egress::push_terminal_quarantine_marker;
-use super::super::loro_support::{map_for_each_value_bytes, tombstone_map_contains_id};
+use super::super::loro_support::map_for_each_value_bytes;
 use super::super::quarantine::{self, QuarantineContainer};
 use super::{RematCtx, RematLedger};
 
@@ -16,7 +16,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     let vault = ctx.vault;
     let window_key = ctx.window_key;
     let edges_map = &ctx.edges_map;
-    let tombstones_map = &ctx.tombstones_map;
+    let tombstones = &ctx.tombstones;
     let marked = &ledger.marked;
     let healed = &mut ledger.healed;
     let terminal_quarantines = &mut ledger.terminal_quarantines;
@@ -81,9 +81,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // admission, pending work and terminal evidence for this key.
             // Do not let a generic early exit strand an older obligation.
             if kind == crate::edge::EdgeKind::Parent {
-                let tombstoned = tombstone_map_contains_id(tombstones_map, &src)
-                    || tombstone_map_contains_id(tombstones_map, &tgt);
-                match vault.with_write_txn(|wtxn| {
+                let tombstoned = tombstones.contains(&src) || tombstones.contains(&tgt);
+                match vault.with_write_txn_grouped(|wtxn| {
                     bridge::submit_parent_in_txn(
                         vault,
                         wtxn,
@@ -135,7 +134,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             };
 
             let soft_addressing = kind == crate::edge::EdgeKind::AddressedTo
-                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some();
+                && crate::recovery::retained_soft_shell(ctx.doc, tombstones, &src).is_some();
             if soft_addressing {
                 // Ordinary peer replay has no body proof after a soft erase.
                 // Only canonical recovery's validated BaseEdge may retain it.
@@ -161,7 +160,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             let residence = (|| {
                 let txn = vault.store.env.read_txn()?;
                 crate::sync::types::edge_belongs_to_window_in(
-                    vault, &txn, ctx.doc, &src, &tgt, window_key,
+                    vault, &txn, ctx.doc, tombstones, &src, &tgt, window_key,
                 )
             })();
             match residence {
@@ -190,10 +189,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.
-            if (tombstone_map_contains_id(tombstones_map, &src)
-                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_none())
-                || (tombstone_map_contains_id(tombstones_map, &tgt)
-                    && crate::recovery::retained_soft_shell(ctx.doc, &tgt).is_none())
+            if (tombstones.contains(&src)
+                && crate::recovery::retained_soft_shell(ctx.doc, tombstones, &src).is_none())
+                || (tombstones.contains(&tgt)
+                    && crate::recovery::retained_soft_shell(ctx.doc, tombstones, &tgt).is_none())
             {
                 return;
             }
@@ -202,7 +201,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // comparison, and paired write share ONE LMDB write txn. A
             // separate read check followed by `batch().commit()` would let
             // an intervening undo revoke the mandate before the edge write.
-            let result = vault.with_write_txn(|wtxn| {
+            let result = vault.with_write_txn_grouped(|wtxn| {
                 if vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
                     || vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
                 {

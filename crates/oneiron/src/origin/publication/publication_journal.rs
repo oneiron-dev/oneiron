@@ -1,25 +1,31 @@
 //! Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers.
 
+use std::ops::ControlFlow;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWireCommitOutcome, GitWireRepo,
 };
+use crate::origin::scan_check::{OriginScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::OriginPublicationRow;
 use super::publication_codec::{
-    KEEP_OWNER, PUBLICATIONS, VISIBLE_REF, keep_owner_oid_scan_prefix, origin_keep_ref_name,
-    visible_ref_key,
+    CAS_BACKFILL, CAS_INTENT, CasIntentKey, KEEP_OWNER, PUBLICATIONS, VISIBLE_REF,
+    keep_owner_oid_scan_prefix, origin_keep_ref_name, visible_ref_key,
 };
 use super::publication_types::{
-    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, ORIGIN_PUBLICATION_MAX_ROWS, OriginCensusDisposition,
-    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
+    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, OriginCensusDisposition, OriginPublicationReceipt,
+    OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // Journal access
 // ---------------------------------------------------------------------------
+
+/// CAS rows one write transaction of the open-time backfill writes.
+const CAS_BACKFILL_BATCH: usize = 4096;
 
 impl Vault {
     /// The repository identity publication rows are scoped to.
@@ -44,7 +50,7 @@ impl Vault {
         &self,
         record: &OriginPublicationRecord,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             PUBLICATIONS.put(
                 &self.store,
                 wtxn,
@@ -55,38 +61,156 @@ impl Vault {
         })
     }
 
+    /// Visits the journal's rows in id order, for one repository or every
+    /// one, until `visit` breaks. The journal is keyed by publication id, so
+    /// the scan reads the whole vault's history; it never refuses for its
+    /// length (rule 5): past its threshold row it raises an origin scan
+    /// check and reads on. `visit` runs inside the scan's read transaction.
+    pub(in crate::origin) fn visit_origin_publication_rows(
+        &self,
+        repo_id: Option<EntityId>,
+        mut visit: impl FnMut(OriginPublicationRecord) -> ControlFlow<()>,
+    ) -> Result<()> {
+        let count = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut count =
+                ScanCount::start(&self.store, &rtxn, OriginScan::PublicationRows, None)?;
+            for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
+                count.row();
+                let (_, row) = row?;
+                let record = row.into_record()?;
+                if repo_id.is_none_or(|scope| scope == record.repo_id) && visit(record).is_break() {
+                    break;
+                }
+            }
+            count
+        };
+        count.finish(self);
+        Ok(())
+    }
+
+    /// Every journal row, for one repository or every one.
+    #[cfg(test)]
     pub(in crate::origin) fn origin_publication_rows(
         &self,
         repo_id: Option<EntityId>,
     ) -> Result<Vec<OriginPublicationRecord>> {
-        let rtxn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        let mut seen = 0_usize;
-        for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
-            seen += 1;
-            if seen > ORIGIN_PUBLICATION_MAX_ROWS {
-                return Err(Error::IndexOverflow("origin publication rows"));
-            }
-            let (_, row) = row?;
-            let record = row.into_record()?;
-            if repo_id.is_none_or(|scope| scope == record.repo_id) {
-                rows.push(record);
-            }
-        }
+        self.visit_origin_publication_rows(repo_id, |record| {
+            rows.push(record);
+            ControlFlow::Continue(())
+        })?;
         Ok(rows)
     }
 
-    pub(super) fn origin_visible_ref_rows(&self, repo_id: &EntityId) -> Result<Vec<EntityId>> {
-        let rtxn = self.store.env.read_txn()?;
-        let mut rows = Vec::new();
-        for row in VISIBLE_REF.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
-            if rows.len() >= ORIGIN_PUBLICATION_MAX_ROWS {
-                return Err(Error::IndexOverflow("origin visible ref rows"));
+    /// The first of one repository's journal rows that `matches`.
+    pub(in crate::origin) fn find_origin_publication(
+        &self,
+        repo_id: EntityId,
+        mut matches: impl FnMut(&OriginPublicationRecord) -> bool,
+    ) -> Result<Option<OriginPublicationRecord>> {
+        let mut found = None;
+        self.visit_origin_publication_rows(Some(repo_id), |record| {
+            if matches(&record) {
+                found = Some(record);
+                return ControlFlow::Break(());
             }
-            let (_, publication_id) = row?;
-            rows.push(publication_id);
-        }
+            ControlFlow::Continue(())
+        })?;
+        Ok(found)
+    }
+
+    /// The publication each of one repository's visible slots names: one
+    /// per ref name its protocol ever published. A deleted name keeps its
+    /// slot, the one advertisement a re-drive or a recreation of its
+    /// publication has. Never refused for their number (rule 5); past the
+    /// threshold row the scan raises an origin scan check.
+    pub(in crate::origin) fn origin_visible_ref_rows(
+        &self,
+        repo_id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut rows = Vec::new();
+        let count = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut count = ScanCount::start(
+                &self.store,
+                &rtxn,
+                OriginScan::VisibleRefRows,
+                Some(*repo_id),
+            )?;
+            for row in VISIBLE_REF.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
+                count.row();
+                let (_, publication_id) = row?;
+                rows.push(publication_id);
+            }
+            count
+        };
+        count.finish(self);
         Ok(rows)
+    }
+
+    /// Takes one Published row's CAS row and the backfill marker away: the
+    /// state a vault written before Published rows kept their CAS row opens
+    /// in.
+    #[cfg(test)]
+    pub(in crate::origin) fn forget_origin_cas_intent_for_test(
+        &self,
+        record: &OriginPublicationRecord,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| {
+            CAS_INTENT.delete(&self.store, wtxn, &CasIntentKey::new(record))?;
+            CAS_BACKFILL.delete(&self.store, wtxn, &())?;
+            Ok(())
+        })
+    }
+
+    /// Gives every Published row the CAS row T2 now keeps, once per vault.
+    ///
+    /// A vault written before Published rows kept their CAS row admitted a
+    /// publication only after reading its whole journal for a Published row
+    /// with the same move. That row now answers in one read; this gives the
+    /// older rows theirs, so no admission reads history again.
+    pub(crate) fn backfill_origin_cas_intents_on_open(&self) -> Result<()> {
+        let rows = {
+            let rtxn = self.store.env.read_txn()?;
+            if CAS_BACKFILL.contains(&self.store, &rtxn, &())? {
+                return Ok(());
+            }
+            let mut rows = Vec::new();
+            let mut journaled = false;
+            for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
+                journaled = true;
+                let (_, row) = row?;
+                let record = row.into_record()?;
+                if record.status != OriginPublicationStatus::Published {
+                    continue;
+                }
+                let key = CasIntentKey::new(&record);
+                if !CAS_INTENT.contains(&self.store, &rtxn, &key)? {
+                    rows.push((key, record.publication_id));
+                }
+            }
+            // An empty journal has nothing to give, and a vault that never
+            // published takes no marker row for it.
+            if !journaled {
+                return Ok(());
+            }
+            rows
+        };
+        // Admission refused a second Published row of one move, so each key
+        // has one row to name.
+        for batch in rows.chunks(CAS_BACKFILL_BATCH) {
+            self.with_write_txn_grouped(|wtxn| {
+                for (key, publication_id) in batch {
+                    CAS_INTENT.put(&self.store, wtxn, key, publication_id)?;
+                }
+                Ok(())
+            })?;
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            CAS_BACKFILL.put(&self.store, wtxn, &(), &())?;
+            Ok(())
+        })
     }
 
     /// Whether this repository's publication protocol has ever published this

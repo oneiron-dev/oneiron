@@ -17,8 +17,11 @@ impl crate::server::SyncServer {
     }
 }
 
-pub(super) fn engine_error(error: oneiron::booking::BookingError) -> ApiError {
-    tracing::error!(error = %error, "booking anti-abuse engine error");
+pub(super) fn engine_error(_error: oneiron::booking::BookingError) -> ApiError {
+    tracing::error!(
+        reason = "booking_anti_abuse_failed",
+        "booking anti-abuse engine error"
+    );
     ApiError::internal_server_error("booking anti-abuse failure")
 }
 

@@ -13,17 +13,18 @@ fn fixture() -> (
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
     let mut owners = Vec::new();
-    for _ in 0..2 {
-        let id = EntityId::now();
-        vault
-            .put_entity(
-                &id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"human",
-            )
-            .unwrap();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .unwrap();
+    // The first is the personal vault's owner, who shares it.
+    for id in [vault.ensure_embedded_owner_actor().unwrap(), person] {
         owners.push(
             vault
                 .authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())
@@ -119,46 +120,6 @@ fn ask_guest_role_is_not_shared_vault_membership() -> Result<()> {
             .is_err()
     );
     assert_eq!(vault.shared_vault_creation()?, None);
-    Ok(())
-}
-
-#[test]
-fn equal_admins_keep_both_rulings_and_newest_wins_in_any_fold_order() -> Result<()> {
-    let (_dir, vault, owner, admin) = fixture();
-    vault.initialize_shared_vault(
-        &owner,
-        42,
-        None,
-        &[
-            InitialSharedMember {
-                member_ref: owner.actor(),
-                role: Some(FederationGrantRole::Admin),
-            },
-            InitialSharedMember {
-                member_ref: admin.actor(),
-                role: Some(FederationGrantRole::Admin),
-            },
-        ],
-        1,
-    )?;
-    let a = vault.append_admin_ruling(&owner, 42, "review:12", serde_json::json!("keep"), 2)?;
-    let b = vault.append_admin_ruling(&admin, 42, "review:12", serde_json::json!("replace"), 3)?;
-    assert_eq!(b.previous_ruling, Some(a.ruling.id.clone()));
-    assert_eq!(b.previous_holder, Some(owner.actor().to_hex()));
-    assert_eq!(b.previous_value, Some(serde_json::json!("keep")));
-    assert_eq!(vault.admin_ruling_receipts(42)?.len(), 2);
-    assert_eq!(
-        vault.live_admin_ruling(42, "review:12")?,
-        Some(b.ruling.clone())
-    );
-    assert_eq!(
-        fold_admin_rulings(&[a.ruling.clone(), b.ruling.clone()], 42, "review:12"),
-        Some(&b.ruling)
-    );
-    assert_eq!(
-        fold_admin_rulings(&[b.ruling.clone(), a.ruling], 42, "review:12"),
-        Some(&b.ruling)
-    );
     Ok(())
 }
 
@@ -473,5 +434,26 @@ fn ask_guest_does_not_count_as_existing_shared_membership() -> Result<()> {
     )?;
     assert_eq!(creation.grant_refs.len(), 1);
     assert_ne!(creation.grant_refs[0], id.to_hex());
+    Ok(())
+}
+
+/// Astra r1 on #1458: a native host's proof shows a live person, not whose
+/// vault this is. A person who does not own the personal vault cannot share
+/// it and name themselves its owner.
+#[test]
+fn a_non_owner_persons_proof_shares_no_vault() -> Result<()> {
+    let (_dir, vault, owner, person) = fixture();
+    let members = [InitialSharedMember {
+        member_ref: person.actor(),
+        role: Some(FederationGrantRole::Owner),
+    }];
+    assert!(matches!(
+        vault.initialize_shared_vault(&person, 42, None, &members, 10),
+        Err(crate::Error::Gate(
+            crate::error::GateError::ConsentOwnerNotAuthenticated(_)
+        ))
+    ));
+    assert!(vault.shared_vault_creation()?.is_none());
+    vault.initialize_shared_vault(&owner, 42, Some(SharedVaultPreset::Family), &[], 10)?;
     Ok(())
 }

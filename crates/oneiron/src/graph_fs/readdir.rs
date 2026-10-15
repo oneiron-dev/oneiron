@@ -1,17 +1,14 @@
-//! Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir helpers, and the resolver policy helper.
+//! Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir helpers.
 
-use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::code_sandbox::SandboxLinkedImport;
-use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::gate::{PolicyManifestResolution, resolve_policy_manifest};
+use crate::gate::PolicyManifestResolution;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 
 use super::model::{
@@ -20,10 +17,11 @@ use super::model::{
     GraphFsPage, GraphFsResolver,
 };
 
-use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_grant_matches_actor};
+use super::coreutils::{claim_matches_world_in, read_grant_matches_actor};
 
 use super::paging::{
-    EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard, parse_edge_cursor,
+    DayPosition, EdgeCursor, PageBuilder, TemporalCursor, WorldPosition, format_day_shard,
+    parse_day_shard,
 };
 
 /// File lookup and the receipt of the scoped read, if a stored row was read.
@@ -284,7 +282,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     /// One live point read, folded into a listing's receipt.
-    fn read_live_into(
+    pub(super) fn read_live_into(
         &self,
         id: EntityId,
         receipt: &mut ScopedReadReceipt,
@@ -317,92 +315,102 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         builder.finish(next_cursor)
     }
 
+    /// The vault's worlds this reader may walk into, base first, then each
+    /// WORLD row by id ([`Self::world_visible`]), all judged in one snapshot.
+    /// A manifest grant never lists a world of its own: it only says where a
+    /// reader other than the owner may read. A page can end inside a run of
+    /// worlds this reader may not see, so its cursor is sealed and names none
+    /// of them. A reader that could read no row in that snapshot (a dead
+    /// credential, one that reads nothing, or a peer of either) lists
+    /// nothing, not even a cursor that would say how many worlds it passed
+    /// over.
     fn listdir_worlds(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let policy = self.policy()?;
-        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+        self.scoped_read.persist_grant_clock()?;
+        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        if !self.scoped_read.every_lane_in(&rtxn, |lane| {
+            Ok(lane.proof_live_in(&rtxn)? && lane_reads_some_row(lane, &policy))
+        })? {
             return Ok(empty_page(path, self.options.mount));
         }
-
-        let names = if policy.has_scoped_read_grants() {
-            self.world_names_from_matching_grants(&policy)
-        } else {
-            return self.listdir_world_rows(path, cursor);
-        };
-        let entries = names.into_iter().map(GraphFsEntry::directory).collect();
-        Ok(self.fixed_page(path, entries, cursor))
-    }
-
-    fn listdir_world_rows(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let after = cursor.unwrap_or_default();
-        let after_world = if after.is_empty() || after == "base" {
-            None
-        } else {
-            Some(parse_entity_id(after)?)
-        };
+        let scope = self.cursor_scope(path);
+        let after: Option<WorldPosition> = scope.open(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
-        let mut next_cursor = None;
-        if after.is_empty() && !builder.try_push(GraphFsEntry::directory("base")) {
+        if after.is_none()
+            && self.world_visible(&rtxn, &policy, None)?
+            && !builder.try_push(GraphFsEntry::directory("base"))
+        {
             return Ok(builder.finish(None));
         }
 
-        let rows = self.scoped_read.vault().entities_by_type_page(
-            ENTITY_TYPE_WORLD,
-            after_world.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1),
-        )?;
+        let after = after.and_then(|position| position.0);
+        let rows = self
+            .scoped_read
+            .vault()
+            .store
+            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_WORLD, after)?
+            .take(GRAPH_FS_MAX_PAGE_ENTRIES.saturating_add(1))
+            .collect::<Result<Vec<_>>>()?;
         let has_more_rows = rows.len() > GRAPH_FS_MAX_PAGE_ENTRIES;
+        let mut next_cursor = None;
+        let (mut last_listed, mut last_scanned) = (after, after);
         for id in rows.into_iter().take(GRAPH_FS_MAX_PAGE_ENTRIES) {
-            if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
-                next_cursor = builder.last_entry_name();
-                break;
+            if self.world_visible(&rtxn, &policy, Some(id))? {
+                if !builder.try_push(GraphFsEntry::directory(id.to_hex())) {
+                    next_cursor = builder
+                        .last_entry_name()
+                        .map(|_| scope.seal(&WorldPosition(last_listed)));
+                    break;
+                }
+                last_listed = Some(id);
             }
+            last_scanned = Some(id);
         }
         if next_cursor.is_none() && has_more_rows {
-            next_cursor = builder.last_entry_name();
+            next_cursor = Some(scope.seal(&WorldPosition(last_scanned)));
         }
         Ok(builder.finish(next_cursor))
     }
 
-    pub(super) fn world_names_from_matching_grants(
+    /// Whether this reader may walk into `world` (`None` is base reality) in
+    /// `rtxn`: its own lane and each peer lane its reads conjoin
+    /// ([`crate::claim::ScopedRead::with_peer_reads`]) must each walk there
+    /// ([`lane_walks_world`]), as each must admit a row it serves (Sol R5-006).
+    /// Off this device no reader walks into a world a device-local flag keeps
+    /// (DEC-0005).
+    pub(super) fn world_visible(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
-    ) -> Vec<String> {
-        let mut names = BTreeSet::new();
-        for grant in policy.scoped_grants() {
-            if !read_grant_matches_actor(grant, self.scoped_read.actor_key()) {
-                continue;
-            }
-            if grant.receipt_required || grant.budget.is_some() {
-                continue;
-            }
-            if let Some(name) = grant_scope_world_name(grant.scope.as_ref()) {
-                names.insert(name);
-            }
+        world: Option<EntityId>,
+    ) -> Result<bool> {
+        if let Some(world) = world
+            && self.scoped_read.off_device()
+            && crate::settings::device_local_keeps_in(self.scoped_read.vault(), rtxn, &world)?
+        {
+            return Ok(false);
         }
-        names.into_iter().collect()
+        self.scoped_read
+            .every_lane_in(rtxn, |lane| lane_walks_world(lane, rtxn, policy, world))
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let scope = self.cursor_scope(path);
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
                 break;
             }
             let time = entry?;
@@ -411,74 +419,22 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(cursor);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id)?
-            {
+            if !sealed_is_absent(
+                self.scoped_read
+                    .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id),
+            )? {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             builder.set_last_temporal_cursor(cursor);
         }
         Ok(builder.finish(next_cursor))
-    }
-
-    fn listdir_claims_by_id(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let after = cursor.map(parse_entity_id).transpose()?;
-        let mut builder = PageBuilder::new(path, self.options);
-        let mut next_cursor = None;
-        let mut receipt = self.scoped_read.read_receipt(None, 0)?;
-        for id in self.scoped_read.vault().entities_by_type_page(
-            ENTITY_TYPE_CLAIM,
-            after.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES,
-        )? {
-            if self.read_live_into(id, &mut receipt)?.is_none() {
-                continue;
-            }
-            let entry = GraphFsEntry::file(id.to_hex(), None);
-            if !builder.try_push(entry) {
-                next_cursor = builder.last_entry_name();
-                break;
-            }
-        }
-        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
-    }
-
-    fn listdir_claims_for_subject(
-        &self,
-        path: &str,
-        subject: &EntityId,
-        cursor: Option<&str>,
-    ) -> Result<GraphFsPage> {
-        if !self.scoped_read.is_entity_readable(subject)? {
-            return Ok(empty_page(path, self.options.mount));
-        }
-        let after = cursor.map(parse_entity_id).transpose()?;
-        let mut builder = PageBuilder::new(path, self.options);
-        let mut next_cursor = None;
-        let mut receipt = self.scoped_read.read_receipt(None, 0)?;
-        for claim in self.scoped_read.vault().sources_page(
-            subject,
-            EdgeKind::ClaimOf,
-            Some(ENTITY_TYPE_CLAIM),
-            after.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES,
-        )? {
-            if self.read_live_into(claim, &mut receipt)?.is_none() {
-                continue;
-            }
-            let entry = GraphFsEntry::file(claim.to_hex(), None);
-            if !builder.try_push(entry) {
-                next_cursor = builder.last_entry_name();
-                break;
-            }
-        }
-        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
     }
 
     fn listdir_claims_in_world(
@@ -487,27 +443,23 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         world: &str,
         cursor: Option<&str>,
     ) -> Result<GraphFsPage> {
+        let scope = self.cursor_scope(path);
         let world = parse_world_scope(world)?;
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
                 break;
             }
             let time = entry?;
@@ -516,10 +468,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             if !claim_matches_world_in(&self.scoped_read.vault().store, &rtxn, &temporal.id, world)?
@@ -528,7 +481,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             builder.set_last_temporal_cursor(temporal);
@@ -545,72 +500,84 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         if !self.scoped_read.is_entity_readable(target)? {
             return Ok(empty_page(path, self.options.mount));
         }
-        let after = cursor.map(parse_edge_cursor).transpose()?;
+        let scope = self.cursor_scope(path);
+        let after = scope.open::<EdgeCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
-        let mut last_cursor = after;
+        let mut last_emitted = after;
+        let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_edge_cursor(
-                &rtxn,
-                target,
-                crate::ports::EdgeDirection::In,
-                after.map(EdgeCursor::port_position),
-            )?
-            .enumerate()
-        {
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
+        let edges = self.admitted_edges(
+            &rtxn,
+            target,
+            crate::ports::EdgeDirection::In,
+            after.map(EdgeCursor::port_position),
+        )?;
+        for (scanned, entry) in edges.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_cursor.map(EdgeCursor::encode);
+                // Sealed: the last scanned edge may be one the walk passed over.
+                next_cursor = last_scanned
+                    .or(last_emitted)
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             let edge = entry?;
             let cursor = EdgeCursor::from_port(&edge);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)?
-            {
+            last_scanned = Some(cursor);
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &edge.target,
+            ))? {
                 continue;
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
             if !builder.try_push(entry) {
-                next_cursor = last_cursor.map(EdgeCursor::encode);
+                next_cursor = last_emitted.map(|cursor| scope.seal(&cursor));
                 break;
             }
-            last_cursor = Some(cursor);
+            last_emitted = Some(cursor);
         }
         Ok(builder.finish(next_cursor))
     }
 
     fn listdir_claim_days(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let after_day = cursor.map(parse_day_shard).transpose()?;
-        let mut days = BTreeSet::new();
+        self.listdir_claim_days_with_scan_cap(path, cursor, GRAPH_FS_MAX_SCAN_ROWS)
+    }
+
+    /// The days that hold a row this reader may read, oldest first.
+    pub(super) fn listdir_claim_days_with_scan_cap(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        max_scan_rows: usize,
+    ) -> Result<GraphFsPage> {
+        let scope = self.cursor_scope(path);
+        let from: DayPosition = scope.open(cursor)?.unwrap_or_default();
+        let day_of = |row: TemporalCursor| row.learned_at / 86_400;
+        let mut listed = from.after.filter(|_| from.day_listed).map(day_of);
+        let mut last_scanned = from.after;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
-            start: after_day
-                .and_then(|day| day.checked_add(1))
-                .and_then(|day| day.checked_mul(86_400))
-                .map_or(Bound::Unbounded, Bound::Included),
+            after: from.after.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
-            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = builder.last_entry_name();
+        // Resumes after `after`, with its day listed or not.
+        let resume = |after: Option<TemporalCursor>, listed: Option<u64>| DayPosition {
+            after,
+            day_listed: after.is_some_and(|after| Some(day_of(after)) == listed),
+        };
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
+            if scanned >= max_scan_rows {
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = Some(scope.seal(&resume(last_scanned, listed)));
                 break;
             }
             let time = entry?;
@@ -618,22 +585,24 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 learned_at: time.timestamp,
                 id: time.id,
             };
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            let scanned_before = last_scanned.replace(temporal);
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
-            let day = temporal.learned_at / 86_400;
-            if !days.insert(day) {
+            let day = day_of(temporal);
+            if listed.is_some_and(|listed| day <= listed) {
                 continue;
             }
-            let day_name = format_day_shard(day);
-            let entry = GraphFsEntry::directory(day_name);
-            if !builder.try_push(entry) {
-                next_cursor = builder.last_entry_name();
+            if !builder.try_push(GraphFsEntry::directory(format_day_shard(day))) {
+                // Resumes before this row, the first of a day not listed yet.
+                next_cursor = Some(scope.seal(&resume(scanned_before, listed)));
                 break;
             }
+            listed = Some(day);
         }
         Ok(builder.finish(next_cursor))
     }
@@ -651,28 +620,24 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let end = start
             .checked_add(86_400)
             .ok_or_else(|| Error::InvalidConfig("graph-fs day shard overflowed".to_owned()))?;
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let scope = self.cursor_scope(path);
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
             start: Bound::Included(start),
             end: Bound::Excluded(end),
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
                 break;
             }
             let time = entry?;
@@ -681,30 +646,78 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             builder.set_last_temporal_cursor(temporal);
         }
         Ok(builder.finish(next_cursor))
     }
-
-    pub(super) fn policy(&self) -> Result<PolicyManifestResolution> {
-        self.scoped_read.persist_grant_clock()?;
-        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
-        resolve_policy_manifest(&self.scoped_read.vault().store, &rtxn)
-    }
 }
 
-fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
+/// Whether `lane` may walk into `world` (`None` is base reality) in `rtxn`,
+/// judged as claim admission judges a claim's world: the lane must read
+/// some row ([`lane_reads_some_row`]), its credential must be live, and the
+/// worlds the read asked for and its Scope must admit `world`; the owner then
+/// reads every world of their vault (ARCH-0057). Any other reader reads where
+/// a read grant for it reads the world
+/// ([`crate::gate::scoped_read_grant_reads_world`]), anywhere while the
+/// manifest holds no read grant, and, with a credential no grant names,
+/// wherever that credential reads.
+fn lane_walks_world(
+    lane: &ScopedRead<'_>,
+    rtxn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    world: Option<EntityId>,
+) -> Result<bool> {
+    let key = lane.actor_key();
+    if !lane_reads_some_row(lane, policy) || !lane.world_readable_in(rtxn, world)? {
+        return Ok(false);
+    }
+    if key.vault_owner_ref().is_some() {
+        return Ok(true);
+    }
+    if !policy.has_scoped_read_grants() {
+        return Ok(true);
+    }
+    let mut matched = false;
+    for grant in policy.scoped_grants() {
+        if !read_grant_matches_actor(grant, key) {
+            continue;
+        }
+        matched = true;
+        if crate::gate::scoped_read_grant_reads_world(grant, world, key.authority_scope()) {
+            return Ok(true);
+        }
+    }
+    Ok(key.authority_scope().is_some() && !matched)
+}
+
+/// Whether `lane`'s ordinary reads could admit any row under `policy`: the
+/// retrieval floor every read applies leaves some row
+/// ([`crate::gate::RetrievalPolicyFloor::reads_some_row`]). A credential
+/// without the read verb, or with its bands, audience, sensitivity or worlds
+/// at bottom, a fail-closed manifest, grants that read nothing, and a
+/// credential whose bands share no type with its grants' each leave it none,
+/// so it walks no world either (Sol R7-003, R11-001).
+fn lane_reads_some_row(lane: &ScopedRead<'_>, policy: &PolicyManifestResolution) -> bool {
+    policy
+        .retrieval_floor_for_actor(Some(lane.actor_key()))
+        .reads_some_row()
+}
+
+pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
     GraphFsPage {
         path: path.to_owned(),
         mount,
@@ -754,5 +767,16 @@ fn parse_world_scope(value: &str) -> Result<Option<EntityId>> {
         Ok(None)
     } else {
         parse_entity_id(value).map(Some)
+    }
+}
+
+/// A walk passes over sealed secret custody as absent rather than failing:
+/// it is never part of the tree, and a raw read of it still refuses.
+pub(super) fn sealed_is_absent(readable: Result<bool>) -> Result<bool> {
+    match readable {
+        Err(error) if error.kind() == crate::error::ErrorKind::InvalidSecretCustodyBody => {
+            Ok(false)
+        }
+        readable => readable,
     }
 }

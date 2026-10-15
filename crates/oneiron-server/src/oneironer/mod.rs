@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::tagging::{TaggingOutcome, TaggingTrace};
 
-use crate::config::{OneironerConfig, OneironerMode, OneironerProvider};
+use crate::config::{OneironerConfig, OneironerProvider};
 
 pub(crate) mod endpoint;
 
@@ -31,10 +31,6 @@ pub(crate) enum TaggerNotBuilt {
         "oneironer.provider = \"local\" is not built yet; run a tagger server on this machine and set provider = \"endpoint\""
     )]
     LocalProvider,
-    #[error(
-        "oneironer.mode = \"save\" is not built yet (ONE-2167); set mode = \"shadow\" to tag without saving"
-    )]
-    SaveMode,
 }
 
 /// One trace as a test observes it.
@@ -114,18 +110,15 @@ impl TaggerSlot {
 /// Builds the slot for a resolved section, probing the tagger before the
 /// listener binds.
 ///
-/// `None` and an absent section build nothing. The local provider and save
-/// mode are refused, typed. A reachable tagger that is not the configured one
-/// stops `serve`; an unreachable one is logged and the worker probes again.
+/// `None` and an absent section build nothing. The local provider is refused,
+/// typed. A reachable tagger that is not the configured one stops `serve`; an
+/// unreachable one is logged and the worker probes again.
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
     if config.provider == OneironerProvider::Local {
         return Err(TaggerNotBuilt::LocalProvider.into());
-    }
-    if config.mode == OneironerMode::Save {
-        return Err(TaggerNotBuilt::SaveMode.into());
     }
     let tagger = endpoint::HttpTagger::from_config(config)?;
     let slot = TaggerSlot {
@@ -137,10 +130,14 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     };
     match slot.tagger.probe()? {
         endpoint::ProbeOutcome::Ready(card) => {
+            // The card's stack is the tagger's own string: with no pin to
+            // compare it to, it could be anything the tagger has read, so the
+            // log says only whether one was pinned.
             tracing::info!(
                 url = slot.tagger.base(),
                 label_count = card.label_count,
                 links = card.returns.links,
+                stack_pinned = config.stack_sha16.is_some(),
                 "tagger probe succeeded"
             );
             slot.accept_card(card);
@@ -160,7 +157,5 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    tokio::task::spawn_blocking(move || build_slot(config.as_ref()))
-        .await
-        .map_err(|error| anyhow::anyhow!("tagger slot task failed: {error}"))?
+    crate::logging::off_runtime("tagger slot task", move || build_slot(config.as_ref())).await?
 }

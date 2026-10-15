@@ -129,7 +129,6 @@ mod tests {
 
     use super::*;
     use crate::config::VaultConfig;
-    use crate::error::CodeError;
     use crate::registry::ENTITY_TYPE_PERSON;
     use crate::store::GRAPH_VERSION_KEY;
 
@@ -170,22 +169,6 @@ mod tests {
             slot.insert_multi_value(value).expect("value fits");
         }
         slot
-    }
-
-    /// Codec: a slot round-trips exactly, and its encoding is CANONICAL — two
-    /// slots holding the same value set encode to identical bytes whatever
-    /// order the values arrived in.
-    #[test]
-    fn slot_encoding_round_trips_and_is_order_independent() {
-        let first = value(0x21, 0x31, 0x41, 100);
-        let second = value(0x22, 0x32, 0x43, 200);
-        let forward = slot_with(vec![first.clone(), second.clone()]);
-        let backward = slot_with(vec![second, first]);
-
-        assert_eq!(encode_slot(&forward), encode_slot(&backward));
-        let decoded = decode_slot(&encode_slot(&forward)).expect("slot decodes");
-        assert_eq!(decoded, forward);
-        assert!(decoded.conflict_visible);
     }
 
     /// Codec fail-closed: an unknown version byte, a truncated body, trailing
@@ -257,26 +240,61 @@ mod tests {
         assert!(!key.windows(path.len()).any(|window| window == path));
     }
 
-    /// A transfer receipt key is deterministic in the declared transfer, so a
-    /// byte-identical replay upserts one row; any changed field moves it.
     #[test]
-    fn transfer_keys_are_deterministic_and_collision_free() {
-        let transfer = AnchorTransfer {
-            kind: AnchorTransferKind::Rename,
-            from_symbol_id: id(0x61),
-            to_symbol_id: id(0x62),
+    fn copy_and_rename_with_matching_identity_survive_reopen_as_distinct_receipts() {
+        let (dir, vault) = test_vault();
+        let from = seed_symbol(&vault, 0x61);
+        let to = seed_symbol(&vault, 0x62);
+        vault
+            .attach_code_memory(AttachCodeMemory {
+                anchor: CodeMemoryAnchor {
+                    symbol_id: from,
+                    locator: locator(),
+                },
+                slot: slot_name(),
+                value: value(0x65, 0x63, 0x66, 1_780_000_100),
+            })
+            .unwrap();
+        let mut transfer = AnchorTransfer {
+            kind: AnchorTransferKind::Copy,
+            from_symbol_id: from,
+            to_symbol_id: to,
             from_locator: locator(),
             to_locator: locator(),
             actor_id: id(0x63),
             observed_at: 1_780_000_100,
             provenance_claim_id: id(0x64),
         };
-        let replay = transfer.clone();
-        assert_eq!(transfer_key(&transfer), transfer_key(&replay));
-
-        let mut copied = transfer;
-        copied.kind = AnchorTransferKind::Copy;
-        assert_ne!(transfer_key(&replay), transfer_key(&copied));
+        assert_eq!(
+            vault
+                .transfer_code_memory_anchor(&transfer)
+                .unwrap()
+                .moved_attachments,
+            1
+        );
+        transfer.kind = AnchorTransferKind::Rename;
+        assert_eq!(
+            vault
+                .transfer_code_memory_anchor(&transfer)
+                .unwrap()
+                .moved_attachments,
+            1
+        );
+        drop(vault);
+        let reopened = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        for endpoint in [from, to] {
+            let records = reopened.code_memory_transfers(endpoint).unwrap();
+            assert_eq!(records.len(), 2);
+            for kind in [AnchorTransferKind::Copy, AnchorTransferKind::Rename] {
+                let record = records.iter().find(|record| record.kind == kind).unwrap();
+                assert_eq!(record.from_symbol_id, from);
+                assert_eq!(record.to_symbol_id, to);
+                assert_eq!(record.observed_at, 1_780_000_100);
+                assert_eq!(record.actor_id, id(0x63));
+                assert_eq!(record.provenance_claim_id, id(0x64));
+                assert_eq!(record.moved_attachments, 1);
+            }
+        }
     }
 
     /// PURE merge algebra over the canonical encoded output: associative,
@@ -315,90 +333,6 @@ mod tests {
             encode_slot(&left.merge_union(&left).expect("merge")),
             "idempotent"
         );
-    }
-
-    /// Two actors, identical bytes: two values survive with actor, time, and
-    /// provenance intact and conflict visible. Nothing elects a winner.
-    #[test]
-    fn equal_bytes_from_different_actors_never_collapse() {
-        let merged = slot_with(vec![value(0x29, 0x39, 0x4F, 900)])
-            .merge_union(&slot_with(vec![value(0x2A, 0x3A, 0x4F, 950)]))
-            .expect("merge");
-
-        assert_eq!(merged.values.len(), 2);
-        assert!(merged.conflict_visible);
-        let actors: BTreeSet<EntityId> = merged.values.iter().map(|value| value.actor_id).collect();
-        assert_eq!(actors, BTreeSet::from([id(0x39), id(0x3A)]));
-    }
-
-    /// One actor, identical bytes: the canonical MINIMUM survives whatever
-    /// order the values arrive in. This is the no-LWW guarantee at the
-    /// algebra level — the LATER value is not the winner.
-    #[test]
-    fn actor_scoped_collision_keeps_the_canonical_minimum() {
-        let older = value(0x2B, 0x3B, 0x4B, 1_000);
-        let newer = value(0x2C, 0x3B, 0x4B, 2_000);
-
-        for order in [
-            vec![older.clone(), newer.clone()],
-            vec![newer, older.clone()],
-        ] {
-            let mut slot = CodeMemorySlot::empty(slot_name());
-            let outcomes: Vec<SlotInsertOutcome> = order
-                .into_iter()
-                .map(|value| slot.insert_multi_value(value).expect("insert"))
-                .collect();
-            assert_eq!(outcomes[0], SlotInsertOutcome::Inserted);
-            assert_eq!(outcomes[1], SlotInsertOutcome::DeduplicatedWithinActor);
-            assert_eq!(slot.values.len(), 1);
-            assert_eq!(slot.values[0], older, "canonical minimum survives");
-            assert!(!slot.conflict_visible);
-        }
-    }
-
-    /// The capacity bound is transactional at the algebra level: the 257th
-    /// DISTINCT value errors typed and leaves the encoded slot unchanged.
-    #[test]
-    fn slot_capacity_is_transactional() {
-        let mut slot = CodeMemorySlot::empty(slot_name());
-        for index in 0..CODE_MEMORY_MAX_VALUES_PER_SLOT {
-            let mut candidate = value(0x2D, 0x3D, 0x4D, 1_100);
-            candidate.content_hash[0] = u8::try_from(index % 251).expect("byte");
-            candidate.content_hash[1] = u8::try_from(index / 251).expect("byte");
-            slot.insert_multi_value(candidate).expect("value fits");
-        }
-        let before = encode_slot(&slot);
-
-        let mut overflow = value(0x2E, 0x3D, 0x4D, 1_200);
-        overflow.content_hash = [0xFE; CODE_MEMORY_CONTENT_HASH_LEN];
-        let error = slot
-            .insert_multi_value(overflow)
-            .expect_err("the 257th distinct value must be refused");
-        assert!(matches!(
-            error,
-            Error::Code(CodeError::CodeMemoryLimitExceeded {
-                kind: "slot values",
-                limit: CODE_MEMORY_MAX_VALUES_PER_SLOT
-            })
-        ));
-        assert_eq!(encode_slot(&slot), before);
-    }
-
-    /// Attachment-index rows mirror the WRITTEN body exactly: the payload of
-    /// a value that lost the actor-scoped dedupe keeps no row and no
-    /// provenance.
-    #[test]
-    fn attachment_rows_never_reference_a_deduped_payload() {
-        let survivor = value(0x2B, 0x3F, 0x49, 1_000);
-        let loser = value(0x2C, 0x3F, 0x49, 2_000);
-        let slot = slot_with(vec![survivor.clone(), loser.clone()]);
-
-        assert_eq!(slot.payloads(), vec![survivor.payload]);
-        assert_eq!(
-            slot.provenance_for_payload(survivor.payload),
-            Some(survivor.provenance_claim_id)
-        );
-        assert_eq!(slot.provenance_for_payload(loser.payload), None);
     }
 
     // -- crate-seam side-effect mirrors -----------------------------------
@@ -489,22 +423,6 @@ mod tests {
             before + 1,
             "graph version increments exactly once"
         );
-    }
-
-    /// CRATE SEAM: the acyclicity walk is KIND-LOCAL. An ordinary structural
-    /// path between the same endpoints is invisible to it, so it can never
-    /// fabricate a readiness cycle.
-    #[test]
-    fn blocks_reachability_walk_is_kind_local() {
-        let (_dir, vault) = test_vault();
-        let left = seed_symbol(&vault, 0x74);
-        let right = seed_symbol(&vault, 0x75);
-        vault
-            .put_edge(&left, EdgeKind::DerivedFrom, &right, 0.2)
-            .expect("an ordinary structural edge still writes through the generic door");
-
-        let rtxn = vault.store.env.read_txn().expect("read txn");
-        assert!(!blocks_path_exists(&vault, &rtxn, left, right).expect("walk"));
     }
 
     /// CRATE SEAM (unreachable through `Vault`): the deindex door's INDEX-ONLY

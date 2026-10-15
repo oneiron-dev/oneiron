@@ -176,7 +176,8 @@ impl SessionVault<'_> {
             "executor speaks in the room",
             None,
         )?;
-        let storage = ExecutorStorage::for_session(&self.session)?;
+        let storage =
+            ExecutorStorage::for_session(&self.session, self.actor.unwrap_or_else(EntityId::now))?;
         let record = CodeRunReplayRecord::new(
             EntityId::now(),
             CodeRunDeterminism::new(1_719_000_004_000, [0xCE; 32]),
@@ -491,38 +492,6 @@ pub(in crate::branch_store_oracle) fn overflow_budget(
     drop(segment);
     drop(wtxn);
     error
-}
-
-/// ONE-1726: take a read snapshot, apply `script` concurrently, then
-/// finish iterating the snapshot; returns (rows seen by the snapshot,
-/// rows a fresh read sees).
-pub(in crate::branch_store_oracle) fn snapshot_vs_concurrent_apply(
-    vault: &Vault,
-    session: &SessionVault<'_>,
-    script: &[OverlayOp],
-    prefix: &[u8],
-) -> Result<(Vec<ModelRow>, Vec<ModelRow>)> {
-    let rtxn = vault.store.env.read_txn()?;
-    let view = session.session.read_view()?;
-    let snapshot_iter = view.entities.prefix_iter(&rtxn, prefix)?;
-    let overlay = session.session.overlay();
-    let apply_result = std::thread::scope(|scope| {
-        scope
-            .spawn(|| apply_overlay_script(&overlay, script))
-            .join()
-            .expect("overlay apply thread panicked")
-    });
-    apply_result?;
-    let snapshot_rows = snapshot_iter
-        .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
-        .collect::<Result<Vec<_>>>()?;
-    let fresh_view = session.session.read_view()?;
-    let fresh_rows = fresh_view
-        .entities
-        .prefix_iter(&rtxn, prefix)?
-        .map(|row| row.map(|(key, value)| (key.into_owned(), value.into_owned())))
-        .collect::<Result<Vec<_>>>()?;
-    Ok((snapshot_rows, fresh_rows))
 }
 
 /// ONE-1726: close the overlay, then attempt a lease-holding read.

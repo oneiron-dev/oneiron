@@ -1,6 +1,5 @@
 //! Per-turn world authority, bound to the host's executing principal.
 
-use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use heed::RoTxn;
 
@@ -8,12 +7,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable,
     session_claim_producer,
 };
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WriteActor;
 
 use super::types::{
@@ -99,7 +96,19 @@ pub(crate) fn resolve_world_authority(
     selection: &ActiveWorldSelection,
     at: u64,
 ) -> Result<ResolvedWorldAuthority> {
-    let rows = world_access_rows(store, rtxn, &selection.agent_ref, at)?;
+    resolve_world_authority_admitting(store, rtxn, selection, at, &|_, _| Ok(true))
+}
+
+/// [`resolve_world_authority`] over only the rows `admit` keeps, so a caller
+/// holding the authority fold can drop causally quarantined grants.
+fn resolve_world_authority_admitting(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    selection: &ActiveWorldSelection,
+    at: u64,
+    admit: &RowAdmission<'_>,
+) -> Result<ResolvedWorldAuthority> {
+    let rows = world_access_rows(store, rtxn, &selection.agent_ref, at, admit)?;
 
     let mut folded_allowed: Option<WorldAuthoritySet> = None;
     let mut allowed_claim_ids = Vec::new();
@@ -164,6 +173,121 @@ pub(crate) fn resolve_world_authority(
     })
 }
 
+/// A row filter for the authority resolver; `Ok(false)` drops the row.
+pub(crate) type RowAdmission<'a> = dyn Fn(&EntityId, &ClaimBody) -> Result<bool> + 'a;
+
+/// Grant rows whose subjects one pass decodes up front; past it, each actor
+/// walks the rows for itself.
+#[cfg(not(test))]
+const GRANT_POSTING_SCAN: usize = 10_000;
+#[cfg(test)]
+const GRANT_POSTING_SCAN: usize = 2;
+
+/// Grant rows one read walks at all. A vault holding more refuses the read
+/// rather than guess who is governed.
+const GRANT_ROW_CEILING: usize = 100_000;
+
+/// Which actors world-access law governs. An owner's ALLOWED-SET grant about
+/// an actor puts it under that law, and the actor stays under it after the
+/// grant closes or loses its authority: losing a grant never falls back to
+/// base reality. A row the owner never granted governs nobody.
+///
+/// Read from the grant predicate's postings, which co-commit with the grant
+/// rows, never from `claim_of` edges: an edge can go while its row stays, and
+/// a missing edge is not permission to read base.
+pub(crate) struct WorldGrantIndex {
+    /// Every grant row under the predicate.
+    rows: Vec<EntityId>,
+    /// The rows' subjects, decoded up front while one pass covers them.
+    governed: Option<std::collections::BTreeSet<EntityId>>,
+}
+
+impl WorldGrantIndex {
+    pub(crate) fn read(store: &Store, rtxn: &RoTxn<'_>) -> Result<Self> {
+        let rows = crate::claim::claim_ids_for_predicate_bounded_in_txn(
+            store,
+            rtxn,
+            PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+            GRANT_ROW_CEILING,
+        )?;
+        if rows.len() > GRANT_POSTING_SCAN {
+            return Ok(Self {
+                rows,
+                governed: None,
+            });
+        }
+        let mut governed = std::collections::BTreeSet::new();
+        for id in &rows {
+            if let Some(subject) = grant_subject(store, rtxn, id)? {
+                governed.insert(subject);
+            }
+        }
+        Ok(Self {
+            rows,
+            governed: Some(governed),
+        })
+    }
+
+    fn governs(&self, store: &Store, rtxn: &RoTxn<'_>, actor: EntityId) -> Result<bool> {
+        if let Some(governed) = &self.governed {
+            return Ok(governed.contains(&actor));
+        }
+        for id in &self.rows {
+            if grant_subject(store, rtxn, id)? == Some(actor) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// The subject of an owner's ALLOWED-SET grant, open, closed or since
+/// stripped of its authority.
+fn grant_subject(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+        return Ok(None);
+    };
+    if raw.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw.body, true)?;
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Ok(None);
+    };
+    if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET || !owner_granted_allowed_row(&body) {
+        return Ok(None);
+    }
+    Ok(Some(subject))
+}
+
+/// The worlds `actor` reads when a request names none (ARCH-0022): base plus
+/// the active world. An actor under world-access law reads its resolved
+/// DEFAULT-SUBSET, which a guest may write without base, or with no default,
+/// base reality only while an in-force grant holds base. An actor no grant
+/// was ever written about reads base reality. `admit` drops rows the caller's
+/// authority snapshot quarantines.
+pub(crate) fn reading_default(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    grants: &WorldGrantIndex,
+    admit: &RowAdmission<'_>,
+    actor: EntityId,
+    at: u64,
+) -> Result<WorldAuthoritySet> {
+    if !grants.governs(store, rtxn, actor)? {
+        return WorldAuthoritySet::new(true, []);
+    }
+    let selection = ActiveWorldSelection {
+        agent_ref: actor,
+        selected: None,
+    };
+    let resolved = resolve_world_authority_admitting(store, rtxn, &selection, at, admit)?;
+    if resolved.default_claim_id.is_some() {
+        return Ok(resolved.default_subset);
+    }
+    WorldAuthoritySet::new(resolved.allowed_set.include_base(), [])
+}
+
 /// One world-access authority CLAIM row that is in force for this resolution.
 struct WorldAccessRow {
     id: EntityId,
@@ -192,9 +316,11 @@ fn world_access_row_in_force(body: &ClaimBody, at: u64) -> bool {
     body.valid_from.is_none_or(|from| from <= at) && body.valid_to.is_none_or(|to| at < to)
 }
 
-/// Reads the agent's in-force world-access rows through its inbound `claim_of`
-/// adjacency — the same edge the claim door writes, so authority rows are
-/// ordinary claims about the agent and nothing else.
+/// Reads the agent's in-force world-access rows from the two grant
+/// predicates' postings, which co-commit with the rows, never from `claim_of`
+/// adjacency: an edge can go while its row stays, and dropping one narrowing
+/// row's edge must not widen the fold. A deleted row grants nothing, even
+/// while an unapplied delete leaves its body stored.
 ///
 /// Rows that are closed (lifecycle, approval, staleness, or valid-time at
 /// `at`), rows about another subject, and rows under any other predicate are
@@ -207,52 +333,51 @@ fn world_access_rows(
     rtxn: &RoTxn<'_>,
     agent_ref: &EntityId,
     at: u64,
+    admit: &RowAdmission<'_>,
 ) -> Result<Vec<WorldAccessRow>> {
     let mut rows = Vec::new();
-    for (scanned, entry) in store
-        .port_edges(
+    for predicate in [
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ] {
+        for claim_id in crate::claim::claim_ids_for_predicate_bounded_in_txn(
+            store,
             rtxn,
-            agent_ref,
-            crate::ports::EdgeDirection::In,
-            Some(EdgeKind::ClaimOf),
-            None,
-        )?
-        .enumerate()
-    {
-        if scanned >= MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("world access authority claims"));
+            predicate,
+            GRANT_ROW_CEILING,
+        )? {
+            let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
+                continue;
+            };
+            if raw.entity_type != ENTITY_TYPE_CLAIM
+                || !crate::vault::live_entity_row_in_txn(store, rtxn, &claim_id)?.is_live()
+            {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(&raw.body, true)?;
+            if body.predicate != predicate {
+                continue;
+            }
+            if body.subject != ClaimSubject::Entity(*agent_ref)
+                || !claim_surfaceable(&body)
+                || !world_access_row_in_force(&body, at)
+            {
+                continue;
+            }
+            if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+                && session_claim_producer(&body) != Some(*agent_ref)
+            {
+                continue;
+            }
+            if !admit(&claim_id, &body)? {
+                continue;
+            }
+            rows.push(WorldAccessRow {
+                id: claim_id,
+                body,
+                learned_at: raw.learned_at,
+            });
         }
-        let edge_row = entry?;
-        let claim_id = edge_row.target;
-        let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
-            continue;
-        };
-
-        if raw.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(&raw.body, true)?;
-        if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
-            && body.predicate != PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-        {
-            continue;
-        }
-        if body.subject != ClaimSubject::Entity(*agent_ref)
-            || !claim_surfaceable(&body)
-            || !world_access_row_in_force(&body, at)
-        {
-            continue;
-        }
-        if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
-            && session_claim_producer(&body) != Some(*agent_ref)
-        {
-            continue;
-        }
-        rows.push(WorldAccessRow {
-            id: claim_id,
-            body,
-            learned_at: raw.learned_at,
-        });
     }
     Ok(rows)
 }

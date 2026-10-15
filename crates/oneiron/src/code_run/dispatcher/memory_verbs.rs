@@ -2,12 +2,14 @@
 
 use rmpv::Value;
 
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
-use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
-    SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
-    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
+    AGENT_VERB_SESSION_BOUND, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
+    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
+    SelfMemoryWriteResult,
 };
 use crate::error::{Error, Result};
 use crate::{ClaimSubject, EdgeKind};
@@ -63,6 +65,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::InferenceDefaultsRead
             | SelfEffect::InferenceDefaultsReplace
             | SelfEffect::WakePolicyWrite
+            // The bound verb door runs against the canonical vault.
+            | SelfEffect::AgentVerb
             | SelfEffect::AgentsSpawn
             | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk
@@ -92,12 +96,27 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// A search its door admitted with a key reads on that key's lane.
     pub(super) fn dispatch_memory_search(
         &self,
         call: SelfMemorySearchCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        let results = self.storage.search_text(&call.query, limit)?;
+        let results = match read_as {
+            // A room's hits include overlay rows a door's lane cannot name, so
+            // a session-bound run's narrowed search is refused as its verb
+            // forwards are.
+            Some(_) if matches!(self.storage, ExecutorStorage::Session(_)) => {
+                return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                    effect: SelfEffect::MemorySearch,
+                    outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
+                    reason_codes: Vec::new(),
+                }));
+            }
+            Some(reader) => self.storage.search_text_as(&call.query, limit, reader)?,
+            None => self.storage.search_text(&call.query, limit)?,
+        };
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
@@ -188,6 +207,7 @@ impl HostSelfDispatcher<'_> {
                     &envelope,
                     call.occurred,
                     call.learned_at,
+                    |_| Ok(()),
                 )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
@@ -288,6 +308,7 @@ impl HostSelfDispatcher<'_> {
                 &claim_gate_body,
                 edge_gate_id,
                 &edge_gate_body,
+                |_| Ok(()),
             )?,
             ExecutorStorage::Session(binding) => binding.session.executor_supersede_claim(
                 &binding.route,
@@ -307,11 +328,22 @@ impl HostSelfDispatcher<'_> {
         }))
     }
 
+    /// A facet stamp its door admitted with a key places only a row that
+    /// key's lane reads, judged in the edge's own write transaction
+    /// (`require_facet_placement_in`).
     pub(super) fn dispatch_memory_put_edge(
         &self,
         call: SelfMemoryPutEdgeCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        let placement = read_as.filter(|_| call.kind == EdgeKind::FacetOf);
+        if placement.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
+            // A room's rows include overlay rows a door's lane cannot name, so
+            // a session-bound run places no facet stamp on a door's key, as
+            // its narrowed search is refused.
+            return Err(unplaceable(call.src, call.tgt));
+        }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
             admission.as_ref().map(|admission| admission.lane),
@@ -333,15 +365,36 @@ impl HostSelfDispatcher<'_> {
         let gate_id =
             edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?;
         match &self.storage {
-            ExecutorStorage::Canonical(vault) => vault.put_edge_for_code_run_trap(
-                &call.src,
-                call.kind,
-                &call.tgt,
-                call.weight,
-                &envelope,
-                gate_id,
-                &gate_body,
-            )?,
+            ExecutorStorage::Canonical(vault) => {
+                vault
+                    .put_edge_for_code_run_trap(
+                        &call.src,
+                        call.kind,
+                        &call.tgt,
+                        call.weight,
+                        &envelope,
+                        gate_id,
+                        &gate_body,
+                        |txn| match &placement {
+                            Some(reader) => {
+                                require_facet_placement_in(vault, reader, txn, call.src, call.tgt)
+                            }
+                            None => Ok(()),
+                        },
+                    )
+                    .map_err(|refused| match refused {
+                        // A door's credential learns no endpoint type from the type
+                        // table either: its every FacetOf refusal reads alike (Astra
+                        // R12 F1 on #1432). A NOTE's or ASSET's refused restamp is
+                        // judged only once the target is a stored FACET, so it reads
+                        // alike too (Astra R13 F1).
+                        Error::Registry(
+                            crate::error::RegistryError::InvalidFacetOfEdge { .. }
+                            | crate::error::RegistryError::FacetStampImmutable { .. },
+                        ) if placement.is_some() => unplaceable(call.src, call.tgt),
+                        other => other,
+                    })?;
+            }
             ExecutorStorage::Session(binding) => binding.session.executor_put_edge(
                 &binding.route,
                 &call.src,

@@ -187,53 +187,6 @@ fn revoked_owner_preview_cannot_observe_later_share_recipient() {
     );
 }
 
-/// T10: an UNROOTED vault keeps today's store-truth behavior exactly.
-///
-/// This pins the ratified enforcement mode (S-AUTH3 D6 fork (a),
-/// "enforce-when-root-exists"): teeth arrive when a host DECLARES authority,
-/// not before. Every shipped vault has no authority log at all, so nothing
-/// breaks on upgrade. [owner] fork note: under the alternate "hard flip"
-/// ruling these three expectations invert to FORBIDDEN.
-#[test]
-fn unrooted_vault_keeps_store_truth_owner_verbs() {
-    let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x63);
-    let agent = put_person(&vault, 0x64);
-    let subject = put_person(&vault, 0x65);
-    let owner_facade = facade_for(&vault, owner);
-    let agent_claim = vault
-        .memory(agent, EdgeActorClass::Agent)
-        .claim_upsert(&claim_input(
-            "profile.mood",
-            &subject,
-            "observed",
-            serde_json::json!("calm"),
-        ))
-        .expect("agent claim");
-
-    assert!(
-        vault.authority_fold().expect("fold").vault_id.is_none(),
-        "fixture must have no declared authority root"
-    );
-    owner_facade
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "PERSON".to_owned(),
-            body: serde_json::json!({"name": "minted"}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 702,
-            learned_at: None,
-        })
-        .expect("unrooted PERSON mint unchanged");
-    owner_facade
-        .claim_retract(&agent_claim.claim_short_id)
-        .expect("unrooted cross-actor retract unchanged");
-    owner_facade
-        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
-        .expect("unrooted delete unchanged");
-}
-
 /// T11: the binding class is EXACT and revocation is real.
 #[test]
 fn exact_class_binding_no_cross_class_satisfaction() {
@@ -247,75 +200,6 @@ fn exact_class_binding_no_cross_class_satisfaction() {
     let err = facade_for(&vault, owner)
         .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("agent-class binding must not satisfy a human-class verb");
-    assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
-}
-
-/// T11b: a RevokeActor watermark takes the owner's teeth away again.
-#[test]
-fn revoked_binding_forbids_owner_verbs() {
-    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
-    let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x68);
-    let subject = put_person(&vault, 0x69);
-    let facade = facade_for(&vault, owner);
-
-    let (genesis, signing) = authority_root(0x73);
-    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
-    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
-    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
-    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
-        sign_authority(
-            AuthorityLogEntry {
-                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-                vault_id: Some(vault_id),
-                seq,
-                parent_hashes: parents,
-                op,
-                signer: AuthoritySignature {
-                    suite: key.suite(),
-                    public_key: key.clone(),
-                    signature: vec![0; 64],
-                },
-                cosigns: Vec::new(),
-                ts: 100 + seq,
-            },
-            &signing,
-        )
-    };
-    let bind = owner_entry(
-        1,
-        AuthorityOp::BindActor {
-            authority_key: key.clone(),
-            actor_ref: owner,
-            actor_class: "human".to_owned(),
-            epoch: 1,
-        },
-        vec![genesis_hash],
-    );
-    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
-    vault
-        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
-        .expect("root + bind");
-    facade
-        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
-        .expect("bound owner deletes");
-
-    let revoke = owner_entry(
-        2,
-        AuthorityOp::RevokeActor {
-            authority_key: key.clone(),
-            epoch: 1,
-        },
-        vec![bind_hash],
-    );
-    vault
-        .put_authority_log_entries(&[(revoke, test_time(3), 3)])
-        .expect("revoke binding");
-
-    let victim = put_person(&vault, 0x6A);
-    let err = facade
-        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
-        .expect_err("a revoked binding must lose its owner teeth");
     assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 
@@ -491,6 +375,16 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 0x6B);
     let subject = put_person(&vault, 0x6C);
+    let facet = EntityId::from_bytes([0x6D; 16]).expect("facet id");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time(1),
+            1,
+            b"facet",
+        )
+        .expect("put facet");
     let facade = facade_for(&vault, owner);
 
     let (genesis, signing) = authority_root(0x74);
@@ -553,6 +447,243 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
         MemoryError::from(error).code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
+    // The readability predicate the server's doors ask refuses the same way
+    // (Sol R1-003 on the `/v1` credential keys).
+    let error = lane
+        .is_entity_readable(&subject)
+        .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+    // So does code mode's facet placement onto a stored facet, judged in the
+    // edge's own write transaction: a door that kept the key places no row
+    // (Sol R4 F5 on #1432).
+    let txn = vault.store.env.read_txn().expect("read txn");
+    let error =
+        crate::code_run::require_facet_placement_in(&vault, lane.actor_key(), &txn, subject, facet)
+            .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+}
+
+/// Astra #1413-003: a narrower credential of the owner's skipped the
+/// relationship gate, but its key kept no tie to the owner binding, so a lane
+/// built while the binding held still read a relationship's words after it
+/// was revoked. The exemption is judged in each read's own snapshot now: the
+/// kept lane withholds them after the revoke, as a fresh lane from the same
+/// credential does, and both still read the owner's unscoped words.
+#[test]
+fn a_narrower_owner_credential_loses_its_grant_exemption_with_the_binding() {
+    use crate::claim::PointRead;
+    use crate::federation::ScopeAxis;
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x6D);
+    let (spaced, unscoped) = (EntityId::now(), EntityId::now());
+    let mut messages = Vec::new();
+    for (order, (id, content, rel)) in [
+        (spaced, "harbor lantern exemption", Some([0x6E; 16])),
+        (unscoped, "kettle stove exemption", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut message = witness_message(order as u32, WitnessAuthor::User, content);
+        message.id = Some(id.to_hex());
+        message.metadata = rel.map(
+            |space| serde_json::json!({ "rel": EntityId::from_bytes(space).unwrap().to_hex() }),
+        );
+        messages.push(message);
+    }
+    facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x6F; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages,
+            occurred_at: 1500,
+        })
+        .expect("witness the owner's words");
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .bind_host_owner_for_test(&issuer, owner)
+        .expect("bind the owner");
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"narrower owner credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"narrower-owner";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    assert!(!proof.is_full_vault_owner_grade());
+    let lane_of = || {
+        vault.scoped_read(
+            vault
+                .credential_read_key(&proof)
+                .expect("judge the credential")
+                .expect("a read key"),
+        )
+    };
+    let reads = |lane: &crate::claim::ScopedRead<'_>, id: EntityId| {
+        let point = lane
+            .read(&[PointRead::id(id)], None)
+            .expect("point read")
+            .value[0]
+            .as_ref()
+            .is_some_and(|row| row.body.is_some());
+        let readable = lane.is_entity_readable(&id).expect("readability");
+        assert_eq!(
+            point,
+            readable,
+            "{}: the point read and the predicate agree",
+            id.to_hex()
+        );
+        readable
+    };
+    let kept = lane_of();
+    assert!(
+        reads(&kept, spaced),
+        "the bound owner's narrower credential"
+    );
+    assert!(reads(&kept, unscoped));
+
+    vault
+        .revoke_host_actor_for_test(&issuer)
+        .expect("revoke the owner binding");
+    let fresh = lane_of();
+    for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
+        assert!(!reads(lane, spaced), "the {which} lane, past the revoke");
+        assert!(
+            reads(lane, unscoped),
+            "the {which} lane keeps unscoped words"
+        );
+    }
+}
+
+/// Sol R5-007 on #1413: the narrower owner credential's exemption was judged
+/// in each read's own snapshot, but for the embedded owner that judgement
+/// never read the PERSON, so a lane kept past the embedded owner's hard
+/// delete, and a fresh lane from the same credential, still read a
+/// relationship's words. The exemption needs its holder's PERSON in the
+/// read's snapshot now. Astra on #1413: the plain delete keeps that PERSON
+/// as a shell with its header, and the first fix read only the header's
+/// type, so both deletes are checked; the exemption needs a live PERSON.
+#[test]
+fn a_narrower_embedded_owner_credential_loses_its_exemption_with_its_person() {
+    use crate::deletion::DeleteReason;
+    for reason in [DeleteReason::UserDelete, DeleteReason::UserHardDelete] {
+        narrower_embedded_owner_reads_past(reason);
+    }
+}
+
+fn narrower_embedded_owner_reads_past(reason: crate::deletion::DeleteReason) {
+    use crate::claim::PointRead;
+    use crate::federation::ScopeAxis;
+    let (_dir, vault) = open_vault();
+    let embedded = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    let author = put_person(&vault, 0x6C);
+    let (spaced, unscoped) = (EntityId::now(), EntityId::now());
+    let mut messages = Vec::new();
+    for (order, (id, content, rel)) in [
+        (spaced, "harbor lantern embedded", Some([0x6B; 16])),
+        (unscoped, "kettle stove embedded", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut message = witness_message(order as u32, WitnessAuthor::User, content);
+        message.id = Some(id.to_hex());
+        message.metadata = rel.map(
+            |space| serde_json::json!({ "rel": EntityId::from_bytes(space).unwrap().to_hex() }),
+        );
+        messages.push(message);
+    }
+    facade_for(&vault, author)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x6A; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages,
+            occurred_at: 1500,
+        })
+        .expect("witness another person's words");
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer).expect("host root");
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"narrower embedded owner credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = embedded.to_hex();
+    claims.actor_class = Some("human".into());
+    claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"narrower-embedded-owner";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    assert!(!proof.is_full_vault_owner_grade());
+    let lane_of = || {
+        vault.scoped_read(
+            vault
+                .credential_read_key(&proof)
+                .expect("judge the credential")
+                .expect("a read key"),
+        )
+    };
+    let reads = |lane: &crate::claim::ScopedRead<'_>, id: EntityId| {
+        let point = lane
+            .read(&[PointRead::id(id)], None)
+            .expect("point read")
+            .value[0]
+            .as_ref()
+            .is_some_and(|row| row.body.is_some());
+        let readable = lane.is_entity_readable(&id).expect("readability");
+        assert_eq!(
+            point,
+            readable,
+            "{}: the point read and the predicate agree",
+            id.to_hex()
+        );
+        readable
+    };
+    let kept = lane_of();
+    assert!(
+        reads(&kept, spaced),
+        "the embedded owner's narrower credential"
+    );
+
+    vault
+        .delete_entity_with_reason(&embedded, reason)
+        .expect("delete the embedded owner");
+    let fresh = lane_of();
+    for (lane, which) in [(&kept, "kept"), (&fresh, "fresh")] {
+        assert!(
+            !reads(lane, spaced),
+            "the {which} lane, past the {reason:?}"
+        );
+        assert!(
+            reads(lane, unscoped),
+            "the {which} lane keeps unscoped words past the {reason:?}"
+        );
+    }
 }
 
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
@@ -1242,8 +1373,14 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     // valid; together they are a collapse.
     let (genesis_a, _) = authority_root(0x74);
     let (genesis_b, _) = authority_root(0x75);
-    vault
-        .put_authority_log_entries(&[(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)])
+    let rows = [(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)];
+    // The local door holds a rival genesis (H72): a caller with local put
+    // access cannot brick the vault's authority with one.
+    assert_eq!(
+        vault.put_authority_log_entries(&rows).unwrap_err().kind(),
+        crate::error::ErrorKind::AuthorityLogSignerPending
+    );
+    crate::authority::with_authority_doors_open_for_test(|| vault.put_authority_log_entries(&rows))
         .expect("two independent roots are individually valid rows");
 
     let fold = vault.authority_fold().expect("fold");

@@ -46,7 +46,10 @@ use self::config::Bm25RecencyConfig;
 pub(crate) use self::config::{Bm25Config, FieldLengthPolicy};
 pub(crate) use self::diagnostics::Bm25Diagnostics;
 pub use self::diagnostics::{Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot};
-pub(crate) use self::index::{deindex_text, index_text};
+pub(crate) use self::index::{
+    AnalyzedText, analyze_text, check_indexed_text_bytes, deindex_text, index_analyzed_text,
+    index_text,
+};
 pub(crate) use self::query::{
     Bm25SearchOptions, PrefixExpansionPostingDecision, final_token_exact_posting_matches,
     final_token_prefix_expansion_has_scoped_and_rejected_postings, search_text,
@@ -54,7 +57,7 @@ pub(crate) use self::query::{
 };
 use self::query::{
     QueryTerm, apply_recency_blend, collapse_lexical_query_hint_scores, collect_query_terms,
-    compute_avgdl, lexical_query_hint_scope_id,
+    compute_avgdl, lexical_query_hint_scope_id, scores_for_withdrawn,
 };
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer};
 use crate::entity_id::EntityId;
@@ -76,12 +79,6 @@ use self::codec::{
     PostingLookup, decode_forward, encode_field_lengths, encode_forward, encode_posting_entry,
     find_posting_dup, read_field_stats, write_field_stats, write_total_docs,
 };
-#[cfg(test)]
-use self::config::BM25_FIELD_COUNT;
-#[cfg(test)]
-pub(crate) use self::config::FieldConfig;
-#[cfg(test)]
-use self::query::search_text_with_recency;
 #[cfg(test)]
 use self::query::{
     MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS, MAX_FINAL_TOKEN_PREFIX_TERMS,

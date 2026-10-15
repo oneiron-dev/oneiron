@@ -2,7 +2,6 @@
 
 use loro::VersionVector;
 
-use oneiron::claim::ScopedReadActorKey;
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{
@@ -64,10 +63,11 @@ pub(super) async fn handle_window_sync(
         conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
         let selector = decode_sync_selector(payload)
             .map_err(|_| ProtocolError::InvalidPayload("invalid promotion selector"))?;
-        let doc = server
-            .get_or_create_window(&key)
+        let window = server
+            .serve_window(&key)
             .await
             .map_err(|e| ProtocolError::Persistence(e.to_string()))?;
+        let doc = window.doc.clone();
         authorize_promoted_window(
             server,
             require_bound_app_auth(server, conn_state)?,
@@ -131,11 +131,14 @@ pub(super) async fn handle_window_sync(
 
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
-    // fresh empty window (fail-closed — see SyncServer::get_or_create_window).
-    let doc = server
-        .get_or_create_window(&key)
+    // fresh empty window (fail-closed — see SyncServer::serve_window).
+    // The handle is held to the end of the frame, so the window cannot be
+    // unloaded under the import below.
+    let window = server
+        .serve_window(&key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
+    let doc = window.doc.clone();
     if conn_state.protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION
         && matches!(
             sub_tag,
@@ -177,11 +180,21 @@ pub(super) async fn handle_window_sync(
             // echo suppression to drop the response for the requester.
             let _ = direct_tx.send(response);
             // Reverse SyncStep1: send our VV so the client pushes its local
-            // diff back — this is what makes the exchange bidirectional.
+            // diff back — this is what makes the exchange bidirectional. A
+            // window withheld as device-only names only what both sides hold,
+            // so a client that sent all it has still sees convergence.
+            let remote = VersionVector::decode(payload)
+                .map_err(|_| ProtocolError::InvalidPayload("invalid version vector"))?;
+            let mut vv = doc.oplog_vv();
+            if oneiron::sync::window::export_withheld(server.vault.as_ref(), &key, &doc, &remote)
+                .map_err(map_delta_export_err)?
+            {
+                vv = vv.intersection(&remote);
+            }
             let vv_response = protocol::encode_window_sync(
                 window_key,
                 window_sub_tags::VV_RESPONSE,
-                &doc.oplog_vv().encode(),
+                &vv.encode(),
             )
             .into_result()
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
@@ -261,11 +274,17 @@ pub(super) async fn handle_window_sync(
                 )));
             }
 
-            let broadcast_msg =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
-                    .into_result()
-                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
+            // A world flagged device-only on this server stays here, even as
+            // another device's relayed update.
+            if !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update) {
+                let broadcast_msg =
+                    protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
+                        .into_result()
+                        .map_err(|e| {
+                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
+                        })?;
+                let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
+            }
             if let Some(seq) = residence_seq {
                 let mut ack = seq.to_be_bytes().to_vec();
                 ack.extend_from_slice(blake3::hash(update).as_bytes());
@@ -324,8 +343,11 @@ pub(super) fn authorize_promoted_window(
         ));
     }
     let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
-    let actor =
-        ScopedReadActorKey::from_verified_slip(proof).ok_or(ProtocolError::RpcNoPrincipal)?;
+    let actor = server
+        .vault
+        .credential_read_key(proof)
+        .map_err(map_selector_filter_err)?
+        .ok_or(ProtocolError::RpcNoPrincipal)?;
     let scoped = server.vault.scoped_read(actor);
     match promotion_covers_full_window(
         &server.vault,

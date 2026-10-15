@@ -31,12 +31,16 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, false, true)?;
+        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            false,
+            true,
+        )?;
         let results = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_vector(query, fetch_limit)
@@ -67,6 +71,16 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
+        self.search_text_revisioned_as_of(query, limit, requested, None)
+    }
+
+    pub(crate) fn search_text_revisioned_as_of(
+        &self,
+        query: &str,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        as_of: Option<u64>,
+    ) -> Result<RevisionedHits> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
             return Ok(RevisionedHits {
@@ -75,17 +89,24 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, false)?;
-        let results = self
+        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            true,
+            false,
+        )?;
+        let mut pipeline = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_text(query, fetch_limit)
-            .limit(fetch_limit)
-            .run_for_pack()?;
+            .limit(fetch_limit);
+        if let Some(as_of) = as_of {
+            pipeline = pipeline.with_temporal_now(as_of);
+        }
+        let results = pipeline.run_for_pack()?;
         let filtered = self.filter_search_results(
             results.scores,
             limit,
@@ -127,7 +148,11 @@ impl ScopedRead<'_> {
         id: &EntityId,
         mode: ReadMode,
     ) -> Result<Option<AdmittedRevision>> {
-        if !self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)? {
+        // A read by id matches no meaning, so it takes the row predicate
+        // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
+        // guards the doors that find a row (search, recall, packs, graph
+        // edges), and each runs it before it reads the row here.
+        if !self.is_entity_readable_with_filter_in(txn, policy, id, filter)? {
             return Ok(None);
         }
         let raw = match self.session_view {
@@ -205,6 +230,7 @@ impl ScopedRead<'_> {
         };
         crate::context_pack::context_entity_matches_read_snapshot(
             self.vault,
+            &self.store_read(),
             txn,
             entity,
             &revision.raw,

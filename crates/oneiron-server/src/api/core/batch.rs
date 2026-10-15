@@ -168,7 +168,7 @@ pub(crate) async fn core_batch(
     }
 
     batch.commit().map_err(|error| {
-        tracing::error!(error = %error, "core batch commit failed");
+        tracing::error!(kind = ?error.kind(), "core batch commit failed");
         core_engine_error("core batch commit failed", error)
     })?;
 
@@ -204,7 +204,7 @@ pub(crate) fn write_core_entity(
         input.text,
     )?;
     batch.commit().map_err(|error| {
-        tracing::error!(error = %error, entity_type = input.entity_type, "core entity create failed");
+        tracing::error!(kind = ?error.kind(), entity_type = input.entity_type, "core entity create failed");
         core_engine_error("core entity create failed", error)
     })?;
     let body = core_body_for_write(input.entity_type, input.body);
@@ -228,7 +228,7 @@ pub(crate) fn project_core_entity(
     view: View,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     let Some(item) = projection::project_entity(vault, id, view).map_err(|error| {
-        tracing::error!(error = %error, id = %id.to_hex(), "core entity read failed");
+        tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core entity read failed");
         core_engine_error("core entity read failed", error)
     })?
     else {

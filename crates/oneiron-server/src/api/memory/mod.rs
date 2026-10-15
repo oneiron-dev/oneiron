@@ -17,6 +17,7 @@ use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
+use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::projection;
@@ -256,7 +257,7 @@ pub(crate) async fn core_memory_timeline(
     let view = params.view.unwrap_or(View::Summary);
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let timeline = scoped_read.memory_timeline(&id).map_err(|error| {
-        tracing::error!(error = %error, id = %id.to_hex(), "core memory timeline failed");
+        tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory timeline failed");
         core_engine_error("core memory timeline failed", error)
     })?;
 
@@ -306,7 +307,7 @@ pub(super) use self::watch::{
         (
             "verb" = String,
             Path,
-            description = "Named memory verb: remember, supersede, retract, delete/forget, or hard_delete/erase.",
+            description = "Named memory verb: remember, supersede, retract, delete/forget, or hard_delete. erase and purge are refused: erase is the owner's own act, never a memory verb.",
             example = "supersede"
         )
     ),
@@ -315,7 +316,7 @@ pub(super) use self::watch::{
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
         (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -327,12 +328,7 @@ pub(crate) async fn core_memory_verb(
     payload: Result<Json<CoreMemoryVerbRequest>, JsonRejection>,
 ) -> Result<Json<CoreMemoryVerbResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let verb = oneiron::NamedMemoryVerb::parse(&verb_name).ok_or_else(|| {
-        ApiError::bad_request(
-            "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete (erase/purge)",
-            Some("verb"),
-        )
-    })?;
+    let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
 
@@ -358,7 +354,7 @@ pub(crate) async fn core_memory_verb(
             )?
             .commit()
             .map_err(|error| {
-                tracing::error!(error = %error, id = %id.to_hex(), "core memory remember failed");
+                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
                 core_engine_error("core memory remember failed", error)
             })?;
 
@@ -385,7 +381,7 @@ pub(crate) async fn core_memory_verb(
                 .supersede_claim(&new_id, &old_id, at)
                 .map_err(|error| {
                     tracing::error!(
-                        error = %error,
+                        kind = ?error.kind(),
                         new_id = %new_id.to_hex(),
                         old_id = %old_id.to_hex(),
                         "core memory supersede failed"
@@ -408,7 +404,7 @@ pub(crate) async fn core_memory_verb(
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let at = req.at.unwrap_or_else(unix_seconds_now);
             server.vault.retract_claim(&id, at).map_err(|error| {
-                tracing::error!(error = %error, id = %id.to_hex(), "core memory retract failed");
+                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
                 core_engine_error("core memory retract failed", error)
             })?;
 
@@ -437,7 +433,7 @@ pub(crate) async fn core_memory_verb(
                 .vault
                 .delete_entity_with_reason(&id, reason)
                 .map_err(|error| {
-                    tracing::error!(error = %error, id = %id.to_hex(), "core memory delete failed");
+                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                     core_engine_error("core memory delete failed", error)
                 })?;
 
@@ -655,6 +651,28 @@ pub(crate) fn parse_required_entity_id(
         ));
     };
     parse_entity_id_param(value, field)
+}
+
+/// The ARCH-0038 ladder: this route deletes. Erase clears backups, is an
+/// owner's own act by hand, and no token or Grant reaches it, so its names
+/// are refused here rather than resolved to a delete.
+fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
+    match refusal {
+        oneiron::NamedMemoryVerbRefusal::OwnerErase => ApiError::new(
+            "erase is the owner's own act and is not a memory verb; this route deletes",
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            [
+                "Use hard_delete to delete; backups can still return a deleted record.",
+                "To erase, the vault owner acts by hand; no token or grant can.",
+            ],
+        ),
+        _ => ApiError::bad_request(
+            "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete",
+            Some("verb"),
+        ),
+    }
 }
 
 pub(crate) fn core_memory_delete_reason(

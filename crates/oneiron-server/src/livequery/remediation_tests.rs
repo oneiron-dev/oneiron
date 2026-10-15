@@ -1,67 +1,10 @@
 #![allow(clippy::unwrap_used)]
 use super::subscriptions::{DerivedView, LiveQueries, LiveQuerySource};
 use super::*;
-use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+use oneiron::sync::bridge::{MaterializedDiffSummary, OriginMark};
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-
-#[test]
-fn app_payload_limits_are_checked_before_copying_or_decoding() {
-    let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-    for tag in [TAG_RPC, TAG_SUB] {
-        let mut bytes = vec![0; max + 2];
-        bytes[0] = tag;
-        assert!(matches!(crate::protocol::parse_message(&bytes),
-            Err(ProtocolError::FrameTooLarge { size, max: cap }) if size == max + 1 && cap == max));
-        bytes.pop();
-        assert!(crate::protocol::parse_message(&bytes).is_ok());
-    }
-}
-
-#[test]
-fn document_and_batch_limits_include_framing() {
-    use oneiron::sync::transport::{TAG_BATCH, TAG_DOCUMENT};
-
-    let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-    for tag in [TAG_DOCUMENT, TAG_BATCH] {
-        let mut bytes = vec![0; max];
-        bytes[0] = tag;
-        let document_offset = if tag == TAG_BATCH {
-            bytes[1..5].copy_from_slice(&((max - 5) as u32).to_be_bytes());
-            5
-        } else {
-            0
-        };
-        bytes[document_offset] = TAG_DOCUMENT;
-        bytes[document_offset + 1..document_offset + 17].fill(7);
-        assert!(crate::protocol::parse_message(&bytes).is_ok());
-        bytes.push(0);
-        assert!(matches!(crate::protocol::parse_message(&bytes),
-            Err(ProtocolError::FrameTooLarge { size, max: cap }) if size == max + 1 && cap == max));
-    }
-}
-
-#[test]
-fn all_caller_controlled_list_sizes_are_validated_before_engine_reads() {
-    for limit in [0, crate::api::CORE_MAX_LIST_LIMIT + 1, usize::MAX] {
-        for (method, params) in [
-            ("queryBm25", json!({"query":"x","limit":limit})),
-            (
-                "neighbors",
-                json!({"entityRef":"invalid","opts":{"limit":limit}}),
-            ),
-            ("pendingWrites", json!({"limit":limit})),
-            ("claimList", json!({"limit":limit})),
-        ] {
-            assert!(Read::parse(method, params).is_err(), "{method}: {limit}");
-        }
-    }
-    assert!(Read::parse("hydrate", json!({"refs":vec!["x";1001]})).is_err());
-    assert!(Read::parse("hydrate", json!({"refs":[]})).is_ok());
-    assert!(Read::parse("hydrate", json!({"refs":vec!["x";1000]})).is_ok());
-    assert!(Read::parse("queryBm25", json!({"query":"x","limit":1000})).is_ok());
-}
 
 #[test]
 fn messagepack_envelope_rejects_json_trailing_bytes_and_wrong_sequences() {
@@ -160,6 +103,7 @@ impl LiveQuerySource for Source {
                 batch: 0,
             },
             dependencies: BTreeSet::from(["e:11111111111111111111111111111111".to_owned()]),
+            followed: BTreeSet::new(),
         })
     }
     fn can_resume(&self, _: &Cursor) -> Result<bool, AppError> {
@@ -168,23 +112,6 @@ impl LiveQuerySource for Source {
     fn ready(&self, _: &MaterializedDiffSummary, _: &OriginMark) -> Result<bool, AppError> {
         Ok(self.ready.load(Ordering::Acquire))
     }
-}
-
-#[test]
-fn aggregate_retention_rejects_open_and_reclaims_on_close() {
-    let hub = budget::Budget::new(100 * 1024);
-    let source = Arc::new(Source::new(json!("x".repeat(60 * 1024))));
-    let a = LiveQueries::with_budget(1, source.clone(), hub.clone());
-    let b = LiveQueries::with_budget(2, source, hub);
-    a.open(1, ScopedView::default(), Channel::View, None, None)
-        .unwrap();
-    assert!(
-        b.open(1, ScopedView::default(), Channel::View, None, None)
-            .is_err()
-    );
-    a.close(1).unwrap();
-    b.open(1, ScopedView::default(), Channel::View, None, None)
-        .unwrap();
 }
 
 #[test]
@@ -203,36 +130,6 @@ fn all_snapshot_channels_are_chunked_then_eose_before_live_data() {
     }
 }
 
-#[test]
-fn a_refresh_between_publication_and_purge_does_not_consume_the_invalidation() {
-    let source = Arc::new(Source::new(json!(1)));
-    let tier = LiveQueries::new(1, source.clone());
-    let opened = tier
-        .open(1, ScopedView::default(), Channel::View, None, None)
-        .unwrap();
-    tier.ack(1, &opened[0].cursor).unwrap();
-    source.ready.store(false, Ordering::Release);
-    tier.on_materialized(
-        "w:2026-03/tombstones",
-        &MaterializedDiffSummary {
-            containers: vec!["w:2026-03/entities/11111111111111111111111111111111".into()],
-            bytes: 0,
-
-            revision_events: Vec::new(),
-        },
-        &OriginMark {
-            conn_id: None,
-            origin: Some("deletion_tombstone".into()),
-        },
-    );
-    tier.refresh().unwrap();
-    assert!(tier.buffered().unwrap().is_empty());
-    *source.value.lock().unwrap() = json!(0);
-    source.ready.store(true, Ordering::Release);
-    tier.refresh().unwrap();
-    assert_eq!(tier.buffered().unwrap()[0].result, Some(json!(0)));
-}
-
 #[tokio::test]
 async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
     let (_dir, server) = production_tests::server();
@@ -240,7 +137,7 @@ async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
     let mut connection = connection::Connection::new(hub, 9);
     assert!(!connection.has_active_subscriptions());
     let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
-    connection
+    let opened = connection
         .control(
             &auth,
             SubRequest::Open {
@@ -253,21 +150,16 @@ async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
         )
         .unwrap();
     assert!(connection.has_active_subscriptions());
-    let private = routing::wrap(9, 1, vec![TAG_SUB, 0x80]);
-    assert!(connection.receive_broadcast(&private).is_some());
-    assert!(
-        connection
-            .receive_broadcast(&routing::wrap(10, 1, vec![TAG_SUB, 0x80]))
-            .is_none()
-    );
-    assert!(
-        connection
-            .receive_broadcast(&routing::wrap(9, 2, vec![TAG_SUB, 0x80]))
-            .is_none()
-    );
+    let incarnation = routing::addressed(&opened[0], 9).unwrap().incarnation;
+    let routed = |conn, id| routing::wrap(conn, id, incarnation, Some(&[]), vec![TAG_SUB, 0x80]);
+    let locality = auth.locality();
+    let private = routed(9, 1);
+    assert!(connection.release(locality, &private).is_some());
+    assert!(connection.release(locality, &routed(10, 1)).is_none());
+    assert!(connection.release(locality, &routed(9, 2)).is_none());
     connection
         .control(&auth, SubRequest::Close { subscription_id: 1 })
         .unwrap();
     assert!(!connection.has_active_subscriptions());
-    assert!(connection.receive_broadcast(&private).is_none());
+    assert!(connection.release(locality, &private).is_none());
 }

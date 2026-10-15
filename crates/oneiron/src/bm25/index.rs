@@ -5,7 +5,7 @@ use heed::{RoTxn, RwTxn};
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
 
@@ -101,6 +101,118 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
     Ok(())
 }
 
+/// One document's fields as the analyzer reads them: term frequencies per
+/// field and surface lengths per field and in total.
+struct Analysis {
+    /// (term, field id) -> tf, sorted by term then field so the forward index
+    /// is canonical.
+    per_term: BTreeMap<String, BTreeMap<u16, u32>>,
+    per_field_len: HashMap<u16, u32>,
+    doc_len_total: u32,
+}
+
+/// An [`Analysis`] done before the write transaction opens, so a writer does
+/// this pure computation outside its critical section (RESEARCH-1115 Bend 2).
+/// It owns a copy of the fields it was read from and indexes only those.
+pub(crate) struct AnalyzedText {
+    analysis: Analysis,
+    source: Vec<(String, String)>,
+}
+
+impl std::fmt::Debug for AnalyzedText {
+    // Terms are the caller's text; only their shape is printed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnalyzedText")
+            .field("terms", &self.analysis.per_term.len())
+            .field("fields", &self.analysis.per_field_len.len())
+            .field("doc_len_total", &self.analysis.doc_len_total)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AnalyzedText {
+    /// Whether this analysis was read from exactly `fields`.
+    pub(crate) fn reads(&self, fields: &[(String, String)]) -> bool {
+        self.source == fields
+    }
+}
+
+pub(crate) fn analyze_text(
+    analyzer: &MultilingualAnalyzer,
+    fields: &[(String, String)],
+) -> Result<AnalyzedText> {
+    Ok(AnalyzedText {
+        analysis: analyze(analyzer, fields)?,
+        source: fields.to_vec(),
+    })
+}
+
+/// The most text one document may put through the analyzer: its field names and values, in
+/// bytes. Twice the 1 MiB a native NOTE body or a MESSAGE stream may hold, so those always
+/// index. A docs segment, an entity document or a raw `batch().text()` over it is refused.
+pub(super) const MAX_INDEXED_TEXT_BYTES: usize = 2 * 1024 * 1024;
+
+/// Refuses a field set over [`MAX_INDEXED_TEXT_BYTES`] before anything is tokenized, so the
+/// document's index stays as it was.
+pub(crate) fn check_indexed_text_bytes(fields: &[(String, String)]) -> Result<()> {
+    let bytes = fields.iter().fold(0_usize, |sum, (name, value)| {
+        sum.saturating_add(name.len()).saturating_add(value.len())
+    });
+    if bytes > MAX_INDEXED_TEXT_BYTES {
+        return Err(Error::Store(StoreError::IndexedTextTooLarge {
+            bytes,
+            limit: MAX_INDEXED_TEXT_BYTES,
+        }));
+    }
+    Ok(())
+}
+
+fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Result<Analysis> {
+    check_indexed_text_bytes(fields)?;
+    let ctx = AnalyzerContext::for_index();
+
+    // Aggregate tokens by (channel, term) → tf, and by channel → length.
+    // Terms within the same channel collide on identical folded text, so
+    // tf = count of matching tokens regardless of offset.
+    let mut per_field: HashMap<u16, HashMap<String, u32>> = HashMap::new();
+    let mut per_field_len: HashMap<u16, u32> = HashMap::new();
+    let mut doc_len_total: u32 = 0;
+
+    // One field's tokens at a time: the buffer peaks at the largest field,
+    // not at the whole document.
+    let mut tokens: Vec<Token> = Vec::new();
+    for (_, value) in fields {
+        analyzer.analyze(value, &ctx, &mut tokens);
+        for tok in tokens.drain(..) {
+            let fid = tok.channel.field_id();
+            let inc = u32::from(tok.length_increment);
+            let entry = per_field.entry(fid).or_default();
+            *entry.entry(tok.term.into_string()).or_insert(0) += 1;
+            let slot = per_field_len.entry(fid).or_insert(0);
+            *slot = slot
+                .checked_add(inc)
+                .ok_or(Error::ArithmeticOverflow("bm25 per-field length"))?;
+            doc_len_total = doc_len_total
+                .checked_add(inc)
+                .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
+        }
+    }
+
+    // Build the flat (term, field, tf) list, sorted lexicographically by
+    // term then ascending field_id so the forward index is canonical.
+    let mut per_term: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
+    for (fid, terms) in per_field {
+        for (term, tf) in terms {
+            per_term.entry(term).or_default().insert(fid, tf);
+        }
+    }
+    Ok(Analysis {
+        per_term,
+        per_field_len,
+        doc_len_total,
+    })
+}
+
 pub(crate) fn index_text(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
@@ -109,7 +221,35 @@ pub(crate) fn index_text(
     fields: &[(String, String)],
 ) -> Result<()> {
     validate_text_doc_id(id)?;
+    let analysis = analyze(analyzer, fields)?;
+    write_index(store, wtxn, id, fields, &analysis)
+}
 
+/// [`index_text`] with the analysis already done, outside the transaction.
+/// Refuses an analysis read from any other fields.
+pub(crate) fn index_analyzed_text(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    fields: &[(String, String)],
+    analyzed: &AnalyzedText,
+) -> Result<()> {
+    validate_text_doc_id(id)?;
+    if !analyzed.reads(fields) {
+        return Err(Error::InvariantViolation(
+            "bm25 analysis was read from other fields",
+        ));
+    }
+    write_index(store, wtxn, id, fields, &analyzed.analysis)
+}
+
+fn write_index(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    fields: &[(String, String)],
+    analysis: &Analysis,
+) -> Result<()> {
     match store.text_forward().get(wtxn, id.as_bytes())? {
         Some(_) => deindex_text(store, wtxn, id)?,
         None if store.text_meta().get(wtxn, id.as_bytes())?.is_some() => {
@@ -121,56 +261,22 @@ pub(crate) fn index_text(
     // Canonical caller input, not tokenizer output. Restore rebuilds postings from it.
     INDEX_SOURCE_TEXT.put(store, wtxn, id, &fields.to_vec())?;
 
-    let mut tokens: Vec<Token> = Vec::new();
-    let ctx = AnalyzerContext::for_index();
-    for (_, value) in fields {
-        analyzer.analyze(value, &ctx, &mut tokens);
-    }
-
-    if tokens.is_empty() {
+    let Analysis {
+        per_term,
+        per_field_len,
+        doc_len_total,
+    } = analysis;
+    if per_term.is_empty() {
         return Ok(());
     }
-
-    // Aggregate tokens by (channel, term) → tf, and by channel → length.
-    // Terms within the same channel collide on identical folded text, so
-    // tf = count of matching tokens regardless of offset.
-    let mut per_field: HashMap<u16, HashMap<String, u32>> = HashMap::new();
-    let mut per_field_len: HashMap<u16, u32> = HashMap::new();
-    let mut doc_len_total: u32 = 0;
-
-    for tok in &tokens {
-        let fid = tok.channel.field_id();
-        let entry = per_field.entry(fid).or_default();
-        *entry.entry(tok.term.as_ref().to_owned()).or_insert(0) += 1;
-        let inc = u32::from(tok.length_increment);
-        let slot = per_field_len.entry(fid).or_insert(0);
-        *slot = slot
-            .checked_add(inc)
-            .ok_or(Error::ArithmeticOverflow("bm25 per-field length"))?;
-        doc_len_total = doc_len_total
-            .checked_add(inc)
-            .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
-    }
-
-    if per_field.is_empty() {
-        return Ok(());
-    }
-
-    // Build the flat (term, field, tf) list, sorted lexicographically by
-    // term then ascending field_id so the forward index is canonical.
-    let mut per_term: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
-    for (fid, terms) in per_field {
-        for (term, tf) in terms {
-            per_term.entry(term).or_default().insert(fid, tf);
-        }
-    }
+    let doc_len_total = *doc_len_total;
 
     // === Postings: append ONE duplicate item per term (DUP_SORT) ===
     // The append never reads the existing posting list — that is the
     // ONE-299 contract (O(1) per term on a hot term instead of the v1
     // read-modify-rewrite of the whole blob).
     let mut entry_buf: Vec<u8> = Vec::new();
-    for (term, fields_tf) in &per_term {
+    for (term, fields_tf) in per_term {
         entry_buf.clear();
         encode_posting_entry(id, fields_tf, &mut entry_buf)?;
         store
@@ -179,13 +285,13 @@ pub(crate) fn index_text(
     }
 
     // === Forward index: (term_len, term, field_id) records ===
-    let forward_bytes = encode_forward(&per_term)?;
+    let forward_bytes = encode_forward(per_term)?;
     store
         .text_forward()
         .put(wtxn, id.as_bytes(), &forward_bytes)?;
 
     // === Per-doc field lengths ===
-    let field_lengths_bytes = encode_field_lengths(&per_field_len);
+    let field_lengths_bytes = encode_field_lengths(per_field_len);
     store
         .text_doc_field_lengths()
         .put(wtxn, id.as_bytes(), &field_lengths_bytes)?;
@@ -199,7 +305,7 @@ pub(crate) fn index_text(
     store.text_meta().put(wtxn, id.as_bytes(), &doc_meta)?;
 
     // === Per-field corpus stats ===
-    for (&fid, &len) in &per_field_len {
+    for (&fid, &len) in per_field_len {
         let (doc_count, total_length) = read_field_stats(store, wtxn, fid)?;
         let doc_count = doc_count
             .checked_add(1)
@@ -328,15 +434,24 @@ pub(crate) fn deindex_text(
         }
     }
 
+    // A room stages these totals as it read base when it wrote them, and base
+    // keeps indexing on record, so in a union they may not count a document
+    // base added since: there they floor at zero, as union scoring reads them
+    // (`scoring.rs`). Base keeps every check.
+    let union = store.is_union();
     // Decrement per-field stats using the per-doc lengths we recorded.
     for (&fid, &len) in &lengths {
         let (doc_count, total_length) = read_field_stats(store, wtxn, fid)?;
-        let doc_count = doc_count
-            .checked_sub(1)
-            .ok_or_else(|| corrupted("field doc_count underflow during deindex"))?;
-        let total_length = total_length
-            .checked_sub(u64::from(len))
-            .ok_or_else(|| corrupted("field total_length underflow during deindex"))?;
+        let doc_count = match doc_count.checked_sub(1) {
+            Some(count) => count,
+            None if union => 0,
+            None => return Err(corrupted("field doc_count underflow during deindex")),
+        };
+        let total_length = match total_length.checked_sub(u64::from(len)) {
+            Some(length) => length,
+            None if union => 0,
+            None => return Err(corrupted("field total_length underflow during deindex")),
+        };
         if doc_count == 0 && total_length == 0 {
             store
                 .text_bm25_field_stats()
@@ -346,10 +461,11 @@ pub(crate) fn deindex_text(
         }
     }
 
-    let total_docs = read_total_docs(store, wtxn)?;
-    let total_docs = total_docs
-        .checked_sub(1)
-        .ok_or_else(|| corrupted("total_docs underflow during deindex"))?;
+    let total_docs = match read_total_docs(store, wtxn)?.checked_sub(1) {
+        Some(total) => total,
+        None if union => 0,
+        None => return Err(corrupted("total_docs underflow during deindex")),
+    };
     write_total_docs(store, wtxn, total_docs)?;
 
     store.text_meta().delete(wtxn, id.as_bytes())?;

@@ -226,7 +226,7 @@ impl CanonicalSnapshot {
 }
 
 pub(super) fn run(vault: &Vault, doc: &LoroDoc, snapshot: &CanonicalSnapshot) -> Result<()> {
-    vault.with_write_txn(|txn| run_in_txn(vault, txn, doc, snapshot))
+    vault.with_write_txn_grouped(|txn| run_in_txn(vault, txn, doc, snapshot))
 }
 
 pub(crate) fn run_in_txn(
@@ -236,9 +236,10 @@ pub(crate) fn run_in_txn(
     snapshot: &CanonicalSnapshot,
 ) -> Result<()> {
     let mut admitted = BTreeSet::new();
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     for head in &snapshot.document_heads {
         let owner = id(head.entity_id)?;
-        if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), &owner)
+        if tombstones.contains(&owner)
             || vault.local_hard_delete_marker_exists_in_txn(txn, &owner)?
         {
             return Err(invalid("recovery NOTE was deleted"));

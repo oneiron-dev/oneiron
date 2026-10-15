@@ -103,6 +103,41 @@ pub enum OffRecordError {
     /// index keys, which are shared across turns.
     #[error("off-record promote found no journaled turn {turn_ref} to replay")]
     OffRecordTurnNotInJournal { turn_ref: String },
+    /// ARCH-0052 D4: a promoted message keeps its `AuthoredBy` edge, and the
+    /// actor it names is a base identity. When base does not hold that actor
+    /// the edge would dangle, so the turn is not promoted.
+    #[error(
+        "off-record promote of turn {turn_ref} refused: its author {actor_ref} does not exist in the vault"
+    )]
+    OffRecordPromoteAuthorMissing { turn_ref: String, actor_ref: String },
+    /// ARCH-0052 D5: a participant act (start, witness, save, export, a save
+    /// suggestion, or reading the room) named a room the actor is not a member
+    /// of, or a stretch that runs in no room at all. The same refusal covers
+    /// both, so it does not tell a stranger which stretches exist.
+    #[error("{actor_ref} is in no room with an off-record stretch {session_ref}")]
+    OffRecordNotInRoom {
+        session_ref: String,
+        actor_ref: String,
+    },
+    /// ARCH-0052 D5: a room on record saves into the vault of the person who
+    /// put it there. That person left the room, or lost this vault or their
+    /// proof, so saving stopped: the stretch is off record again, and the
+    /// write that found this kept nothing.
+    #[error(
+        "off-record stretch {session_ref} stopped saving: {saver_ref}, who put it on record, no longer holds this vault in the room"
+    )]
+    OffRecordSavingStopped {
+        session_ref: String,
+        saver_ref: String,
+    },
+    /// ARCH-0052 D4: a save copies what was said into a turn it saved since,
+    /// and an ordinary write had meanwhile put another message at the same
+    /// order into that turn. A turn holds one message per order, so the save
+    /// kept nothing: what was said stays in the room, unsaved.
+    #[error(
+        "the save kept nothing: turn {turn_ref} holds another message at order {order} now, so what was said into it since stays in the room"
+    )]
+    OffRecordCopyConflict { turn_ref: String, order: u32 },
 }
 
 impl OffRecordError {
@@ -124,6 +159,10 @@ impl OffRecordError {
             Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
+            Self::OffRecordPromoteAuthorMissing { .. } => ErrorKind::OffRecordPromoteAuthorMissing,
+            Self::OffRecordNotInRoom { .. } => ErrorKind::OffRecordNotInRoom,
+            Self::OffRecordSavingStopped { .. } => ErrorKind::OffRecordSavingStopped,
+            Self::OffRecordCopyConflict { .. } => ErrorKind::OffRecordCopyConflict,
         }
     }
 }

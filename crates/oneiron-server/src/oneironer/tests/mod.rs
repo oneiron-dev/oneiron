@@ -1,6 +1,8 @@
 //! The slot's laws: configuration, the endpoint's wire and identity probe,
 //! the typed refusals, `init`, and the worker against a stub tagger server.
 
+mod golden;
+mod links;
 mod support;
 mod worker;
 
@@ -20,7 +22,7 @@ use crate::config::{
     resolve_serve_config_with_sources,
 };
 use support::{
-    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, StubTagger, card, endpoint_config,
+    Answer, CHECKPOINT, LABEL_COUNT, NONSTANDARD_STATUS, STACK, StubTagger, card, endpoint_config,
 };
 
 fn input(text: &str) -> EncoderInput {
@@ -31,6 +33,8 @@ fn input(text: &str) -> EncoderInput {
             text: text.into(),
         }],
         context: Vec::new(),
+        language: None,
+        speaker: None,
     }
 }
 
@@ -223,6 +227,7 @@ fn managed_mode_refuses_every_tagger_flag_by_name() {
         ("--oneironer-mode", "shadow"),
         ("--oneironer-url", "http://127.0.0.1:9100"),
         ("--oneironer-checkpoint-sha16", CHECKPOINT),
+        ("--oneironer-stack-sha16", CHECKPOINT),
         ("--oneironer-label-count", "3"),
         ("--oneironer-labels", "PERSON=PERSON"),
         ("--oneironer-timeout-ms", "250"),
@@ -325,11 +330,8 @@ fn the_probe_accepts_the_configured_tagger_and_refuses_another() {
     let mut wrong = card(CHECKPOINT);
     wrong["returns"]["mood"] = json!(false);
     stub.set_card(wrong);
-    if oneiron::tagging::spans_only_answers_admitted() {
-        assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
-    } else {
-        assert_eq!(tagger.probe(), Err(ProbeError::NoMood));
-    }
+    // A spans-only tagger is served: the contract's mood is optional.
+    assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
     stub.set_card(json!({"name": "something else"}));
     assert_eq!(tagger.probe(), Err(ProbeError::NoModelCard));
 }
@@ -555,7 +557,7 @@ fn the_tagger_client_never_routes_through_an_inherited_proxy() {
 // ─── the slot ───────────────────────────────────────────────────────────
 
 #[test]
-fn the_local_provider_and_save_mode_are_refused_by_name_and_none_builds_nothing() {
+fn the_local_provider_is_refused_by_name_save_mode_serves_and_none_builds_nothing() {
     let local = OneironerConfig {
         provider: OneironerProvider::Local,
         ..OneironerConfig::default()
@@ -570,17 +572,105 @@ fn the_local_provider_and_save_mode_are_refused_by_name_and_none_builds_nothing(
         mode: OneironerMode::Save,
         ..stub.config()
     };
-    let refused = build_slot(Some(&save)).err().expect("save refused");
-    assert_eq!(
-        refused.downcast_ref::<TaggerNotBuilt>(),
-        Some(&TaggerNotBuilt::SaveMode)
-    );
+    assert!(build_slot(Some(&save)).expect("save").is_some());
     let none = OneironerConfig {
         provider: OneironerProvider::None,
         ..stub.config()
     };
     assert!(build_slot(Some(&none)).expect("none").is_none());
     assert!(build_slot(None).expect("absent").is_none());
+}
+
+/// Contract v2 at startup: a tagger serving contract v1 is refused with the
+/// version error, one whose card names no well-formed stack is refused, and
+/// a pinned stack refuses any other, as a wrong checkpoint is refused.
+#[test]
+fn a_v1_card_or_another_pinned_stack_refuses_the_tagger_at_start() {
+    let stub = StubTagger::start(Answer::Good);
+    let refusal = |config: &OneironerConfig| {
+        build_slot(Some(config))
+            .err()
+            .expect("refused")
+            .downcast_ref::<ProbeError>()
+            .cloned()
+    };
+    let mut v1 = card(CHECKPOINT);
+    v1["contract_version"] = json!(1);
+    stub.set_card(v1);
+    assert_eq!(
+        refusal(&stub.config()),
+        Some(ProbeError::WrongContract { expected: 2 })
+    );
+    let mut unnamed = card(CHECKPOINT);
+    unnamed.as_object_mut().expect("card").remove("stack_sha16");
+    stub.set_card(unnamed);
+    assert_eq!(refusal(&stub.config()), Some(ProbeError::MalformedStack));
+    stub.set_card(card(CHECKPOINT));
+    let pinned = |stack: &str| OneironerConfig {
+        stack_sha16: Some(stack.to_owned()),
+        ..stub.config()
+    };
+    assert_eq!(
+        refusal(&pinned("0f0f0f0f0f0f0f0f")),
+        Some(ProbeError::WrongStack {
+            expected: "0f0f0f0f0f0f0f0f".to_owned()
+        })
+    );
+    let slot = build_slot(Some(&pinned(STACK)))
+        .expect("built")
+        .expect("slot");
+    assert_eq!(
+        slot.card().and_then(|card| card.stack_sha16),
+        Some(STACK.to_owned())
+    );
+    let mut bad = pinned(STACK);
+    bad.stack_sha16 = Some("NOT-HEX".to_owned());
+    assert!(bad.validate().is_err());
+}
+
+/// A v2 answer is bound to the card read after it: one naming another stack
+/// fails the call, and so does a link with no confidence or a mood with a
+/// field the contract does not name.
+#[test]
+fn an_answer_off_its_cards_stack_or_outside_the_contract_fails_the_call() {
+    let stub = StubTagger::start(Answer::Good);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    let request = input("Ada sailed north");
+    assert_eq!(
+        tagger
+            .infer(&request)
+            .expect("answer")
+            .stack_sha16
+            .as_deref(),
+        Some(STACK)
+    );
+    let code = |tagger: &HttpTagger| match tagger.infer(&request) {
+        Err(oneiron::Error::UpstreamToolFailure { code, .. }) => code,
+        other => panic!("not a tagger failure: {other:?}"),
+    };
+    stub.set_answer_stack("0f0f0f0f0f0f0f0f");
+    assert_eq!(
+        code(&tagger),
+        "tagger answer names another stack than its model card"
+    );
+    stub.set_answer_stack(STACK);
+    stub.set_script(|_: &serde_json::Value| {
+        json!({
+            "spans": [{"message": 0, "start": 0, "end": 3, "label": "PERSON", "confidence": 0.9},
+                      {"message": 0, "start": 4, "end": 10, "label": "PERSON", "confidence": 0.9}],
+            "links": [{"span": 1, "antecedent": 0}],
+        })
+    });
+    assert_eq!(code(&tagger), "tagger extract response is not the contract");
+    // The mood is three coordinates; a fourth field is outside the contract.
+    stub.set_script(|_: &serde_json::Value| {
+        json!({
+            "spans": [],
+            "links": [],
+            "vad": {"valence": 0.1, "arousal": 0.5, "dominance": 0.5, "note": "unexpected"},
+        })
+    });
+    assert_eq!(code(&tagger), "tagger extract response is not the contract");
 }
 
 #[test]
@@ -624,7 +714,6 @@ fn init_writes_the_tagger_serve_reads_and_refuses_one_it_cannot_serve() {
         oneironer_url: Some(stub.base.clone()),
         oneironer_checkpoint_sha16: Some(CHECKPOINT.into()),
         oneironer_label_count: Some(LABEL_COUNT),
-        oneironer_mode: Some(OneironerMode::Shadow),
         ..init_args(dir.path())
     };
     crate::commands::init(args).expect("init");
@@ -639,40 +728,26 @@ fn init_writes_the_tagger_serve_reads_and_refuses_one_it_cannot_serve() {
     .expect("serve config");
     let section = serve.oneironer.as_ref().expect("section");
     assert_eq!(section.provider, OneironerProvider::Endpoint);
-    assert_eq!(section.mode, OneironerMode::Shadow);
+    // A tagger with no stated mode saves its tags.
+    assert_eq!(section.mode, OneironerMode::Save);
     assert_eq!(
         serve
             .vault_config()
             .tagging
-            .map(|tagging| tagging.checkpoint),
-        Some(CHECKPOINT.to_owned())
+            .map(|tagging| (tagging.checkpoint, tagging.mode)),
+        Some((CHECKPOINT.to_owned(), oneiron::tagging::TaggingMode::Save))
     );
 
-    for (provider, mode, refusal) in [
-        (
-            OneironerProvider::Local,
-            None,
-            TaggerNotBuilt::LocalProvider,
-        ),
-        (
-            OneironerProvider::Endpoint,
-            Some(OneironerMode::Save),
-            TaggerNotBuilt::SaveMode,
-        ),
-    ] {
-        let dir = tempfile::tempdir().expect("dir");
-        let endpoint = provider == OneironerProvider::Endpoint;
-        let args = crate::cli::InitArgs {
-            oneironer: Some(provider),
-            oneironer_url: endpoint.then(|| stub.base.clone()),
-            oneironer_checkpoint_sha16: endpoint.then(|| CHECKPOINT.to_owned()),
-            oneironer_label_count: endpoint.then_some(LABEL_COUNT),
-            oneironer_mode: mode,
-            ..init_args(dir.path())
-        };
-        let refused = crate::commands::init(args).expect_err("refused");
-        assert_eq!(refused.downcast_ref::<TaggerNotBuilt>(), Some(&refusal));
-        assert!(!dir.path().join("oneiron.toml").exists());
-        assert!(!dir.path().join("vault").exists());
-    }
+    let dir = tempfile::tempdir().expect("dir");
+    let args = crate::cli::InitArgs {
+        oneironer: Some(OneironerProvider::Local),
+        ..init_args(dir.path())
+    };
+    let refused = crate::commands::init(args).expect_err("refused");
+    assert_eq!(
+        refused.downcast_ref::<TaggerNotBuilt>(),
+        Some(&TaggerNotBuilt::LocalProvider)
+    );
+    assert!(!dir.path().join("oneiron.toml").exists());
+    assert!(!dir.path().join("vault").exists());
 }

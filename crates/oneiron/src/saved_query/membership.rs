@@ -193,7 +193,7 @@ pub fn commit_membership_plan(
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let watermark = current_watermark(vault, wtxn, event.query_ref, event.entity_ref)?;
         if let Some(outcome) = watermark_verdict(watermark, event.epoch, &content) {
             return Ok(outcome);

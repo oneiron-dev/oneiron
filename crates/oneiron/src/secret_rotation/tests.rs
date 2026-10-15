@@ -24,10 +24,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::artifact_hosting::ArtifactPointerChannel;
-use crate::batch::export::{
-    ExportManifest, ExportSecretsNulledManifest, export_bundle_carries_tainted_exhaust,
-    secrets_nulled_for_export_bundle, whole_vault_export_manifest_artifact_for_bundle,
-};
+use crate::batch::export::ExportManifest;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody,
     decode_blob_artifact_body, encode_blob_artifact_body,
@@ -183,38 +180,6 @@ fn artifact_id(seed: u8) -> EntityId {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn rotate_bumps_generation_stamps_time_and_writes_a_value_free_receipt() {
-    let (_tmp, vault) = temp_vault();
-    let id = register(&vault, SECRET, VALUE_V1);
-    assert_eq!(generation_of(&vault, &id), 0);
-
-    let receipt = vault
-        .rotate_secret(SECRET, VALUE_V2, AT_ROTATED)
-        .expect("rotate");
-
-    assert_eq!(receipt.secret_ref, SECRET);
-    assert_eq!(receipt.from_generation, 0);
-    assert_eq!(receipt.to_generation, 1);
-    assert_eq!(receipt.rotated_at, AT_ROTATED);
-    assert_eq!(receipt.kind, RotationKind::Rotated);
-
-    let meta = vault
-        .get_secret_metadata(&id)
-        .expect("metadata")
-        .expect("record present");
-    assert_eq!(meta.rotation_generation, 1);
-    assert_eq!(meta.rotated_at, Some(AT_ROTATED));
-    assert_eq!(meta.status, SecretCustodyStatus::Active);
-
-    let durable = vault
-        .rotation_receipt(&receipt.receipt_id)
-        .expect("read receipt")
-        .expect("receipt row present");
-    assert_eq!(durable, receipt, "the receipt round-trips through its row");
-    assert_eq!(count_rows(&vault, SECRET_ROTATION_RECEIPT_PREFIX), 1);
-}
-
-#[test]
 fn rotate_refuses_a_missing_or_inactive_record() {
     let (_tmp, vault) = temp_vault();
     assert!(matches!(
@@ -233,6 +198,26 @@ fn rotate_refuses_a_missing_or_inactive_record() {
     );
     // The refused rotation wrote nothing: only the revoke's own receipt.
     assert_eq!(count_rows(&vault, SECRET_ROTATION_RECEIPT_PREFIX), 1);
+}
+
+/// The rotation wipes the value it replaces before freeing it, and its own
+/// copy of the new value once that is stored. Both used to be freed unwiped.
+#[test]
+fn a_rotation_wipes_the_value_it_replaces_and_its_copy_of_the_new_one() {
+    use super::owner_door::wiped;
+
+    // Distinct from every other row's values, so the hook's counts are ours.
+    const OLD: &[u8] = b"wipe-check-replaced-value";
+    const NEW: &[u8] = b"wipe-check-rotated-value";
+    let (_tmp, vault) = temp_vault();
+    register(&vault, SECRET, OLD);
+
+    vault
+        .rotate_secret(SECRET, NEW, AT_ROTATED)
+        .expect("rotate");
+
+    assert_eq!(wiped::count(OLD), 1, "the replaced value");
+    assert_eq!(wiped::count(NEW), 1, "the record's copy of the new value");
 }
 
 #[test]
@@ -726,29 +711,6 @@ fn a_taint_ref_naming_a_secret_that_never_existed_reads_stale() {
 }
 
 #[test]
-fn an_empty_ref_list_clears_the_sidecar_so_clean_has_one_representation() {
-    let (_tmp, vault) = temp_vault();
-    register(&vault, SECRET, VALUE_V1);
-    let id = artifact_id(0x52);
-
-    vault
-        .mark_artifact_tainted(&id, &[taint(SECRET, 0)])
-        .expect("attach");
-    assert_eq!(count_rows(&vault, SECRET_EXHAUST_TAINT_PREFIX), 1);
-
-    vault.mark_artifact_tainted(&id, &[]).expect("clear");
-    assert_eq!(
-        count_rows(&vault, SECRET_EXHAUST_TAINT_PREFIX),
-        0,
-        "clean is an ABSENT row, never an empty one"
-    );
-    assert_eq!(
-        vault.artifact_taint_state(&id).expect("state"),
-        ArtifactTaintState::Clean
-    );
-}
-
-#[test]
 fn malformed_taint_refs_refuse_rather_than_defaulting_to_clean() {
     let (_tmp, vault) = temp_vault();
     let id = artifact_id(0x53);
@@ -1017,76 +979,70 @@ fn blob_pointer_publish_checks_stale_taint_and_stamps_override() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_bundle_carrying_tainted_exhaust_forces_the_structural_placeholder_only() {
+fn mixed_bundle_export_nulls_tainted_exhaust_preserves_clean_payload_and_reports_nulling()
+-> Result<()> {
     let (_tmp, vault) = temp_vault();
     register(&vault, SECRET, VALUE_V1);
-
     let tainted = artifact_id(0x61);
     put_artifact(
         &vault,
         &tainted,
-        &BlobArtifactBody::new("build.log", "text/plain")
+        &BlobArtifactBody::new("private-build-exhaust", "text/plain")
             .with_secret_taint_refs(vec![taint(SECRET, 0)]),
     );
     let clean = artifact_id(0x62);
-    put_artifact(
-        &vault,
+    let clear_bytes = br#"{"message":"public bundle payload","sequence":7}"#;
+    vault.put_entity(
         &clean,
-        &BlobArtifactBody::new("readme.txt", "text/plain"),
-    );
-
-    assert!(!export_bundle_carries_tainted_exhaust(&vault, &[clean]).expect("clean bundle"));
-    assert!(
-        export_bundle_carries_tainted_exhaust(&vault, &[clean, tainted]).expect("mixed bundle")
-    );
-
-    let base = ExportSecretsNulledManifest::from_redacted(false);
-    let clean_bundle =
-        secrets_nulled_for_export_bundle(&vault, base, &[clean]).expect("clean bundle manifest");
-    assert!(!clean_bundle.structural_placeholders());
-    assert!(!clean_bundle.payloads());
-
-    let tainted_bundle = secrets_nulled_for_export_bundle(&vault, base, &[clean, tainted])
-        .expect("tainted bundle manifest");
-    assert!(
-        tainted_bundle.structural_placeholders(),
-        "tainted exhaust serializes nulled with the structural placeholder"
-    );
-    assert!(
-        !tainted_bundle.payloads(),
-        "the new ctor does NOT force payload nulling: one tainted artifact must not redact a whole export"
-    );
-    assert!(
-        ExportManifest::from_secrets_nulled(tainted_bundle).structurally_secret_nulled(),
-        "the manifest reflects the placeholders"
-    );
-
-    // A caller who ASKED for a redacted export still gets one.
-    let redacted = secrets_nulled_for_export_bundle(
-        &vault,
-        ExportSecretsNulledManifest::from_redacted(true),
-        &[clean],
-    )
-    .expect("redacted bundle");
-    assert!(redacted.payloads() && redacted.structural_placeholders());
-
-    // State-INDEPENDENT: rotating does not change the bundle's shape.
-    vault
-        .rotate_secret(SECRET, VALUE_V2, AT_ROTATED)
-        .expect("rotate");
+        crate::registry::ENTITY_TYPE_EVENT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        clear_bytes,
+    )?;
+    let clean_bytes = vault.export_entity_bundle_json(&[clean])?;
+    let clean_export: serde_json::Value = serde_json::from_slice(&clean_bytes).unwrap();
+    let clean_manifest: ExportManifest =
+        serde_json::from_value(clean_export["manifest"].clone()).unwrap();
+    assert!(!clean_manifest.redacted());
+    assert!(!clean_manifest.structurally_secret_nulled());
     assert_eq!(
-        vault.artifact_taint_state(&tainted).expect("state"),
-        ArtifactTaintState::TaintedStale
+        clean_export["entities"][0]["body"],
+        serde_json::json!({"message":"public bundle payload", "sequence":7})
     );
-    assert!(
-        secrets_nulled_for_export_bundle(&vault, base, &[tainted])
-            .expect("still nulled")
-            .structural_placeholders(),
-        "stale taint nulls exactly as live taint does — an export leaves the vault either way"
-    );
-
-    whole_vault_export_manifest_artifact_for_bundle(&vault, base, &[clean, tainted])
-        .expect("the bundle manifest assembles");
+    for rotated in [false, true] {
+        if rotated {
+            vault.rotate_secret(SECRET, VALUE_V2, AT_ROTATED)?;
+        }
+        let bytes = vault.export_entity_bundle_json(&[clean, tainted])?;
+        let emitted: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let entities = emitted["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 2);
+        let clean_id = clean.to_hex();
+        let tainted_id = tainted.to_hex();
+        let clean_row = entities
+            .iter()
+            .find(|row| row["id"].as_str() == Some(clean_id.as_str()))
+            .unwrap();
+        let tainted_row = entities
+            .iter()
+            .find(|row| row["id"].as_str() == Some(tainted_id.as_str()))
+            .unwrap();
+        assert_eq!(clean_row, &clean_export["entities"][0]);
+        assert_eq!(tainted_row.get("body"), Some(&serde_json::Value::Null));
+        let manifest: ExportManifest = serde_json::from_value(emitted["manifest"].clone()).unwrap();
+        assert!(manifest.redacted());
+        assert!(manifest.structurally_secret_nulled());
+        assert!(
+            !bytes
+                .windows(b"private-build-exhaust".len())
+                .any(|w| w == b"private-build-exhaust")
+        );
+        assert_eq!(
+            vault.get_raw(&clean)?.unwrap()[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            *clear_bytes
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

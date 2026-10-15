@@ -231,7 +231,7 @@ pub fn project_identity_amendment_deltas(vault: &Vault) -> Result<usize> {
         return Ok(0);
     }
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut written = 0;
         for (receipt_id, projected) in &pending {
             let wrote = match projected {

@@ -9,8 +9,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::backup::{self, BackupOutcome, BackupPlan};
+use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal};
 use super::stamp::now_unix_ms;
+use super::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
 /// How often a running server checks whether a backup is due.
@@ -25,6 +26,10 @@ pub(crate) struct OwnerHost {
     pub(crate) every: Option<Duration>,
     /// One backup at a time, whether the schedule or the owner asked.
     pub(crate) backup_lock: Mutex<()>,
+    /// Where a test's rehearsals make their scratch copy in place of the
+    /// system temp directory, which its host may share with other accounts.
+    #[cfg(test)]
+    pub(crate) rehearse_temp: Option<PathBuf>,
 }
 
 impl OwnerHost {
@@ -49,16 +54,78 @@ impl OwnerHost {
                 && config.privacy_posture == oneiron::HostingPrivacyPosture::SelfHostLocal)
                 .then(|| Duration::from_secs(backup.every_hours.saturating_mul(3_600))),
             backup_lock: Mutex::new(()),
+            #[cfg(test)]
+            rehearse_temp: None,
         }
     }
 
-    /// Takes a backup now, serialized with every other backup of this vault.
-    pub(crate) fn take(&self, vault: &oneiron::Vault) -> anyhow::Result<BackupOutcome> {
-        let _one_at_a_time = self
-            .backup_lock
+    fn one_at_a_time(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.backup_lock
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        backup::take(vault, &self.backups)
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Takes a backup now, serialized with every other backup of this vault.
+    /// On an owner's request, `owner` is rechecked once the lock is held, in
+    /// the snapshot itself: a request queued behind a revocation or an
+    /// ownership change takes and prunes nothing.
+    pub(crate) fn take(
+        &self,
+        vault: &oneiron::Vault,
+        owner: Option<&oneiron::consent::AuthenticatedOwner>,
+    ) -> OwnerResult<BackupOutcome> {
+        let _one_at_a_time = self.one_at_a_time();
+        backup::take_as(vault, &self.backups, owner).map_err(|error| {
+            match error.downcast::<oneiron::Error>() {
+                Ok(engine) => OwnerError::from(engine),
+                Err(error) => OwnerError::Host(error),
+            }
+        })
+    }
+
+    /// Rehearses one of this vault's backups by its listed file name, the
+    /// newest by default; never a caller-built path. The backup lock is held
+    /// from choosing the file until the rehearsal has read it, so retention
+    /// cannot prune it in between. `vault` is the open vault the backup is
+    /// of; the rehearsal reads only its key-custody state.
+    pub(crate) fn rehearse(
+        &self,
+        vault: &oneiron::Vault,
+        file: Option<&str>,
+    ) -> OwnerResult<Rehearsal> {
+        self.with_chosen(file, |chosen| {
+            Ok(backup::rehearse_in(
+                &self.rehearse_temp(),
+                &chosen.path,
+                self.vault_config.clone(),
+                None,
+                &vault.side_restore_source()?,
+            )?)
+        })
+    }
+
+    /// The directory a rehearsal's scratch copy is made in and removed from.
+    fn rehearse_temp(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(temp) = &self.rehearse_temp {
+            return temp.clone();
+        }
+        std::env::temp_dir()
+    }
+
+    fn with_chosen<T>(
+        &self,
+        file: Option<&str>,
+        rehearse: impl FnOnce(&BackupRecord) -> OwnerResult<T>,
+    ) -> OwnerResult<T> {
+        let _one_at_a_time = self.one_at_a_time();
+        let backups = backup::list(&self.backups)?;
+        let chosen = match file {
+            Some(file) => backups.into_iter().find(|record| record.file == file),
+            None => backups.into_iter().last(),
+        }
+        .ok_or_else(|| OwnerError::Invalid("no such backup for this vault".into()))?;
+        rehearse(&chosen)
     }
 
     /// Takes a backup when the newest one is older than the interval.
@@ -69,10 +136,7 @@ impl OwnerHost {
         let Some(every) = self.every else {
             return Ok(None);
         };
-        let _one_at_a_time = self
-            .backup_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _one_at_a_time = self.one_at_a_time();
         let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
         let due = backup::list(&self.backups)?
             .last()
@@ -109,8 +173,15 @@ impl SyncServer {
                         "scheduled backup taken"
                     ),
                     Ok(Ok(None)) => {}
-                    Ok(Err(error)) => tracing::warn!(error = %error, "scheduled backup failed"),
-                    Err(error) => tracing::warn!(error = %error, "scheduled backup task failed"),
+                    Ok(Err(error)) => {
+                        tracing::warn!(
+                            kind = ?crate::logging::engine_kind(&error),
+                            "scheduled backup failed"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(panicked = error.is_panic(), "scheduled backup task failed");
+                    }
                 }
             }
         }))
@@ -126,8 +197,8 @@ mod tests {
         every: Duration,
         keep: usize,
     ) -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
-        let dir = tempfile::tempdir().unwrap();
-        let backups = tempfile::tempdir().unwrap();
+        let dir = oneiron::test_support::restore_tempdir();
+        let backups = oneiron::test_support::restore_tempdir();
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let host = OwnerHost {
@@ -136,6 +207,7 @@ mod tests {
             backups: BackupPlan::new(dir.path(), backups.path().to_path_buf(), keep),
             every: Some(every),
             backup_lock: Mutex::new(()),
+            rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
         };
         let server = SyncServer::new(vault, SyncServerConfig::default())
             .unwrap()
@@ -183,6 +255,38 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         handle.abort();
+    }
+
+    #[test]
+    fn a_backup_waits_for_the_rehearsal_of_the_file_it_would_prune() {
+        let (_dir, backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
+        let host = Arc::clone(server.owner_host.as_ref().unwrap());
+        let only = host.take(server.vault(), None).unwrap().backup;
+        let rehearsal = host
+            .with_chosen(None, |chosen| {
+                assert_eq!(chosen.file, only.file);
+                // A backup asked for now, with keep = 1, would prune the file
+                // being rehearsed; it waits until the rehearsal is done.
+                let racing = {
+                    let (host, server) = (Arc::clone(&host), Arc::clone(&server));
+                    std::thread::spawn(move || host.take(server.vault(), None).unwrap())
+                };
+                std::thread::sleep(Duration::from_millis(500));
+                assert!(!racing.is_finished(), "the backup waited");
+                let source = server.vault().side_restore_source()?;
+                let rehearsal = backup::rehearse_in(
+                    backups.path(),
+                    &chosen.path,
+                    host.vault_config.clone(),
+                    None,
+                    &source,
+                );
+                Ok((rehearsal?, racing))
+            })
+            .unwrap();
+        let (rehearsal, racing) = rehearsal;
+        assert!(rehearsal.verified);
+        assert_eq!(racing.join().unwrap().pruned, vec![only.file]);
     }
 
     #[test]

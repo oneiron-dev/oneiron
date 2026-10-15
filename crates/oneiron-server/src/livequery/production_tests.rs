@@ -166,7 +166,7 @@ pub(super) fn claim(server: &SyncServer) -> oneiron::memory::CommitReceipt {
 
 fn rpc(server: &SyncServer, auth: &CoreAuth, method: &str, params: Value) -> Value {
     let frame = bound_rpc(
-        server.vault(),
+        server,
         auth,
         RpcRequest {
             request_id: 7,
@@ -352,6 +352,68 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     }
 }
 
+/// Wave 9: `oneiron token read` and `token pair --scope core:read` mint the
+/// read verb as the host spells it, `core:read`. The WebSocket door reads
+/// under the presented slip, and a `core:read` slip resolved a deny-all read
+/// floor, so its recall came back empty.
+#[tokio::test]
+async fn a_paired_core_read_slip_recalls_over_the_websocket() {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, server) = server();
+    let said = witness(&server, "solar panel maintenance").message_short_ids[0].clone();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(["core:read".to_owned()].into());
+    let link = server
+        .vault()
+        .issue_pairing_link_for_principal(
+            &issuer,
+            scope,
+            3_600,
+            oneiron::authority::PairingPrincipal {
+                holder_ref: Some(ACTOR.to_owned()),
+                actor_class: Some("human".to_owned()),
+                org_ref: None,
+                write_facet: None,
+            },
+        )
+        .unwrap();
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let binding = key.verifying_key().to_bytes();
+    let transcript =
+        oneiron::authority::pairing_binding_transcript(&link.code, &binding, ACTOR).unwrap();
+    let slip = server
+        .vault()
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            ACTOR,
+            binding,
+            &key.sign(&transcript).to_bytes(),
+        )
+        .unwrap();
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &key,
+        axum::http::Request::new(axum::body::Body::empty()),
+    );
+    let auth =
+        CoreAuth::from_headers(request.headers(), &server.config, server.vault().as_ref()).unwrap();
+
+    // The message comes back as its turn, quoting it (ARCH-0004).
+    let pack = rpc(&server, &auth, "recall", json!({"query": "solar panel"}))["result"].clone();
+    let found = pack["items"].as_array().unwrap().iter().any(|item| {
+        item["cited_messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|message| message["short_id"].as_str() == Some(said.as_str()))
+    });
+    assert!(found, "{said}: {pack}");
+}
+
 #[tokio::test]
 async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved() {
     let (_dir, server) = server();
@@ -428,15 +490,20 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
         .vault()
         .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
     let missing = "ffffffffffffffffffffffffffffffff".to_owned();
+    // High recall on a host with no reranker now runs unreranked, so the
+    // recall case is a scope the engine refuses on both doors.
     let cases = [
         (
             "recall",
-            json!({"query":"solar","effort":"high"}),
+            json!({"query":"solar","effort":"medium","scope":{"kinds":[]}}),
             memory
                 .recall(
                     "solar",
-                    Effort::High,
-                    &RecallScope::default(),
+                    Effort::Medium,
+                    &RecallScope {
+                        kinds: Some(Vec::new()),
+                        ..RecallScope::default()
+                    },
                     10,
                     None,
                     None,
@@ -478,6 +545,26 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
     assert_eq!(body["code"], "FUTURE_ENGINE_REFUSAL");
     assert_eq!(body["message"], "future refusal");
     assert_eq!(body["suggestions"], json!(["retry later"]));
+}
+
+/// Done-means (G1 check 3, on the sync RPC): high recall on a host with no
+/// reranker runs unreranked and says so, where it answered `LEASE_REQUIRED`.
+#[tokio::test]
+async fn rpc_high_recall_without_a_reranker_runs_unreranked_and_says_so() {
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    let reply = rpc(
+        &server,
+        &auth,
+        "recall",
+        json!({"query":"solar","effort":"high"}),
+    );
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["rerank"],
+        json!({"status":"skipped","reason":"no_reranker"}),
+        "{reply}"
+    );
 }
 
 #[tokio::test]
@@ -529,6 +616,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
             &RecallScope {
                 world_ref: None,
                 facet: missing_facet.facet.clone(),
+                kinds: None,
             },
             100,
             None,
@@ -705,7 +793,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
             .commit()
             .unwrap();
         let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
-        expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
+        expected.push((receipt.claim_short_id, revision.to_hex()));
     }
     // More than 1,000 base-scope decoys outrank both targets even when
     // Light widens lexical admission for its temporal anchor and blends
@@ -724,7 +812,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
     assert!(
         !old.items
             .iter()
-            .any(|item| expected.contains(&item.short_id)),
+            .any(|item| expected.iter().any(|(id, _)| *id == item.short_id)),
         "unfiltered recall returned a filtered match among {} items ({} candidates)",
         old.items.len(),
         old.retrieval_meta.total_candidates,
@@ -748,14 +836,19 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         let rows = derived.value.as_array().unwrap();
         let ids: Vec<_> = rows
             .iter()
-            .map(|row| row["short_id"].as_str().unwrap())
+            .map(|row| {
+                (
+                    row["short_id"].as_str().unwrap(),
+                    row["source_revision_ref"].as_str().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             ids,
             expected
                 .iter()
                 .take(limit)
-                .map(String::as_str)
+                .map(|(id, revision)| (id.as_str(), revision.as_str()))
                 .collect::<Vec<_>>()
         );
         assert!(rows.iter().all(|row| row["world"].is_null()));
@@ -2054,4 +2147,226 @@ async fn owner_feed_socket_delivers_two_local_changes_without_reopen_or_poll() {
         2
     );
     assert!(socket.has_active_subscriptions());
+}
+
+/// CodeRabbit 1333 (deletion fence): a live recall view returns a matched
+/// MESSAGE as its TURN, whose words are its messages'. The turn's item names
+/// each of them, so a change to one, an erase included, refreshes the view,
+/// which never serves the erased words again. One message's text lives in its
+/// entity document (an owner edit), which the view must still follow. Bug
+/// repro: the TURN item named only itself and its superseded rows, and an
+/// erase publishes only the message.
+#[tokio::test]
+async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
+    use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    use oneiron::sync::bridge::LiveQueryTee;
+    for reason in [
+        oneiron::DeleteReason::UserDelete,
+        oneiron::DeleteReason::UserHardDelete,
+    ] {
+        let (_dir, server) = server();
+        let actor = EntityId::from_hex(ACTOR).unwrap();
+        let memory = server.vault().memory(actor, EdgeActorClass::Human);
+        let said = |order, content: &str| WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "dialogue".to_owned(),
+            content: content.to_owned(),
+            metadata: Some(json!({"rel": SPACE})),
+            is_visible: true,
+            order,
+        };
+        let receipt = memory
+            .witness(&WitnessTurn {
+                conversation_ref: CONVERSATION.to_owned(),
+                turn_ref: None,
+                messages: vec![
+                    said(0, "The mechanic says the brakes squeal."),
+                    said(1, "We met for lunch at noon."),
+                ],
+                occurred_at: AT,
+            })
+            .unwrap();
+        let id_of = |short_id: &str| {
+            EntityId::from_hex(&memory.get_entity(short_id).unwrap().value.unwrap().id_hex).unwrap()
+        };
+        let brakes = id_of(&receipt.message_short_ids[0]);
+        let lunch = id_of(&receipt.message_short_ids[1]);
+
+        // The owner edits the other message: its text moves into its document.
+        crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
+        let writer = oneiron::WriteActor::new(actor, EdgeActorClass::Human);
+        let owner = server
+            .vault()
+            .authenticate_owner(actor, ACTOR, true, oneiron::store::GateDecisionId::now())
+            .unwrap();
+        let authorization = DocAuthorization::Owner(&owner);
+        server
+            .vault()
+            .migrate_entity_text(
+                &lunch,
+                &TextField::MapField("content".into()),
+                writer,
+                &authorization,
+            )
+            .unwrap();
+        let end = server.vault().entity_text(&lunch).unwrap().chars().count();
+        let whole = server.vault().entity_text_anchor(&lunch, 0, end).unwrap();
+        server
+            .vault()
+            .edit_entity_text(
+                &lunch,
+                &[AnchoredEdit {
+                    actor: Some(writer),
+                    verb: EditVerb::ReplaceQuotedSpan {
+                        span: whole,
+                        text: "We met for a meal at noon.".into(),
+                    },
+                }],
+                &authorization,
+                AT + 60,
+            )
+            .unwrap();
+
+        let source = Arc::new(BoundSource::new(
+            Arc::downgrade(&server),
+            auth(&server, "human"),
+            "turn-fold".into(),
+        ));
+        let queries = Arc::new(subscriptions::LiveQueries::new(1, source.clone()));
+        let tee: Arc<dyn LiveQueryTee> = queries.clone();
+        server
+            .reassert_manager
+            .materializer()
+            .attach_live_query_tee(&tee);
+        let view = ScopedView {
+            query: Some("mechanic".into()),
+            ..Default::default()
+        };
+        let derived = source.derive(&view, Channel::View).unwrap();
+        let opened = queries
+            .open(1, view.clone(), Channel::View, None, None)
+            .unwrap();
+        let served = opened[0].result.as_ref().unwrap();
+        assert!(
+            served.as_array().unwrap().iter().any(|item| {
+                item["kind"] == "TURN"
+                    && item["value_text"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("squeal") && text.contains("meal"))
+            }),
+            "{reason:?}: the turn is served with both messages' words: {served:#}"
+        );
+        queries.ack(1, &opened[0].cursor).unwrap();
+        queries.refresh().unwrap();
+        assert!(queries.pending(1).unwrap().is_empty());
+
+        server
+            .vault()
+            .delete_room_record_unchecked_for_test(&brakes, reason)
+            .unwrap();
+        queries.refresh().unwrap();
+        let pushed = queries.pending(1).unwrap();
+        assert!(
+            !pushed.is_empty(),
+            "{reason:?}: the erase left the view as it was"
+        );
+        for push in &pushed {
+            assert!(
+                push.result
+                    .as_ref()
+                    .is_none_or(|result| !result.to_string().contains("squeal")),
+                "{reason:?}: the view serves the erased words: {:?}",
+                push.result
+            );
+        }
+        let again = source.derive(&view, Channel::View).unwrap();
+        assert!(
+            !again.value.to_string().contains("squeal"),
+            "{reason:?}: {:#}",
+            again.value
+        );
+        // The view's own read set follows both messages, not only a coarse
+        // re-derive of every unfiltered view on any change.
+        for message in [brakes, lunch] {
+            assert!(
+                derived
+                    .dependencies
+                    .contains(&format!("e:{}", message.to_hex())),
+                "{reason:?}: the view does not follow {message:?}: {:?}",
+                derived.dependencies
+            );
+        }
+    }
+}
+
+/// Call mode on the read RPC (retrieval hub #call-mode): `effort: "call"` and
+/// `deadline_ms` ride the recall request, and a deadline outside 1..=60000 is
+/// refused with a typed error.
+#[tokio::test]
+async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    for value in [
+        json!({"query":"solar","effort":"call"}),
+        json!({"query":"solar","effort":"call","deadline_ms":30_000}),
+        json!({"query":"solar","deadline_ms":60_000}),
+    ] {
+        let reply = rpc(&server, &auth, "recall", value);
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(reply["result"]["pack_version"], 1);
+    }
+    for deadline_ms in [0, 60_001] {
+        let reply = rpc(
+            &server,
+            &auth,
+            "recall",
+            json!({"query":"solar","effort":"call","deadline_ms":deadline_ms}),
+        );
+        assert_error(&reply, "BAD_REQUEST");
+        assert_eq!(
+            reply["error"]["message"],
+            "deadline_ms must be a whole number between 1 and 60000"
+        );
+    }
+}
+
+/// The read RPC is synchronous, yet a stage that never yields cannot hold a
+/// call-mode recall past its deadline: the read runs on a thread of its own,
+/// and at the deadline the RPC answers with the pack recall published.
+#[tokio::test]
+async fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
+    use oneiron::retrieval_depth::SlowRetrievalStage;
+    use oneiron::store::RetrievalSignal;
+    use std::time::{Duration, Instant};
+
+    const DEADLINE_MS: u64 = 300;
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    server
+        .vault()
+        .arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+            signal: RetrievalSignal::Text,
+            duration: Duration::from_secs(3),
+            yields: false,
+        }));
+    let started = Instant::now();
+    let reply = rpc(
+        &server,
+        &auth,
+        "recall",
+        json!({"query":"solar","effort":"call","deadline_ms":DEADLINE_MS}),
+    );
+    let took = started.elapsed();
+    server.vault().arm_slow_retrieval_stage_for_test(None);
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert!(
+        took < Duration::from_millis(DEADLINE_MS + 1_000),
+        "the stalled stage held the answer {took:?}"
+    );
+    assert_eq!(reply["result"]["items"], json!([]), "{reply}");
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["partial"], true,
+        "{reply}"
+    );
 }

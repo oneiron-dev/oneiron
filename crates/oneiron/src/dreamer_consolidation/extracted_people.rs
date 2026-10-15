@@ -4,7 +4,7 @@
 //! admissible turns in this extraction's working set may mint a new row. The
 //! mint door stamps Generated provenance and refuses existing/deleted ids.
 
-use super::resources::FallbackOutputPin;
+use super::resources::ConsolidationFence;
 use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
@@ -14,40 +14,10 @@ use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_rol
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{ContentPart, LlmResponse};
+use crate::llm::LlmResponse;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-
-pub(super) fn extraction_response_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "candidates": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {"topic_key": {}}
-                }
-            },
-            "persons": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["id", "name", "evidence_turn_refs"],
-                    "properties": {
-                        "id": {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"},
-                        "name": {"type": "string", "minLength": 1},
-                        "evidence_turn_refs": {
-                            "type": "array", "minItems": 1,
-                            "items": {"type": "string", "pattern": "^[0-9a-fA-F]{32}$"}
-                        }
-                    }
-                }
-            }
-        }
-    })
-}
 
 pub(super) fn mint_extracted_people(
     vault: &Vault,
@@ -55,24 +25,14 @@ pub(super) fn mint_extracted_people(
     working_set: &[EntityId],
     scope: &crate::llm::Scope,
     now: u64,
-    fallback_binding: Option<(FallbackOutputPin, EntityId)>,
     deadline: Option<&WakePassDeadline>,
+    fence: Option<&ConsolidationFence>,
 ) -> Result<()> {
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let parsed: serde_json::Value = serde_json::from_str(text.trim())
-        .map_err(|_| invalid_consolidation("extraction response must be JSON"))?;
-    let Some(people) = parsed.get("persons").and_then(serde_json::Value::as_array) else {
+    let people = super::executor::extraction::extraction_reply(response)?.persons;
+    if people.is_empty() {
         return Ok(());
-    };
-    vault.with_write_txn(|txn| {
+    }
+    vault.with_write_txn_grouped(|txn| {
         // Check before the first write. Once admitted, the gated write is not
         // interrupted mid-transaction by the wake clock.
         if deadline.is_some_and(WakePassDeadline::expired) {
@@ -80,7 +40,7 @@ pub(super) fn mint_extracted_people(
                 "wake pass expired before person mint",
             ));
         }
-        if let Some((binding, actor)) = fallback_binding {
+        if let Some((binding, actor)) = fence.and_then(ConsolidationFence::fallback) {
             let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
             if !crate::llm::verified_step_consolidation_eligible_in_txn(
                 vault,
@@ -97,40 +57,31 @@ pub(super) fn mint_extracted_people(
                 ));
             }
         }
-        for person in people {
-            let Some(id) = person
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|id| EntityId::from_hex(id).ok())
-            else {
+        // A branch's names are checked against the text its model saw, so
+        // the whole branch fence must still hold before the first mint.
+        // Grants are judged at this writer's own clock, never a stale floor.
+        if let Some(fence) = fence
+            && !people.is_empty()
+        {
+            crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+            fence.validate_in_txn(vault, txn)?;
+        }
+        for person in &people {
+            let Ok(id) = EntityId::from_hex(&person.id) else {
                 continue;
             };
-            let Some(name) = person
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            else {
+            let name = person.name.trim();
+            if name.is_empty() {
                 continue;
-            };
+            }
             let normalized_name = normalize_name_span(name);
             if !normalized_name.chars().any(char::is_alphabetic) {
                 continue;
             }
-            let Some(evidence) = person
-                .get("evidence_turn_refs")
-                .and_then(serde_json::Value::as_array)
-                .filter(|refs| !refs.is_empty())
-            else {
-                continue;
-            };
             let mut admissible = true;
             let mut mentioned = false;
-            for reference in evidence {
-                let Some(turn) = reference
-                    .as_str()
-                    .and_then(|id| EntityId::from_hex(id).ok())
-                else {
+            for reference in &person.evidence_turn_refs {
+                let Ok(turn) = EntityId::from_hex(reference) else {
                     admissible = false;
                     break;
                 };
@@ -166,8 +117,11 @@ pub(super) fn mint_extracted_people(
                     admissible = false;
                     break;
                 }
-                mentioned |= facts
-                    .text
+                let text = match fence {
+                    Some(fence) => fence.turn_text(&turn)?.map(str::to_owned),
+                    None => facts.text,
+                };
+                mentioned |= text
                     .as_deref()
                     .is_some_and(|text| has_name_span(text, &normalized_name));
             }

@@ -75,14 +75,13 @@ struct LiveMembers {
 }
 
 /// A personal vault's one owner, the embedded owner actor, while it is a live
-/// person. A deleted or corrupted personal owner is not silently replaced.
+/// person. A deleted or corrupted personal owner is not silently replaced: a
+/// plain delete keeps the PERSON shell and its Active lifecycle, so liveness
+/// reads the deletion tombstone too.
 fn personal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
     let owner = crate::vault::embedded_owner_actor_id()?;
     Ok(
-        if vault.get_entity_type_in_txn(txn, &owner)? == Some(crate::registry::ENTITY_TYPE_PERSON)
-            && vault.entity_lifecycle_state_in_txn(txn, &owner)?
-                == crate::identity_topology::EntityLifecycleState::Active
-        {
+        if crate::consent::person_is_live_in_txn(vault, txn, &owner)? {
             vec![owner]
         } else {
             Vec::new()
@@ -119,16 +118,21 @@ fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Op
         {
             return Err(invalid());
         }
+        // A deleted grant is no membership: its shell is skipped here, and a
+        // stored body counts only while its row is live, checked last.
+        if raw.len() == ENTITY_METADATA_HEADER_LEN
+            && !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+        {
+            continue;
+        }
         let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if grant.scope == FederationGrantScope::vault(creation.vault_id)
             && grant.confers_at(now)
             && fold
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
-            && vault.get_entity_type_in_txn(txn, &grant.member_ref)?
-                == Some(crate::registry::ENTITY_TYPE_PERSON)
-            && vault.entity_lifecycle_state_in_txn(txn, &grant.member_ref)?
-                == crate::identity_topology::EntityLifecycleState::Active
+            && crate::consent::person_is_live_in_txn(vault, txn, &grant.member_ref)?
+            && crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
         {
             grants.push(grant);
         }
@@ -150,8 +154,8 @@ impl Vault {
     /// An authenticated human is not by that alone an owner.
     pub fn is_live_vault_owner(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        Ok(owners_in_txn(self, &txn)?.contains(&owner.actor()))
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        is_live_vault_owner_in_txn(self, &txn, &actor)
     }
 
     /// Everyone whose membership confers authority now: the embedded owner of
@@ -165,6 +169,15 @@ impl Vault {
             }
         })
     }
+}
+
+/// Whether `actor` is one of the vault's live owners in `txn`.
+pub(crate) fn is_live_vault_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<bool> {
+    Ok(owners_in_txn(vault, txn)?.contains(actor))
 }
 
 /// The vault's live owners: the embedded owner of a personal vault, or every

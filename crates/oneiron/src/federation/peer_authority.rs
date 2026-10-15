@@ -91,7 +91,7 @@ pub fn admit_peer_authority_log_entry(
     }
     let key = peer_authority_row_key(peer_vault_id, &authority_entry_hash(&entry)?);
     let prefix = peer_authority_row_prefix(peer_vault_id);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if PEER_AUTHORITY.contains(&vault.store, wtxn, &key)? {
             return Ok(());
         }

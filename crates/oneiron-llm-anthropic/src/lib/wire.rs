@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use oneiron::llm::ReasoningEffort;
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
@@ -18,6 +18,11 @@ pub fn build_anthropic_messages_request(
     request: &LlmRequest,
     stream: bool,
 ) -> LlmResult<AnthropicMessagesHttpRequest> {
+    // The model id and the catalog row pick the model and the route; a param
+    // or provider option never does.
+    if request.route_selector_override().is_some() {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
     let catalog = config.catalog_entry(&request.model)?;
     let mut provider_options = AnthropicProviderOptions::from_request(request)?;
     if request.envelope.seat_effort.is_some() {
@@ -40,7 +45,14 @@ pub fn build_anthropic_messages_request(
             None => JsonMap::new(),
         };
         output_config.remove("effort");
-        for key in ["reasoning_effort", "reasoning", "thinking"] {
+        // A thinking budget param is an own server's field; this wire has
+        // no per-request equivalent beside the effort.
+        for key in [
+            "reasoning_effort",
+            "reasoning",
+            "thinking",
+            REASONING_BUDGET_PARAM,
+        ] {
             body.remove(key);
         }
         if effort != ReasoningEffort::None {
@@ -60,9 +72,18 @@ pub fn build_anthropic_messages_request(
     // Anthropic's /v1/messages defines no response_format parameter; strip any
     // caller-supplied copy so the OpenAI-shaped key never reaches the wire.
     body.remove("response_format");
+    // A catalog row may carry the provider's own spelling of the model, which
+    // need not fit the engine's `provider/name@revision` grammar.
     body.insert(
         "model".to_owned(),
-        JsonValue::String(request.model.name().to_owned()),
+        JsonValue::String(
+            catalog
+                .metadata
+                .get("wire_model")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_else(|| request.model.name())
+                .to_owned(),
+        ),
     );
     body.insert("stream".to_owned(), JsonValue::Bool(stream));
     body.insert(
@@ -127,10 +148,12 @@ pub fn build_anthropic_messages_request(
 }
 
 pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmResponse> {
+    // `Stop` is a claim the provider makes about the reply. A body that names
+    // no stop reason made none, so it must not read as a finished answer.
     let stop_reason = body
         .get("stop_reason")
         .and_then(JsonValue::as_str)
-        .map_or(FinishReason::Stop, anthropic_finish_reason);
+        .map_or_else(unreported_finish_reason, anthropic_finish_reason);
     let content_blocks = body
         .get("content")
         .and_then(JsonValue::as_array)
@@ -179,7 +202,11 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
                 });
             }
-            _ => {}
+            // Redacted reasoning carries nothing to read.
+            Some("redacted_thinking") => {}
+            // Every other block kind is tool traffic this decoder cannot read,
+            // so the decode fails, as the streamed decoder's does.
+            _ => return Err(FatalLlmError::InvalidRequest.into()),
         }
     }
 
@@ -310,6 +337,13 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider: usage.clone(),
+    }
+}
+
+/// The finish of a reply whose provider reported none.
+fn unreported_finish_reason() -> FinishReason {
+    FinishReason::Other {
+        name: "unreported".to_owned(),
     }
 }
 

@@ -67,6 +67,35 @@ pub(super) fn receipt(
 ) -> Result<Option<MessageStreamReceipt>> {
     RECEIPT.get(&vault.store, txn, &id)
 }
+/// The latest stream finality of a MESSAGE and the generation that wrote it,
+/// in the caller's transaction. An atomically committed MESSAGE has none.
+pub(crate) fn message_stream_finality_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<Option<(StreamFinality, EntityId)>> {
+    Ok(receipt(vault, txn, *message)?.map(|done| (done.finality, done.generation)))
+}
+/// A finalized continuation changed the final words its TURN projects:
+/// re-dirty the TURN in this commit so consolidation selects it again, past
+/// every scope cursor. The TURN row stays byte-identical, so a DAG record TURN
+/// keeps its append-only row and still comes back. The TURN's change-log entry
+/// is what wakes the Dreamer for it, as a re-put would.
+pub(super) fn redirty_turn(vault: &Vault, txn: &mut heed::RwTxn<'_>, seed: &Seed) -> Result<()> {
+    crate::dreamer_consolidation::redirty::redirty_turn_in_txn(vault, txn, &seed.turn)?;
+    crate::ports::audit_mutation_in_txn(
+        &vault.store,
+        txn,
+        crate::ports::MutationAudit {
+            entity: seed.turn,
+            op: crate::ports::ChangeOp::Update,
+            actor_principal: Some(seed.actor),
+            occurred_at: seed.occurred_at,
+            input: seed.message_id.as_bytes(),
+            reason: Some("stream continuation finalized"),
+        },
+    )
+}
 pub(super) fn finish(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

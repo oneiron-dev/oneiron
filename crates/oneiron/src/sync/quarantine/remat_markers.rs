@@ -84,7 +84,7 @@ pub(super) fn set_remat_marker(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| set_remat_marker_in_txn(vault, wtxn, window_key, id))
+    vault.with_write_txn_grouped(|wtxn| set_remat_marker_in_txn(vault, wtxn, window_key, id))
 }
 
 /// Sets a replay/quarantine-origin `rm:w:{window}:{entity_hex}` marker plus
@@ -115,7 +115,7 @@ pub(in crate::sync) fn set_replay_remat_marker(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| set_replay_remat_marker_in_txn(vault, wtxn, window_key, id))
+    vault.with_write_txn_grouped(|wtxn| set_replay_remat_marker_in_txn(vault, wtxn, window_key, id))
 }
 
 /// Clears `rm:w:{window}:{entity_hex}` inside an existing write

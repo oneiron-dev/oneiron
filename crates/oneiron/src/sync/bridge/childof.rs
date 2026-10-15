@@ -203,7 +203,7 @@ pub(super) fn apply_materialized_edge_ops(
     ops: Vec<BatchOp>,
     metas: &[EdgeOpMeta],
     window_key: &str,
-    tombstones_map: &LoroMap,
+    tombstones: &crate::sync::loro_support::TombstoneIndex,
 ) -> Result<()> {
     debug_assert_eq!(ops.len(), metas.len());
     let mut child_of_adds = Vec::<PendingEdgeOp>::new();
@@ -372,12 +372,7 @@ pub(super) fn apply_materialized_edge_ops(
         };
         let bytes =
             super::encode_edge_value_for_crdt(EdgeKind::Parent, *weight, *created_at, None, None)?;
-        let tombstoned =
-            crate::sync::loro_support::tombstone_map_contains_id(tombstones_map, &pending.src)
-                || crate::sync::loro_support::tombstone_map_contains_id(
-                    tombstones_map,
-                    &pending.tgt,
-                );
+        let tombstoned = tombstones.contains(&pending.src) || tombstones.contains(&pending.tgt);
         super::parent_retry::submit(
             vault,
             wtxn,

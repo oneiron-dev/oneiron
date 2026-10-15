@@ -153,11 +153,13 @@ impl LiveQuerySource for BoundSource {
         // The same verified principal/class pair binds RPC and subscription reads.
         let memory = bound_memory(server.vault(), &self.auth)?;
         let mut dependencies = BTreeSet::new();
+        let mut followed = BTreeSet::new();
         let value = match channel {
             Channel::View => {
                 let scope = RecallScope {
                     world_ref: view.world_ref.clone(),
                     facet: view.facet.clone(),
+                    kinds: None,
                 };
                 let pack = memory
                     .recall_view(
@@ -170,37 +172,67 @@ impl LiveQuerySource for BoundSource {
                     .map_err(AppError::from)?;
                 // Do not publish out-of-scope-world accounting: a world-B
                 // mutation must not produce a world-A push through metadata.
+                let mut served = BTreeSet::new();
                 for item in &pack.items {
                     for id in &item.provenance.source_revision_ids {
-                        if let Ok(id) = oneiron::EntityId::from_hex(id) {
-                            dependencies.insert(format!("e:{}", id.to_hex()));
+                        let Ok(id) = oneiron::EntityId::from_hex(id) else {
+                            continue;
+                        };
+                        let path = format!("e:{}", id.to_hex());
+                        // A TURN item names its messages so the view follows
+                        // a change to any of them; it reads their words live,
+                        // never at their index position.
+                        let message = item.kind == "TURN"
+                            && server.vault().get_entity_type(&id).map_err(|_| {
+                                AppError::internal_server_error("dependency type read failed")
+                            })? == Some(oneiron::registry::ENTITY_TYPE_MESSAGE);
+                        if message {
+                            followed.insert(path.clone());
+                        } else {
+                            served.insert(path.clone());
                         }
+                        dependencies.insert(path);
                     }
                 }
+                followed.retain(|path| !served.contains(path));
                 serde_json::to_value(pack.items)
             }
-            Channel::Receipts => serde_json::to_value(
-                oneiron::sync::bridge::scoped_subscription_receipts(
+            Channel::Receipts => {
+                let rows = oneiron::sync::bridge::scoped_subscription_receipts(
                     server.vault(),
                     self.auth
                         .principal_ref()
                         .ok_or_else(AppError::unauthorized)?,
                     view.world_ref.as_deref(),
+                    self.auth.locality(),
                     limit,
                 )
-                .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?,
-            ),
-            Channel::PendingConsent => serde_json::to_value(
-                oneiron::sync::bridge::scoped_subscription_pending(
+                .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?;
+                // A row names its claim: the view follows the claim, and a
+                // delivery off this device re-admits it.
+                for claim in rows.iter().filter_map(|row| row.claim_ref.as_deref()) {
+                    dependencies.insert(format!("e:{claim}"));
+                    followed.insert(format!("e:{claim}"));
+                }
+                serde_json::to_value(rows)
+            }
+            Channel::PendingConsent => {
+                let rows = oneiron::sync::bridge::scoped_subscription_pending(
                     server.vault(),
                     self.auth
                         .principal_ref()
                         .ok_or_else(AppError::unauthorized)?,
                     view.world_ref.as_deref(),
+                    self.auth.locality(),
                     limit,
                 )
-                .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?,
-            ),
+                .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?;
+                for row in &rows {
+                    dependencies.insert(format!("e:{}", row.claim_ref));
+                    followed.insert(format!("e:{}", row.claim_ref));
+                }
+                serde_json::to_value(rows)
+            }
             Channel::OwnerFeed => {
                 dependencies.insert("owner-feed".to_owned());
                 let owner = owner_feed_principal(&self.auth, server.vault())?;
@@ -252,7 +284,7 @@ impl LiveQuerySource for BoundSource {
         // A live edit cannot move this cursor while its index is still behind.
         let indexed = dependencies
             .iter()
-            .filter(|path| path.starts_with("e:"))
+            .filter(|path| path.starts_with("e:") && !followed.contains(*path))
             .map(|path| {
                 let id = oneiron::EntityId::from_hex(path.strip_prefix("e:").ok_or_else(|| {
                     AppError::internal_server_error("invalid indexed dependency")
@@ -337,6 +369,7 @@ impl LiveQuerySource for BoundSource {
                 dependencies.insert(format!("membership:{key}"));
                 dependencies
             },
+            followed,
         })
     }
 
@@ -442,6 +475,29 @@ impl LiveQuerySource for BoundSource {
         super::history::History::replay(&state.journal, view, channel, cursor)
     }
 
+    fn withholds(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
+        let locality = self.auth.locality();
+        if locality == oneiron::claim::CallerLocality::OnDevice {
+            return Ok(false);
+        }
+        let bodies: Vec<_> = pushes.iter().filter(|push| push.result.is_some()).collect();
+        if bodies.is_empty() {
+            return Ok(false);
+        }
+        let server = self.server()?;
+        // The rows each body was derived from decide; the bodies are scanned
+        // only as a backstop.
+        let rows: Vec<_> = bodies
+            .iter()
+            .flat_map(|push| push.rows.iter().copied())
+            .collect();
+        let results: Vec<_> = bodies.iter().map(|push| &push.result).collect();
+        let bytes = serde_json::to_vec(&results)
+            .map_err(|_| AppError::internal_server_error("live-query release check failed"))?;
+        crate::device_local::withholds_retained(server.vault(), locality, &rows, &bytes)
+            .map_err(|_| AppError::internal_server_error("device-local admission read failed"))
+    }
+
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {
         let _server = self.server()?;
         if cursor.document != self.document {
@@ -495,6 +551,7 @@ mod remediation_tests {
             cursor: next.clone(),
             kind: "data",
             result: Some(json!([1])),
+            rows: Vec::new(),
         };
         source.record(&view, Channel::Receipts, &[push]).unwrap();
         assert!(source.can_resume(&anchor).unwrap());
@@ -550,6 +607,7 @@ mod remediation_tests {
                     cursor: cursor.clone(),
                     kind: "snapshot",
                     result: Some(json!([])),
+                    rows: Vec::new(),
                 }],
             )
             .unwrap();

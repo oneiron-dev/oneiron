@@ -61,7 +61,7 @@ pub fn write_actor_claim(
     evidence: &ActorClaimEvidence,
 ) -> Result<EntityId> {
     ground_actor_claim(vault, &row, evidence)?;
-    vault.with_write_txn(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, evidence))
+    vault.with_write_txn_grouped(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, evidence))
 }
 /// Resolves everything a row asserts BEFORE any transaction opens: the actor,
 /// the fit pair's skill, and every cited piece of evidence.
@@ -69,7 +69,7 @@ pub fn write_actor_claim(
 /// Split from the write so the two inlets can differ on policy without
 /// differing on the check — the CHAT and TASK lanes both SKIP an ungrounded row
 /// rather than failing a whole pass, while the door itself refuses one.
-pub(super) fn ground_actor_claim(
+pub(crate) fn ground_actor_claim(
     vault: &Vault,
     row: &ActorClaimRow,
     evidence: &ActorClaimEvidence,
@@ -120,7 +120,7 @@ pub(super) fn ground_actor_claim(
 /// [`write_actor_claim`]'s body, composable into a caller's transaction so a
 /// batch of rows lands all-or-nothing (the CHAT lane's notes and the job that
 /// authorized them commit together).
-pub(super) fn write_actor_claim_in_txn(
+pub(crate) fn write_actor_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     row: &ActorClaimRow,
@@ -441,9 +441,9 @@ pub fn project_actor_claims_from_judgments(
         if ground_actor_claim(vault, &row, &evidence).is_err() {
             continue;
         }
-        written.push(
-            vault.with_write_txn(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, &evidence))?,
-        );
+        written.push(vault.with_write_txn_grouped(|wtxn| {
+            write_actor_claim_in_txn(vault, wtxn, &row, &evidence)
+        })?);
     }
     Ok(written)
 }

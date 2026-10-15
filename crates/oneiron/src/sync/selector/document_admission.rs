@@ -37,6 +37,11 @@ pub(super) fn authorize_in_txn(
     if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         return Err(selector_err(SelectorError::GrantWrongType));
     }
+    // A deleted grant confers nothing, even while an unapplied delete leaves
+    // its body stored.
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &selector.grant_id)?.is_live() {
+        return Err(selector_err(SelectorError::GrantNotFound));
+    }
     let grant = decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
     if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
@@ -226,6 +231,14 @@ impl StoredSelection<'_, '_> {
         else {
             return Ok(None);
         };
+        if !super::scope::settled_position_selected(
+            &id,
+            &raw,
+            &record,
+            self.admission.position.as_scope(),
+        )? {
+            return Ok(None);
+        }
         // Role verbs gate peer writes on top of the stored authority scope.
         if self.admission.verb == "write"
             && !crate::federation::grant_allows_content_write(&self.admission.grant, &record)
@@ -268,6 +281,7 @@ impl StoredSelection<'_, '_> {
         let Some(decision) = entity_selector_decision(
             self.vault,
             (&id, &raw),
+            &record,
             self.selector,
             &Default::default(),
             self.admission.position.as_scope(),

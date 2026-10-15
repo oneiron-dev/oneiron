@@ -143,7 +143,7 @@ impl Vault {
             return Ok(ids);
         }
         let digest = *blake3::hash(&SIGNED_RUN.encode_value(run)?).as_bytes();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             SIGNED_RUN.put(&self.store, txn, &digest, run)?;
             for id in &ids {
                 SIGNED_EVENT.put(&self.store, txn, id, &digest)?;

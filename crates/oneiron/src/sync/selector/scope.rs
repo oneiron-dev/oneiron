@@ -12,7 +12,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    FederationDirectionScope, ScopeAxis, ScopeId, SelectorRange, selector_range_of,
+    FederationDirectionScope, Scope, ScopeAxis, ScopeId, SelectorRange, base_world_axis,
+    selector_range_of,
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::sync::bridge::parse_edge_key;
@@ -522,9 +523,35 @@ pub(super) fn band_filter(
     (position.bands != ScopeAxis::All).then_some(&position.bands)
 }
 
+/// A SUMMARY a run settled (an epoch summary) travels only where the
+/// selector, under its pact ceiling, selects the position it was born at:
+/// shared-base residence is not base-world disclosure, and a SUMMARY has no
+/// `FacetOf` row, so its settled facet is judged here, never widened by a
+/// selected source it rides on. A SUMMARY still at its generic stamp (its
+/// own substrate facet) has no settled facet and keeps the graph closure.
+/// Every other row keeps its own world and facet rules.
+pub(super) fn settled_position_selected(
+    id: &EntityId,
+    raw: &[u8],
+    record: &crate::federation::Scope,
+    position: &FederationDirectionScope,
+) -> Result<bool> {
+    if raw.first().copied() != Some(crate::registry::ENTITY_TYPE_SUMMARY) {
+        return Ok(true);
+    }
+    let world = record.worlds == crate::federation::base_world_axis()
+        || record.worlds.is_narrowing_of(&position.worlds);
+    let generic = record.facets
+        == ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::substrate_facet_id(
+            *id,
+        )?)]));
+    Ok(world && (generic || record.facets.is_narrowing_of(&position.facets)))
+}
+
 pub(super) fn entity_selector_decision(
     vault: &Vault,
     entity: (&EntityId, &[u8]),
+    record: &Scope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
     position: &FederationDirectionScope,
@@ -543,10 +570,9 @@ pub(super) fn entity_selector_decision(
     if !coreference_claim_passes(header.entity_type, blob, coreference) {
         return None;
     }
-    // Diagnostics are local-only. Credentials use the shared per-credential dial.
+    // Diagnostics and credentials are local-only.
     if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-        || (header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-            && !crate::secret_custody::custody_sync_allowed(&blob[ENTITY_METADATA_HEADER_LEN..]))
+        || header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
     {
         return None;
     }
@@ -594,7 +620,8 @@ pub(super) fn entity_selector_decision(
         header.entity_type,
         &blob[ENTITY_METADATA_HEADER_LEN..],
         selector.world,
-    ) {
+    ) || !record_world_passes(header.entity_type, record, selector.world)
+    {
         return None;
     }
     let facet_visible = facets.is_some_and(|facets| {
@@ -655,5 +682,22 @@ fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool 
     match body.world {
         None => true,
         Some(claim_world) => target == Some(claim_world),
+    }
+}
+
+/// A row settled in a world at birth (a narrowed writer's TASK and its
+/// authority facts, ARCH-0067 §5) travels as a CLAIM in that world does under
+/// [`world_passes`]: a base row under every selector, a world row only under
+/// its own world or `All`. A CLAIM is judged from its body there.
+fn record_world_passes(entity_type: u8, record: &Scope, world: SyncSelectorWorld) -> bool {
+    if entity_type == ENTITY_TYPE_CLAIM || record.worlds == base_world_axis() {
+        return true;
+    }
+    match world {
+        SyncSelectorWorld::All => true,
+        SyncSelectorWorld::Base => false,
+        SyncSelectorWorld::World(id) => {
+            record.worlds == ScopeAxis::Some(BTreeSet::from([ScopeId(id.entity_id())]))
+        }
     }
 }

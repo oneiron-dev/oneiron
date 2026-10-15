@@ -108,6 +108,17 @@ impl Store {
         Ok(())
     }
 
+    /// Restore's cleanup of a dropped row: a committed image never carries
+    /// a marker, so its absence is the normal case here.
+    pub(super) fn discard_unapplied_preflight_marker_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        UNAPPLIED_PREFLIGHT.delete(self, wtxn, &decision_id)?;
+        Ok(())
+    }
+
     pub(super) fn is_unapplied_preflight_decision_in_txn(
         &self,
         txn: &RoTxn<'_>,

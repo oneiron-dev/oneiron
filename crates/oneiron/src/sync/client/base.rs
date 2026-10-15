@@ -18,7 +18,7 @@ use crate::sync::schema::read_window_list;
 use crate::sync::transport;
 use crate::sync::transport::TransportError;
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window::LoadedWindow;
+use crate::sync::window::{LoadedWindow, UpdateVerdict};
 use crate::sync::window_rows::{
     LAST_SYNC, ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE,
 };
@@ -200,6 +200,29 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(format!("open window {key}: {e}")))
     }
 
+    /// The verdict on raw local `update` bytes for window `key`, read right
+    /// before they go out or a queue row holding them clears unsent.
+    pub(crate) fn update_verdict(&self, key: &str, update: &[u8]) -> UpdateVerdict {
+        crate::sync::window::raw_update_verdict(&self.manager, key, update)
+    }
+
+    /// Whether an outgoing frame carries what a device-only world now keeps
+    /// here, judged as it is released: a window UPDATE by the raw verdict
+    /// (a frame that cannot be read stays), a document frame, a NOTE command
+    /// included, by its text ([`crate::sync::documents::document_frame_withheld`]).
+    pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
+        if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
+            return frame
+                .get(1..)
+                .and_then(|payload| transport::decode_window_sync(payload).ok())
+                .is_none_or(|(key, sub_tag, update)| {
+                    sub_tag == transport::window_sub_tags::UPDATE
+                        && self.update_verdict(key, update) != UpdateVerdict::Portable
+                });
+        }
+        crate::sync::documents::document_frame_withheld(&self.vault, frame)
+    }
+
     /// Returns the live window for `key` if loaded — registry lookup only,
     /// never opens.
     pub fn window(&self, key: &str) -> Option<Arc<LoadedWindow>> {
@@ -361,7 +384,7 @@ impl SyncClient {
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())
         })
@@ -377,7 +400,7 @@ impl SyncClient {
         let frontiers_before = self.root_doc.state_frontiers();
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
-        if let Err(err) = self.vault.with_write_txn(|wtxn| {
+        if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {
             ROOT_SNAPSHOT.put(&self.vault.store, wtxn, &(), &snapshot)?;
             ROOT_STATE_VECTOR.put(&self.vault.store, wtxn, &(), &vv)?;
             ROOT_SHALLOW_FENCE.put(&self.vault.store, wtxn, &(), &[SVF_FRESH])?;

@@ -318,7 +318,7 @@ fn audit_ingest_preserves_independent_provider_rows_and_lifecycle() -> Result<()
 }
 
 #[test]
-fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
+fn malformed_audit_batch_preserves_content_anchor_verdict_rows() -> Result<()> {
     let (_temp, vault) = open_vault();
     let entity = EntityId::now();
     let imported = package(
@@ -326,7 +326,7 @@ fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
         SkillCapabilitySurface::default(),
     );
     vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
-    let first = SkillScanReceipt::new(
+    let seed = SkillScanReceipt::new(
         "first",
         3,
         ScanVerdict::Clean,
@@ -334,26 +334,40 @@ fn audit_ingest_rejects_bad_middle_receipt_atomically() -> Result<()> {
         ScanCompleteness::Complete,
         SkillGovernance::Recommended,
     )?;
+    vault.ingest_skill_scan_verdict(&entity, fixture_hash(), &seed, t(3), 4)?;
+    let anchor = skill_content_anchor_entity_id(fixture_hash())?;
+    let mut before = vault.active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?;
+    before.sort_by_key(|row| row.0);
+    assert!(!before.is_empty());
+    let first = SkillScanReceipt::new(
+        "first",
+        5,
+        ScanVerdict::Malicious,
+        ScanRiskLevel::Critical,
+        ScanCompleteness::Complete,
+        SkillGovernance::Prohibited,
+    )?;
     let mut bad = first.clone();
     bad.provider.clear();
     let last = SkillScanReceipt::new(
         "last",
-        3,
+        5,
         ScanVerdict::Suspicious,
         ScanRiskLevel::High,
         ScanCompleteness::Partial,
         SkillGovernance::Discouraged,
     )?;
-
     let error = vault
-        .ingest_skill_audit_verdicts(&entity, fixture_hash(), &[first, bad, last], t(3), 4)
-        .expect_err("a malformed middle receipt must reject the whole batch");
+        .ingest_skill_audit_verdicts(&entity, fixture_hash(), &[first, bad, last], t(5), 6)
+        .expect_err("malformed middle receipt must reject the batch");
     assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
-    assert!(
-        vault
-            .active_claims_for_predicate(&entity, PREDICATE_SKILL_SCAN_VERDICT)?
-            .is_empty()
-    );
+    let mut after = vault.active_claims_for_predicate(&anchor, PREDICATE_SKILL_SCAN_VERDICT)?;
+    after.sort_by_key(|row| row.0);
+    assert_eq!(after, before);
+    let providers = third_party_verdicts(&vault, fixture_hash())?;
+    assert_eq!(providers.len(), 1);
+    assert_eq!(map_text(&providers[0].value, "provider"), Some("first"));
+    assert_eq!(map_text(&providers[0].value, "verdict"), Some("clean"));
     Ok(())
 }
 
@@ -2019,5 +2033,94 @@ fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
         vault.put_claim(&EntityId::now(), &body, t(1), 2),
         Err(Error::Claim(ClaimError::ReservedPredicate { .. }))
     ));
+    Ok(())
+}
+
+/// ASTRA-9A-2-R2 F3: a skill's scan verdicts restrict how its bytes activate.
+/// A refreshed scan with the same clean result supersedes the old verdict
+/// but changes no posture, so a restore over the vault goes ahead, as it does
+/// past a risk found in bytes the backup does not hold; a verdict that finds
+/// risk in the backup's bytes since refuses it.
+#[test]
+fn a_restore_goes_ahead_past_a_clean_rescan_and_refuses_a_risk_found_since() -> Result<()> {
+    let (_temp, vault) = open_vault();
+    let (_, imported_entity) = materialize_shared_hash_skills(&vault)?;
+    let scan = |at: u64, risk: ScanRiskLevel| {
+        let verdict = if risk == ScanRiskLevel::None {
+            ScanVerdict::Clean
+        } else {
+            ScanVerdict::Suspicious
+        };
+        SkillScanReceipt::new(
+            "alpha",
+            at,
+            verdict,
+            risk,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )
+    };
+    vault.ingest_skill_scan_verdict(
+        &imported_entity,
+        fixture_hash(),
+        &scan(5, ScanRiskLevel::None)?,
+        t(5),
+        6,
+    )?;
+    let backups = crate::test_support::restore_tempdir();
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let restore = |destination: &std::path::Path| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            crate::VaultConfig::default(),
+            &vault,
+            200,
+        )
+        .map(|(restored, _)| restored)
+    };
+
+    vault.ingest_skill_scan_verdict(
+        &imported_entity,
+        fixture_hash(),
+        &scan(7, ScanRiskLevel::None)?,
+        t(7),
+        8,
+    )?;
+    drop(restore(&backups.path().join("first"))?);
+
+    // A risk found in another skill's bytes, imported since the backup,
+    // leaves with them (SOL-9A-2-R2 F26).
+    let other_entity = EntityId::now();
+    let other = package_with_content(
+        candidate("fixture.other-bytes"),
+        b"# other\n",
+        SkillCapabilitySurface::default(),
+    );
+    vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &other, other_entity, t(9), 10)?;
+    let other_hash = canonical_skill_tree_hash([("SKILL.md", b"# other\n".as_slice())])?;
+    vault.ingest_skill_scan_verdict(
+        &other_entity,
+        other_hash,
+        &scan(11, ScanRiskLevel::Low)?,
+        t(11),
+        12,
+    )?;
+    drop(restore(&backups.path().join("other"))?);
+
+    vault.ingest_skill_scan_verdict(
+        &imported_entity,
+        fixture_hash(),
+        &scan(13, ScanRiskLevel::High)?,
+        t(13),
+        14,
+    )?;
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(error.to_string().contains("skill scan verdicts"), "{error}");
+    assert!(!destination.exists());
     Ok(())
 }

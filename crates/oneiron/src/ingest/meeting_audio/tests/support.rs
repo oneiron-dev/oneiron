@@ -25,9 +25,6 @@ pub(super) enum Fault {
     MissingTrack,
     InventedCleanup,
     AcousticCorrection,
-    AcousticContraction,
-    AcousticCurlyContraction,
-    AcousticJapaneseNegation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,33 +138,6 @@ impl FixtureHost {
             diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
         }
     }
-
-    pub(super) fn two_packs() -> Self {
-        Self {
-            duration_ms: 190_000,
-            spans: vec![
-                SpeechSpan {
-                    start_ms: 1_000,
-                    end_ms: 46_000,
-                },
-                SpeechSpan {
-                    start_ms: 48_000,
-                    end_ms: 93_000,
-                },
-                SpeechSpan {
-                    start_ms: 95_000,
-                    end_ms: 140_000,
-                },
-                SpeechSpan {
-                    start_ms: 142_000,
-                    end_ms: 187_000,
-                },
-            ],
-            requests: Vec::new(),
-            fault: Fault::None,
-            diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
-        }
-    }
 }
 
 fn provenance(id: &str, model: &str, hash: &str) -> InferenceProvenance {
@@ -267,9 +237,6 @@ impl MeetingAudioHost for FixtureHost {
                 text: if index == 0 {
                     match self.fault {
                         Fault::AcousticCorrection => "allice",
-                        Fault::AcousticContraction => "can't",
-                        Fault::AcousticCurlyContraction => "don’t",
-                        Fault::AcousticJapaneseNegation => "安全ではない",
                         _ => "hello",
                     }
                 } else if index % 2 == 0 {
@@ -282,9 +249,6 @@ impl MeetingAudioHost for FixtureHost {
                 acoustic_candidates: if index == 0 {
                     match self.fault {
                         Fault::AcousticCorrection => vec!["Alice".into()],
-                        Fault::AcousticContraction => vec!["can".into()],
-                        Fault::AcousticCurlyContraction => vec!["do".into()],
-                        Fault::AcousticJapaneseNegation => vec!["安全です".into()],
                         _ => Vec::new(),
                     }
                 } else {
@@ -383,9 +347,6 @@ impl MeetingAudioHost for FixtureHost {
         }
         texts[0] = match self.fault {
             Fault::AcousticCorrection => "Alice.".into(),
-            Fault::AcousticContraction => "Can.".into(),
-            Fault::AcousticCurlyContraction => "Do.".into(),
-            Fault::AcousticJapaneseNegation => "安全です。".into(),
             _ => texts[0].clone(),
         };
         Ok(CleanupOutput {

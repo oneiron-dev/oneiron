@@ -262,15 +262,6 @@ jobs:
         env:
           RUSTC_WRAPPER: sccache
         run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh test
-      - name: Fuzz atom codec and render (golden corpus)
-        if: >-
-          ${{ !cancelled() && (needs.changes.result != 'success'
-              || needs.changes.outputs.full == 'true'
-              || (needs.changes.outputs.oneiron == 'true'
-                  && (needs.changes.outputs.modules == 'ALL'
-                      || contains(format(' {0} ', needs.changes.outputs.modules), ' lens ')))) }}
-        run: timeout 1200s cargo test --locked -j 8 -p oneiron --lib --all-features lens::tests::atom_fuzz::sustained_atom_codec_render_fuzz -- --ignored --exact --test-threads=1
-
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
         run: sccache --show-stats

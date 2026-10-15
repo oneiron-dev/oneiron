@@ -18,7 +18,10 @@ impl PipelineBuilder<'_> {
         txn: &RoTxn<'_>,
         subjects: &[EntityId],
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        // Authority (policy, worlds) is the vault's; the evidence is read
+        // where the run reads, a room's view included.
         let store = &self.vault.store;
+        let content = &self.read;
         let policy = crate::gate::resolve_policy_manifest(store, txn)?;
         let owner_filter =
             crate::gate::narrow_retrieval_filter(&policy.retrieval_floor_for_actor(None), None)?;
@@ -33,14 +36,16 @@ impl PipelineBuilder<'_> {
             now,
         )?;
         let corpus = CorpusFilter::new(&self.corpus_scope)?;
+        let device_local = self.device_local_worlds(txn)?;
         let mut filters = corpus.config(self, self.occurred_range, authority_filter);
         filters.world_active_set = authority.as_ref().map(|authority| &authority.active_set);
+        filters.device_local = device_local.as_ref();
         let stale_worlds = crate::federation::stale_stamped_worlds(store, txn)?;
         let subjects: BTreeSet<_> = subjects.iter().copied().collect();
         let mut ids = BTreeSet::new();
         let mut scanned = 0usize;
         for subject in &subjects {
-            for edge in store.port_edges(
+            for edge in content.port_edges(
                 txn,
                 subject,
                 EdgeDirection::In,
@@ -59,14 +64,15 @@ impl PipelineBuilder<'_> {
         let mut evidence = Vec::new();
         let mut evidence_bytes = 0usize;
         for id in ids {
-            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(content, txn, &id)?
+            else {
                 continue;
             };
             if raw.len() > 256 * 1024 {
                 return Err(Error::IndexOverflow("L2 evidence bytes"));
             }
             if !pipeline_candidate_matches_filters_and_gate(
-                store,
+                content,
                 txn,
                 &id,
                 filters,
@@ -98,6 +104,14 @@ impl PipelineBuilder<'_> {
                     .world
                     .is_some_and(|world| stale_worlds.contains_key(&world))
             {
+                continue;
+            }
+            // A claim the write door refuses, stored while the owner's scan was
+            // off, is no evidence: the L2 rows project it as JSON, which no
+            // read follows exactly, so none of it is served.
+            if crate::batch::export::write_door_refuses_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            ) {
                 continue;
             }
             evidence_bytes = evidence_bytes.saturating_add(raw.len());

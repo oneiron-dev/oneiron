@@ -51,12 +51,13 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, true)?;
+        let fetch_limit =
+            self.vault
+                .scoped_read_search_candidate_limit(&self.store_read(), limit, true, true)?;
         let results = self
             .vault
             .query()
+            .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search(query, vector, None, fetch_limit)
@@ -78,7 +79,19 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_text_revisioned(query, limit, requested)?;
+        self.search_text_as_of(query, limit, requested, None)
+    }
+
+    /// [`Self::search_text`] with the query's time words read against
+    /// `as_of` (unix seconds) instead of now.
+    pub(crate) fn search_text_as_of(
+        &self,
+        query: &str,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        as_of: Option<u64>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,
@@ -121,7 +134,8 @@ impl ScopedRead<'_> {
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             requested,
-        )?;
+        )?
+        .under_credential_of(&self.actor_key);
         Ok((filter, policy))
     }
 
@@ -229,6 +243,7 @@ impl ScopedRead<'_> {
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
         if self.audience.is_none()
+            && self.peer_reads.is_empty()
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
@@ -236,8 +251,12 @@ impl ScopedRead<'_> {
         }
         drop(rtxn);
 
-        self.vault
-            .scoped_read_search_candidate_limit(requested, include_text, include_vector)
+        self.vault.scoped_read_search_candidate_limit(
+            &self.store_read(),
+            requested,
+            include_text,
+            include_vector,
+        )
     }
 
     pub fn filter_scored_entities(

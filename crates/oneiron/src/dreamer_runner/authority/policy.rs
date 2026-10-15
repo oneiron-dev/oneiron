@@ -24,6 +24,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         crate::dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE => {
             Some("dreamer.consolidation")
         }
+        crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE => {
+            Some("dreamer.consolidation")
+        }
         DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND => Some(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
         DREAMER_VAULT_CLEANUP_ATTEMPT_KIND => Some(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND),
         DREAMER_WEAVE_RECIPE_ATTEMPT_KIND => Some(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND),

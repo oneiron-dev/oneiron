@@ -259,6 +259,8 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
                     .ok_or_else(invalid_authority)?,
             })
         }
+        OP_KIND_MACHINE_PROFILE => super::machine_profile::decode_machine_profile(entries),
+        OP_KIND_WORLD_PRIVACY => super::world_privacy::decode_world_privacy(entries),
         _ => Err(invalid_authority()),
     }
 }

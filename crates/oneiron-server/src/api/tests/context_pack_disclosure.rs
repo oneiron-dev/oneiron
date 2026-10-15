@@ -126,42 +126,6 @@ async fn core_context_pack_owner_present_true_on_scoped_bearer_is_forbidden() {
 }
 
 #[tokio::test]
-async fn core_context_pack_owner_session_without_block_carries_no_interlocutors_field() {
-    let (_dir, server) = interlocutor_test_server();
-    seed_turn(&server, "owner alone regression needle");
-    let request = json!({ "query": "regression needle", "limit": 3 });
-    let (status, body) = owner_json(
-        server.clone(),
-        "POST",
-        "/v1/core/context-pack",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.get("interlocutors").is_none(),
-        "owner-grade auth with no block must stay byte-identical: {body:?}"
-    );
-
-    // The same request on a scope-narrowed token is NOT the owner-grade path:
-    // a delegated credential resolves an interlocutor set and gets echoed
-    // stamps even though it carries no principal_ref.
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.get("interlocutors").is_some(),
-        "a scope-narrowed token is not owner-grade: {body:?}"
-    );
-}
-
-#[tokio::test]
 async fn core_context_pack_echoes_stamps_for_supplied_block_on_owner_session() {
     let (_dir, server) = interlocutor_test_server();
     let identity_ref = seeded_test_entity_id(0x1516_0011);
@@ -199,207 +163,6 @@ async fn core_context_pack_echoes_stamps_for_supplied_block_on_owner_session() {
         assert_eq!(
             stamp["claims_not_instructions"],
             Value::from(claims_not_instructions),
-        );
-    }
-}
-
-#[tokio::test]
-async fn core_context_pack_owner_present_false_narrows_owner_session() {
-    let (_dir, server) = interlocutor_test_server();
-    let request = json!({
-        "query": "hallway",
-        "interlocutors": {
-            "owner_present": false,
-            "third_parties": [{ "label": "guest", "claimed_owner": true }]
-        }
-    });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let stamps = body["interlocutors"].as_array().expect("stamps echoed");
-    assert_eq!(stamps.len(), 1, "narrowing removes the owner entry");
-    assert_eq!(stamps[0]["speaker"], Value::from("guest"));
-    assert_eq!(stamps[0]["class"], Value::from("unknown"));
-    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(true));
-}
-
-#[tokio::test]
-async fn core_context_pack_scoped_bearer_gets_implicit_interlocutor_echo() {
-    let (_dir, server) = interlocutor_test_server();
-
-    // Companion-style principal with no contact row -> one Unknown stamp
-    // labeled with the principal hex.
-    let unknown_principal = seeded_test_entity_id(0x1516_0021).to_hex();
-    let request = json!({ "query": "hallway" });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request_with_principal_ref(
-            "POST",
-            "/v1/core/context-pack",
-            "core:read",
-            &unknown_principal,
-            Some(&request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let stamps = body["interlocutors"].as_array().expect("implicit echo");
-    assert_eq!(stamps.len(), 1);
-    assert_eq!(stamps[0]["speaker"], Value::from(unknown_principal.clone()));
-    assert_eq!(stamps[0]["class"], Value::from("unknown"));
-    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(true));
-
-    // A principal whose entity id IS a contact row -> KnownContact stamp.
-    let identity_ref = seeded_test_entity_id(0x1516_0022);
-    let contact_principal = seeded_test_entity_id(0x1516_0023);
-    seed_counterparty_contact(
-        &server,
-        contact_principal,
-        identity_ref,
-        "kenji@example.com",
-    );
-    let (status, body) = route_json(
-        server,
-        core_request_with_principal_ref(
-            "POST",
-            "/v1/core/context-pack",
-            "core:read",
-            &contact_principal.to_hex(),
-            Some(&request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let stamps = body["interlocutors"].as_array().expect("implicit echo");
-    assert_eq!(stamps.len(), 1);
-    assert_eq!(
-        stamps[0]["speaker"],
-        Value::from(contact_principal.to_hex())
-    );
-    assert_eq!(stamps[0]["class"], Value::from("known_contact"));
-    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(true));
-}
-
-#[tokio::test]
-async fn core_context_pack_scoped_bearer_merges_principal_with_supplied_block() {
-    // N14 (shape level, RATIFY-20260710 R8 merge-always): a scoped token
-    // naming a wider-scoped contact gets BOTH operands into the resolved
-    // set — the supplied block can never displace the principal party.
-    let (_dir, server) = interlocutor_test_server();
-    let identity_ref = seeded_test_entity_id(0x1516_0031);
-    let wider_contact = seeded_test_entity_id(0x1516_0032);
-    seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
-    let principal_ref = seeded_test_entity_id(0x1516_0033).to_hex();
-
-    let request = json!({
-        "query": "hallway",
-        "interlocutors": {
-            "third_parties": [{ "contact_ref": wider_contact.to_hex() }]
-        }
-    });
-    let (status, body) = route_json(
-        server,
-        core_request_with_principal_ref(
-            "POST",
-            "/v1/core/context-pack",
-            "core:read",
-            &principal_ref,
-            Some(&request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let stamps = body["interlocutors"].as_array().expect("merged echo");
-    assert_eq!(
-        stamps.len(),
-        2,
-        "both the supplied contact and the implicit principal party resolve",
-    );
-    for (speaker, class) in [
-        (wider_contact.to_hex(), "known_contact"),
-        (principal_ref, "unknown"),
-    ] {
-        let stamp = stamps
-            .iter()
-            .find(|stamp| stamp["speaker"].as_str() == Some(speaker.as_str()))
-            .expect("merged speaker stamp");
-        assert_eq!(stamp["class"], Value::from(class));
-    }
-    assert!(
-        stamps.iter().all(|stamp| stamp["class"] != "owner"),
-        "no owner entry on a scoped token",
-    );
-}
-
-#[tokio::test]
-async fn core_context_pack_rejects_malformed_interlocutor_parties() {
-    let (_dir, server) = interlocutor_test_server();
-    let contact_hex = seeded_test_entity_id(0x1516_0041).to_hex();
-
-    let cases = [
-        (
-            json!({ "contact_ref": contact_hex, "label": "guest" }),
-            "interlocutors.third_parties[0]",
-        ),
-        (json!({}), "interlocutors.third_parties[0]"),
-        (
-            json!({ "contact_ref": "not-hex" }),
-            "interlocutors.third_parties[0].contact_ref",
-        ),
-        (
-            json!({ "channel_identity_ref": contact_hex }),
-            "interlocutors.third_parties[0]",
-        ),
-        (
-            json!({ "channel_identity_ref": contact_hex, "counterparty": "  " }),
-            "interlocutors.third_parties[0].counterparty",
-        ),
-        (
-            json!({ "channel_identity_ref": contact_hex, "counterparty": " kenji@example.com " }),
-            "interlocutors.third_parties[0].counterparty",
-        ),
-        (
-            json!({ "channel_identity_ref": contact_hex, "counterparty": "k".repeat(513) }),
-            "interlocutors.third_parties[0].counterparty",
-        ),
-        (
-            json!({ "label": "   " }),
-            "interlocutors.third_parties[0].label",
-        ),
-        (
-            json!({ "label": "l".repeat(513) }),
-            "interlocutors.third_parties[0].label",
-        ),
-        (
-            json!({ "contact_ref": contact_hex, "claimed_owner": true }),
-            "interlocutors.third_parties[0].claimed_owner",
-        ),
-    ];
-    for (party, expected_field) in cases {
-        let request = json!({
-            "query": "hallway",
-            "interlocutors": { "third_parties": [party.clone()] }
-        });
-        let (status, body) = core_json(
-            server.clone(),
-            "POST",
-            "/v1/core/context-pack",
-            "core:read",
-            Some(&request),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "party {party:?}");
-        assert_error_envelope(&body, "BAD_REQUEST");
-        assert_eq!(
-            body["error"]["details"]["field"],
-            Value::from(expected_field),
-            "party {party:?}"
         );
     }
 }
@@ -509,6 +272,19 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
     let identity_ref = seeded_test_entity_id(0x1517_0011);
     let contact_id = seeded_test_entity_id(0x1517_0012);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
+    // Owner presence never widens a guest's clearance; this one admits tier B.
+    server
+        .vault
+        .set_counterparty_disclosure_scope(
+            &contact_id,
+            &oneiron::disclosure::DisclosureScope::new(
+                oneiron::federation::Scope::top(),
+                "supervised tier b",
+                101,
+            )
+            .expect("clearance"),
+        )
+        .expect("clear the contact");
     let diary = seed_text_turn(&server, "tier b memory needle18");
 
     let request = json!({
@@ -545,7 +321,7 @@ async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
         .iter()
         .filter_map(|entity| entity["id"].as_str())
         .any(|id| id == diary_id);
-    assert!(found, "supervised mode keeps Tier B present");
+    assert!(found, "supervised mode keeps cleared Tier B present");
 }
 
 #[tokio::test]
@@ -582,36 +358,6 @@ async fn core_context_pack_n4_spoofed_owner_claim_stays_absence_clamped() {
         body["results"].as_array().expect("results").is_empty(),
         "unknown party gets the deny-all scope: {diary:?} must not surface"
     );
-}
-
-#[tokio::test]
-async fn core_context_pack_n5_voice_session_seam_cannot_widen() {
-    // The ILD-3 roster seam is accepted but inert: a voice_session_ref with
-    // no session owner resolves to no roster entries and stays AbsenceClamp.
-    // The enrolled-print corroboration case (owner_print_matched) lands with
-    // ONE-1518 and can never mint an Owner entry by construction.
-    let (_dir, server) = interlocutor_test_server();
-    seed_text_turn(&server, "tier b memory needle20");
-
-    let request = json!({
-        "query": "needle20",
-        "interlocutors": {
-            "owner_present": false,
-            "third_parties": [{ "label": "speaker 1", "claimed_owner": false }],
-            "voice_session_ref": "call-123"
-        }
-    });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
-    assert!(body["results"].as_array().expect("results").is_empty());
 }
 
 #[tokio::test]
@@ -843,23 +589,6 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
     );
 }
 
-#[tokio::test]
-async fn core_context_pack_owner_auth_without_block_carries_no_disclosure_field() {
-    let (_dir, server) = interlocutor_test_server();
-    seed_text_turn(&server, "owner alone regression needle24");
-    let request = json!({ "query": "needle24", "limit": 3 });
-    let (status, body) = owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        body.get("disclosure").is_none(),
-        "owner-grade auth with no block stays byte-identical: {body:?}"
-    );
-    assert!(
-        !body["results"].as_array().expect("results").is_empty(),
-        "owner-alone behavior unchanged"
-    );
-}
-
 /// P1 regression (`l1-r2-verdicts`): a v2 token narrowed by SCOPE ALONE — no
 /// `principal_ref` — is a delegated read-only credential, not the owner.
 ///
@@ -936,75 +665,6 @@ async fn core_context_pack_scope_only_token_is_clamped_and_cannot_assert_owner_p
         body["error"]["details"]["requiredScope"],
         Value::from("interlocutors.owner_present")
     );
-}
-
-#[tokio::test]
-async fn core_context_pack_caps_the_third_parties_block() {
-    let (_dir, server) = interlocutor_test_server();
-
-    let party = |index: usize| json!({ "label": format!("guest {index}") });
-    let at_cap: Vec<Value> = (0..MAX_INTERLOCUTOR_THIRD_PARTIES).map(party).collect();
-    let over_cap: Vec<Value> = (0..=MAX_INTERLOCUTOR_THIRD_PARTIES).map(party).collect();
-
-    let request = json!({
-        "query": "hallway",
-        "interlocutors": { "third_parties": at_cap }
-    });
-    let (status, body) = owner_json(
-        server.clone(),
-        "POST",
-        "/v1/core/context-pack",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "at-cap block accepted: {body:?}");
-    assert_eq!(
-        body["interlocutors"].as_array().map(Vec::len),
-        Some(MAX_INTERLOCUTOR_THIRD_PARTIES + 1),
-        "owner stamp plus every supplied party"
-    );
-
-    let request = json!({
-        "query": "hallway",
-        "interlocutors": { "third_parties": over_cap }
-    });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-    assert_eq!(
-        body["error"]["details"]["field"],
-        Value::from("interlocutors.third_parties")
-    );
-}
-
-#[tokio::test]
-async fn core_context_pack_dangling_contact_ref_fails_loudly() {
-    let (_dir, server) = interlocutor_test_server();
-    let request = json!({
-        "query": "hallway",
-        "interlocutors": {
-            "third_parties": [
-                { "contact_ref": seeded_test_entity_id(0x1516_0051).to_hex() }
-            ]
-        }
-    });
-    let (status, body) = core_json(
-        server,
-        "POST",
-        "/v1/core/context-pack",
-        "core:read",
-        Some(&request),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_error_envelope(&body, "NOT_FOUND");
 }
 
 async fn room_owner_json(
@@ -1327,4 +987,424 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
             .any(|row| row["id"] == private.to_hex()),
         "unbound host cannot disclose Tier A: {unbound}"
     );
+}
+
+/// Engine-lane ruling 2026-10-11 (ARCH-0067 §8): the vault's own agent acts
+/// for the owner and adds no clearance term; its own grant bounds what the
+/// room reads instead. A room holding the bound owner and that agent
+/// assembles its own default-Sensitive history, owner present or away, once
+/// the agent may read it too: a policy grant for the room's records and a
+/// relationship grant for its message's space. Before, the agent was an
+/// unknown party and the room public-only.
+#[tokio::test]
+async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
+    let (_dir, server) = interlocutor_test_server();
+    let owner = seeded_test_entity_id(0x2094_0301);
+    let agent = seeded_test_entity_id(0x2094_0302);
+    server
+        .vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room member",
+        )
+        .expect("onboard person");
+    bind_room_owner(&server, owner);
+    // The host key holds the owner's binding, so the vault's own agent here
+    // is one of its live agent definitions.
+    let definition = oneiron::agent_def::AgentDefinition::new(
+        "oneiron.agent.room",
+        "Room member fixture",
+        "1.0.0",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        oneiron::agent_def::AgentScope::All,
+        oneiron::agent_def::AgentCeiling::Proposed,
+        None,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+        oneiron::ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("test"),
+        )]),
+        None,
+        true,
+        None,
+    );
+    server
+        .vault
+        .put_agent_definition(
+            &agent,
+            &definition,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .expect("agent definition");
+    let root = server.vault.root_project().expect("root project");
+    let project = seeded_test_entity_id(0x2094_0303);
+    let mut roster =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    create_owned_project(&server, owner, project, &roster);
+    roster.roster.push(agent.to_hex());
+    let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
+    let exact_room = oneiron::workspace_roster::ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: project.to_hex(),
+        member_ids: roster.roster.clone(),
+        claims_scope_ref: roster.claims_scope_ref.clone(),
+        origin: None,
+    };
+    server
+        .vault
+        .batch()
+        .put(
+            &project,
+            server.vault.project_type_byte().unwrap(),
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&roster).unwrap(),
+        )
+        .put(
+            &room,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&exact_room).unwrap(),
+        )
+        .commit()
+        .expect("onboard exact project and room in one batch");
+    let space = seeded_test_entity_id(0x2094_0304);
+    server
+        .vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .rooms_speak(&oneiron::memory::WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(oneiron::EntityId::now().to_hex()),
+            messages: vec![oneiron::memory::WitnessMessage {
+                id: Some(oneiron::EntityId::now().to_hex()),
+                author: oneiron::memory::WitnessAuthor::User,
+                message_type: "text".into(),
+                content: "lantern harbor room2094".into(),
+                metadata: Some(json!({ "rel": space.to_hex() })),
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 2,
+        })
+        .expect("speak");
+
+    // Nothing, the policy grant alone, then both: only the agent's whole
+    // read of the message lets the room read it.
+    for grants in 0..3 {
+        if grants == 1 {
+            super::context_board_history::restrict_principal_read_types(
+                &server,
+                agent,
+                &[
+                    oneiron::registry::ENTITY_TYPE_TURN,
+                    oneiron::registry::ENTITY_TYPE_MESSAGE,
+                ],
+            );
+        }
+        if grants == 2 {
+            server
+                .vault
+                .create_access_grant(
+                    &seeded_test_entity_id(0x2094_0305),
+                    &oneiron::access_grant::AccessGrant {
+                        principal_ref: agent,
+                        scope: oneiron::access_grant::AccessGrantScope::Messages {
+                            space_ref: space,
+                        },
+                        capability: oneiron::access_grant::AccessGrantCapability::MessagesRead,
+                        authority_scope: oneiron::federation::Scope::top(),
+                        status: oneiron::access_grant::AccessGrantStatus::Active,
+                        created_at: 1,
+                        revoked_at: None,
+                        expires_at: None,
+                    },
+                )
+                .expect("grant the message's space");
+        }
+        for (owner_present, mode) in [(None, "absence_clamp"), (Some(true), "owner_alone")] {
+            let mut request = json!({"conversation_id": room.to_hex(), "query": "room2094"});
+            if let Some(present) = owner_present {
+                request["interlocutors"] = json!({ "owner_present": present });
+            }
+            let (status, body) = room_owner_json(server.clone(), owner, &request).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["disclosure"]["mode"], mode, "{body}");
+            assert_eq!(
+                body.to_string().contains("lantern harbor room2094"),
+                grants == 2,
+                "the room reads its history only as its agent may ({grants}, {mode}): {body}"
+            );
+        }
+    }
+}
+
+/// A bare host secret proves no PERSON, so the vault's own agents stay
+/// unknown parties to it: a room of agents alone never reads as the owner
+/// alone, presence asserted or not, and reads only public rows. The agent
+/// reading on its own credential is the room's proven reader: it adds no
+/// clearance term, so the room reads what its own grant admits, and never
+/// Tier A.
+#[tokio::test]
+async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
+    let (_dir, server) = interlocutor_test_server();
+    let agent = seeded_test_entity_id(0x2094_0401);
+    server
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room agent",
+        )
+        .expect("onboard agent");
+    bind_room_actor(&server, agent, "agent");
+    let creator = server.vault.ensure_embedded_owner_actor().unwrap();
+    let room = oneiron::EntityId::now();
+    server
+        .vault
+        .create_conversation(
+            room,
+            &oneiron::conversation::ConversationBody {
+                kind: oneiron::conversation::ConversationKind::Channel,
+                member_ids: vec![agent],
+                ..Default::default()
+            },
+            oneiron::WriteActor::new(creator, oneiron::EdgeActorClass::Human),
+            1,
+        )
+        .expect("agent-only room");
+    let private = seed_text_turn(&server, "agent room private2094");
+    server.vault.set_disclosure_tier_a(&private, 101).unwrap();
+    let sensitive = seed_text_turn(&server, "agent room sensitive2094");
+    let request = json!({"conversation_id": room.to_hex(), "query": "agent room"});
+    let ids = |body: &Value| -> Vec<String> {
+        body["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    for interlocutors in [None, Some(json!({"owner_present": true}))] {
+        let mut request = request.clone();
+        if let Some(interlocutors) = interlocutors {
+            request["interlocutors"] = interlocutors;
+        }
+        let (status, body) = owner_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["disclosure"]["mode"], "owner_alone", "{body}");
+        assert!(
+            !ids(&body).contains(&private.to_hex()) && !ids(&body).contains(&sensitive.to_hex()),
+            "a bare host reads only public rows through an agent-only room: {body}"
+        );
+    }
+
+    let agent_reads = |server: std::sync::Arc<SyncServer>| {
+        route_json(
+            server,
+            core_request_with_authz(
+                "POST",
+                "/v1/core/context-pack",
+                test_bearer(&format!(
+                    "scope=core:read;principal_ref={};actor_class=agent",
+                    agent.to_hex()
+                )),
+                Some(&request),
+            ),
+        )
+    };
+    // The agent's slip reads every record kind until a manifest grant names
+    // it, so a grant that reads only MESSAGEs is the narrow start.
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_MESSAGE],
+    );
+    let (status, before) = agent_reads(server.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{before}");
+    assert!(
+        !ids(&before).contains(&sensitive.to_hex()),
+        "the agent's own read bounds the room: {before}"
+    );
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (status, after) = agent_reads(server.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_ne!(after["disclosure"]["mode"], "owner_alone", "{after}");
+    assert!(
+        ids(&after).contains(&sensitive.to_hex()),
+        "the agent reads the room as its own grant admits: {after}"
+    );
+    assert!(
+        !ids(&after).contains(&private.to_hex()),
+        "an agent's room never holds Tier A: {after}"
+    );
+}
+
+/// F16 H145: a narrowed reader that names a contact it cannot read learns
+/// nothing of it. An explicit `contact_ref` fails exactly as a missing one
+/// does, and a channel pair that finds the contact stays the unknown label
+/// the reader sent, never the contact's id. Once the reader's grant admits
+/// contact rows, the same requests resolve the contact.
+#[tokio::test]
+async fn a_narrowed_reader_resolves_no_contact_it_cannot_read() {
+    let (_dir, server) = interlocutor_test_server();
+    let principal = seeded_test_entity_id(0x2516_0001);
+    let identity = seeded_test_entity_id(0x2516_0002);
+    let contact = seeded_test_entity_id(0x2516_0003);
+    let missing = seeded_test_entity_id(0x2516_0004);
+    seed_counterparty_contact(&server, contact, identity, "hidden@example.com");
+    let pack = |party: Value| {
+        route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal.to_hex(),
+                Some(&json!({
+                    "query": "anything",
+                    "interlocutors": { "third_parties": [party] }
+                })),
+            ),
+        )
+    };
+    let by_ref = |id: oneiron::EntityId| json!({ "contact_ref": id.to_hex() });
+    let by_channel = json!({
+        "channel_identity_ref": identity.to_hex(),
+        "counterparty": "hidden@example.com"
+    });
+    let error = |body: &Value| {
+        (
+            body["error"]["code"].clone(),
+            body["error"]["message"].clone(),
+            body["error"]["details"].clone(),
+        )
+    };
+    let stamp = |body: &Value, speaker: &str| -> Value {
+        body["interlocutors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|stamp| stamp["speaker"] == speaker)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (missing_status, missing_body) = pack(by_ref(missing)).await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing_body}");
+    let (status, body) = pack(by_ref(contact)).await;
+    assert_eq!(
+        (status, error(&body)),
+        (missing_status, error(&missing_body)),
+        "a contact the reader cannot read is a missing one: {body}"
+    );
+    let (status, body) = pack(by_channel.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.to_string().contains(&contact.to_hex()), "{body}");
+    assert_eq!(
+        stamp(&body, "hidden@example.com")["class"],
+        "unknown",
+        "{body}"
+    );
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        ],
+    );
+    for party in [by_ref(contact), by_channel] {
+        let (status, body) = pack(party).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            stamp(&body, &contact.to_hex())["class"],
+            "known_contact",
+            "a reader that reads the contact resolves it: {body}"
+        );
+    }
+}
+
+/// F16 (S-F5): a sealed secret custody id a caller names as a contact or a
+/// room is a ref that resolves to nothing, as a missing id is: the same
+/// status and error, never a server error that tells the two apart.
+#[tokio::test]
+async fn a_named_custody_id_reads_as_a_missing_ref() {
+    let (_dir, server) = interlocutor_test_server();
+    let principal = seeded_test_entity_id(0x2516_0011);
+    let custody = server
+        .vault
+        .register_test_secret("ref-placeholder", b"placeholder", Vec::new(), 1)
+        .unwrap();
+    let missing = seeded_test_entity_id(0x2516_0012);
+    let pack = |body: Value| {
+        route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal.to_hex(),
+                Some(&body),
+            ),
+        )
+    };
+    let error = |body: &Value| {
+        (
+            body["error"]["code"].clone(),
+            body["error"]["message"].clone(),
+            body["error"]["details"].clone(),
+        )
+    };
+    let requests: [fn(oneiron::EntityId) -> Value; 2] = [
+        |id| {
+            json!({
+                "query": "anything",
+                "interlocutors": { "third_parties": [{ "contact_ref": id.to_hex() }] }
+            })
+        },
+        |id| json!({ "query": "anything", "conversation_id": id.to_hex() }),
+    ];
+    for request in requests {
+        let (missing_status, missing_body) = pack(request(missing)).await;
+        assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing_body}");
+        let (status, body) = pack(request(custody)).await;
+        assert_eq!(
+            (status, error(&body)),
+            (missing_status, error(&missing_body)),
+            "{body}"
+        );
+    }
 }

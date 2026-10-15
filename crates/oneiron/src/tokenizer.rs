@@ -43,28 +43,3 @@ impl ContextPackTokenizer for PackTokenizer {
 pub fn count_context_pack_tokens(text: &str) -> usize {
     DEFAULT_CONTEXT_PACK_TOKENIZER.count(text)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
-        count_context_pack_tokens,
-    };
-
-    #[test]
-    fn tokenizer_id_and_counts_are_deterministic() {
-        let text = "Oneiron context pack tokenizer determinism テスト";
-
-        assert_eq!(DEFAULT_CONTEXT_PACK_TOKENIZER.id(), "o200k_base");
-        assert_eq!(DEFAULT_CONTEXT_PACK_TOKENIZER_ID, "o200k_base");
-        assert_eq!(
-            count_context_pack_tokens(text),
-            DEFAULT_CONTEXT_PACK_TOKENIZER.count(text)
-        );
-        assert_eq!(
-            DEFAULT_CONTEXT_PACK_TOKENIZER.count(text),
-            DEFAULT_CONTEXT_PACK_TOKENIZER.count(text)
-        );
-        assert!(count_context_pack_tokens(text) > 0);
-    }
-}

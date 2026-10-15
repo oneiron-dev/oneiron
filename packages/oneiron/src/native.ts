@@ -33,7 +33,7 @@ tasksCreate(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 witness(turn: WitnessTurn): WitnessReceipt
 claimUpsert(claim: ClaimInput): CommitReceipt
-recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined): MemoryPack
+recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined): MemoryPack
 export(input: unknown): unknown
 receipts(limit: number | undefined): FacadeReceipt[]
 keyValueGet(requestJson: string): string
@@ -58,6 +58,7 @@ roomsSpeak(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
+  inRoomTurn(roomRef: string): NativeClient
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

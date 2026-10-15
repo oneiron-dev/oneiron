@@ -13,7 +13,7 @@ use heed::{Database, Env, RwTxn};
 use crate::authority::AuthorityLocalClock;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
@@ -22,8 +22,6 @@ use super::*;
 
 thread_local! {
     static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
-    #[cfg(test)]
-    static PANIC_ON_ACTIVE_WRITE_TXN: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
@@ -39,13 +37,6 @@ impl Drop for ActiveWriteTxnGuard {
 }
 
 pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
-    #[cfg(test)]
-    PANIC_ON_ACTIVE_WRITE_TXN.with(|panic_on_txn| {
-        assert!(
-            !panic_on_txn.get(),
-            "write transaction must not be opened by this path",
-        );
-    });
     ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
         depth.set(depth.get().saturating_add(1));
     });
@@ -54,11 +45,6 @@ pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
 
 pub(super) fn active_write_txn_depth() -> usize {
     ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
-}
-
-#[cfg(test)]
-pub(crate) fn panic_on_active_write_txn_for_current_thread(enabled: bool) {
-    PANIC_ON_ACTIVE_WRITE_TXN.with(|panic_on_txn| panic_on_txn.set(enabled));
 }
 
 pub struct RawDatabases {
@@ -95,6 +81,105 @@ pub struct RawDatabases {
     pub(crate) attempt_dedupe: Database<Bytes, Bytes>,
 }
 
+/// The environment a store opens its transactions in. A vault archived by a
+/// restore in its place is sealed once its open is done, and a vault a
+/// restore swaps out is sealed under the writer that marks it: from then on
+/// every write transaction refuses, so neither its rows nor the key custody
+/// it shares with its replacement change through any handle on it.
+pub(crate) struct StoreEnv {
+    env: Env,
+    sealed: std::sync::atomic::AtomicBool,
+}
+
+impl StoreEnv {
+    pub(in crate::store) fn new(env: Env) -> Self {
+        Self {
+            env,
+            sealed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// A write transaction, refused on a sealed (archived) vault. The seal
+    /// is checked again once LMDB's writer is held: a vault is sealed while
+    /// the writer marking it archived holds it, so a writer that waited
+    /// behind that one refuses too.
+    pub(crate) fn write_txn(&self) -> Result<RwTxn<'_>> {
+        self.refuse_sealed()?;
+        #[cfg(test)]
+        run_after_seal_check();
+        let txn = self.env.write_txn()?;
+        self.refuse_sealed()?;
+        Ok(txn)
+    }
+
+    /// A write transaction past the seal, for the archive mark itself: the
+    /// mark a restore's swap rewrites, and an owner's activation, which
+    /// lifts it.
+    pub(in crate::store) fn past_seal_write_txn(&self) -> Result<RwTxn<'_>> {
+        Ok(self.env.write_txn()?)
+    }
+
+    fn refuse_sealed(&self) -> Result<()> {
+        if self.is_sealed() {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        Ok(())
+    }
+
+    pub(in crate::store) fn is_sealed(&self) -> bool {
+        self.sealed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(in crate::store) fn seal(&self) {
+        self.sealed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Only for the handle a restore builds its replacement through, which
+    /// is archived until a swap puts it in its place.
+    pub(in crate::store) fn unseal(&self) {
+        self.sealed
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_SEAL_CHECK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` once, the next time this thread opens a write
+/// transaction, between the seal check and taking LMDB's writer.
+#[cfg(test)]
+pub(crate) fn arm_after_seal_check(callback: impl FnOnce() + 'static) {
+    AFTER_SEAL_CHECK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+#[cfg(test)]
+fn run_after_seal_check() {
+    if let Some(callback) = AFTER_SEAL_CHECK.with(|slot| slot.borrow_mut().take()) {
+        callback();
+    }
+}
+
+impl std::ops::Deref for StoreEnv {
+    type Target = Env;
+
+    fn deref(&self) -> &Env {
+        &self.env
+    }
+}
+
+impl StoreCore {
+    /// Whether the key custody this vault binds is its replacement's, so no
+    /// handle on it may mint or retire a key there: it was archived when it
+    /// opened, or a restore's swap has sealed it since.
+    pub(in crate::store) fn gate_custody_archived(&self) -> bool {
+        self.gate_custody_archived_at_open || self.env.is_sealed()
+    }
+}
+
 /// Arc-shared substrate of an open vault (ARCH-0052 store split).
 ///
 /// Everything here is safe to share across handles: the environment handle
@@ -111,11 +196,21 @@ pub struct StoreCore {
     /// Exterior key custody binding. On restore this remains the source vault's
     /// canonical path; it is never reset to the new LMDB image's location.
     pub(in crate::store) gate_custody_root: std::path::PathBuf,
+    /// The vault was archived when it opened: the custody it binds is its
+    /// replacement's, so from the first moment of its open no handle on it
+    /// mints or retires a key there. A vault archived later is sealed
+    /// ([`StoreCore::gate_custody_archived`]).
+    pub(in crate::store) gate_custody_archived_at_open: bool,
     /// Exterior retirement cannot race a live snapshot's decision decrypt.
     pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
+    /// A device-only flag commits under the write side; a raw send's verdict
+    /// reads the flags and accepts under the read side. A flag committed
+    /// before a verdict reads is seen by it; one committed later finds the
+    /// send already past its guard.
+    pub(crate) device_only_flag_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
-    pub(crate) env: Env,
+    pub(crate) env: StoreEnv,
     /// Raw handles; runtime access goes through the [`Store`] accessors.
     /// `pub(in crate::store)` so no code outside `crate::store` can bypass the
     /// [`OverlayDb`] seam — open-time machinery and accessor construction both
@@ -135,6 +230,10 @@ pub struct StoreCore {
     pub(in crate::store) retrieval_telemetry_capture: bool,
     /// Open-time posture for exact authority scope checks without a Vault handle.
     pub(crate) privacy_posture: crate::HostingPrivacyPosture,
+    /// Drawn at random when this environment opened and shared by every
+    /// handle on it. An owner proof binds to it, so a proof minted before a
+    /// close never acts on another vault opened later at the same path.
+    pub(crate) open_nonce: [u8; 16],
     #[cfg(target_os = "linux")]
     pub(in crate::store) retrieval_telemetry_lease:
         Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
@@ -144,6 +243,15 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// What the authority store doors read of one committed generation.
+    pub(crate) authority_door_view:
+        Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// Rows the authority doors refused because a key a handoff this vault
+    /// holds retired signed them (OF-166 evidence). Never persisted.
+    pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,
+    /// Policy manifest decodes kept between resolutions: the shipped
+    /// manifest's rows, and each stored manifest body by its hash.
+    pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
     /// Opt-in host root for signing scoped MACHINE history. Never populated
     /// from a transport key, peer assertion, or relay-mode vault.
     pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
@@ -151,6 +259,9 @@ pub struct StoreCore {
     /// persisted, inferred from transport credentials, or shared across vaults.
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
     pub(crate) clock: crate::ports::StoreClock,
+    /// The single writer's group commit (ARCH-0019, OF-536): concurrent
+    /// logical writes share one write transaction and one fsync.
+    pub(crate) group_commit: GroupCommit,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
@@ -165,6 +276,10 @@ pub struct StoreCore {
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
+    /// Committed TASK ids, sent after their write commits. Readers re-read
+    /// the TASK; a lagged reader has lost ids, never seen a false one.
+    #[cfg(feature = "sync")]
+    pub(crate) task_updates: tokio::sync::broadcast::Sender<crate::EntityId>,
     /// Serializes this vault's foreign-import admission window: the receipt
     /// read, the selector admission and the stage-if-absent write are one
     /// logical step, and the durable re-read is the cross-process guard. It was
@@ -292,6 +407,9 @@ pub struct Store {
 )]
 pub(crate) struct SessionStoreView<'store> {
     _owner: &'store StoreOwner,
+    /// The canonical store this view composes over: a reader handed the view
+    /// still consults the vault's own authority there ([`StoreRead::base`]).
+    base: &'store Store,
     /// The shared substrate this view's writes belong to. Held so a writer
     /// generic over [`ManifestDbs`] records a diagnostic into the vault it is
     /// writing rather than into a process-wide counter.
@@ -365,12 +483,92 @@ impl SessionStoreView<'_> {
     }
 }
 
-/// Generates [`ManifestDbs`] and its two implementations from ONE list of the
-/// manifest's named databases, so the trait cannot drift from the structs: a
-/// database renamed in `Store` or `SessionStoreView` and not here fails to
-/// compile.
+/// Generates [`ManifestDbs`], its implementations and [`StoreRead`] from ONE
+/// list of the manifest's named databases, so neither the trait nor the read
+/// target can drift from the structs: a database renamed in `Store` or
+/// `SessionStoreView` and not here fails to compile.
 macro_rules! manifest_dbs {
     ($($name:ident: $ty:ty),+ $(,)?) => {
+        /// The content a reader reads: the 28 accessors of [`Store`] or of one
+        /// [`SessionStoreView`], borrowed (ARCH-0052 §2: reads compose overlay
+        /// ∪ base at the storage-accessor layer). A reader that takes
+        /// `&StoreRead` keeps its body (`store.entities.get(..)`, `store.env`)
+        /// and sees the union when it is handed a session's view, with no code
+        /// of its own for it.
+        ///
+        /// Content only. Authority (the policy manifest, gates, grants, blend
+        /// weights) is the vault's and is read on [`Store`]: a row staged in a
+        /// room never becomes a grant or a policy.
+        #[derive(Clone, Copy)]
+        pub(crate) struct StoreRead<'a> {
+            base: &'a Store,
+            room: Option<&'a crate::session_overlay::SessionOverlay>,
+            $(pub(crate) $name: &'a $ty,)+
+        }
+
+        impl<'a> StoreRead<'a> {
+            /// Whether this target reads a room's overlay ∪ base. A cache keyed
+            /// by base versions cannot answer for it: overlay writes bump none.
+            pub(crate) fn is_union(&self) -> bool {
+                self.room.is_some()
+            }
+
+            /// Whether the room stages anything of its own (a row, a vector,
+            /// a posting, a deletion), which a read here may reflect. Base
+            /// holds nothing derived from one (ARCH-0052: the taint guard
+            /// covers references).
+            pub(crate) fn holds_room_rows(&self) -> bool {
+                self.room.is_some_and(|room| room.stages_anything())
+            }
+
+            /// Whether the room holds `id` as a row of its own.
+            pub(crate) fn room_holds(&self, id: &crate::EntityId) -> crate::Result<bool> {
+                self.room.map_or(Ok(false), |room| room.contains_entity(id))
+            }
+
+            /// The vault's canonical store, for authority a content reader
+            /// consults on its way: the policy manifest, gates and grants.
+            pub(crate) fn base(&self) -> &'a Store {
+                self.base
+            }
+        }
+
+        impl Store {
+            /// This store's canonical accessors as a read target.
+            pub(crate) fn read(&self) -> StoreRead<'_> {
+                StoreRead {
+                    base: self,
+                    room: None,
+                    $($name: &self.$name,)+
+                }
+            }
+        }
+
+        impl SessionStoreView<'_> {
+            /// This view's composed accessors as a read target: one overlay
+            /// snapshot ∪ base for every database.
+            pub(crate) fn read(&self) -> StoreRead<'_> {
+                StoreRead {
+                    base: self.base,
+                    room: Some(&self.overlay),
+                    $($name: &self.$name,)+
+                }
+            }
+        }
+
+        impl ManifestDbs for StoreRead<'_> {
+            $(fn $name(&self) -> &$ty { self.$name })+
+
+            fn diagnostics(&self) -> &Diagnostics { &self.base.core.diagnostics }
+            fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.base.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { self.room.is_some() }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.base.core.manifest_memo
+            }
+        }
+
         /// The manifest's named databases, addressed uniformly by write target
         /// (ARCH-0052 D2, ONE-1728 K11).
         ///
@@ -402,6 +600,13 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
+            fn gate_custody_archived(&self) -> bool;
+            /// Whether reads see a room's overlay ∪ base rather than base
+            /// alone. A cache keyed and validated by base versions cannot
+            /// answer for such a read: overlay writes bump none of them.
+            fn is_union(&self) -> bool;
+            /// The vault's memo of policy manifest decodes.
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
 
         impl ManifestDbs for Store {
@@ -410,6 +615,11 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { false }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -418,6 +628,11 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
+            fn is_union(&self) -> bool { true }
+            fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
+                &self.core.manifest_memo
+            }
         }
     };
 }
@@ -458,6 +673,14 @@ impl std::ops::Deref for Store {
 
     fn deref(&self) -> &StoreCore {
         &self.core
+    }
+}
+
+impl std::ops::Deref for StoreRead<'_> {
+    type Target = StoreCore;
+
+    fn deref(&self) -> &StoreCore {
+        &self.base.core
     }
 }
 
@@ -550,6 +773,7 @@ impl Store {
             |base, keyspace| OverlayDb::composed(base, overlay.clone(), snapshot.clone(), keyspace);
         Ok(SessionStoreView {
             _owner: &self.owner,
+            base: self,
             core: &self.core,
             overlay: overlay.clone(),
             entities: db(self.core.raw.entities, OverlayKeyspace::Entities),

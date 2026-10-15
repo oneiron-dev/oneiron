@@ -70,7 +70,9 @@ impl Vault {
     /// Resolves the vault-owned system principal. Open seeds it without granting
     /// a ceiling, consent grant, or privilege.
     pub fn dreamer_authority(&self) -> Result<WriteActor> {
-        self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, self.now_recorded_at()))
+        self.with_write_txn_grouped(|txn| {
+            self.dreamer_authority_in_txn(txn, self.now_recorded_at())
+        })
     }
     pub(crate) fn dreamer_authority_in_txn(
         &self,

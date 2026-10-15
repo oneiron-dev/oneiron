@@ -301,12 +301,21 @@ impl Store {
         run_id: &str,
     ) -> Result<Vec<PendingGateConsentRecord>> {
         let rtxn = self.env.read_txn()?;
+        self.pending_gate_consents_for_run_in_txn(&rtxn, run_id)
+    }
+
+    /// [`Self::pending_gate_consents_for_run`] inside the caller's snapshot.
+    pub(crate) fn pending_gate_consents_for_run_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        run_id: &str,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
         let scan_prefix = suffix_of(
             pending_gate_consent_run_index_prefix(run_id),
             super::keys::PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
         );
         self.pending_gate_consents_for_vec_index_in_txn(
-            &rtxn,
+            txn,
             RUN_INDEX,
             &scan_prefix,
             "pending gate consent run index",
@@ -413,7 +422,14 @@ impl Store {
             return Err(Error::CorruptedIndex("critical confirm index"));
         }
         CRITICAL_CONFIRM_INDEX.put(self, wtxn, &binding.confirm_id, &claim_id)?;
-        Ok(())
+        // A vault that is not running wakes when the window closes, so the
+        // expiry sweep can demote a write still waiting on its confirm.
+        crate::housekeeping::note_wake_in_txn(
+            self,
+            wtxn,
+            crate::housekeeping::HousekeepingSweep::CriticalConfirmExpiry,
+            binding.expires_at,
+        )
     }
 
     pub(super) fn delete_pending_gate_consent_critical_confirm_index_in_txn(

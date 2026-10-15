@@ -17,34 +17,41 @@ pub(super) fn invalid_body(reason: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretCustodyBody(reason))
 }
 
-/// ONE-1865 arms the replication and export posture for SECRET_CUSTODY; until
-/// then the type byte is sealed from the raw and CRDT planes. This is the ONE
+/// SECRET_CUSTODY is sealed from the raw and sync planes: no replicated or
+/// rematerialization door carries it, whatever its class or portable dial
+/// (C1, secscan 2026-10-14). A peer-supplied custody body is unauthenticated
+/// against the owner, so a replica that stored one would let any same-vault
+/// device rewrite a value, widen a binding, roll a generation back or bring a
+/// revoked record back to life. The record writes ONLY through the local
+/// doors ([`Vault::register_secret`], rotation and revocation). This is the ONE
 /// rejection constructor every REJECTING door names, so a grep for it audits
 /// the whole seal:
 ///
 /// * the replicated write wall (`batch::apply_ops`' Put arm) — the CRDT replay
-///   door never materializes a peer-supplied custody body; the record writes
-///   ONLY through [`Vault::register_secret`]. Public raw puts are already
-///   refused one level up by the `Maintenance` classification
-///   (`MaintenanceKindNotWritable(77)`);
+///   door never materializes a peer-supplied custody body. Public raw puts are
+///   already refused one level up by the `Maintenance` classification
+///   (`MaintenanceKindNotWritable`);
 /// * the generic read doors [`Vault::get`] and [`Vault::get_raw`], whose bytes
 ///   would otherwise carry `value_bytes` in the clear — the ONLY sanctioned
 ///   value read is [`Vault::get_secret_value_in_txn`];
 /// * the export scrub's malformed-key arm ([`crate::sync::window`]), which
-///   quarantines a custody carrier filed under a non-canonical peer key.
+///   quarantines a custody carrier filed under a non-canonical peer key;
+/// * replayed tombstones (`replayed_tombstone_protection_in_txn`): a peer's
+///   delete proves no owner intent, so a credential leaves only through the
+///   local revoke door.
 ///
-/// The two SILENT doors are deliberately not errors: the sync selector
+/// The SILENT doors are deliberately not errors: the sync selector
 /// ([`crate::sync::selector`]) drops the byte from the export set, and reverse
-/// rematerialization skips-and-scrubs it. Neither has a caller to fail.
+/// rematerialization and window egress skip-and-scrub it. None has a caller
+/// to fail.
 pub(crate) fn reject_secret_custody_byte() -> Error {
-    invalid_body("secret custody is not eligible for this raw or sync door")
+    invalid_body(CUSTODY_SEAL_REASON)
 }
 
-/// Same-vault replication eligibility. Malformed bodies fail closed.
-pub(crate) fn custody_sync_allowed(body: &[u8]) -> bool {
-    decode_secret_custody_body(body)
-        .is_ok_and(|record| record.class == CustodyClass::CustodyPortable && !record.device_only)
-}
+/// The seal's reason, for a caller that tells the seal apart from a decode
+/// failure of the same error variant.
+pub(crate) const CUSTODY_SEAL_REASON: &str =
+    "secret custody is not eligible for this raw or sync door";
 
 fn tier_band_to_value(band: &TierBand) -> Value {
     Value::Map(vec![

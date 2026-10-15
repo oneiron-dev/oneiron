@@ -86,6 +86,8 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
     spec.roster.push(human.to_hex());
     vault.put_project(project, &spec, 2)?;
     let room = EntityId::from_hex(&spec.home_room)?;
+    // Membership reads nothing; the agent reads the room through its grant.
+    vault.install_read_permit_for_test(crate::WriteActor::new(agent, EdgeActorClass::Agent))?;
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),
@@ -461,6 +463,8 @@ fn loaded_interview(dedupe: &str) -> Result<Interview> {
     spec.roster.push(human.to_hex());
     vault.put_project(project, &spec, 2)?;
     let room = EntityId::from_hex(&spec.home_room)?;
+    // Membership reads nothing; the agent reads the room through its grant.
+    vault.install_read_permit_for_test(crate::WriteActor::new(agent, EdgeActorClass::Agent))?;
     let owner = vault.authenticate_owner(
         human,
         &human.to_hex(),

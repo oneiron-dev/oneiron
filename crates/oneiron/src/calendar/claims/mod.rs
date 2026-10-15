@@ -55,8 +55,6 @@ pub(crate) use self::codec::{
 // These four decoders are named only by sibling test modules (`series` and
 // `tz`); the re-export exists in test builds so those paths keep resolving,
 // and is absent otherwise so the non-test build carries no unused import.
-#[cfg(test)]
-pub(in crate::calendar) use self::codec::{decode_successor_value, decode_wall_time_value};
 
 // The flat claims.rs module used to provide these names to the inline test
 // module through `use super::*`: its own private crate/std import header, and

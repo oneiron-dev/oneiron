@@ -293,23 +293,24 @@ pub(crate) async fn run_context_pack_builder(
         .l2_summary_subjects(&subjects)
         .l2_summary_reader(scoped_read);
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
-        tracing::error!(error = %error, "core context-pack failed");
+        tracing::error!(kind = ?error.kind(), "core context-pack failed");
         core_engine_error("core context-pack failed", error)
     })?;
     let clamped_out = pack.clamped_out();
     let mut narrowing = scoped_read
-        .filter_context_pack(&mut pack.value)
+        .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
-            tracing::error!(error = %error, "core context-pack scoped read failed");
+            tracing::error!(kind = ?error.kind(), "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
         })?;
-    // A MESSAGE carries its current reactions, read through the same scope.
+    // A MESSAGE carries its current reactions, read through the same scope
+    // and clamp.
     scoped_read
-        .attach_reactions(&mut pack.value)
+        .attach_reactions_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
-            tracing::error!(error = %error, "core context-pack reactions failed");
+            tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
             core_engine_error("core context-pack reactions failed", error)
         })?;
     apply_context_pack_response_limits(&mut pack.value, response_limits);
@@ -656,13 +657,9 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
 }
 
 impl CoreContextPackResponse {
-    /// Records the served rows on the session, folding that read's receipt
-    /// into this response's `narrowing` and its withheld-data notice.
-    pub(super) fn observe_rows(
-        &mut self,
-        read: &oneiron::claim::ScopedRead<'_>,
-        session: &mut oneiron::context_board::SessionReadSet,
-    ) -> oneiron::Result<()> {
+    /// The rows this pack serves: its results, its neighbours and the
+    /// evidence its L2 base names.
+    pub(crate) fn served_rows(&self) -> oneiron::Result<Vec<oneiron::EntityId>> {
         let mut ids = self
             .results
             .iter()
@@ -672,6 +669,31 @@ impl CoreContextPackResponse {
         if let Some(base) = &self.l2_base {
             ids.extend_from_slice(base.evidence_ids());
         }
+        Ok(ids)
+    }
+
+    /// The rows this pack names beyond its documents, each of which a keyed
+    /// replay re-admits: every known contact it stamps and every capability
+    /// it discovered.
+    pub(crate) fn replay_admits(&self) -> Vec<oneiron::EntityId> {
+        let contacts = self
+            .interlocutors
+            .iter()
+            .flatten()
+            .filter(|stamp| stamp.class == oneiron::interlocutor::InterlocutorClass::KnownContact)
+            .filter_map(|stamp| oneiron::EntityId::from_hex(&stamp.speaker).ok());
+        let capabilities = self.capabilities.iter().map(|hit| hit.id);
+        contacts.chain(capabilities).collect()
+    }
+
+    /// Records the served rows on the session, folding that read's receipt
+    /// into this response's `narrowing` and its withheld-data notice.
+    pub(super) fn observe_rows(
+        &mut self,
+        read: &oneiron::claim::ScopedRead<'_>,
+        session: &mut oneiron::context_board::SessionReadSet,
+    ) -> oneiron::Result<()> {
+        let ids = self.served_rows()?;
         let observed = session.observe_rows(read, &ids)?;
         self.narrowing.restrict_with(&observed);
         self.access = oneiron::access_grant::GrantedData::new(

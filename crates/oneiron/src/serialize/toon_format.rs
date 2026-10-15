@@ -16,9 +16,7 @@ pub(super) fn encode_toon_section(
     }
 
     let mut out = String::new();
-    let mut value = Value::Object(section_object(groups, false));
-    handles.value(&mut value);
-    write_toon_object(&mut out, value.as_object().expect("section map"), 0);
+    write_toon_object(&mut out, &section_object(groups, false, handles), 0);
     out
 }
 

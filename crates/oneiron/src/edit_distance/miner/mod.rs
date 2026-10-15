@@ -120,7 +120,7 @@ pub(crate) use self::target::{is_compiled_preference, validate_compiled_preferen
 // split the seam re-imports both so `tests.rs` resolves exactly as it did
 // before.
 #[cfg(test)]
-use self::{config::*, emission::*, mining::*, model::*, store::*};
+use self::{config::*, emission::*, model::*, store::*};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

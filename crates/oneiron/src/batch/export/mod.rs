@@ -1,5 +1,10 @@
 mod credential_filter;
-pub use credential_filter::{redact_credentials, redacted_memory_body, redacted_memory_payload};
+pub use credential_filter::{
+    claim_reads_as_secret, redact_credentials, redact_messagepack_credentials,
+    redacted_memory_body, redacted_memory_payload, write_door_refuses_body,
+    write_door_refuses_claim,
+};
+pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
 mod export_authority;
 mod export_egress;
 mod export_enumerate;
@@ -23,8 +28,6 @@ mod tests;
 // their capped visibility, so `pub(super)` helpers stay reachable here), and
 // the lines below restore the crate/std names the old module header imported
 // for them.
-#[cfg(test)]
-use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]

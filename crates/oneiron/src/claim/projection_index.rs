@@ -102,6 +102,7 @@ pub(crate) fn maintain_claim_projection_index(
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
     PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
+    crate::blob_artifact::record_version_claim(store, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
         && body.source == Some(ClaimSource::Generated)
@@ -136,6 +137,40 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
     predicate: &str,
 ) -> Result<Vec<EntityId>> {
     predicate_ids_in_txn(store, txn, predicate_hash(predicate), 10_000)
+}
+/// A predicate index row: `(predicate hash, claim id)` and its value.
+type PredicateRow = Result<(([u8; 32], EntityId), String)>;
+
+/// One page of a predicate's posting list: at most `limit` claim ids after
+/// `after`, in id order. A walk that pages through every page reads each claim
+/// once, however long the list, without a whole-list ceiling.
+pub(crate) fn claim_ids_for_predicate_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let hash = predicate_hash(predicate);
+    let after = after.map(|id| (hash, id));
+    let rows: Box<dyn Iterator<Item = PredicateRow> + '_> = match &after {
+        Some(after) => Box::new(PREDICATE_INDEX.iter_range(
+            store,
+            txn,
+            std::ops::Bound::Excluded(after),
+            std::ops::Bound::Unbounded,
+        )?),
+        None => Box::new(PREDICATE_INDEX.iter_from(store, txn, &hash)?),
+    };
+    let mut ids = Vec::new();
+    for row in rows {
+        let (key, _) = row?;
+        if key.0 != hash || ids.len() == limit {
+            break;
+        }
+        ids.push(key.1);
+    }
+    Ok(ids)
 }
 /// The same posting list under a caller-resolved ceiling (a policy row), for
 /// doors whose limit is authored data rather than this index's default.

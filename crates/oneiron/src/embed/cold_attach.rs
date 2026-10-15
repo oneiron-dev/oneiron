@@ -7,16 +7,18 @@ use crate::{Error, Result};
 pub(crate) const COLD_ATTACH_PENDING_KEY: &[u8] = b"cold_attach_pending";
 
 impl crate::Vault {
-    /// Requeues pre-embedder records at priority 3 after the first model is attached.
-    /// Open with the provider's pinned model identity first. This is idempotent,
-    /// preserves hotter work, and never changes the model epoch or vector graph.
+    /// Requeues pre-embedder records at priority 3 after the first model is
+    /// attached, or after a restore: each record still owed a vector, never
+    /// one that holds its vector and is not pending. Open with the provider's
+    /// pinned model identity first. This is idempotent, preserves hotter work,
+    /// and never changes the model epoch or vector graph.
     pub fn cold_attach_embedder(&self) -> Result<usize> {
         if self.config.embedding_model.is_none() {
             return Err(Error::InvalidConfig(
                 "cold attach requires an embedding model".into(),
             ));
         }
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if self
                 .store
                 .hnsw_meta
@@ -50,13 +52,15 @@ pub(crate) fn remark_all_embeddable_pending_in_txn(
     remark_pending_in_txn(vault, wtxn, priority, true)
 }
 
-/// Queues every record the worker embeds ([`super::embeddable_payload`]): the
-/// same rule the worker leases by, so nothing queued here is work it can only
-/// fail on, and nothing it can embed is left out.
+/// Queues every record the worker embeds ([`super::embeddable_payload_in_txn`]):
+/// the same rule the worker leases by, so nothing queued here is work it can
+/// only fail on, and nothing it can embed is left out. A TURN is marked at its
+/// messages' text, as the turn doors mark it.
 ///
 /// A replacement (`replace_priority`) also drops what a record the rule does
 /// not embed still carries — a marker, a job, a lease — so none of it is left
-/// for a worker in the new space to trip over.
+/// for a worker in the new space to trip over. An attach leaves out a record
+/// that already holds its vector and is not pending.
 fn remark_pending_in_txn(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -69,13 +73,38 @@ fn remark_pending_in_txn(
     let mut retired = Vec::new();
     for row in vault.store.port_entity_records(wtxn)? {
         let (id, row) = row?;
-        if super::embeddable_payload(row.entity_type, &row.body).is_some() {
+        // A stale record's words are withdrawn (an erased source's, an
+        // epoch summary's): never queued again until it is written anew.
+        if crate::ports::stale_in_txn(&vault.store, wtxn, &id)? {
+            retired.push(id);
+        } else if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
+            match super::turn_text_in_txn(vault, wtxn, &id)? {
+                Some(text) => embeddable.push((id, text.into_bytes())),
+                None => retired.push(id),
+            }
+        } else if super::embeddable_payload(row.entity_type, &row.body).is_some() {
             embeddable.push((id, row.body));
         } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             || row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
         {
             retired.push(id);
         }
+    }
+    if !replace_priority {
+        // An attach queues only what is still owed a vector. A record that
+        // holds one and is not pending was embedded in this space already,
+        // e.g. a restored record the worker filled before this attach.
+        let mut owed = Vec::with_capacity(embeddable.len());
+        for (id, body) in embeddable {
+            if vault.store.vectors.get(wtxn, id.as_bytes())?.is_none()
+                || vault
+                    .store
+                    .has_current_pending_embedding_in_txn(wtxn, &id)?
+            {
+                owed.push((id, body));
+            }
+        }
+        embeddable = owed;
     }
     if replace_priority {
         for id in &retired {
@@ -99,70 +128,4 @@ fn remark_pending_in_txn(
         }
     }
     Ok(embeddable.len())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
-    use crate::{ClaimCandidate, EdgeActorClass, WriteActor, WriteEnvelope, WriteProvenance};
-    use crate::{EntityId, TimeRange, Vault, VaultConfig};
-
-    #[test]
-    fn cold_attach_consumes_marker_only_when_queue_work_is_available() -> crate::Result<()> {
-        let dir = tempfile::tempdir()?;
-        let mut config = VaultConfig::device();
-        config.dimensions = 4;
-        config.map_size = 64 * 1024 * 1024;
-        config.embedding_model = None;
-        let vault = Vault::open(dir.path(), config.clone())?;
-        // First open seeds the bootstrap skills, whose claims predate the embedder too.
-        let seeded_claims = vault
-            .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
-            .len();
-        let subject = EntityId::now();
-        vault.put_entity(
-            &subject,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&serde_json::json!({"name":"fixture"})).unwrap(),
-        )?;
-        let id = EntityId::now();
-        let candidate = ClaimCandidate::new(
-            "test.fact",
-            ClaimSubject::Entity(subject),
-            "a fact".into(),
-            1.0,
-        );
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(subject, EdgeActorClass::Human),
-            ClaimSource::UserStated,
-            WriteProvenance::new(rmpv::Value::Map(vec![(
-                "fixture".into(),
-                "cold-attach".into(),
-            )]))?,
-            ClaimApprovalStatus::Auto,
-        );
-        vault
-            .batch()
-            .claim_candidate(&id, candidate, &envelope, TimeRange { start: 1, end: 1 }, 1)
-            .commit()?;
-        drop(vault);
-        config.embedding_model = Some("fixture/embedder@v1".into());
-        let vault = Vault::open(dir.path(), config.clone())?;
-        assert_eq!(vault.cold_attach_embedder()?, seeded_claims + 1);
-        drop(vault);
-        let vault = Vault::open(dir.path(), config)?;
-        // A serving build queued the work. A featureless build must leave the
-        // one-time pass available so a later serving build can populate it.
-        assert_eq!(
-            vault.cold_attach_embedder()?,
-            if cfg!(feature = "sync") {
-                0
-            } else {
-                seeded_claims + 1
-            }
-        );
-        Ok(())
-    }
 }

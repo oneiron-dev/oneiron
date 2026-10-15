@@ -252,6 +252,17 @@ impl super::AgentDispatcher<'_> {
         Ok(record.intent.parent)
     }
 
+    /// Saved workflows a host pump may still advance: open (Paused) wrapper
+    /// roots in creation order. Completed and stopped roots are not listed.
+    pub fn open_workflow_roots(&self) -> Result<Vec<AttemptId>> {
+        Ok(AttemptQueue::new(self.vault)
+            .list()?
+            .into_iter()
+            .filter(|row| row.state == AttemptState::Paused && is_wrapper(row))
+            .map(|row| row.id)
+            .collect())
+    }
+
     /// Reads the durable workflow result report, including after completion.
     pub fn workflow_status(&self, root: AttemptId) -> Result<WorkflowDispatchStatus> {
         let row = crate::attempt_queue::AttemptQueue::new(self.vault)

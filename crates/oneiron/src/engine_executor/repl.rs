@@ -1,5 +1,6 @@
 //! Durable REPL loop: run(), persistence helpers, and LLM request building.
 
+use super::code_check::ShadowStep;
 use super::driver::EngineNativeExecutor;
 use super::host::{
     RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
@@ -88,14 +89,15 @@ impl EngineNativeExecutor<'_> {
             self.output_context = OutputWorkingContext::default();
             self.output_run = Some(config.run_id);
         }
+        if let Some(seat) = self.compaction.as_deref_mut() {
+            seat.begin_turn(matches!(
+                self.storage,
+                crate::code_run::ExecutorStorage::Canonical(_)
+            ));
+        }
         if let Some(status) = loaded.terminal_status {
             self.recover_checkpointed_implicit_speak(&loaded.record, &status, config)?;
-            return Ok(EngineExecutorOutcome {
-                status,
-                steps_run: 0,
-                replay_record: loaded.record,
-                seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-            });
+            return Ok(self.outcome(status, 0, loaded.record));
         }
         let mut record = loaded.record;
         let mut expected_generation = loaded.generation;
@@ -104,25 +106,34 @@ impl EngineNativeExecutor<'_> {
         loop {
             let completed_steps = completed_step_count(&record)?;
             if completed_steps >= u64::from(config.limits.hard_steps) {
-                return Ok(EngineExecutorOutcome {
-                    status: EngineExecutorStatus::HardStepLimitReached,
+                return Ok(self.outcome(
+                    EngineExecutorStatus::HardStepLimitReached,
                     steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                    record,
+                ));
             }
             if steps_run >= config.limits.soft_steps {
-                return Ok(EngineExecutorOutcome {
-                    status: EngineExecutorStatus::Yielded {
+                return Ok(self.outcome(
+                    EngineExecutorStatus::Yielded {
                         next_step_seq: completed_steps,
                     },
                     steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                    record,
+                ));
             }
 
+            self.land_finished_compaction()?;
             let request = self.build_llm_request(config, &record, &wire_prompt.text)?;
+            if let Some(reason) = self.feed_compaction(config, &record, &request)? {
+                return Ok(self.outcome(
+                    EngineExecutorStatus::WindowFull {
+                        next_step_seq: completed_steps,
+                        reason,
+                    },
+                    steps_run,
+                    record,
+                ));
+            }
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
@@ -139,6 +150,12 @@ impl EngineNativeExecutor<'_> {
                 script_output_path(completed_steps),
                 &script,
             )?;
+            // Shadow mode type-checks the program before it runs and acts on
+            // nothing it finds. The report is appended once the step's own
+            // state is durable.
+            let mut shadow = self
+                .code_check
+                .map(|shadow| ShadowStep::check(shadow, config.run_id, completed_steps, &script));
 
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
@@ -184,12 +201,10 @@ impl EngineNativeExecutor<'_> {
                             config,
                         )?
                     {
-                        return Ok(EngineExecutorOutcome {
-                            status,
-                            steps_run: steps_run + 1,
-                            replay_record: record,
-                            seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                        });
+                        if let Some(shadow) = &mut shadow {
+                            shadow.ended(Some(&status));
+                        }
+                        return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     return Err(err.into());
                 }
@@ -213,12 +228,10 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed(),
                     config,
                 )? {
-                    return Ok(EngineExecutorOutcome {
-                        status,
-                        steps_run: steps_run + 1,
-                        replay_record: record,
-                        seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                    });
+                    if let Some(shadow) = &mut shadow {
+                        shadow.ended(Some(&status));
+                    }
+                    return Ok(self.outcome(status, steps_run + 1, record));
                 }
                 return Err(failure.into());
             }
@@ -245,16 +258,19 @@ impl EngineNativeExecutor<'_> {
                                 config,
                             )?
                         {
-                            return Ok(EngineExecutorOutcome {
-                                status,
-                                steps_run: steps_run + 1,
-                                replay_record: record,
-                                seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                            });
+                            if let Some(shadow) = &mut shadow {
+                                shadow.ended(Some(&status));
+                            }
+                            return Ok(self.outcome(status, steps_run + 1, record));
                         }
                         return Err(err);
                     }
                 };
+            self.gated_write.refuse_a_step_that_dropped_a_write(
+                config.run_id,
+                bridge_start as u64,
+                &host.bridge_calls,
+            )?;
             record.bridge_calls.extend(host.bridge_calls);
             record_text_output(
                 &self.storage,
@@ -324,7 +340,7 @@ impl EngineNativeExecutor<'_> {
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
-            let next_generation = self
+            let mut next_generation = self
                 .storage
                 .put_code_run_replay_record_if_generation_with_heal(
                     &record,
@@ -339,14 +355,17 @@ impl EngineNativeExecutor<'_> {
                 self.emit_trailing_speak_fallback(&record, completed_steps, text, config)?;
             }
             steps_run += 1;
+            if let Some(shadow) = &mut shadow {
+                shadow.ended(terminal_status.as_ref());
+                if let Some(generation) =
+                    shadow.append_report(&self.storage, &mut record, next_generation)
+                {
+                    next_generation = generation;
+                }
+            }
 
             if let Some(status) = terminal_status {
-                return Ok(EngineExecutorOutcome {
-                    status,
-                    steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                return Ok(self.outcome(status, steps_run, record));
             }
             expected_generation = Some(next_generation);
         }
@@ -464,6 +483,19 @@ impl EngineNativeExecutor<'_> {
         if self.storage.get_code_run_raw_output(&marker)?.is_some() {
             return Ok(());
         }
+        // The bubble is the run's own `self.speak`: a bound door rules on it
+        // as on any other, answered as a call is. A refused bubble stays a
+        // checkpointed intent that a later admitted retry delivers.
+        self.storage
+            .answered(|| {
+                self.gated_write
+                    .admit_run_call(crate::code_run::RunCall::Bridge(
+                        crate::code_run::SelfEffect::Speak,
+                    ))
+            })?
+            .map_err(|refusal| super::types::EngineExecutorError::HostRefused {
+                code: refusal.code,
+            })?;
         let occurred_at = config
             .determinism
             .frozen_unix_ms
@@ -512,6 +544,11 @@ impl EngineNativeExecutor<'_> {
         healed: bool,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
+        self.gated_write.refuse_a_step_that_dropped_a_write(
+            config.run_id,
+            bridge_start as u64,
+            &bridge_calls,
+        )?;
         record.bridge_calls.extend(bridge_calls);
         let failed_outcome = JsCodeModeStepOutcome::pending(observation);
         record_text_output(
@@ -551,7 +588,7 @@ impl EngineNativeExecutor<'_> {
         Ok(terminal_status)
     }
 
-    /// Loads the run's replay record, or starts one.
+    /// Loads the run's replay record, or starts and saves one.
     ///
     /// Run IDENTITY is strict on every resume. Resolved-prompt drift is judged
     /// against what the resume would DO: a record that is not terminal still
@@ -597,9 +634,15 @@ impl EngineNativeExecutor<'_> {
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint)?;
+        // The run's clock and config are durable from its start: a process
+        // that stops after the first step's writes and before its checkpoint
+        // resumes under them, never under a fresh clock or another task.
+        let generation = self
+            .storage
+            .put_code_run_replay_record_if_generation_with_heal(&record, None, None)?;
         Ok(LoadedReplayRecord {
             record,
-            generation: None,
+            generation: Some(generation),
             terminal_status: None,
         })
     }
@@ -696,7 +739,20 @@ impl EngineNativeExecutor<'_> {
                         .map(|text| text.as_bytes().to_vec())
                         .ok_or(Error::CorruptedIndex("missing executor observation"))
                 })?;
-        for (seq, view) in views.into_iter().enumerate() {
+        let epochs = self.compaction_epochs(record.run_id)?;
+        if !epochs.is_empty() {
+            self.admit_compaction_read()?;
+        }
+        for (seq, view) in views.iter().enumerate() {
+            match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
+                Some(Some(frame)) => {
+                    messages.push(frame);
+                    continue;
+                }
+                Some(None) => continue,
+                None => {}
+            }
+            let view = view.clone();
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
             let console = match view.tier {

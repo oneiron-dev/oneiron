@@ -22,14 +22,8 @@ use super::types::{
 };
 
 impl Vault {
-    pub(super) fn autonomy_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )
-        .map(|_| ())
+    pub(super) fn autonomy_owner(&self, owner: &AuthenticatedOwner) -> Result<EntityId> {
+        owner.revalidate(self)
     }
 
     pub(super) fn autonomy_row(
@@ -68,15 +62,16 @@ impl Vault {
         owner: &AuthenticatedOwner,
         at: u64,
     ) -> Result<EntityId> {
+        let owner_actor = owner.revalidate_in_txn(self, txn)?;
         let reference = address(kind, &value)?;
         let key = key(kind, &reference.to_hex());
         if AUTONOMY.contains(&self.store, txn, &key)? {
             let (actor, _, old) = self.autonomy_row(txn, &key)?;
-            if actor != owner.actor() || old != value {
+            if actor != owner_actor || old != value {
                 return Err(invalid_autonomy());
             }
         } else {
-            self.write_autonomy_row(txn, &key, owner.actor(), at, value)?;
+            self.write_autonomy_row(txn, &key, owner_actor, at, value)?;
         }
         Ok(reference)
     }
@@ -171,6 +166,11 @@ impl Vault {
             .ok_or_else(invalid_autonomy)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(invalid_autonomy());
+        }
+        // A deleted identity authorizes nothing, even while an unapplied
+        // delete leaves its Active body stored.
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, &identity)?.is_live() {
             return Err(invalid_autonomy());
         }
         let record = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;

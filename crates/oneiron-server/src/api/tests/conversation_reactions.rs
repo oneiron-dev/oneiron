@@ -195,6 +195,81 @@ async fn context_packed_message_carries_its_grouped_reactions() {
     );
 }
 
+/// Sol R9 F3: a recalled message's reaction lines are derived from the
+/// reaction claims they count, so the recall the tool door and the socket
+/// read door run comes with each of them beside its pack: the door judges
+/// the pack by them again before it leaves this device (DEC-0005).
+#[tokio::test]
+async fn a_recall_comes_with_the_reaction_claims_its_lines_count() {
+    let (_dir, server) = test_server();
+    let (_room, alice, bob, message) = room(&server, ConversationBody::default());
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let mut read = oneiron::federation::Scope::top();
+    read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &server.vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        EntityId::now(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "reaction-reader", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": [{
+                "actor_ref": alice.to_hex(),
+                "effector": "core:read",
+                "scope": serde_json::to_value(read).unwrap(),
+                "receipt_required": false,
+            }],
+        }),
+    )
+    .unwrap();
+    let reaction = server
+        .vault
+        .react(oneiron::reaction::ReactionInput {
+            message,
+            by: bob,
+            glyph: "👀".to_owned(),
+            occurred_at: now(),
+            actor: WriteActor::new(bob, EdgeActorClass::Human),
+        })
+        .unwrap()
+        .id;
+    server.vault.set_indexed_idle_delay_ms(0).unwrap();
+    server
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    let request = |effort: &str| {
+        serde_json::from_value::<oneiron::task_verb::sdk::RecallRequest>(
+            json!({"query": "friday plan", "effort": effort}),
+        )
+        .unwrap()
+    };
+    let away = oneiron::claim::CallerLocality::OffDevice;
+    for effort in ["light", "medium"] {
+        let (pack, listed) = server
+            .recall_off_runtime_listing(
+                alice,
+                EdgeActorClass::Human,
+                None,
+                away,
+                None,
+                request(effort),
+            )
+            .await;
+        let pack = pack.unwrap();
+        assert!(
+            pack.items.iter().any(|item| !item.reactions.is_empty()),
+            "{effort}: {:?}",
+            pack.items
+        );
+        assert!(listed.contains(&reaction), "{effort}: {listed:?}");
+        let (pack, listed) =
+            server.recall_at_sync_door(alice, EdgeActorClass::Human, None, away, request(effort));
+        assert!(pack.is_ok(), "{effort}");
+        assert!(listed.contains(&reaction), "{effort}: {listed:?}");
+    }
+}
+
 #[tokio::test]
 async fn reaction_route_refuses_another_persons_reaction_and_paging_without_since() {
     let (_dir, server) = test_server();
@@ -318,22 +393,4 @@ async fn mirrored_reaction_route_goes_through_the_signed_mirror_machine() {
     assert_eq!(status, StatusCode::OK, "{removed}");
     assert_eq!(removed["event"], "reaction.revoked");
     assert_eq!(server.vault.reactions_outbound(room).unwrap(), "mirrored");
-}
-
-#[test]
-fn reaction_route_has_openapi_and_security_policy() {
-    let spec = generated_spec();
-    assert!(spec["paths"]["/v1/core/messages/{message}/reactions"]["post"]["security"].is_array());
-    for schema in [
-        "ReactionRequest",
-        "ReactionResponse",
-        "DagReactionRecord",
-        "CoreReactionSignal",
-        "SurfaceReactionPayload",
-    ] {
-        assert!(
-            spec["components"]["schemas"][schema].is_object(),
-            "{schema}"
-        );
-    }
 }

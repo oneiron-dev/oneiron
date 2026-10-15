@@ -183,8 +183,7 @@ pub enum EvidenceBasis {
 }
 
 impl EvidenceBasis {
-    /// Wire token for this basis. Pinned equal to the serde representation by
-    /// `crm_stage_wire_tokens_match_serde`.
+    /// Wire token for this basis. Equal to the serde representation.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -236,8 +235,7 @@ impl StageEvidenceClass {
         Self::RecurringCommitment,
     ];
 
-    /// Wire token for this class. Pinned equal to the serde representation by
-    /// `crm_stage_wire_tokens_match_serde`.
+    /// Wire token for this class. Equal to the serde representation.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

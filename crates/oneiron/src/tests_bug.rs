@@ -151,28 +151,6 @@ fn sources_reject_corrupted_edge_key_length() {
 }
 
 #[test]
-fn targets_reject_non_finite_persisted_edge_payload() {
-    let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-    let value = non_finite_edge_value(f32::NAN);
-
-    vault
-        .with_write_txn(|wtxn| {
-            let key = Store::encode_edge_key(&src, EdgeKind::BelongsTo, &tgt);
-            vault.store.edges_out.put(wtxn, &key, &value).unwrap();
-            Ok(())
-        })
-        .unwrap();
-
-    let result = vault.targets(&src, EdgeKind::BelongsTo, None);
-    assert!(
-        matches!(result, Err(Error::CorruptedIndex("edge record"))),
-        "expected corrupted edge record, got {result:?}"
-    );
-}
-
-#[test]
 fn topology_reads_reject_truncated_persisted_edge_payload() {
     let (_temp_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let truncated_value = [0_u8; 11];

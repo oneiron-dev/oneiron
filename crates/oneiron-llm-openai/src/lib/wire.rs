@@ -4,11 +4,11 @@ use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
     backend::validate_capabilities,
 };
-use oneiron::llm::ReasoningEffort;
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
-    ResponseFormat, RetryableLlmError,
+    ModelLocality, ResponseFormat, RetryableLlmError,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::BTreeMap;
@@ -18,6 +18,11 @@ pub fn build_openai_chat_request(
     request: &LlmRequest,
     stream: bool,
 ) -> LlmResult<OpenAiCompatHttpRequest> {
+    // The model id and the catalog row pick the model and the route; a param
+    // or provider option never does.
+    if request.route_selector_override().is_some() {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
     let catalog = config.catalog_entry(&request.model)?;
     let provider_options = OpenAiProviderOptions::from_request(request)?;
     validate_capabilities(catalog, request, &provider_options, stream)?;
@@ -50,6 +55,28 @@ pub fn build_openai_chat_request(
                 body.insert("reasoning".into(), JsonValue::Object(options));
             }
             body.insert("reasoning_effort".into(), json!(effort));
+        }
+        // An own server (llama.cpp, vLLM, an exllamav3 server) also reads the
+        // level through its chat template, and llama.cpp reads the thinking
+        // budget per request. A hosted API takes the effort alone and refuses
+        // fields it does not know, so it is sent neither.
+        if request.envelope.locality == ModelLocality::OwnServer {
+            let mut kwargs = match body.remove("chat_template_kwargs") {
+                Some(JsonValue::Object(kwargs)) => kwargs,
+                Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+                None => JsonMap::new(),
+            };
+            kwargs.remove("reasoning_effort");
+            kwargs.remove("enable_thinking");
+            if effort == ReasoningEffort::None {
+                kwargs.insert("enable_thinking".into(), JsonValue::Bool(false));
+                body.remove(REASONING_BUDGET_PARAM);
+            } else {
+                kwargs.insert("reasoning_effort".into(), json!(effort));
+            }
+            body.insert("chat_template_kwargs".into(), JsonValue::Object(kwargs));
+        } else {
+            body.remove(REASONING_BUDGET_PARAM);
         }
     }
     body.insert(
@@ -115,10 +142,12 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         .get("message")
         .and_then(JsonValue::as_object)
         .ok_or(FatalLlmError::EmptyResponse)?;
+    // `Stop` is a claim the provider makes about the reply. A body that names
+    // no finish made none, so it must not read as a finished answer.
     let finish_reason = choice
         .get("finish_reason")
         .and_then(JsonValue::as_str)
-        .map_or(FinishReason::Stop, openai_finish_reason);
+        .map_or_else(unreported_finish_reason, openai_finish_reason);
 
     let mut content = Vec::new();
     if let Some(text) = message.get("content").and_then(JsonValue::as_str)
@@ -139,12 +168,25 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
             signature: None,
         });
     }
-    if let Some(tool_calls) = message.get("tool_calls").and_then(JsonValue::as_array) {
-        for call in tool_calls {
-            if let Some(part) = parse_openai_tool_call(call) {
-                content.push(part);
+    // A reply that asked for a tool is no finished answer, however its text
+    // reads. A tool call this decoder cannot read fails the decode rather than
+    // leaving the reply looking tool-free.
+    match message.get("tool_calls") {
+        None | Some(JsonValue::Null) => {}
+        Some(JsonValue::Array(tool_calls)) => {
+            for call in tool_calls {
+                content.push(parse_openai_tool_call(call).ok_or(FatalLlmError::InvalidRequest)?);
             }
         }
+        Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+    }
+    // The legacy single-call field asks for a tool too. This adapter never
+    // offers legacy functions, so it cannot read one: the decode fails.
+    if message
+        .get("function_call")
+        .is_some_and(|call| !call.is_null())
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
     }
 
     if content.is_empty() {
@@ -300,6 +342,13 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: reasoning_tokens,
         },
         raw_provider: usage.clone(),
+    }
+}
+
+/// The finish of a reply whose provider reported none.
+fn unreported_finish_reason() -> FinishReason {
+    FinishReason::Other {
+        name: "unreported".to_owned(),
     }
 }
 

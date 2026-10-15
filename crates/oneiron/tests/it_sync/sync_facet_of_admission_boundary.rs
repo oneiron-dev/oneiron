@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 //! ONE-1645 — the `FacetOf` type table at the FEDERATION ADMISSION BOUNDARY.
 //!
-//! The replay chokepoint (`sync_facet_of_replay_gating`) stops an off-table
+//! The replay chokepoint (forward rematerialization) stops an off-table
 //! stamp from reaching LMDB. That is not the whole exposure, because the
 //! federation SELECTOR does not read LMDB — `facet_scope_by_source` walks the
 //! RAW Loro edges map. A forged `PERSON -> <selected FACET>` row that merely
@@ -136,14 +136,20 @@ fn admission_drops_provably_off_table_facet_of_for_member_and_guest() {
         let turn = EntityId::from_bytes([0x74; 16]).unwrap();
         for (id, entity_type) in [
             (&person, ENTITY_TYPE_PERSON),
-            (&event, ENTITY_TYPE_EVENT),
             (&facet, ENTITY_TYPE_FACET),
             (&turn, ENTITY_TYPE_TURN),
         ] {
             seed(&vault, id, entity_type);
         }
 
+        // The control EVENT is born in this frame with its stamp: the stamp
+        // is no forgery, and it waits for that birth to apply.
         let remote = create_window_doc("federation-peer", &window_key);
+        map_insert_bytes(
+            &remote.get_map("entities"),
+            &event.to_hex(),
+            &entity_blob(ENTITY_TYPE_EVENT, b"event"),
+        );
         let edges = remote.get_map("edges");
         let forged_key = format_edge_key(&person, EdgeKind::FacetOf, &facet);
         let forged_value = facet_of_value(T0);
@@ -167,8 +173,9 @@ fn admission_drops_provably_off_table_facet_of_for_member_and_guest() {
              quarantined row still scopes exports"
         );
         assert!(
-            keys.contains(&control_key),
-            "{role:?}: the on-table EVENT stamp must admit normally"
+            !keys.contains(&control_key),
+            "{role:?}: the on-table EVENT stamp waits for its row's birth to \
+             apply, outside the admitted document"
         );
         assert!(
             keys.contains(&ordinary_key),
@@ -318,194 +325,78 @@ fn admission_drops_one_sided_non_facet_target_with_unknown_source() {
     }
 }
 
-/// H2 line: a row whose endpoint types are UNKNOWABLE — absent from the vault
-/// and from the update — passes THROUGH admission. The remat gate's
-/// defer-then-validate owns it.
+/// H2 line: a stamp whose endpoints have not arrived is not evidence of
+/// forgery, so admission does not reject it, and it leaves no `x:` row.
 ///
-/// Rejecting here would make first-delivery-out-of-order a permanent drop with
-/// no CRDT row left to retry from, which is exactly the wedge the ungated
-/// batch arm exists to avoid, relocated to the boundary. The full lifecycle is
-/// pinned: passes admission → defers at remat (no `x:` row, no edge) → heals
-/// once the endpoints land.
+/// Nor does admission copy it, or a stamp onto a row the update brings (the
+/// Engine's rulings on Sol R3 F1 and Astra-b F1): the window replicates to
+/// the owner's other devices as their own, and only the sender's birth of
+/// the row, applied here, lets the stamp count. With no sender named, nothing
+/// binds the stamp to that birth, so it never enters the admitted document,
+/// whether the row comes later or in the same frame.
 #[test]
-fn admission_passes_through_unknowable_endpoint_types_for_the_remat_gate() {
+fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
     let (_dir, vault) = test_vault();
     let window_key = WindowKey::new(WINDOW);
-    let turn = EntityId::from_bytes([0xC1; 16]).unwrap();
+    let event = EntityId::from_bytes([0xC1; 16]).unwrap();
     let facet = EntityId::from_bytes([0xC2; 16]).unwrap();
-
-    let remote = create_window_doc("federation-peer", &window_key);
-    let stamp_key = format_edge_key(&turn, EdgeKind::FacetOf, &facet);
-    map_insert_bytes(&remote.get_map("edges"), &stamp_key, &facet_of_value(T0));
-    remote.commit();
-    let update = remote.export(ExportMode::all_updates()).unwrap();
-
-    let admitted = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("an unknowable-type row must not fail the admission door");
+    let stamp_key = format_edge_key(&event, EdgeKind::FacetOf, &facet);
+    let admit = |doc: &loro::LoroDoc| {
+        doc.commit();
+        let update = doc.export(ExportMode::all_updates()).unwrap();
+        admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect("an unknowable-type row must not fail the admission door")
+    };
     let local = create_window_doc("receiver", &window_key);
-    local.import(&admitted).unwrap();
-    let mut keys = Vec::new();
-    local
-        .get_map("edges")
-        .for_each(|k, _| keys.push(k.to_string()));
+    let edge_keys = || {
+        let mut keys = Vec::new();
+        local
+            .get_map("edges")
+            .for_each(|k, _| keys.push(k.to_string()));
+        keys
+    };
+
+    let first = create_window_doc("federation-peer", &window_key);
+    map_insert_bytes(&first.get_map("edges"), &stamp_key, &facet_of_value(T0));
+    local.import(&admit(&first)).unwrap();
     assert!(
-        keys.contains(&stamp_key),
-        "an unknowable endpoint type is not evidence of forgery — the row \
-         passes through for the remat gate's defer-then-validate"
+        !edge_keys().contains(&stamp_key),
+        "a stamp ahead of its row is not copied"
+    );
+
+    let second = create_window_doc("federation-peer", &window_key);
+    let entities = second.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &event.to_hex(),
+        &entity_blob(ENTITY_TYPE_EVENT, b"event"),
+    );
+    map_insert_bytes(
+        &entities,
+        &facet.to_hex(),
+        &entity_blob(ENTITY_TYPE_FACET, b"facet"),
+    );
+    map_insert_bytes(&second.get_map("edges"), &stamp_key, &facet_of_value(T0));
+    local.import(&admit(&second)).unwrap();
+    assert!(
+        !edge_keys().contains(&stamp_key),
+        "a stamp onto a row the update brings waits for that birth to apply"
+    );
+    forward_rematerialize(&vault, &local, &Materializer::new(), &window_key).unwrap();
+    assert!(
+        !vault
+            .edge_exists(&event, EdgeKind::FacetOf, &facet)
+            .unwrap()
     );
     assert!(
         quarantined_records(&vault).unwrap().is_empty(),
-        "a deferred legitimate row must leave no false evidence at admission"
+        "a stamp that waits leaves no false evidence"
     );
-
-    forward_rematerialize(&vault, &local, &Materializer::new(), &window_key).unwrap();
-    assert!(
-        !vault.edge_exists(&turn, EdgeKind::FacetOf, &facet).unwrap(),
-        "remat defers while the endpoints are absent"
-    );
-    assert!(
-        quarantined_records(&vault).unwrap().is_empty(),
-        "deferral is not rejection: still no x: row"
-    );
-
-    // The endpoints arrive later; the SAME retained CRDT row now materializes.
-    seed(&vault, &turn, ENTITY_TYPE_TURN);
-    seed(&vault, &facet, ENTITY_TYPE_FACET);
-    forward_rematerialize(&vault, &local, &Materializer::new(), &window_key).unwrap();
-    assert!(
-        vault.edge_exists(&turn, EdgeKind::FacetOf, &facet).unwrap(),
-        "the on-table stamp must heal once its endpoints exist — dropping it \
-         at admission would have destroyed the only retry source"
-    );
-}
-
-/// OBSERVER-B door (P2). A member/guest import into a LOADED window
-/// materializes SYNCHRONOUSLY through Observer B and the ungated
-/// `BatchOp::EdgeWithCreatedAt` arm — it never crosses forward remat, where
-/// the replay gate lives. Driven through the PRODUCTION entry
-/// `SyncClient::import_federated_window_update` on an already-open window, per
-/// role, so the pin fails if that routing changes.
-#[test]
-fn observer_b_blocks_off_table_facet_of_on_a_loaded_window_for_both_roles() {
-    for role in [
-        FederationAdmissionRole::Member,
-        FederationAdmissionRole::Guest,
-    ] {
-        let (_dir, vault) = test_vault();
-        let manager = Arc::new(WindowManager::new(
-            Arc::clone(&vault),
-            Arc::new(Materializer::new()),
-            "test-user",
-        ));
-        let principal = EntityId::now();
-        let grant_id = EntityId::now();
-        let scope = oneiron::FederationGrantScope::vault(7);
-        let grant = oneiron::federation::FederationGrant::new(
-            scope,
-            principal,
-            oneiron::federation::FederationGrantRole::Member,
-            oneiron::federation::FederationGrantPreset::Member,
-        );
-        oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
-        let selector = oneiron::sync::SyncSelector::new(
-            grant_id,
-            principal,
-            oneiron::sync::SyncSelectorWorld::All,
-            vec![],
-            vec![],
-        );
-        let peer = oneiron::sync::federation_burst::FederationPeer::authorize(
-            &vault, principal, scope, &selector,
-        )
-        .unwrap();
-        let (mut client, _rx) = SyncClient::new(
-            manager,
-            SyncClientConfig {
-                federation_peer: Some(peer),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let person = EntityId::from_bytes([0xD1; 16]).unwrap();
-        let event = EntityId::from_bytes([0xD2; 16]).unwrap();
-        let facet = EntityId::from_bytes([0xD3; 16]).unwrap();
-        let turn = EntityId::from_bytes([0xD4; 16]).unwrap();
-        for (id, entity_type) in [
-            (&person, ENTITY_TYPE_PERSON),
-            (&event, ENTITY_TYPE_EVENT),
-            (&facet, ENTITY_TYPE_FACET),
-            (&turn, ENTITY_TYPE_TURN),
-        ] {
-            seed(&vault, id, entity_type);
-        }
-        // LOADED, not cold: this is the arm that materializes synchronously.
-        client.ensure_window(WINDOW).unwrap();
-
-        let remote = create_window_doc("federation-peer", &WindowKey::new(WINDOW));
-        let edges = remote.get_map("edges");
-        map_insert_bytes(
-            &edges,
-            &format_edge_key(&person, EdgeKind::FacetOf, &facet),
-            &facet_of_value(T0),
-        );
-        map_insert_bytes(
-            &edges,
-            &format_edge_key(&event, EdgeKind::FacetOf, &facet),
-            &facet_of_value(T0 + 1),
-        );
-        map_insert_bytes(
-            &edges,
-            &format_edge_key(&turn, EdgeKind::Mentions, &facet),
-            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.4, T0 + 2, None, None).unwrap(),
-        );
-        remote.commit();
-        let update = remote.export(ExportMode::all_updates()).unwrap();
-
-        client
-            .import_federated_window_update(WINDOW, &update, role)
-            .unwrap_or_else(|e| panic!("{role:?}: federated import must not fail closed: {e:?}"));
-        client.replay_deferred_federation_update().unwrap();
-
-        assert!(
-            !vault
-                .edge_exists(&person, EdgeKind::FacetOf, &facet)
-                .unwrap(),
-            "{role:?}: the forged stamp must not land through the synchronous \
-             Observer-B path — it never reaches the remat gate"
-        );
-        assert!(
-            vault
-                .edge_exists(&event, EdgeKind::FacetOf, &facet)
-                .unwrap(),
-            "{role:?}: the on-table EVENT control must materialize"
-        );
-        assert!(
-            vault
-                .edge_exists(&turn, EdgeKind::Mentions, &facet)
-                .unwrap(),
-            "{role:?}: unrelated rows in the same import must still commit"
-        );
-
-        let records = quarantined_records(&vault).unwrap();
-        assert!(
-            records
-                .iter()
-                .any(|(_, r)| r.container == QuarantineContainer::Edges
-                    && r.reason_code == "InvalidFacetOfEdge"),
-            "{role:?}: the rejection must carry the typed table reason, not a \
-             generic one — got {:?}",
-            records
-                .iter()
-                .map(|(_, r)| &r.reason_code)
-                .collect::<Vec<_>>()
-        );
-    }
 }
 
 /// The Observer-B gate ISOLATED: the ordinary full-window `UPDATE` arm.

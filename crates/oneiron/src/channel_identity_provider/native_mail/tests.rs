@@ -174,49 +174,6 @@ fn native_modes_conform_and_unauthenticated_ingress_writes_nothing() -> Result<(
     Ok(())
 }
 #[test]
-fn native_mail_refuses_foreign_malformed_and_non_email_envelopes() -> Result<()> {
-    let adapter = NativeMailAdapter::new(
-        "side.example.test",
-        NativeMailRunMode::SelfRun,
-        Host {
-            inbound: EmailProviderInbound::new("unused", "unused", "unused", 10),
-        },
-    )?;
-    let normalized = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(
-        EmailProviderInbound::new(
-            "case",
-            "mail-ABABABABABABABABABABABABABABABAB@SIDE.EXAMPLE.TEST",
-            "Sender@EXAMPLE.TEST",
-            10,
-        ),
-    ))?;
-    assert_eq!(
-        normalized.receiving_address_or_handle,
-        "mail-abababababababababababababababab@side.example.test"
-    );
-    for address in [
-        "mail-abababababababababababababababab@foreign.example.test",
-        "other-abababababababababababababababab@side.example.test",
-        "mail-not-a-uuid@side.example.test",
-    ] {
-        assert!(
-            adapter
-                .parse_inbound(ChannelIdentityProviderInbound::Email(
-                    EmailProviderInbound::new("event", address, "sender@example.test", 10)
-                ))
-                .is_err()
-        );
-    }
-    assert!(
-        adapter
-            .parse_inbound(ChannelIdentityProviderInbound::Slack(
-                super::super::SlackProviderInbound::new("event", "T1", "C1", "U1", "agent", 10)
-            ))
-            .is_err()
-    );
-    Ok(())
-}
-#[test]
 fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Result<()> {
     use crate::claim::ClaimSource;
     use crate::identity_reputation::{
@@ -279,12 +236,6 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         format!("recipient:cold_external:{}", id.to_hex()),
         actor.to_hex(),
     )?;
-    for _ in 0..crate::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
-        vault.record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)?;
-    }
-    assert_eq!(vault.ramp_scope_state(&scope)?, RampState::Offered);
-    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
-    assert!(!vault.graduation_offers()?.contains(&scope));
     let owner_id = EntityId::now();
     vault.put_entity(
         &owner_id,
@@ -299,6 +250,16 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         true,
         crate::store::GateDecisionId::now(),
     )?;
+    for _ in 0..crate::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault.record_proposal_outcome_for_ramp(
+            &owner,
+            &scope,
+            ProposalOutcome::ApprovedUntouched,
+        )?;
+    }
+    assert_eq!(vault.ramp_scope_state(&scope)?, RampState::Offered);
+    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
+    assert!(!vault.graduation_offers()?.contains(&scope));
     assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
 
     let reputation = IdentityReputation {

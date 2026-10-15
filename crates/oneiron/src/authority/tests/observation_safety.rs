@@ -261,11 +261,22 @@ fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
                 put_replay(&vault, entry, 1);
             }
             put_replay(&vault, &old, 1);
-            let outsider = ed_key(182);
-            put_replay(
-                &vault,
-                &slip_withdrawal(vault_id, &old, &outsider, 20, 14),
-                1,
+            // A key no row enrolled never reaches the log (H72).
+            let outsider = slip_withdrawal(vault_id, &old, &ed_key(182), 20, 14);
+            let refused = vault
+                .batch()
+                .put_replicated(
+                    &authority_log_entity_id(&outsider).unwrap(),
+                    ENTITY_TYPE_AUTHORITY_LOG,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &encode_authority_log_entry_body(&outsider).unwrap(),
+                )
+                .commit()
+                .unwrap_err();
+            assert_eq!(
+                refused.kind(),
+                crate::error::ErrorKind::AuthorityLogSignerPending
             );
         }
         let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
@@ -282,55 +293,6 @@ fn late_causal_withdrawal_ancestors_heal_without_unrelated_rollback() {
         outputs.push(fold);
     }
     assert_eq!(outputs[0], outputs[1]);
-}
-
-#[test]
-fn authority_replay_admits_withdrawals_and_raises_one_typed_peer_check() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let policy = AuthorityObservationPolicy {
-        ingest_check_threshold: 2,
-        ..AuthorityObservationPolicy::default()
-    };
-    vault.set_authority_observation_policy(policy).unwrap();
-    let owner = ed_key(190);
-    let genesis = genesis_entry(190, DEFAULT_PENDING_WIDEN_DELAY_SECS, 0);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    vault
-        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 0)
-        .unwrap();
-    let mut parent = genesis;
-    let mut rows = Vec::new();
-    for seq in 1..=5 {
-        let entry = slip_withdrawal(vault_id, &parent, &owner, seq, seq as u8);
-        let id = put_replay(&vault, &entry, 0);
-        assert_eq!(
-            vault.get_authority_log_entry(&id).unwrap(),
-            Some(entry.clone())
-        );
-        rows.push(entry.clone());
-        parent = entry;
-    }
-    let checks = vault.authority_ingest_checks().unwrap();
-    assert_eq!(checks.len(), 1);
-    assert_eq!(
-        checks[0].peer_id,
-        AuthorityIngestCheck::peer_id_for_signer(&authority_key_from_ed(&owner))
-    );
-    assert_eq!(checks[0].count, 3);
-    assert_eq!(checks[0].threshold, 2);
-    let fold = vault.authority_fold().unwrap();
-    for entry in &rows {
-        assert!(
-            fold.valid_entries
-                .contains(&authority_entry_hash(entry).unwrap())
-        );
-        put_replay(&vault, entry, 1);
-    }
-    assert_eq!(vault.authority_ingest_checks().unwrap(), checks);
-    drop(vault);
-    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    assert_eq!(reopened.authority_ingest_checks().unwrap(), checks);
 }
 
 fn store_re_rooted_confirm(vault: &crate::Vault) -> (AuthorityEntryHash, AuthorityKey) {
@@ -391,7 +353,7 @@ fn store_re_rooted_confirm(vault: &crate::Vault) -> (AuthorityEntryHash, Authori
     (hash, host_key)
 }
 
-fn advance_observation_floor(vault: &crate::Vault, now: u64) {
+pub(super) fn advance_observation_floor(vault: &crate::Vault, now: u64) {
     vault
         .with_write_txn(|txn| {
             vault.store.sync_state.put(

@@ -38,5 +38,3 @@ mod tests;
 // sibling test module through `use super::run_tree_events`. After the
 // directory split the seam re-imports it so `tests.rs` resolves exactly as
 // it did before.
-#[cfg(test)]
-use self::render::run_tree_events;

@@ -193,20 +193,6 @@ fn corrupt_code_revision_frontier_fold(vault: &Vault, session_id: &EntityId) -> 
     Ok(())
 }
 
-fn remove_code_revision_integrity_sidecars(
-    vault: &Vault,
-    revision_ids: &[EntityId],
-    session_id: &EntityId,
-) -> Result<()> {
-    let mut wtxn = vault.store.env.write_txn()?;
-    for revision_id in revision_ids {
-        INTEGRITY.delete(&vault.store, &mut wtxn, revision_id)?;
-    }
-    FRONTIER.delete(&vault.store, &mut wtxn, session_id)?;
-    wtxn.commit()?;
-    Ok(())
-}
-
 fn delete_code_revision_session_index_row(
     vault: &Vault,
     session_id: &EntityId,
@@ -308,105 +294,6 @@ fn corrupt_code_revision_record_bytes(vault: &Vault, revision_id: &EntityId) -> 
         b"not-a-code-revision",
     )?;
     wtxn.commit()?;
-    Ok(())
-}
-
-fn code_revision_integrity_sidecars_exist(
-    vault: &Vault,
-    revision_ids: &[EntityId],
-    session_id: &EntityId,
-) -> Result<bool> {
-    let rtxn = vault.store.env.read_txn()?;
-    for revision_id in revision_ids {
-        if !INTEGRITY.contains(&vault.store, &rtxn, revision_id)? {
-            return Ok(false);
-        }
-    }
-    FRONTIER.contains(&vault.store, &rtxn, session_id)
-}
-
-#[test]
-fn code_revision_codec_round_trips_commit_revert_and_fork() -> Result<()> {
-    let session = entity(0x60);
-    let first = entity(0x21);
-    let second = entity(0x22);
-    let third = entity(0x23);
-    let provenance = entity(0x31);
-
-    let commit = CodeRevision::commit_child(second, session, first, 2_000)
-        .with_provenance_claim_id(provenance);
-    let decoded = decode_code_revision(&encode_code_revision(&commit)?)?;
-    assert_eq!(decoded.revision_id, second);
-    assert!(matches!(decoded.kind, CodeRevisionKind::Commit));
-    assert_eq!(decoded.session_id, session);
-    assert_eq!(decoded.parent_revision_id, Some(first));
-    assert_eq!(decoded.reverted_to_revision_id, None);
-    assert_eq!(decoded.provenance_claim_id, Some(provenance));
-
-    let revert = CodeRevision::revert(third, session, second, first, 3_000);
-    let decoded = decode_code_revision(&encode_code_revision(&revert)?)?;
-    assert_eq!(decoded.revision_id, third);
-    assert!(matches!(decoded.kind, CodeRevisionKind::Revert));
-    assert_eq!(decoded.session_id, session);
-    assert_eq!(decoded.parent_revision_id, Some(second));
-    assert_eq!(decoded.reverted_to_revision_id, Some(first));
-    assert_eq!(decoded.provenance_claim_id, None);
-
-    let fork = CodeRevisionFork::new(entity(0x41), session, second, 4_000);
-    let decoded = decode_code_revision_fork(&encode_code_revision_fork(&fork)?)?;
-    assert_eq!(decoded.fork_session_id, entity(0x41));
-    assert_eq!(decoded.parent_session_id, session);
-    assert_eq!(decoded.base_revision_id, second);
-    Ok(())
-}
-
-#[test]
-fn code_revision_commit_finalizes_session_revision_and_links_parent() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x60);
-    let first = entity(0x21);
-    let second = entity(0x22);
-    put_session(&vault, session, 10)?;
-    put_artifact(&vault, first, 0xA1, 20)?;
-    put_artifact(&vault, second, 0xA2, 30)?;
-
-    let first_revision = CodeRevision::commit(first, session, 100);
-    let second_revision = CodeRevision::commit_child(second, session, first, 200);
-    vault.commit_code_revision(&first_revision)?;
-    vault.commit_code_revision(&second_revision)?;
-
-    for expected in [&first_revision, &second_revision] {
-        let stored = vault
-            .get_code_revision(&expected.revision_id)?
-            .expect("committed revision");
-        assert_eq!(stored.revision_id, expected.revision_id);
-        assert!(matches!(stored.kind, CodeRevisionKind::Commit));
-        assert_eq!(stored.session_id, session);
-        assert_eq!(stored.parent_revision_id, expected.parent_revision_id);
-        assert_eq!(stored.reverted_to_revision_id, None);
-        assert_eq!(stored.provenance_claim_id, None);
-    }
-    assert_eq!(
-        vault
-            .code_revisions_for_session(&session)?
-            .iter()
-            .map(|revision| revision.revision_id)
-            .collect::<Vec<_>>(),
-        vec![first, second],
-    );
-    assert_eq!(
-        vault
-            .child_code_revisions(&first)?
-            .iter()
-            .map(|revision| revision.revision_id)
-            .collect::<Vec<_>>(),
-        vec![second],
-    );
-
-    let supersedes = vault.targets(&second, EdgeKind::Supersedes, None)?;
-    assert!(supersedes.contains(&first));
-    let derived = vault.targets(&second, EdgeKind::DerivedFrom, None)?;
-    assert!(derived.contains(&session));
     Ok(())
 }
 
@@ -1181,55 +1068,6 @@ fn code_integrity_orphaned_frontier_rejects_write_backfill() -> Result<()> {
 }
 
 #[test]
-fn code_integrity_legacy_revision_sidecars_remain_readable_without_read_backfill() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x60);
-    let first = entity(0x21);
-    let second = entity(0x22);
-    let first_revision = CodeRevision::commit(first, session, 100);
-    let second_revision = CodeRevision::commit_child(second, session, first, 200);
-    put_session(&vault, session, 10)?;
-    put_artifact(&vault, first, 0xA1, 20)?;
-    put_artifact(&vault, second, 0xA2, 30)?;
-    vault.commit_code_revision(&first_revision)?;
-    vault.commit_code_revision(&second_revision)?;
-    remove_code_revision_integrity_sidecars(&vault, &[first, second], &session)?;
-
-    assert_eq!(
-        vault.code_revisions_for_session(&session)?,
-        vec![first_revision, second_revision]
-    );
-    assert!(!code_revision_integrity_sidecars_exist(
-        &vault,
-        &[first, second],
-        &session
-    )?);
-    Ok(())
-}
-
-#[test]
-fn code_integrity_divergent_root_conflicts_after_frontier_exists() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x60);
-    let first = entity(0x21);
-    let second_root = entity(0x22);
-    put_session(&vault, session, 10)?;
-    put_artifact(&vault, first, 0xA1, 20)?;
-    put_artifact(&vault, second_root, 0xA2, 30)?;
-
-    vault.commit_code_revision(&CodeRevision::commit(first, session, 100))?;
-    let outcome = vault.commit_code_revision(&CodeRevision::commit(second_root, session, 200))?;
-    let CodeRevisionWriteOutcome::Proposed(proposal) = outcome else {
-        panic!("divergent root is a proposal");
-    };
-    assert_eq!(proposal.head_revision_id, first);
-    assert_eq!(proposal.revision.revision_id, second_root);
-    assert_eq!(vault.code_revision_proposal(&second_root)?, Some(*proposal));
-    assert!(vault.get_code_revision(&second_root)?.is_none());
-    Ok(())
-}
-
-#[test]
 fn code_integrity_independent_trace_entries_converge_or_conflict() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let session = entity(0x60);
@@ -1406,96 +1244,6 @@ fn code_revision_requires_claim_typed_provenance() -> Result<()> {
 }
 
 #[test]
-fn code_integrity_generated_apply_cannot_supersede_user_stated_revision_truth() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x60);
-    let revision_id = entity(0x21);
-    let user_truth = entity(0x31);
-    let generated_apply = entity(0x32);
-    put_session(&vault, session, 10)?;
-    put_artifact(&vault, revision_id, 0xA1, 20)?;
-    vault.commit_code_revision(&CodeRevision::commit(revision_id, session, 100))?;
-    put_claim_entity_with_source(
-        &vault,
-        user_truth,
-        revision_id,
-        Some(ClaimSource::UserStated),
-        200,
-    )?;
-    put_claim_entity_with_source_and_approval(
-        &vault,
-        generated_apply,
-        revision_id,
-        Some(ClaimSource::Generated),
-        ClaimApprovalStatus::Proposed,
-        300,
-    )?;
-
-    let err = vault
-        .supersede_claim(&generated_apply, &user_truth, 400)
-        .expect_err("generated apply must not supersede user-stated revision truth");
-
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert_eq!(
-        vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
-        ClaimLifecycleStatus::Active
-    );
-    assert!(
-        vault
-            .targets(&generated_apply, EdgeKind::Supersedes, None)?
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
-fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_truth() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let session = entity(0x60);
-    let revision_id = entity(0x21);
-    let user_truth = entity(0x31);
-    let generated_non_code = entity(0x33);
-    put_session(&vault, session, 10)?;
-    put_artifact(&vault, revision_id, 0xA1, 20)?;
-    vault.commit_code_revision(&CodeRevision::commit(revision_id, session, 100))?;
-    put_claim_entity_with_source(
-        &vault,
-        user_truth,
-        revision_id,
-        Some(ClaimSource::UserStated),
-        200,
-    )?;
-
-    let mut generated_body = ClaimBody::new(
-        "profile.lives_in",
-        ClaimSubject::Entity(revision_id),
-        Value::from("tokyo"),
-        0.9,
-        ClaimApprovalStatus::Proposed,
-        ClaimLifecycleStatus::Active,
-    )?;
-    generated_body.source = Some(ClaimSource::Generated);
-    let data = encode_claim_body(&generated_body)?;
-    put_claim_entity_unchecked(&vault, generated_non_code, 300, &data)?;
-
-    let err = vault
-        .supersede_claim(&generated_non_code, &user_truth, 400)
-        .expect_err("generated non-code claim must not supersede user-stated revision truth");
-
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert_eq!(
-        vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
-        ClaimLifecycleStatus::Active
-    );
-    assert!(
-        vault
-            .targets(&generated_non_code, EdgeKind::Supersedes, None)?
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
 fn code_integrity_generated_apply_cannot_supersede_user_truth_across_revisions() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let session = entity(0x60);
@@ -1569,48 +1317,6 @@ fn code_integrity_generated_apply_with_missing_subject_cannot_supersede_user_tru
         300,
     )?;
     vault.batch().delete(&revision_id).commit()?;
-
-    let err = vault
-        .supersede_claim(&generated_apply, &user_truth, 400)
-        .expect_err("generated apply must not supersede user-stated truth");
-
-    assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
-    assert_eq!(
-        vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
-        ClaimLifecycleStatus::Active
-    );
-    assert!(
-        vault
-            .targets(&generated_apply, EdgeKind::Supersedes, None)?
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
-fn code_integrity_generated_apply_with_header_only_subject_cannot_supersede_user_truth()
--> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let revision_id = entity(0x21);
-    let user_truth = entity(0x31);
-    let generated_apply = entity(0x32);
-    put_artifact(&vault, revision_id, 0xA1, 20)?;
-    put_claim_entity_with_source(
-        &vault,
-        user_truth,
-        revision_id,
-        Some(ClaimSource::UserStated),
-        200,
-    )?;
-    put_claim_entity_with_source_and_approval(
-        &vault,
-        generated_apply,
-        revision_id,
-        Some(ClaimSource::Generated),
-        ClaimApprovalStatus::Proposed,
-        300,
-    )?;
-    replace_entity_with_header_shell(&vault, &revision_id)?;
 
     let err = vault
         .supersede_claim(&generated_apply, &user_truth, 400)

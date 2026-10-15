@@ -11,13 +11,16 @@ mod execution;
 mod execution_binding;
 mod filters;
 mod scoped_channels;
-pub(crate) use types::CandidateFilter;
+pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
+mod population;
+pub(crate) use population::{indexed_text_population, indexed_vector_population};
 mod support;
+mod temporal_bound;
 mod trace;
 mod types;
 mod world_authority;
-pub(crate) use world_authority::resolve_world_authority;
+pub(crate) use world_authority::{WorldGrantIndex, reading_default, resolve_world_authority};
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{
@@ -43,8 +46,6 @@ mod tests;
 // its home.
 #[cfg(test)]
 mod decay_tests;
-#[cfg(test)]
-mod made_by_tests;
 
 #[cfg(test)]
 mod authority_tests;
@@ -54,13 +55,11 @@ mod authority_tests;
 // every pipeline-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::{blend::*, channels::*, trace::*, types::*};
+use self::trace::retrieval_trace_fused_scores;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::batch::LONG_INTERVAL_THRESHOLD_SECS;
-#[cfg(test)]
-use crate::codebase::{CodebaseScopeKey, RepoRef};
+use crate::codebase::RepoRef;
 #[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
@@ -72,20 +71,16 @@ use crate::query_expansion::{
     CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeOptions, HydeRequest,
 };
 #[cfg(test)]
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SUMMARY};
+use crate::registry::ENTITY_TYPE_CLAIM;
 #[cfg(test)]
 use crate::rerank::{RerankCandidate, RerankOptions, Reranker};
 #[cfg(test)]
 use crate::store::{
-    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceStage,
+    RetrievalAction, RetrievalRunId, RetrievalScoreBreakdown, RetrievalSignal, RetrievalTrace,
+    RetrievalTraceStage,
 };
 #[cfg(test)]
 use crate::temporal::TemporalAnchorMode;
-#[cfg(test)]
-use crate::temporal::TemporalExpressionParseError;
-#[cfg(test)]
-use crate::temporal::TemporalGranularity;
 #[cfg(test)]
 use crate::temporal::TimeRange;
 #[cfg(test)]

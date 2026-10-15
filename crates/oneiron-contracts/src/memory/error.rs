@@ -25,6 +25,16 @@ pub const MEMORY_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
 /// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
 pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 
+/// A paid call's budget line cannot cover it: the line the host admitted the
+/// request on is spent, or the vault's budget policy refuses the call. Distinct
+/// from `LEASE_REQUIRED`: the caller held a lease, and the line ran out.
+pub const MEMORY_CODE_BUDGET_SPENT: &str = "BUDGET_SPENT";
+
+/// The model a request needs gave no usable answer: its route refused the
+/// call, the call failed, or its answer did not fit the call. Nothing stands
+/// in for it.
+pub const MEMORY_CODE_MODEL_UNAVAILABLE: &str = "MODEL_UNAVAILABLE";
+
 /// The canonical door was asked to witness into a conversation owned by a live
 /// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from
 /// `FORBIDDEN`: the write was not refused on policy grounds — the room is only
@@ -366,6 +376,30 @@ impl From<Error> for MemoryError {
                     "A route is generation-stamped on purpose: a stale one refuses before staging anything.",
                 ],
             ),
+            ErrorKind::OffRecordSavingStopped => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Nothing of this write was kept, and the stretch is off record again.",
+                    "Witness the turn again to say it off record; only the vault's owner, in the room, puts it back on record.",
+                ],
+            ),
+            ErrorKind::OffRecordCopyConflict => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Nothing of this save was kept; what was said stays in the room until it closes.",
+                    "Export the talk to keep a copy of it.",
+                ],
+            ),
+            // One answer for "no such stretch" and "not in its room", as the
+            // HTTP boundary gives, so a stranger learns nothing of a room's
+            // stretches here either.
+            ErrorKind::OffRecordSessionNotFound | ErrorKind::OffRecordNotInRoom => Self::new(
+                MEMORY_CODE_NOT_FOUND,
+                message,
+                &["Verify the room and the stretch, and join the room before acting in it."],
+            ),
             ErrorKind::OffRecordOverlayFull => Self::new(
                 MEMORY_CODE_INVALID_STATE,
                 message,
@@ -382,6 +416,22 @@ impl From<Error> for MemoryError {
                 MEMORY_CODE_INVALID_STATE,
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
+            ),
+            // The vault no longer holds the bytes a restore needs; the
+            // request itself was sound.
+            ErrorKind::SkillPackageUnavailable => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["Restore the revision's package (re-import it), or edit the skill by hand."],
+            ),
+            // The host skipped a setup step, so neither the request nor the
+            // caller's standing is what has to change.
+            ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
+                MEMORY_CODE_INTERNAL,
+                message,
+                &[
+                    "The host must provision the engine's machine identities after it opens the vault, then retry.",
+                ],
             ),
             ErrorKind::Storage
             | ErrorKind::Io

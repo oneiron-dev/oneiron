@@ -55,12 +55,65 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum remote SUCCESS body read, in bytes: 64 MiB.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Maximum remote EXPORT body read, in bytes: 2 GiB.
+///
+/// A full-vault export is one document and may pass the ordinary success
+/// ceiling, so it has its own; it is still finite, and the client stops
+/// reading one byte past it.
+pub const MAX_REMOTE_EXPORT_BYTES: usize = 2 * 1024 * 1024 * 1024;
+
 /// Rejects an over-long query before it reaches retrieval.
 pub fn check_query(query: &str) -> Result<(), MemoryError> {
     if query.len() > MAX_QUERY_BYTES {
         return Err(MemoryError::bad_request_with(
             format!("query exceeds the {MAX_QUERY_BYTES}-byte ceiling"),
             &["Shorten the query; retrieval scores intent, not transcript length."],
+        ));
+    }
+    Ok(())
+}
+
+/// Longest recall deadline a request or a vault may name, in milliseconds:
+/// one minute. Past it a deadline stops being a cut and becomes a wait.
+pub const MAX_RECALL_DEADLINE_MS: u64 = 60_000;
+
+/// Refuses a recall deadline outside 1 to [`MAX_RECALL_DEADLINE_MS`].
+pub fn check_deadline_ms(deadline_ms: Option<u64>) -> Result<(), MemoryError> {
+    if deadline_ms.is_some_and(|ms| ms == 0 || ms > MAX_RECALL_DEADLINE_MS) {
+        return Err(deadline_out_of_range());
+    }
+    Ok(())
+}
+
+/// A binding's `deadline_ms` number as engine milliseconds. JavaScript has
+/// no integer type, so a fractional, non-finite or out-of-range value is
+/// refused here, before it narrows.
+pub fn check_deadline_ms_number(value: f64) -> Result<u64, MemoryError> {
+    // MAX_RECALL_DEADLINE_MS is far below 2^53, so the cast is exact.
+    let max = MAX_RECALL_DEADLINE_MS as f64;
+    if !value.is_finite() || value.fract() != 0.0 || !(1.0..=max).contains(&value) {
+        return Err(deadline_out_of_range());
+    }
+    // Proven finite, whole and within 1..=MAX_RECALL_DEADLINE_MS above.
+    Ok(value as u64)
+}
+
+fn deadline_out_of_range() -> MemoryError {
+    MemoryError::bad_request_with(
+        format!("deadline_ms must be a whole number between 1 and {MAX_RECALL_DEADLINE_MS}"),
+        &["Send the milliseconds the caller can wait, or omit deadline_ms for no deadline."],
+    )
+}
+
+/// Latest reference time a recall may name: 9999-12-31T23:59:59Z.
+pub const MAX_AS_OF_SECONDS: u64 = crate::temporal::TEMPORAL_MAX_REFERENCE_SECS;
+
+/// Rejects a reference time past the calendar the temporal parser resolves.
+pub fn check_as_of(as_of: Option<u64>) -> Result<(), MemoryError> {
+    if as_of.is_some_and(|as_of| as_of > MAX_AS_OF_SECONDS) {
+        return Err(MemoryError::bad_request_with(
+            format!("as_of must be Unix seconds no later than {MAX_AS_OF_SECONDS}"),
+            &["Send the conversation's time in Unix seconds, or omit as_of for now."],
         ));
     }
     Ok(())

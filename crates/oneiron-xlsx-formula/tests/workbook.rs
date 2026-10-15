@@ -1,11 +1,15 @@
 //! Actual XLSX in/out tests of the retained engine. The core's edit round
 //! trip, which wraps host sessions in this engine by default, tests the
 //! session routing (`crates/oneiron/src/edit_roundtrip/native_recalc_tests.rs`).
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 use std::io::{Cursor, Read, Write};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
-use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links};
+use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links, route_workbook};
 
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -854,6 +858,79 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
         sheet(r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>43</v></c>"#),
     );
     assert_eq!(preserve_external_links(&input, &recached, limits()), Ok(()));
+}
+
+#[test]
+fn a_formula_too_long_to_parse_safely_is_classified_without_deep_recursion() {
+    // C12: routing parsed every formula with the raw parser and walked the
+    // AST recursively, so a sheet formula of 100,000 chained additions
+    // overflowed the stack (an abort) wherever an edit checked its links.
+    let chain = |head: &str, terms: usize| format!("{head}{}", "+1".repeat(terms));
+    let local = chain("1", 100_000);
+    let linked = chain("'[linked.xlsx]S'!A1", 100_000);
+    // Under the byte limit, over the token limit.
+    let linked_tokens = chain("'[linked.xlsx]S'!A1", 5_000);
+    let xml = limits().xml;
+    assert!(route_workbook([], [], [local.as_str()], xml).is_in_process());
+    assert!(!route_workbook([], [], [linked.as_str()], xml).is_in_process());
+    assert!(!route_workbook([], [], [linked_tokens.as_str()], xml).is_in_process());
+    // A bracket that names no workbook still parses as local.
+    assert!(route_workbook([], [], ["SUM(Prices[Price])"], xml).is_in_process());
+
+    let cell = |formula: &str| sheet(&format!(r#"<c r="A1"><f>{formula}</f><v>1</v></c>"#));
+    let unlinked = with_part(&fixture("", "", false), OUTPUT, cell("1"));
+    let input = with_part(&unlinked, OUTPUT, cell(&local));
+    assert_eq!(preserve_external_links(&input, &unlinked, limits()), Ok(()));
+    for formula in [&linked, &linked_tokens] {
+        let input = with_part(&unlinked, OUTPUT, cell(formula));
+        assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
+        assert_eq!(
+            preserve_external_links(&input, &unlinked, limits()),
+            Err("fallback altered or dropped an external formula link")
+        );
+    }
+}
+
+#[test]
+fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link() {
+    // C12 (Sol r1): a local formula over the parser's token bound that holds a
+    // `[` (a structured reference) failed closed as an external link, so the
+    // fallback could no longer edit its cell.
+    let sum = |name: &str, args: usize| format!("SUM({})", vec![name; args].join(","));
+    let long = sum("Prices[Price]", 130);
+    let longer = sum("Prices[Price]", 131);
+    let quoted = format!("{long}+LEN(\"[linked.xlsx]S!A1\")");
+    // Excel brackets a column header holding `!` twice: `Prices[[Cost!USD]]`.
+    let header = sum("Prices[[Cost!USD]]", 130);
+    let xml = limits().xml;
+    for formula in [&long, &quoted, &header] {
+        assert!(route_workbook([], [], [formula.as_str()], xml).is_in_process());
+    }
+    // Over the bound, a workbook qualifier in any reference still routes out.
+    for link in [
+        "'[linked.xlsx]S'!A1",
+        "[1]S!A1:B2",
+        "SUM('C:\\dir\\[linked.xlsx]S'!B9)",
+    ] {
+        let formula = format!("{long}+{link}");
+        assert!(!route_workbook([], [], [formula.as_str()], xml).is_in_process());
+    }
+
+    let cells = |a1: &str, b1: &str| {
+        sheet(&format!(
+            r#"<c r="A1"><f>{a1}</f><v>1</v></c><c r="B1"><f>{b1}</f><v>2</v></c>"#
+        ))
+    };
+    let link = "'[linked.xlsx]S'!A1";
+    let base = fixture("", "", false);
+    let input = with_part(&base, OUTPUT, cells(&long, link));
+    let edited = with_part(&base, OUTPUT, cells(&longer, link));
+    assert_eq!(preserve_external_links(&input, &edited, limits()), Ok(()));
+    let unlinked = with_part(&base, OUTPUT, cells(&longer, "1"));
+    assert_eq!(
+        preserve_external_links(&input, &unlinked, limits()),
+        Err("fallback altered or dropped an external formula link")
+    );
 }
 
 /// `fixture` whose `Result!A1` is a dynamic-array formula saved over `extent`.

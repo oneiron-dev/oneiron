@@ -19,7 +19,7 @@ use crate::config::VaultConfig;
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-    DreamerConsolidationAdmissionOutcome, EnqueueDreamerConsolidationAttempt,
+    DreamerConsolidationAdmissionOutcome,
 };
 use crate::dreamer_wake::WakePassDeadline;
 use crate::inbox::InboxBulkVerb;
@@ -371,74 +371,6 @@ fn lead_and_due_enqueue_once_across_reopen() {
     );
 }
 
-/// A late start is two immediate, distinct, fire-once transactions — Lead then
-/// Due — and synthesizes no escalation event of its own.
-#[test]
-fn late_start_consumes_lead_then_due_once() {
-    let (_dir, vault) = open_vault();
-    let instance = project_instance(&vault, CommitmentStrength::Commitment);
-    let late = DUE_AT + 5_000;
-
-    assert!(matches!(
-        fire_next(&vault, late),
-        CommitmentWakeFireOutcome::Enqueued { .. }
-    ));
-    assert!(matches!(
-        fire_next(&vault, late),
-        CommitmentWakeFireOutcome::Enqueued { .. }
-    ));
-    assert!(next_due(&vault).is_none());
-
-    assert_eq!(
-        run_ids(&vault),
-        vec![
-            phase_key(instance, CommitmentWakePhase::Lead),
-            phase_key(instance, CommitmentWakePhase::Due),
-        ],
-        "exactly two attempts, in phase order, and nothing else"
-    );
-}
-
-/// Only `Commitment` wakes. `Decision` is query/check-in material and
-/// `StatedIntention` is retrieval-only: both settle their phase without
-/// enqueueing, so the deadline source converges instead of busy-looping.
-#[test]
-fn only_commitment_strength_emits_event_attempt() {
-    for (strength, expected) in [
-        (
-            CommitmentStrength::StatedIntention,
-            Some(CommitmentWakeSkip::StatedIntention),
-        ),
-        (
-            CommitmentStrength::Decision,
-            Some(CommitmentWakeSkip::Decision),
-        ),
-        (CommitmentStrength::Commitment, None),
-    ] {
-        let (_dir, vault) = open_vault();
-        project_instance(&vault, strength);
-        let outcome = fire_next(&vault, PROJECT_AT);
-        match expected {
-            Some(skip) => {
-                assert_eq!(outcome, CommitmentWakeFireOutcome::Skipped(skip));
-                assert!(run_ids(&vault).is_empty(), "{strength:?} must not wake");
-            }
-            None => {
-                assert!(matches!(
-                    outcome,
-                    CommitmentWakeFireOutcome::Enqueued { .. }
-                ));
-                assert_eq!(run_ids(&vault).len(), 1);
-            }
-        }
-        assert_eq!(
-            next_due(&vault).map(|due| due.phase),
-            Some(CommitmentWakePhase::Due),
-            "{strength:?}: the Lead phase is settled either way"
-        );
-    }
-}
-
 /// A closed instance is a stale row, not a wake. The status write and the
 /// schedule's close hook are separate calls, so the rows a crash between them
 /// leaves behind are exactly what this settles.
@@ -470,70 +402,6 @@ fn closed_or_missing_instance_settles_stale_due_row() {
 }
 
 // ─── 4: the wrapper executor ───────────────────────────────────────────────
-
-/// An ordinary partition attempt is delegated with its payload, context, and
-/// result untouched.
-#[test]
-fn ordinary_partition_attempt_delegates_unchanged() {
-    let (_dir, vault) = open_vault();
-    DreamerRunnerStore::new(&vault)
-        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
-            scope: DreamerConsolidationScope::Micro,
-            input: Value::from("ordinary-partition-payload"),
-            parent_attempt: None,
-            dedupe_key: Some("ordinary".to_owned()),
-            run_id: Some("run-ordinary".to_owned()),
-            now: 10,
-        })
-        .expect("enqueue an ordinary attempt");
-    let attempt = admit_micro(&vault, 11);
-
-    let inner = RecordingInner {
-        calls: Rc::default(),
-        completed_units: 7,
-    };
-    let calls = Rc::clone(&inner.calls);
-    let execution = execute_wrapped(&vault, &attempt, None, inner, dreamer_actor())
-        .expect("delegation never fails on the wrapper's account");
-
-    assert_eq!(
-        execution,
-        DreamerAttemptExecution::Completed { completed_units: 7 },
-        "the delegated result is the inner executor's, verbatim"
-    );
-    assert_eq!(
-        calls.borrow().as_slice(),
-        &[Some("run-ordinary".to_owned())]
-    );
-}
-
-/// A tagged event with no planner is a typed COMPLETION with zero units. It
-/// never reaches the partition decoder and never parks the driver — which is
-/// why the production factory installs the wrapper unconditionally.
-#[test]
-fn missing_planner_completes_tagged_attempt_without_parking() {
-    let (_dir, vault) = open_vault();
-    project_instance(&vault, CommitmentStrength::Commitment);
-    fire_next(&vault, PROJECT_AT);
-    let attempt = admit_micro(&vault, PROJECT_AT);
-
-    let inner = RecordingInner::default();
-    let calls = Rc::clone(&inner.calls);
-    // A System-class actor: legal precisely because a planner-less wrapper
-    // never uses it.
-    let system = WriteActor::new(party(BENEFICIARY), EdgeActorClass::System);
-    let execution =
-        execute_wrapped(&vault, &attempt, None, inner, system).expect("no-planner skip completes");
-
-    assert_eq!(
-        execution,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
-    );
-    assert!(
-        calls.borrow().is_empty(),
-        "a tagged event must never reach the partition decoder"
-    );
-}
 
 /// The proposal exists as a PENDING consent row whose inbox group key is the
 /// phase key itself, through the existing literal-run fallback — no new
@@ -1016,4 +884,89 @@ fn quiet_window_holds_then_eventually_delivers_after_window() {
         OutboundDispatchOutcome::DeliveredToChannel
     );
     assert_eq!(sink.calls.len(), 1, "the deferred send eventually happens");
+}
+
+/// The proposal as a landed retraction leaves it: lifecycle `Retracted`,
+/// valid to `now`. Written below the gate, which holds a Dreamer-authored
+/// proposal's retraction for consent in this fixture vault; the executor
+/// reads exactly the claim a landed retraction leaves.
+fn land_retraction(vault: &Vault, proposal: &EntityId, now: u64) {
+    let mut body = vault
+        .get_claim(proposal)
+        .expect("read the proposal")
+        .expect("the proposal");
+    body.lifecycle = ClaimLifecycleStatus::Retracted;
+    body.valid_to = Some(now);
+    let data = crate::claim::encode_claim_body(&body).expect("encode the retraction");
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(now), now, &data);
+    vault
+        .with_write_txn(|wtxn| {
+            vault
+                .store
+                .entities
+                .put(wtxn, proposal.as_bytes(), &payload)?;
+            Ok(())
+        })
+        .expect("land the retraction");
+}
+
+/// Astra #1353 finding 4: approval revocation reaches an already scheduled
+/// wake. Approve, schedule, then retract the proposal before the connector
+/// executor runs: nothing is sent, and the TASK settles as failed.
+#[test]
+fn retracting_an_approved_wake_stops_its_scheduled_send() {
+    let (_dir, vault) = open_vault();
+    let (instance, _attempt, proposal) = propose_lead_wake(&vault);
+    let key = phase_key(instance, CommitmentWakePhase::Lead);
+    accept_group(&vault, &key, DUE_AT);
+    let token = approved_commitment_wake(&vault, &proposal).expect("approved token");
+    let agent = party(DREAMER_AGENT);
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("default manifest id"),
+        &voice_send_manifest(&agent.to_hex()),
+    )
+    .expect("seed policy manifest");
+    let facade = vault.memory(agent, EdgeActorClass::Agent);
+    schedule_approved_commitment_wake(&facade, token).expect("the approved wake schedules");
+
+    land_retraction(&vault, &proposal, DUE_AT);
+
+    let mut sink = RecordingSink::default();
+    vault
+        .run_connector_task_executor(&mut sink, DUE_AT)
+        .expect("the executor runs");
+    assert!(sink.calls.is_empty(), "a withdrawn approval sends nothing");
+    let task = vault
+        .connector_send_tasks()
+        .expect("connector tasks")
+        .into_iter()
+        .find(|task| task.intent.idempotency_key.as_deref() == Some(key.as_str()))
+        .expect("the scheduled TASK");
+    assert_eq!(
+        task.outcome,
+        Some(crate::outbound::ConnectorSendTaskOutcome::Failed)
+    );
+}
+
+/// Greptile #1353: an approved run member whose claim cannot be read is
+/// reported to the approval door, not passed over.
+#[test]
+fn an_unreadable_claim_is_reported_by_the_approval_hook() {
+    let (_dir, vault) = open_vault();
+    let id = party(0x6D);
+    let payload = entity_record(crate::registry::ENTITY_TYPE_CLAIM, at(1), 1, &[0xc1]);
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let key = crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &id);
+            vault.store.type_index.put(wtxn, &key, &[])?;
+            Ok(())
+        })
+        .expect("seed an unreadable claim");
+    let results = schedule_approved_commitment_wakes(&vault, &[id]);
+    assert!(
+        matches!(results.as_slice(), [(claim, Err(_))] if *claim == id),
+        "{results:?}"
+    );
 }

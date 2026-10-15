@@ -1,7 +1,9 @@
 //! Durable per-operation code proposals. Review never mutates the repository.
 use std::collections::BTreeSet;
 
-use super::git::{canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root};
+use super::git::{
+    admitted_repo_ref, git_common_dir, require_pinned_head, resolve_mutable_repo_root,
+};
 use super::oplog::{SNAPSHOT, repo_mutation_repo_key_hash, repo_mutation_snapshot_key};
 use super::queue::validate_operation;
 use super::snapshot::capture_repo_snapshot;
@@ -276,10 +278,14 @@ impl Vault {
         // Empty triage validates the host's catalog without inventing a verdict.
         triage_critiques(&catalog, &[], &[])?;
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
-        let repo = canonical_repo_ref_for_root(&request.repo_ref, &repo_root)?;
+        let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
         self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
         let (fork, snapshot) = capture_repo_snapshot(&repo_root)?;
+        require_pinned_head(
+            &repo,
+            super::snapshot::decode_snapshot(&snapshot)?.head.as_deref(),
+        )?;
         let row = RepoProposal {
             id: EntityId::now(),
             repo: repo.canonical(),
@@ -671,7 +677,7 @@ pub(super) fn validate_conflict(
         .into_iter()
         .any(|claim| {
             claim.claim_id == *open_conflict_claim_id
-                && claim.repo_ref == repo
+                && super::oplog::same_repository(&claim.repo_ref, &repo)
                 && claim.branch == *branch_name
                 && claim.conflicted_paths.contains(&proposal.path)
         });

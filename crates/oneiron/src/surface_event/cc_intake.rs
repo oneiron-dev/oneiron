@@ -40,7 +40,7 @@ impl Vault {
         let message = canonical_message_id(message_id)?;
         let references = canonical_message_id_list(references)?;
         let reply = in_reply_to.map(canonical_message_id).transpose()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let routed = self.route_inbound_surface_event(input.clone())?;
             let Some(event) = routed.surface_event.clone() else {
                 return Ok(CcAgentIntakeOutcome {
@@ -89,6 +89,7 @@ impl Vault {
             }
             let ack = SurfaceEventAck {
                 status_path: surface_event_status_path(&event.correlation_id),
+                receiving_identity_ref: event.receiving_identity_ref.clone(),
                 correlation_id: event.correlation_id,
                 attempt_ref: SurfaceEventAttemptRef::from_attempt_id(admitted.attempt.id),
                 state: SurfaceEventHandoffState::from_attempt_state(admitted.attempt.state),

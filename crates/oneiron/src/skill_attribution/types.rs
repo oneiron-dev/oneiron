@@ -474,6 +474,8 @@ pub struct AttributionJudgment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillEditProposal {
     /// The [`AttributionJudgment::sequence`] this proposal was minted from.
+    /// An amendment's proposal carries the sequence drawn for it, which its
+    /// judgment row records; its evidence cites the amendment receipt.
     pub judgment_sequence: u64,
     /// The SKILL entity whose content the attempt found missing.
     pub skill: EntityId,

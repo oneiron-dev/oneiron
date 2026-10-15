@@ -40,6 +40,9 @@ that applications can embed or run as a daemon.
   approval of an import batch or an agent run. A running server offers the same
   actions under `/v1/owner`, except two: restore is CLI-only, and export is
   `POST /v1/core/facade/export`. None of them needs a model. See [docs/ops/owner-actions.md](./docs/ops/owner-actions.md).
+- **Agents over MCP.** `oneiron mcp` connects Claude Code and Codex to a
+  running vault over stdio, with a scoped, revocable agent credential from
+  `oneiron token agent`. See [docs/ops/connect-an-agent.md](./docs/ops/connect-an-agent.md).
 
 These are implemented APIs and components. Oneiron is pre-release.
 
@@ -103,8 +106,9 @@ oneiron-server serve --config ./oneiron-server.toml --host 127.0.0.1 \
 ```
 
 This assumes no `ONEIRON_*` overrides. Existing vaults need matching storage,
-analyzer, and vector settings. Do not use unauthenticated mode for a shared or
-network-facing vault. For authenticated setup, start with
+analyzer, and vector settings. Serve refuses unauthenticated mode on any host
+but loopback; a shared or network-facing vault sets an auth secret. For
+authenticated setup, start with
 `oneiron-server token bootstrap --help` and the
 [authentication reference](./oneiron.skills.md#authentication).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.

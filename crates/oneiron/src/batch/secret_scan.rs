@@ -1,9 +1,15 @@
 mod shapes;
+mod whole_read;
 mod wordlist;
 
 use heed::{RoTxn, RwTxn};
 
 use self::shapes::Door;
+pub(crate) use self::whole_read::{
+    Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
+    release_reads_json_text, release_reads_whole, release_reads_whole_json,
+    sanitize_messagepack_credentials_in, write_door_refuses_raw,
+};
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
@@ -15,10 +21,13 @@ const REASON_DETECTED: &str = "gate.secret_scan.detected";
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";
+const REASON_MNEMONIC: &str = "gate.secret_scan.mnemonic";
 const REASON_OPENAI_KEY: &str = "gate.secret_scan.openai_key";
 const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
 const REASON_STRIPE_KEY: &str = "gate.secret_scan.stripe_key";
+const REASON_JSON_TOO_DEEP: &str = "gate.secret_scan.json_depth_over_127";
+const REASON_MESSAGEPACK_TOO_DEEP: &str = "gate.secret_scan.messagepack_depth_over_1024";
 
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the
@@ -123,7 +132,221 @@ pub(super) fn scan_batch_ops(
 /// use this; none of them follows the owner's ingest switch.
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
     let haystack = String::from_utf8_lossy(bytes);
-    detect(&haystack, Door::Release)
+    detect(&haystack, Door::Release).or_else(|| {
+        let payload = framed_payload(bytes)?;
+        let Some(mut value) = decode_members(payload) else {
+            return nested_past_decoder(payload);
+        };
+        sanitize_messagepack(&mut value, false, Door::Release)
+            .then_some("gate.secret_scan.sensitive_env")
+    })
+}
+
+/// The release reading of a body no decoder took whole: its text, and a
+/// nesting past the decoders ([`nested_past_decoder`]), whose members no
+/// scan read.
+pub(crate) fn scan_undecoded_body(bytes: &[u8]) -> Option<&'static str> {
+    scan_file_content("", bytes).or_else(|| nested_past_decoder(bytes))
+}
+
+/// The body a known framed carrier wraps behind its magic and ids: an inert
+/// refinement receipt's JSON. The raw text scan reads its text, but no
+/// whole-body decode reaches its fields, so every door decodes the wrapped
+/// body as a body too.
+fn framed_payload(data: &[u8]) -> Option<&[u8]> {
+    crate::skill_hub::refinement_carrier_payload(data)
+}
+
+/// A structured body with every member it holds: JSON read into a MessagePack
+/// tree, whose maps keep a repeated key and its value (a JSON map keeps only
+/// the last), or a MessagePack value that is the whole body.
+pub(crate) fn decode_members(data: &[u8]) -> Option<rmpv::Value> {
+    if let Ok(value) = serde_json::from_slice::<rmpv::Value>(data) {
+        return Some(value);
+    }
+    let mut cursor = std::io::Cursor::new(data);
+    rmpv::decode::read_value(&mut cursor)
+        .ok()
+        .filter(|_| cursor.position() == data.len() as u64)
+}
+
+/// [`decode_members`] at the write door, which refuses a body nested past
+/// its decoder: none of its members was read.
+fn read_members(data: &[u8]) -> Result<Option<rmpv::Value>> {
+    match decode_members(data) {
+        Some(value) => Ok(Some(value)),
+        None => nested_past_decoder(data).map_or(Ok(None), |reason| Err(secret_scan_error(reason))),
+    }
+}
+
+/// JSON or MessagePack nested past what its decoder reads (127 open JSON
+/// containers, 1024 MessagePack levels). Its decode fails, so no scan read
+/// its members, and no door takes it as clean. Text that is no JSON before
+/// that depth is text: only the decoder's own depth stop counts.
+pub(crate) fn nested_past_decoder(data: &[u8]) -> Option<&'static str> {
+    let first = data.iter().find(|byte| !byte.is_ascii_whitespace());
+    // The same depth-bound decode [`decode_members`] runs (a skip-only parse
+    // has no depth stop); serde_json names that stop in its message only.
+    let json = matches!(first, Some(b'{' | b'['))
+        && serde_json::from_slice::<rmpv::Value>(data)
+            .is_err_and(|error| error.to_string().starts_with("recursion limit exceeded"));
+    if json {
+        return Some(REASON_JSON_TOO_DEEP);
+    }
+    let container = matches!(data.first(), Some(0x80..=0x9f | 0xdc..=0xdf));
+    let too_deep = container
+        && matches!(
+            rmpv::decode::read_value(&mut std::io::Cursor::new(data)),
+            Err(rmpv::decode::Error::DepthLimitExceeded)
+        );
+    too_deep.then_some(REASON_MESSAGEPACK_TOO_DEEP)
+}
+
+/// The release doors' text rules over strings a reader keeps apart (one
+/// array's items), read one per line: a phrase or key split over the items.
+pub(crate) fn release_joined_strings<S: std::borrow::Borrow<str>>(items: &[S]) -> bool {
+    joined_strings(items, Door::Release)
+}
+
+/// A secret split over an array's strings (a recovery phrase one word per
+/// item, a private key one line per item) is read whole, one item per line,
+/// before each item is read alone.
+fn joined_strings<S: std::borrow::Borrow<str>>(items: &[S], door: Door) -> bool {
+    items.len() > 1 && detect(&items.join("\n"), door).is_some()
+}
+
+/// [`release_joined_strings`] over a MessagePack array's items.
+pub(crate) fn release_joined_messagepack(items: &[rmpv::Value]) -> bool {
+    joined_messagepack(items, Door::Release)
+}
+
+/// [`release_joined_strings`] over a JSON array's items.
+pub(crate) fn release_joined_json(items: &[serde_json::Value]) -> bool {
+    joined_json(items, Door::Release)
+}
+
+/// The text items of a MessagePack array read joined. An item is read as text
+/// as it is read alone: a string, binary or extension bytes, and an array of
+/// byte values, which carry words as well as a string does.
+fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
+    let texts: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            rmpv::Value::String(text) => Some(String::from_utf8_lossy(text.as_bytes())),
+            rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
+                Some(String::from_utf8_lossy(bytes))
+            }
+            rmpv::Value::Array(values) => byte_values(values.iter().map(rmpv::Value::as_u64))
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into()),
+            _ => None,
+        })
+        .collect();
+    joined_strings(&texts, door)
+}
+
+/// [`joined_messagepack`] for JSON items: a string, and an array of byte
+/// values (MessagePack binary projects to one).
+fn joined_json(items: &[serde_json::Value], door: Door) -> bool {
+    let texts: Vec<std::borrow::Cow<'_, str>> = items
+        .iter()
+        .filter_map(|item| match item {
+            serde_json::Value::String(text) => Some(text.as_str().into()),
+            serde_json::Value::Array(values) => {
+                byte_values(values.iter().map(serde_json::Value::as_u64))
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into())
+            }
+            _ => None,
+        })
+        .collect();
+    joined_strings(&texts, door)
+}
+
+/// An array's items as bytes, when every one is a byte value.
+fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
+    items
+        .map(|item| item.and_then(|n| u8::try_from(n).ok()))
+        .collect()
+}
+
+/// The write door's text rules over text a stream scanner joined across a
+/// chunk edge, but for the recovery-phrase rule: a phrase's run of one-word
+/// segments crosses the line breaks that end such text, so a
+/// [`PhraseStream`] reads it over the whole stream instead. Like the batch
+/// door, it follows the owner's switch: its caller reads it.
+pub(crate) fn scan_write_seam(text: &str) -> Result<()> {
+    match detect_in(text, Door::Write, false) {
+        Some(reason) => Err(secret_scan_error(reason)),
+        None => Ok(()),
+    }
+}
+
+/// [`scan_write_seam`] for a segment a reader kept in parts, its middle
+/// dropped: the assignment rule over its first `=` or `:` alone (see
+/// `shapes::cut_assignment`), for the rules that match anywhere read the
+/// whole stream. Where the parts cannot tell, the door refuses.
+pub(crate) fn scan_cut_seam(
+    head: Option<&str>,
+    key: &str,
+    value: &str,
+    value_cut: bool,
+) -> Result<()> {
+    match shapes::cut_assignment(head, key, value, value_cut) {
+        Some(false) => Ok(()),
+        _ => Err(secret_scan_error("gate.secret_scan.sensitive_env")),
+    }
+}
+
+/// The write door's blocklist over a body read in parts, in order: it finds
+/// what one read of the whole finds, an entry an edge cut included.
+#[derive(Default)]
+pub(crate) struct BlocklistStream(Vec<u8>);
+
+impl BlocklistStream {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        self.0.extend_from_slice(bytes);
+        if shapes::blocklisted(&String::from_utf8_lossy(&self.0)) {
+            return Err(secret_scan_error("gate.secret_scan.blocklist"));
+        }
+        // What an entry the next part ends could start in.
+        let keep = shapes::blocklist_longest().saturating_sub(1);
+        self.0.drain(..self.0.len().saturating_sub(keep));
+        Ok(())
+    }
+}
+
+/// The write door's recovery-phrase rule over a body's text read in parts,
+/// in order: it finds what one read of the whole text finds.
+#[derive(Default)]
+pub(crate) struct PhraseStream(shapes::MnemonicStream);
+
+impl PhraseStream {
+    pub(crate) fn feed(&mut self, text: &str) -> Result<()> {
+        if self.0.feed(text) {
+            return Err(secret_scan_error(REASON_MNEMONIC));
+        }
+        Ok(())
+    }
+
+    /// Reads the end of the text.
+    pub(crate) fn finish(&mut self) -> Result<()> {
+        if self.0.finish() {
+            return Err(secret_scan_error(REASON_MNEMONIC));
+        }
+        Ok(())
+    }
+}
+
+/// The release doors' field rule, for a reader that finds fields the
+/// structural scans below do not walk (a binary map key, a repeated JSON key).
+pub(crate) fn release_credential_field(name: &str, nil: bool, text: Option<&str>) -> bool {
+    credential_field(name, nil, text, Door::Release)
+}
+
+/// A credential name holding anything but nil or a placeholder.
+fn credential_field(name: &str, nil: bool, text: Option<&str>, door: Door) -> bool {
+    shapes::sensitive_key(name)
+        && !nil
+        && !text.is_some_and(|text| shapes::field_placeholder(text, door))
 }
 
 /// Identifiers and records outside the batch door (refs, paths, telemetry
@@ -131,6 +354,20 @@ pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static st
 /// in keys, indexes and receipts that a later mask cannot reach.
 pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     let _secrets_nulled = scan_payload(value.as_bytes())?;
+    Ok(())
+}
+
+/// Both doors' text rules and no structured reading, for text a caller joined
+/// from separate strings: the join is no record a field walk could read.
+pub(crate) fn scan_joined_text(text: &str) -> Option<&'static str> {
+    detect(text, Door::Write).or_else(|| detect(text, Door::Release))
+}
+
+/// The batch write door's scan of one payload, for a planner that must say
+/// what that door would refuse without staging a write. It does not read the
+/// owner's switch; the caller does.
+pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
+    let _secrets_nulled = scan_payload(data)?;
     Ok(())
 }
 
@@ -156,18 +393,14 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     if let Some(reason) = detect(&haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
-    let mut cursor = std::io::Cursor::new(data);
-    let structured = if let Ok(mut value) = serde_json::from_slice(data) {
-        sanitize_json(&mut value, false, Door::Write)
-    } else if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
-        && cursor.position() == data.len() as u64
-    {
-        sanitize_messagepack(&mut value, false, Door::Write)
-    } else {
-        false
-    };
-    if structured {
-        return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+    // Every member is read, a repeated JSON key and every map key included,
+    // and a framed carrier's body as a body too.
+    for body in std::iter::once(data).chain(framed_payload(data)) {
+        if read_members(body)?
+            .is_some_and(|mut value| sanitize_messagepack(&mut value, false, Door::Write))
+        {
+            return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+        }
     }
     Ok(secrets_nulled)
 }
@@ -195,6 +428,11 @@ fn has_redaction_marker(haystack: &str) -> bool {
 }
 
 fn detect(haystack: &str, door: Door) -> Option<&'static str> {
+    detect_in(haystack, door, true)
+}
+
+/// [`detect`], with the recovery-phrase rule only when `phrases`.
+fn detect_in(haystack: &str, door: Door, phrases: bool) -> Option<&'static str> {
     let private_key = match door {
         Door::Write => shapes::private_key_block(haystack),
         Door::Release => shapes::private_key_header(haystack),
@@ -206,8 +444,8 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
     if shapes::blocklisted(haystack) {
         return Some("gate.secret_scan.blocklist");
     }
-    if shapes::mnemonic(haystack) {
-        return Some("gate.secret_scan.mnemonic");
+    if phrases && shapes::mnemonic(haystack) {
+        return Some(REASON_MNEMONIC);
     }
     // Preserve precise provider reason codes before the generic env class.
     let provider = haystack
@@ -222,7 +460,32 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
 /// Returns whether any bytes were removed. `null` is the export representation;
 /// the serving representation is the fixed, non-authoritative redaction marker.
 pub(crate) fn sanitize_credentials(value: &mut serde_json::Value, null: bool) -> bool {
-    sanitize_json(value, null, Door::Release)
+    sanitize_json_whole(value, null, release_reads_whole_json)
+}
+
+/// [`sanitize_credentials`] over JSON whose stored encoding was read as stored
+/// (a MessagePack body read at its own widths before its projection, or a body
+/// stored as JSON): its whole read takes its text, not a MessagePack form it
+/// never had, where a wide float read narrowed is other bytes.
+pub(crate) fn sanitize_read_credentials(value: &mut serde_json::Value, null: bool) -> bool {
+    sanitize_json_whole(value, null, release_reads_json_text)
+}
+
+fn sanitize_json_whole(
+    value: &mut serde_json::Value,
+    null: bool,
+    reads_whole: fn(&serde_json::Value) -> bool,
+) -> bool {
+    let changed = sanitize_json(value, null, Door::Release);
+    if reads_whole(value) {
+        *value = if null {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String("[redacted]".into())
+        };
+        return true;
+    }
+    changed
 }
 
 fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool {
@@ -242,35 +505,41 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
         Value::Array(values) => {
             // MessagePack binary values project to JSON byte arrays. They must
             // not become an alternate encoding around recursive redaction.
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
+            let bytes = byte_values(values.iter().map(Value::as_u64));
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))
+                || joined_json(values, door)
             {
                 *value = replacement();
-                true
-            } else {
-                values.iter_mut().fold(false, |changed, value| {
-                    sanitize_json(value, null, door) | changed
-                })
+                return true;
             }
-        }
-        Value::Object(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = shapes::sensitive_key(key)
-                && !value.is_null()
-                && !value
-                    .as_str()
-                    .is_some_and(|text| shapes::field_placeholder(text, door));
-            if sensitive {
-                *value = replacement();
-                true
-            } else {
+            let changed = values.iter_mut().fold(false, |changed, value| {
                 sanitize_json(value, null, door) | changed
+            });
+            // Read again once items are nulled: the text left is what a second
+            // pass reads joined, so the array is its own fixed point.
+            if changed && joined_json(values, door) {
+                *value = replacement();
             }
-        }),
+            changed
+        }
+        Value::Object(fields) => {
+            // A JSON key is text a reader shows; one shaped like a credential
+            // goes with its member, since a key cannot be nulled.
+            let before = fields.len();
+            fields.retain(|key, _| detect(key, door).is_none());
+            let dropped = fields.len() != before;
+            fields.iter_mut().fold(dropped, |changed, (key, value)| {
+                let sensitive = credential_field(key, value.is_null(), value.as_str(), door);
+                if sensitive {
+                    *value = replacement();
+                    true
+                } else {
+                    sanitize_json(value, null, door) | changed
+                }
+            })
+        }
         _ => false,
     }
 }
@@ -278,7 +547,24 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
 /// Scan MessagePack before any lossy JSON projection. Safe binary and extension
 /// values retain their original type on raw transports.
 pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bool) -> bool {
-    sanitize_messagepack(value, null, Door::Release)
+    sanitize_messagepack_whole(value, null, release_reads_whole)
+}
+
+fn sanitize_messagepack_whole(
+    value: &mut rmpv::Value,
+    null: bool,
+    reads_whole: impl Fn(&rmpv::Value) -> bool,
+) -> bool {
+    let changed = sanitize_messagepack(value, null, Door::Release);
+    if reads_whole(value) {
+        *value = if null {
+            rmpv::Value::Nil
+        } else {
+            rmpv::Value::from("[redacted]")
+        };
+        return true;
+    }
+    changed
 }
 
 fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool {
@@ -300,37 +586,42 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             true
         }
         Value::Array(values) => {
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
+            let bytes = byte_values(values.iter().map(Value::as_u64));
             if bytes
                 .as_ref()
                 .is_some_and(|bytes| detect_bytes(bytes, door))
+                || joined_messagepack(values, door)
             {
                 *value = replacement();
-                true
-            } else {
-                values.iter_mut().fold(false, |changed, value| {
-                    sanitize_messagepack(value, null, door) | changed
-                })
+                return true;
             }
-        }
-        Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = key.as_str().is_some_and(shapes::sensitive_key)
-                && !value.is_nil()
-                && !value
-                    .as_str()
-                    .is_some_and(|text| shapes::field_placeholder(text, door));
-            let key_changed = sanitize_messagepack(key, null, door);
-            let value_changed = if sensitive {
+            let changed = values.iter_mut().fold(false, |changed, value| {
+                sanitize_messagepack(value, null, door) | changed
+            });
+            // Read again once items are nulled, as the JSON walk does.
+            if changed && joined_messagepack(values, door) {
                 *value = replacement();
-                true
-            } else {
-                sanitize_messagepack(value, null, door)
-            };
-            changed | key_changed | value_changed
-        }),
+            }
+            changed
+        }
+        Value::Map(fields) => {
+            // A key shaped like a credential goes with its member, as a JSON
+            // object's does: a marker in its place could repeat a real key.
+            let before = fields.len();
+            fields.retain(|(key, _)| !sanitize_messagepack(&mut key.clone(), null, door));
+            let dropped = fields.len() != before;
+            fields.iter_mut().fold(dropped, |changed, (key, value)| {
+                let sensitive = key
+                    .as_str()
+                    .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
+                if sensitive {
+                    *value = replacement();
+                    true
+                } else {
+                    sanitize_messagepack(value, null, door) | changed
+                }
+            })
+        }
         _ => false,
     }
 }

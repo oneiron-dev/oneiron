@@ -102,6 +102,10 @@ side_tables! {
     DREAMER_PROACTIVITY_CONFIRMED: VaultMeta b"settings:dreamer:proactivity:confirmed:v1:" Raw;
     /// Owner-confirmed presentation row. Key: singleton.
     DREAMER_PROACTIVITY_PRESENTATION: VaultMeta b"settings:dreamer:proactivity:presentation:v1" LegacyJson;
+    /// Owner-set projector surprise policy. Key: ().
+    DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
+    /// Owner-set continuous sieve policy. Key: ().
+    DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
@@ -127,9 +131,6 @@ side_tables! {
     SKILL_OPTIMIZE_MIN_OUTCOMES: VaultMeta b"settings:skill_optimize:v1:min_outcomes" Raw;
     /// Persisted activation-risk threshold dial for skill-scan consent escalation. Key: ().
     SKILL_SCAN_ACTIVATION_RISK_THRESHOLD: VaultMeta b"settings:skill_scan:v1:activation_risk_threshold" Raw;
-    /// Flags a WORLD as device-only: its rows, claims and NOTEs never leave this device. Key: hex32
-    /// (world id).
-    DEVICE_ONLY_WORLD: VaultMeta b"settings:sync:v1:device_only_world:" Raw;
     /// Local, engine-written provenance and monotonic revocation latch for one admitted brief share
     /// (issuer, gate decision id, effect-target digest, revocation state), proving the row was
     /// created through the share door and not a generic grant write. Key: id16.
@@ -279,6 +280,10 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
+    /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
+    /// prefix included.
+    SKILL_RELIABILITY_AMENDED: VaultMeta b"skill_reliability:amended:v1:" Raw;
     /// Lease-bound callable invocation witness of one caller step (MessagePack map: executor,
     /// version, success, result digest). Key: id16 (skill) + u16be length + receipt string +
     /// u64be step seq.
@@ -309,6 +314,18 @@ side_tables! {
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
+    /// Which turns' saved tag sets name one entity, real or provisional: derived, local, never
+    /// synced. Empty marker. Key: entity id16 + turn id16.
+    TAGGING_MENTION_REF: VaultMeta b"tagging:mention_ref:v1:" Raw;
+    /// A provisional entity the tagger's save minted on an identity-key miss: local like the tags,
+    /// never synced, until it is confirmed into a real entity. Key: id16.
+    TAGGING_PROVISIONAL: VaultMeta b"tagging:provisional:v1:" Named;
+    /// Local identity-hint index over the provisional entities, keyed as the engine's identity
+    /// index is. Empty marker. Key: kind byte + blake3(hint) + id16.
+    TAGGING_PROVISIONAL_HINT: VaultMeta b"tagging:provisional_hint:v1:" Raw;
+    /// One turn's saved tag set under its derivation envelope: unconfirmed mentions, the turn's
+    /// mood and merge evidence. Derived, local, never synced. Key: turn id16.
+    TAGGING_TAG_SET: VaultMeta b"tagging:tags:v1:" Named;
     /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
     TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
     /// Local ed25519 seed (32 bytes) that signs one ask group's option-link words. Key: id16 (group).
@@ -337,8 +354,13 @@ side_tables! {
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
     TASK_BY_OWNER_FORWARD: VaultMeta b"tasks.by_owner.v1/" Raw;
+    /// Marker that the one-time consult party fact migration has run. Key: ().
+    TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
+    /// Presence marker: an authority fact of this task was refused at admission because its id
+    /// was deleted here first, so the task's facts read as a refusal. Key: id16 (task).
+    TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
     /// Owner-authority fact to forward index key. Key: id16.
@@ -372,6 +394,12 @@ side_tables! {
     /// Legacy per-entity VAD annotation metadata row (entity_type byte then subject id); no current
     /// write path, only read and deleted for headerless-delete cleanup. Key: u8 + id16.
     AFFECT_VAD_ANNOTATION_META: VaultMeta b"vad_ann:" Named;
+    /// Archives a vault that shares key custody with another: the image a restore in its place
+    /// set aside, and the replacement until it is in that place. An archived vault's handles
+    /// refuse every write until an owner activates it as a side vault. Runtime, never
+    /// checkpointed. Value: the byte 1 (archived wherever it is), or the byte 2 and an encoded
+    /// canonical root (archived unless it is at that root). Key: ().
+    VAULT_ARCHIVED_BY_RESTORE: VaultMeta b"vault_archived:v1" Raw;
     /// Marks a completed queue-record attempt as archived, pinned to the exact bytes archived. Key:
     /// id16 (AttemptId).
     VAULT_CLEANUP_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.attempt_archive.v1/" Raw;

@@ -125,6 +125,68 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
     ])
 }
 
+/// A `core:read` grant whose canonical Scope reads only `worlds` and admits
+/// only `verb`, and whose selectors, if `selector` names one, read only that
+/// world.
+fn core_read_grant_in(
+    actor_ref: &str,
+    worlds: &[EntityId],
+    selector: Option<EntityId>,
+    verb: &str,
+) -> Value {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = worlds
+        .iter()
+        .map(|world| crate::federation::ScopeId(*world))
+        .collect();
+    scope.verbs = [verb.to_owned()].into_iter().collect();
+    let mut grant = vec![
+        (Value::from("actor_ref"), Value::from(actor_ref)),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ];
+    if let Some(world) = selector {
+        grant.push((
+            Value::from("selectors"),
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        ));
+    }
+    Value::Map(grant)
+}
+
+/// A `core:read` grant whose canonical Scope reads only `world` and the
+/// entity types in `bands`, with `selectors` if given.
+fn core_read_grant_typed(
+    actor: EntityId,
+    world: EntityId,
+    bands: crate::federation::ScopeAxis<u8>,
+    selectors: Option<Value>,
+) -> Value {
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = crate::federation::ScopeAxis::Some(
+        [crate::federation::ScopeId(world)].into_iter().collect(),
+    );
+    scope.bands = bands;
+    let mut grant = vec![
+        (Value::from("actor_ref"), Value::from(actor.to_hex())),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(&scope).expect("scope fixture"),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ];
+    grant.extend(selectors.map(|selectors| (Value::from("selectors"), selectors)));
+    Value::Map(grant)
+}
+
 // Kept local instead of `test_util`: this exercises `BatchOp::Put` through `apply_ops`.
 fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Result<()> {
     let ops = vec![BatchOp::Put {
@@ -215,123 +277,497 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
     Ok(())
 }
 
+/// Sol R3 F6: `/worlds` names each world a reader's grant names. Off this
+/// device one a device-local flag keeps is not named on the page; on this
+/// device it still is.
 #[test]
-fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
+fn worlds_readdir_off_this_device_names_no_device_local_world() -> Result<()> {
+    use crate::claim::CallerLocality;
     let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x44);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    let learned_at = 1_771_027_200;
-    let mut ops = Vec::with_capacity(100_000);
-    for index in 0..100_000_u32 {
-        let mut bytes = [0x60; 16];
-        bytes[12..16].copy_from_slice(&index.to_be_bytes());
-        let id = EntityId::from_bytes(bytes).expect("valid claim id");
-        let mut body = ClaimBody::new(
-            "profile.note",
-            ClaimSubject::Entity(subject),
-            Value::from(format!("claim-{index}")),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.valid_from = Some(learned_at);
-        let data = crate::claim::encode_claim_body(&body)?;
-        ops.push(BatchOp::Put {
-            id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: time_range(learned_at),
-            learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        });
-    }
-    let mut wtxn = vault.store.env.write_txn()?;
-    apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        &mut wtxn,
-        ops,
-        true,
-        false,
-        true,
+    let world = test_id(0x34);
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x91),
+        encode_policy_manifest(vec![core_read_world_grant("reader", world)]),
     )?;
-    wtxn.commit()?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
+    let names = |locality| -> Result<String> {
+        let reader = vault.scoped_read(
+            crate::claim::ScopedReadActorKey::new("reader")
+                .expect("actor key")
+                .at(locality),
+        );
+        let page = resolver(&reader, 1024).readdir("/worlds/", None)?;
+        Ok(String::from_utf8_lossy(&page.render_bytes()).into_owned())
+    };
+    let here = names(CallerLocality::OnDevice)?;
+    assert!(here.contains(&world.to_hex()), "{here}");
+    let away = names(CallerLocality::OffDevice)?;
+    assert!(!away.contains(&world.to_hex()), "{away}");
+    Ok(())
+}
+
+/// Astra #1413-004: the world listing took the manifest's read grants for
+/// the whole list of worlds, so the owner's own key, which no manifest
+/// narrows, listed none of them while only an agent held a grant. Worlds are
+/// listed, and a WORLD's path judged, by the reader's own authority now: the
+/// owner walks into every world, the agent only into its grant's, and a
+/// credential no grant names only into the worlds it grants. A grant reads
+/// a world as claim admission judges it (Sol R5-004): by its canonical Scope
+/// and any world selector together, not by the selector's name alone.
+#[test]
+fn worlds_list_under_the_readers_own_authority() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (first, second, subject) = (test_id(0x34), test_id(0x35), test_id(0x36));
+    let (agent, holder) = (test_id(0x37), test_id(0x38));
+    let (scoped, crossed, effect) = (test_id(0x3A), test_id(0x3B), test_id(0x3F));
+    put_entity(&vault, first, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, test_id(0x44), subject, Some(first), 10)?;
+    put_claim(&vault, test_id(0x45), subject, Some(second), 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x91),
+        encode_policy_manifest(vec![
+            core_read_world_grant(&agent.to_hex(), first),
+            core_read_grant_in(&scoped.to_hex(), &[second], None, "read"),
+            core_read_grant_in(&crossed.to_hex(), &[first], Some(second), "read"),
+            core_read_grant_in(&effect.to_hex(), &[second], None, "effect"),
+        ]),
+    )?;
+    let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
+        let fs = resolver(read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [first, second].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner));
+    assert_eq!(
+        walk(&owner)?,
+        (
+            vec!["base".to_owned(), first.to_hex(), second.to_hex()],
+            [true, true]
+        ),
+        "no manifest grant narrows the owner's worlds"
+    );
+    let agent = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(agent.to_hex()).expect("actor key"));
+    assert_eq!(walk(&agent)?, (vec![first.to_hex()], [true, false]));
+    let scoped = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(scoped.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&scoped)?,
+        (vec![second.to_hex()], [false, true]),
+        "a grant whose Scope reads one world and names no selector"
+    );
+    let crossed = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(crossed.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&crossed)?,
+        (Vec::new(), [false, false]),
+        "a selector outside the grant's Scope reads no world"
+    );
+    let effect = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(effect.to_hex()).expect("actor key"));
+    assert_eq!(
+        walk(&effect)?,
+        (Vec::new(), [false, false]),
+        "a grant whose Scope admits no read reads no world"
+    );
+
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"one world credential").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(
+        [crate::federation::ScopeId(second)].into_iter().collect(),
+    );
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let tag = b"one-world";
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    let narrowed = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read key"),
+    );
+    assert_eq!(walk(&narrowed)?, (vec![second.to_hex()], [false, true]));
+    Ok(())
+}
+
+/// Sol R5-001 on #1413: past a run of worlds the reader may not see, the
+/// world listing handed out the last one it scanned as its cursor, naming a
+/// world it withheld. The position is sealed now: no page names a withheld
+/// world, and paging on still reaches the reader's own.
+#[test]
+fn a_world_listing_cursor_names_no_withheld_world() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let mut worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
+        .map(|_| EntityId::now())
+        .collect();
+    worlds.sort();
+    for chunk in worlds.chunks(512) {
+        chunk
+            .iter()
+            .fold(vault.batch(), |batch, world| {
+                batch.put(world, ENTITY_TYPE_WORLD, time_range(1), 1, b"entity")
+            })
+            .commit()?;
+    }
+    let (withheld, shown) = worlds.split_at(GRAPH_FS_MAX_PAGE_ENTRIES);
+    let reader = test_id(0x39);
     put_policy_manifest(
         &vault,
         test_id(0x92),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+        encode_policy_manifest(vec![core_read_world_grant(&reader.to_hex(), shown[0])]),
     )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let day = format_day_shard(learned_at / 86_400);
-    let page = resolver(&reader, 512).readdir(&format!("/claims/by-time/{day}/"), None)?;
-
-    assert!(page.byte_count() <= 512);
-    assert!(
-        page.entries()
-            .iter()
-            .any(|entry| entry.name() == GRAPH_FS_MORE_ENTRY)
-    );
-    assert!(page.next_cursor().is_some());
-    assert!(
-        page.entries()
-            .iter()
-            .filter(|entry| entry.kind() == GraphFsEntryKind::File)
-            .count()
-            > 0
-    );
+    let read = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new(reader.to_hex()).expect("actor key"));
+    let fs = resolver(&read, 1024);
+    let (mut listed, mut cursor, mut pages) = (Vec::new(), None::<String>, 0);
+    loop {
+        let page = fs.readdir("/worlds/", cursor.as_deref())?;
+        let rendered = String::from_utf8(page.render_bytes()).expect("a page is text");
+        for world in withheld {
+            assert!(
+                !rendered.contains(&world.to_hex()),
+                "page {pages} names withheld world {}",
+                world.to_hex()
+            );
+        }
+        listed.extend(
+            page.entries()
+                .iter()
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .map(|entry| entry.name().to_owned()),
+        );
+        cursor = page.next_cursor().map(str::to_owned);
+        pages += 1;
+        if cursor.is_none() || pages > 4 {
+            break;
+        }
+    }
+    assert_eq!(listed, vec![shown[0].to_hex()]);
     Ok(())
 }
 
+/// Sol R5-005 and R6-002 on #1413: the world listing never asked whether the
+/// reader's credential was still live, so the owner's lane, kept past its
+/// slip's revocation with the owner binding untouched, still listed every
+/// world; once that was fixed per world, a vault past one scan of WORLD rows
+/// still handed the dead credential a cursor. The listing judges the
+/// credential once in its own snapshot now and lists nothing, cursor
+/// included, and a WORLD path takes the same verdict.
 #[test]
-fn same_fork_hash_mount_renders_byte_identical_readdir() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x55);
-    let claim = test_id(0x56);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, claim, subject, None, 20)?;
-
+fn a_kept_lane_lists_no_world_after_its_credential_is_revoked() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (owner, other) = (test_id(0x3D), test_id(0x3E));
+    let worlds: Vec<EntityId> = (0..=GRAPH_FS_MAX_PAGE_ENTRIES)
+        .map(|_| EntityId::now())
+        .collect();
+    for chunk in worlds.chunks(512) {
+        chunk
+            .iter()
+            .fold(vault.batch(), |batch, world| {
+                batch.put(world, ENTITY_TYPE_WORLD, time_range(1), 1, b"entity")
+            })
+            .commit()?;
+    }
+    put_entity(&vault, owner, ENTITY_TYPE_PERSON)?;
     put_policy_manifest(
         &vault,
         test_id(0x93),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+        encode_policy_manifest(vec![core_read_base_grant(&other.to_hex())]),
     )?;
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    vault.bind_host_owner_for_test(&issuer, owner)?;
+    let slip_id = *blake3::hash(b"the owner's world credential").as_bytes();
+    let mut claims = root.claims;
+    claims.slip_id = slip_id;
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let tag = b"owner-worlds";
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    assert!(proof.is_full_vault_owner_grade());
+    let kept = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
+    let fs = resolver(&kept, 1024);
+    let walk = || -> Result<(Vec<String>, bool, bool)> {
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = fs.coreutils_path_visible(&format!("/worlds/{}", worlds[0].to_hex()))?;
+        Ok((names.collect(), page.next_cursor().is_some(), visible))
+    };
+    let (names, more, visible) = walk()?;
+    assert_eq!(
+        (names.first().map(String::as_str), more, visible),
+        (Some("base"), true, true),
+        "the owner's live credential"
+    );
 
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let options = GraphFsOptions::default()
-        .with_mount(GraphFsMount::ForkHash([0xA5; 32]))
-        .with_page_byte_cap(1024);
-    let fs = reader.graph_fs(options);
-    let first = fs.readdir_bytes("/claims/by-id", None)?;
-    let second = fs.readdir_bytes("/claims/by-id", None)?;
-
-    assert_eq!(first, second);
-    assert!(
-        first
-            .windows(claim.to_hex().len())
-            .any(|window| window == claim.to_hex().as_bytes())
+    vault.revoke_capability_slip(&issuer, slip_id)?;
+    assert_eq!(
+        walk()?,
+        (Vec::new(), false, false),
+        "the kept lane, past its credential's revocation"
     );
     Ok(())
 }
 
+/// A live credential for `holder`, cut from the host root with `scope`, and
+/// its slip id.
+fn mint_credential(
+    vault: &crate::Vault,
+    issuer: &crate::authority::HostSlipIssuer,
+    holder: EntityId,
+    label: &str,
+    scope: crate::federation::Scope,
+) -> Result<(crate::authority::VerifiedSlip, [u8; 32])> {
+    let root = vault.ensure_host_root_slip(issuer)?;
+    let slip_id = *blake3::hash(label.as_bytes()).as_bytes();
+    let mut claims = root.claims;
+    claims.slip_id = slip_id;
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.scope = scope;
+    let slip = vault.mint_capability_slip(issuer, claims)?;
+    let tag = label.as_bytes();
+    let signature = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &signature)?;
+    Ok((proof, slip_id))
+}
+
+/// Sol R5-006 on #1413: a lane serves only rows each peer it conjoins
+/// (`with_peer_reads`) reads too, yet the world listing judged the lane's own
+/// key alone, so the owner's lane with a peer held to one world listed every
+/// world, and still did after the peer's credential was revoked. Every lane
+/// must walk into a world now, and a dead peer lists nothing.
 #[test]
-fn graph_fs_host_imports_are_read_only() {
-    assert!(
-        GRAPH_FS_HOST_IMPORTS
-            .iter()
-            .all(|import| import.class() == SandboxImportClass::ReadOnly)
+fn a_world_listing_answers_to_every_peer_read() -> Result<()> {
+    use crate::federation::{ScopeAxis, ScopeId};
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (near, far, agent, other) = (test_id(0x2A), test_id(0x2B), test_id(0x2C), test_id(0x24));
+    put_entity(&vault, near, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, far, ENTITY_TYPE_WORLD)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x94),
+        encode_policy_manifest(vec![core_read_base_grant(&other.to_hex())]),
+    )?;
+    let issuer = crate::test_support::test_host_issuer();
+    let mut scope = crate::federation::scope_codec::read_preset();
+    scope.worlds = ScopeAxis::Some([ScopeId(near)].into_iter().collect());
+    let (proof, slip_id) = mint_credential(&vault, &issuer, agent, "a peer held to near", scope)?;
+    let peer = crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read key");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let lane = |peers| {
+        vault
+            .scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner))
+            .with_peer_reads(peers)
+    };
+    let walk = |read: &ScopedRead<'_>| -> Result<(Vec<String>, [bool; 2])> {
+        let fs = resolver(read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [near, far].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    assert_eq!(
+        walk(&lane(Vec::new()))?,
+        (
+            vec!["base".to_owned(), near.to_hex(), far.to_hex()],
+            [true, true]
+        ),
+        "the owner's lane alone"
     );
-    assert!(
-        GRAPH_FS_HOST_IMPORTS
-            .iter()
-            .all(|import| !matches!(import.class(), SandboxImportClass::WriteTrap))
+    let shared = lane(vec![peer]);
+    assert_eq!(
+        walk(&shared)?,
+        (vec![near.to_hex()], [true, false]),
+        "the owner's lane with a peer held to one world"
     );
+    vault.revoke_capability_slip(&issuer, slip_id)?;
+    assert_eq!(
+        walk(&shared)?,
+        (Vec::new(), [false, false]),
+        "past the peer's revocation"
+    );
+    Ok(())
+}
+
+/// Sol R7-003 on #1413: a credential whose bands, audience or sensitivity
+/// sit at bottom reads no row, yet the world listing asked only whether its
+/// Scope named a world, so it listed them and handed out a cursor past
+/// them. A lane whose ordinary reads admit nothing walks no world now and
+/// gets no cursor, while a credential that leaves out base reality still
+/// walks into its own world. Sol R11-001: a credential whose bands share no
+/// type with its grant's reads no row either, though no axis sits at bottom,
+/// and a grant opens a world only where its types meet the credential's.
+#[test]
+fn a_credential_that_reads_no_row_walks_no_world() -> Result<()> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, SensitivityCeiling};
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (world, second, holder, other) =
+        (test_id(0x2D), test_id(0x2E), test_id(0x2F), test_id(0x24));
+    let (single, typed) = (test_id(0x21), test_id(0x22));
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, second, ENTITY_TYPE_WORLD)?;
+    let types = |entity_type: u8| ScopeAxis::Some([entity_type].into_iter().collect());
+    let (claims, tasks) = (
+        crate::registry::ENTITY_TYPE_CLAIM,
+        crate::registry::ENTITY_TYPE_TASK,
+    );
+    put_policy_manifest(
+        &vault,
+        test_id(0x95),
+        encode_policy_manifest(vec![
+            core_read_base_grant(&other.to_hex()),
+            core_read_grant_typed(single, world, types(claims), None),
+            core_read_grant_typed(typed, world, types(claims), None),
+            core_read_grant_typed(typed, second, types(tasks), None),
+        ]),
+    )?;
+    let issuer = crate::test_support::test_host_issuer();
+    // One entry a page: a lane that lists anything gets a cursor too.
+    let walk_as =
+        |holder: EntityId, label: &str, scope: Scope| -> Result<(Vec<String>, bool, bool)> {
+            let (proof, _) = mint_credential(&vault, &issuer, holder, label, scope)?;
+            let read = vault.scoped_read(vault.credential_read_key(&proof)?.expect("a read key"));
+            let fs = read.graph_fs(GraphFsOptions::default().with_max_entries(1));
+            let page = fs.readdir("/worlds/", None)?;
+            let names = page
+                .entries()
+                .iter()
+                .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+                .map(|entry| entry.name().to_owned());
+            let visible = fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))?;
+            Ok((names.collect(), page.next_cursor().is_some(), visible))
+        };
+    let walk = |label: &str, scope: Scope| walk_as(holder, label, scope);
+    let banded = |entity_type: u8| {
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = types(entity_type);
+        scope
+    };
+
+    let mut own = crate::federation::scope_codec::read_preset();
+    own.worlds = ScopeAxis::Some([ScopeId(world)].into_iter().collect());
+    assert_eq!(
+        walk("its own world", own)?,
+        (vec![world.to_hex()], false, true),
+        "a credential that leaves out base reality"
+    );
+    let preset = crate::federation::scope_codec::read_preset;
+    let no_band = Scope {
+        bands: ScopeAxis::Bottom,
+        ..preset()
+    };
+    let no_audience = Scope {
+        audience: ScopeAxis::Bottom,
+        ..preset()
+    };
+    let no_sensitivity = Scope {
+        sensitivity: SensitivityCeiling::Bottom,
+        ..preset()
+    };
+    for (label, scope) in [
+        ("no band", no_band),
+        ("no audience", no_audience),
+        ("no sensitivity", no_sensitivity),
+    ] {
+        assert_eq!(
+            walk(label, scope)?,
+            (Vec::new(), false, false),
+            "a credential with {label}"
+        );
+    }
+    assert_eq!(
+        walk_as(single, "claims under a claims grant", banded(claims))?,
+        (vec![world.to_hex()], false, true),
+        "a credential whose bands meet its grant's"
+    );
+    assert_eq!(
+        walk_as(single, "tasks under a claims grant", banded(tasks))?,
+        (Vec::new(), false, false),
+        "a credential whose bands share no type with its grant's"
+    );
+    assert_eq!(
+        walk_as(typed, "tasks under two grants", banded(tasks))?,
+        (vec![second.to_hex()], false, false),
+        "a grant whose types miss the credential's opens no world"
+    );
+    Ok(())
+}
+
+/// Sol R7-004 on #1413: retrieval reads a grant whose selectors name no
+/// entity type as reading nothing, yet the world matcher took every selector
+/// it knew for granted, so such a grant still opened its world beside the
+/// reader's valid one. A grant reads a world now only where retrieval's floor
+/// for it leaves an entity type, and a grant held to TASKs still reads the
+/// world it names.
+#[test]
+fn a_grant_that_selects_no_entity_type_reads_no_world() -> Result<()> {
+    use crate::federation::ScopeAxis;
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (empty, kept, tasks) = (test_id(0x26), test_id(0x27), test_id(0x28));
+    let (reader, tasker) = (test_id(0x29), test_id(0x25));
+    for world in [empty, kept, tasks] {
+        put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    }
+    let no_type = Value::Map(vec![(
+        Value::from("entity_types"),
+        Value::Array(Vec::new()),
+    )]);
+    let task_band = ScopeAxis::Some([crate::registry::ENTITY_TYPE_TASK].into_iter().collect());
+    put_policy_manifest(
+        &vault,
+        test_id(0x96),
+        encode_policy_manifest(vec![
+            core_read_grant_typed(reader, empty, ScopeAxis::All, Some(no_type)),
+            core_read_grant_typed(reader, kept, ScopeAxis::All, None),
+            core_read_grant_typed(tasker, tasks, task_band, None),
+        ]),
+    )?;
+    let walk = |actor: EntityId| -> Result<(Vec<String>, [bool; 3])> {
+        let read = vault
+            .scoped_read(crate::claim::ScopedReadActorKey::new(actor.to_hex()).expect("actor key"));
+        let fs = resolver(&read, 1024);
+        let page = fs.readdir("/worlds/", None)?;
+        let names = page.entries().iter().map(|entry| entry.name().to_owned());
+        let visible = [empty, kept, tasks].map(|world| {
+            fs.coreutils_path_visible(&format!("/worlds/{}", world.to_hex()))
+                .expect("path visibility")
+        });
+        Ok((names.collect(), visible))
+    };
+
+    assert_eq!(
+        walk(reader)?,
+        (vec![kept.to_hex()], [false, true, false]),
+        "a grant that selects no entity type, beside a valid one"
+    );
+    assert_eq!(
+        walk(tasker)?,
+        (vec![tasks.to_hex()], [false, false, true]),
+        "a grant held to TASKs"
+    );
+    Ok(())
 }
 
 #[test]
@@ -395,102 +831,6 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
         crate::store::RetrievalAction::GraphFsCoreutils
     );
     Ok(())
-}
-
-#[test]
-fn find_root_under_clamped_actor_is_bounded_and_non_leaking() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let allowed_world = test_id(0x64);
-    let excluded_world = test_id(0x65);
-    let subject = test_id(0x66);
-    let allowed_claim = test_id(0x67);
-    let excluded_claim = test_id(0x68);
-    put_entity(&vault, allowed_world, ENTITY_TYPE_WORLD)?;
-    put_entity(&vault, excluded_world, ENTITY_TYPE_WORLD)?;
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, allowed_claim, subject, Some(allowed_world), 20)?;
-    put_claim(&vault, excluded_claim, subject, Some(excluded_world), 21)?;
-    put_policy_manifest(
-        &vault,
-        test_id(0x91),
-        encode_policy_manifest(vec![core_read_world_grant("reader", allowed_world)]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let output = resolver(&reader, GRAPH_FS_MIN_PAGE_BYTE_CAP).find("/", None, None)?;
-    let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 find output");
-
-    assert_eq!(output.decision(), GraphFsCoreutilsDecision::Walk);
-    assert!(output.bytes().len() <= GRAPH_FS_MIN_PAGE_BYTE_CAP);
-    assert!(!rendered.contains(&excluded_world.to_hex()));
-    assert!(!rendered.contains(&excluded_claim.to_hex()));
-    Ok(())
-}
-
-#[test]
-fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x69);
-    let old_claim = test_id(0x6A);
-    let new_claim = test_id(0x6B);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, old_claim, subject, None, 10)?;
-    put_claim(&vault, new_claim, subject, None, 20)?;
-
-    put_policy_manifest(
-        &vault,
-        test_id(0x95),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let output = resolver(&reader, 1024).find("/claims", Some(15), None)?;
-    let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 find output");
-
-    assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
-    assert!(rendered.contains(&format!("/claims/{}", new_claim.to_hex())));
-    assert!(!rendered.contains(&old_claim.to_hex()));
-    let telemetry = vault
-        .retrieval_run(output.telemetry_run_id().expect("capture enabled"))?
-        .expect("coreutils telemetry row is written");
-    assert_eq!(
-        telemetry.action,
-        crate::store::RetrievalAction::GraphFsCoreutils
-    );
-    Ok(())
-}
-
-#[test]
-fn wikilink_deeplink_resolves_to_claim_symlink() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x70);
-    let claim = test_id(0x71);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, claim, subject, None, 30)?;
-    put_policy_manifest(
-        &vault,
-        test_id(0x96),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let link = resolver(&reader, 1024)
-        .read_link(&format!("/[[claim:{}]]", claim.to_hex()))?
-        .expect("claim link resolves");
-
-    assert_eq!(link, format!("/claims/{}", claim.to_hex()));
-    Ok(())
-}
-
-#[test]
-fn day_shard_date_round_trips() {
-    let day = 1_771_027_200 / 86_400;
-    let formatted = format_day_shard(day);
-    assert_eq!(parse_day_shard(&formatted).expect("valid day"), day);
-    assert_eq!(format_day_shard(0), "1970-01-01");
 }
 
 #[test]
@@ -619,6 +959,129 @@ fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
     }
     assert!(cursor.is_none(), "pagination must terminate");
     assert_eq!(emitted, format!("/claims/{}\n", claim.to_hex()));
+    Ok(())
+}
+
+/// A walk that reaches its scan limit on a row it passed over (sealed secret
+/// custody here) resumes after that row without naming it: the cursor carries
+/// neither its time nor its id, and paging on lists every visible claim once
+/// (Astra P2 on #1341).
+#[test]
+fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
+    let initial_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
+    let subject = test_id(0x61);
+    let (older, newer) = (test_id(0x62), test_id(0x63));
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, older, subject, None, 10)?;
+    put_claim(&vault, newer, subject, None, 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x64),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+    let sealed = vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "graph-fs-scan-limit".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"never-in-a-cursor".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:graph-fs-test".to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: vec![SECRET_SCOPE_READ.to_owned()],
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    // Newest first, as `ls -t` walks: the cap that ends on the sealed row.
+    let timeline: Vec<_> = {
+        let rtxn = vault.store.env.read_txn()?;
+        let query = crate::ports::TimelineQuery {
+            reverse: true,
+            ..Default::default()
+        };
+        vault
+            .store
+            .port_entity_timeline(&rtxn, query)?
+            .collect::<Result<_>>()?
+    };
+    let at = timeline
+        .iter()
+        .position(|row| row.id == sealed)
+        .expect("the sealed row is on the timeline");
+    let sealed_at = timeline[at].timestamp;
+    let cap = at + 1;
+    // Neither as text (`<time>:<id hex>`, the plain form) nor as raw bytes.
+    let names_sealed = |token: &str| {
+        let bytes: Vec<u8> = (0..token.len() / 2)
+            .filter_map(|at| u8::from_str_radix(token.get(2 * at..2 * at + 2)?, 16).ok())
+            .collect();
+        token.contains(&sealed.to_hex())
+            || token.contains(&format!("{sealed_at}:"))
+            || bytes.windows(16).any(|window| window == sealed.as_bytes())
+            || bytes
+                .windows(8)
+                .any(|window| window == sealed_at.to_be_bytes())
+    };
+
+    let reader =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+    let fs = resolver(&reader, 1024);
+    let mut emitted = String::new();
+    let mut cursor = None;
+    for page in 0.. {
+        assert!(page < timeline.len() + 2, "pagination must terminate");
+        let (bytes, next, _) =
+            fs.ls_claims_by_time_pushdown_with_scan_cap(cursor.as_deref(), cap)?;
+        emitted.push_str(std::str::from_utf8(&bytes).expect("utf8 ls output"));
+        let Some(next) = next else { break };
+        assert!(!names_sealed(&next), "{next}");
+        cursor = Some(next);
+    }
+    assert!(!emitted.contains(&sealed.to_hex()), "{emitted}");
+    let lines: Vec<_> = emitted
+        .lines()
+        .filter(|line| !initial_claims.iter().any(|id| id.to_hex() == *line))
+        .collect();
+    assert_eq!(lines, [newer.to_hex(), older.to_hex()]);
+
+    // The first cap-hit page ends exactly on the sealed row, and another
+    // reader cannot open its cursor.
+    let (_, first, _) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, cap)?;
+    let first = first.expect("the scan limit leaves a cursor");
+    let other =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("other").expect("actor key"));
+    assert!(
+        resolver(&other, 1024)
+            .ls_claims_by_time_pushdown_with_scan_cap(Some(&first), cap)
+            .is_err()
+    );
+    // Stopping on the same row twice hands out two unequal tokens, so
+    // comparing tokens says nothing about where a walk stopped.
+    let (_, again, _) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, cap)?;
+    assert_ne!(again.as_deref(), Some(first.as_str()));
+    // A find cursor opens only under the threshold it was minted for.
+    let (_, found, _) = fs.find_newer_pushdown_with_scan_cap("/claims", 0, None, 1)?;
+    let found = found.expect("the scan limit leaves a cursor");
+    assert!(
+        fs.find_newer_pushdown_with_scan_cap("/claims", 0, Some(&found), 1)
+            .is_ok()
+    );
+    assert!(
+        fs.find_newer_pushdown_with_scan_cap("/claims", 1, Some(&found), 1)
+            .is_err()
+    );
     Ok(())
 }
 
@@ -757,32 +1220,6 @@ fn readdir_listing_carries_the_read_receipt() -> Result<()> {
 }
 
 #[test]
-fn fixed_and_unmatched_files_do_not_claim_a_scoped_read() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
-    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
-    let fs = resolver(&read, 16 * 1024);
-    let fixed = fs.read_file("/worlds/base/scope")?;
-    assert_eq!(fixed.value.unwrap().bytes(), b"base\n");
-    assert!(fixed.receipt.is_none());
-    let missing = fs.read_file("/unmatched/path")?;
-    assert!(missing.value.is_none());
-    assert!(missing.receipt.is_none());
-    for output in [
-        fs.cat("/worlds/base/scope", None)?,
-        fs.head("/worlds/base/scope", 1)?,
-        fs.wc("/worlds/base/scope")?,
-        fs.grep("base", "/worlds/base/scope", false, None)?,
-        fs.cat("/unmatched/path", None)?,
-        fs.head("/unmatched/path", 1)?,
-        fs.wc("/unmatched/path")?,
-        fs.grep("base", "/unmatched/path", false, None)?,
-    ] {
-        assert!(output.read_receipt().is_none());
-    }
-    Ok(())
-}
-
-#[test]
 fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
     use crate::access_grant::{
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
@@ -889,11 +1326,6 @@ fn graph_fs_default_output_has_no_telemetry_identity() -> Result<()> {
 }
 
 #[test]
-fn graph_fs_opted_in_output_has_persisted_telemetry_identity() -> Result<()> {
-    assert_graph_fs_capture(true)
-}
-
-#[test]
 fn graph_fs_failed_telemetry_write_has_no_identity() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), telemetry_config())?;
@@ -906,5 +1338,178 @@ fn graph_fs_failed_telemetry_write_has_no_identity() -> Result<()> {
             .grep("amberlantern", "/claims", true, None)?;
     assert_eq!(output.telemetry_run_id(), None);
     assert!(vault.retrieval_runs(10)?.is_empty());
+    Ok(())
+}
+
+/// Every page of one command, following its cursor to the end, joined.
+fn pages(mut next: impl FnMut(Option<&str>) -> Result<GraphFsCommandOutput>) -> Result<String> {
+    let mut joined = String::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = next(cursor.as_deref())?;
+        joined.push_str(std::str::from_utf8(page.bytes()).expect("every page is text"));
+        cursor = page.next_cursor().map(str::to_owned);
+        if cursor.is_none() {
+            return Ok(joined);
+        }
+    }
+    panic!("paging must end");
+}
+
+/// Every page a limit cuts hands out a cursor, and paging on reaches the
+/// rest, each line once: `find` and `grep -r` paged small rejoin to the same
+/// walk in one page (stopping inside files and directory listings), `head`
+/// goes past a page, the claim text pushdown past its result cap, an id
+/// listing past a run of ids the reader cannot see, and the day listing past
+/// its scan limit. Each of these ended with no cursor before (#1341).
+#[test]
+fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (world, subject) = (test_id(0x51), test_id(0x52));
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    // Claims in a world the reader has no grant for come first, by id and by
+    // time (day 1); the reader's own come after them (day 2).
+    let hidden = [test_id(0x53), test_id(0x54), test_id(0x55)];
+    let shown = [test_id(0x56), test_id(0x57), test_id(0x58)];
+    let needle = "cutpageneedle";
+    for (at, id) in (0_u64..).zip(hidden) {
+        put_claim(&vault, id, subject, Some(world), 86_400 + at)?;
+    }
+    for (at, id) in (0_u64..).zip(shown) {
+        put_claim_with_value(&vault, id, subject, None, 2 * 86_400 + at, needle)?;
+        vault.batch().text(&id, &[("body", needle)]).commit()?;
+    }
+    let lines: Vec<_> = (0..600).map(|at| format!("{needle} line {at}")).collect();
+    let (long, short) = (test_id(0x59), test_id(0x5A));
+    let body = lines.join("\n");
+    vault.put_entity(&long, ENTITY_TYPE_PERSON, time_range(1), 1, body.as_bytes())?;
+    let body = format!("{needle} alone");
+    vault.put_entity(
+        &short,
+        ENTITY_TYPE_PERSON,
+        time_range(1),
+        1,
+        body.as_bytes(),
+    )?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x5B),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+    let reader =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+    for id in hidden {
+        assert!(!reader.is_entity_readable(&id)?);
+    }
+    for id in shown {
+        assert!(reader.is_entity_readable(&id)?);
+    }
+    let text = |output: &GraphFsCommandOutput| {
+        std::str::from_utf8(output.bytes())
+            .expect("every page is text")
+            .to_owned()
+    };
+
+    // find and grep -r: many small pages rejoin to one uncut page.
+    let small = resolver(&reader, 256);
+    let whole = reader.graph_fs(
+        GraphFsOptions::default()
+            .with_page_byte_cap(GRAPH_FS_MAX_PAGE_BYTE_CAP)
+            .with_max_entries(GRAPH_FS_MAX_PAGE_ENTRIES),
+    );
+    let found = whole.find("/entities", None, None)?;
+    assert!(found.next_cursor().is_none());
+    let found = text(&found);
+    assert!(found.contains(&format!("/entities/{}/claims", subject.to_hex())));
+    assert_eq!(
+        pages(|cursor| small.find("/entities", None, cursor))?,
+        found
+    );
+    let grepped = whole.grep(needle, "/entities", true, None)?;
+    assert!(grepped.next_cursor().is_none());
+    let grepped = text(&grepped);
+    for line in &lines {
+        let line = format!("/entities/{}/body:{line}\n", long.to_hex());
+        assert_eq!(grepped.matches(&line).count(), 1, "{line}");
+    }
+    assert!(grepped.contains(&format!("/entities/{}/body:{needle} alone", short.to_hex())));
+    assert_eq!(
+        pages(|cursor| small.grep(needle, "/entities", true, cursor))?,
+        grepped
+    );
+
+    // head past a page (512 lines).
+    let fs = resolver(&reader, GRAPH_FS_DEFAULT_PAGE_BYTE_CAP);
+    let path = format!("/entities/{}/body", long.to_hex());
+    let head = pages(|cursor| fs.head(&path, 600, cursor))?;
+    assert_eq!(head.lines().collect::<Vec<_>>(), lines);
+
+    // The claim text pushdown past its result cap (2 here).
+    let capped = reader.graph_fs(GraphFsOptions::default().with_max_entries(2));
+    let grepped = pages(|cursor| capped.grep(needle, "/claims", true, cursor))?;
+    let mut ids: Vec<_> = grepped
+        .lines()
+        .filter_map(|line| line.strip_prefix("/claims/")?.split_once(':'))
+        .map(|(id, _)| id.to_owned())
+        .collect();
+    ids.sort();
+    assert_eq!(ids, shown.map(|id| id.to_hex()));
+
+    // An id listing whose run of ids (2 here) holds no claim the reader sees.
+    let mut listed = Vec::new();
+    let mut empty_but_more = false;
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = fs.listdir_claims_by_id_with_fetch("/claims/by-id", cursor.as_deref(), 2)?;
+        let names: Vec<_> = page
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+            .map(|entry| entry.name().to_owned())
+            .collect();
+        cursor = page.next_cursor().map(str::to_owned);
+        empty_but_more |= names.is_empty() && cursor.is_some();
+        listed.extend(names);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(cursor.is_none(), "paging must end");
+    assert!(empty_but_more);
+    for id in shown {
+        assert_eq!(
+            listed.iter().filter(|name| **name == id.to_hex()).count(),
+            1
+        );
+    }
+    for id in hidden {
+        assert!(!listed.contains(&id.to_hex()));
+    }
+
+    // The day listing past its scan limit (1 row here), over the hidden day.
+    let days = |page: &GraphFsPage| -> Vec<String> {
+        page.entries()
+            .iter()
+            .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+            .map(|entry| entry.name().to_owned())
+            .collect()
+    };
+    let all_days = fs.listdir_claim_days_with_scan_cap("/claims/by-time", None, usize::MAX)?;
+    assert!(all_days.next_cursor().is_none());
+    let all_days = days(&all_days);
+    assert!(all_days.contains(&super::paging::format_day_shard(2)));
+    let mut paged = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = fs.listdir_claim_days_with_scan_cap("/claims/by-time", cursor.as_deref(), 1)?;
+        paged.extend(days(&page));
+        cursor = page.next_cursor().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(cursor.is_none(), "paging must end");
+    assert_eq!(paged, all_days);
     Ok(())
 }

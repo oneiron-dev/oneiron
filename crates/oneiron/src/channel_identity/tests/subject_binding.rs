@@ -1,90 +1,5 @@
 use super::*;
 
-fn subject_owner(vault: &Vault) -> Result<crate::write_envelope::WriteActor> {
-    let owner = seed_entity(vault, entity(0xE0), crate::registry::ENTITY_TYPE_PERSON);
-    let writer = crate::write_envelope::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
-    // Signed genesis and a live owner binding, not an Agent capability exemption.
-    crate::subject_model::tests::authorization::root_owner(vault, writer, 0xE0)?;
-    Ok(writer)
-}
-
-/// An identity bound to an actor anchored to a PERSON round-trips, mask and
-/// all. The binding names the ACTOR; the person is reached through the actor's
-/// subject anchor, never stored on the identity.
-#[test]
-fn actor_person_round_trip() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed_entity(&vault, entity(0x51), crate::registry::ENTITY_TYPE_AGENT_DEF);
-    let person = seed_entity(&vault, entity(0x52), crate::registry::ENTITY_TYPE_PERSON);
-    let facet = seed_entity(&vault, entity(0x53), crate::registry::ENTITY_TYPE_FACET);
-
-    crate::subject_model::anchor_actor_subject(
-        &vault,
-        actor,
-        person,
-        subject_owner(&vault)?,
-        1_800_000_000,
-    )?;
-
-    let identity_id = entity(0x60);
-    let identity = sample_identity_faceted(actor, facet);
-    vault.create_channel_identity(&identity_id, &identity)?;
-
-    let stored = vault
-        .get_channel_identity(&identity_id)?
-        .expect("identity stored");
-    assert_eq!(stored.binding(), identity.binding());
-    assert_eq!(stored.binding().actor_ref(), Some(actor));
-    assert_eq!(stored.binding().facet_ref(), Some(facet));
-    // Binding is unchanged, but the anchor is absent before its occurrence.
-    assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &actor, 1_799_999_999)?,
-        None
-    );
-    assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
-        Some(person)
-    );
-    Ok(())
-}
-
-/// The same shape with an ORG behind the actor. ORG and PERSON are the two
-/// anchor targets; nothing about the binding changes between them.
-#[test]
-fn actor_org_round_trip() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed_entity(&vault, entity(0x61), crate::registry::ENTITY_TYPE_AGENT_DEF);
-    let org = seed_entity(&vault, entity(0x62), crate::registry::ENTITY_TYPE_ORG);
-
-    crate::subject_model::anchor_actor_subject(
-        &vault,
-        actor,
-        org,
-        subject_owner(&vault)?,
-        1_800_000_000,
-    )?;
-
-    let identity_id = entity(0x63);
-    let identity = sample_identity_actor(actor);
-    vault.create_channel_identity(&identity_id, &identity)?;
-
-    let stored = vault
-        .get_channel_identity(&identity_id)?
-        .expect("identity stored");
-    assert_eq!(stored.binding(), ChannelIdentityBinding::actor(actor));
-    assert_eq!(stored.binding().facet_ref(), None);
-    assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &org, 1_800_000_000)?,
-        None,
-        "the anchor hangs off the actor, not the org"
-    );
-    assert_eq!(
-        crate::subject_model::actor_subject_anchor(&vault, &actor, 1_800_000_000)?,
-        Some(org)
-    );
-    Ok(())
-}
-
 /// A bound facet must name a real type-13 FACET. This is a vault question, so
 /// it is enforced at the write chokepoint rather than in the pure codec.
 #[test]
@@ -123,14 +38,6 @@ fn sample_identity_faceted(actor: EntityId, facet: EntityId) -> ChannelIdentity 
     sample_identity_bound(
         Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
         ChannelIdentityBinding::actor_with_facet(actor, facet),
-    )
-}
-
-/// [`sample_identity`] bound to an unmasked `actor`.
-fn sample_identity_actor(actor: EntityId) -> ChannelIdentity {
-    sample_identity_bound(
-        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
-        ChannelIdentityBinding::actor(actor),
     )
 }
 

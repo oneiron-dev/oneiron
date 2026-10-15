@@ -2,6 +2,7 @@
 
 use super::Vault;
 use super::entities::MAX_LEARNED_RANGE_RESULTS;
+use crate::TimeRange;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -10,7 +11,9 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, validate_embedding_model_id};
+use crate::store::{
+    Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id,
+};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -19,12 +22,26 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Generic sync diagnostics may not edit the inputs to an authority fold.
 /// Authority-owned writers use their own validated doors and advance the
-/// snapshot generation in the same transaction as their row changes.
+/// snapshot generation in the same transaction as their row changes. Nor may
+/// they edit the record of which identity-topology seals this vault wrote and
+/// whose it last counted: only the seal writes it (H161). Nor the record of
+/// which author carriers it wrote: only the carrier write and its scrub touch
+/// it (H161 sidecars).
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
         return Err(Error::InvalidConfig(
             "authority-owned sync_state key requires its authority door".to_owned(),
+        ));
+    }
+    if key.starts_with("it:sealed:") || key.starts_with("it:mine_signers") {
+        return Err(Error::InvalidConfig(
+            "identity-topology seal trust is written only by the seal".to_owned(),
+        ));
+    }
+    if key.starts_with("it:authored:") {
+        return Err(Error::InvalidConfig(
+            "identity-topology authorship is written only by its carrier".to_owned(),
         ));
     }
     Ok(())
@@ -83,6 +100,16 @@ impl Vault {
         Ok(header.learned_at)
     }
 
+    /// Returns the occurred interval from an entity's header.
+    pub fn get_occurred(&self, id: &EntityId) -> Result<TimeRange> {
+        let rtxn = self.store.env.read_txn()?;
+        let row = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(row.occurred)
+    }
+
     /// Returns the greatest `learned_at` timestamp present in the temporal index.
     pub fn latest_learned_at(&self) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
@@ -104,7 +131,22 @@ impl Vault {
         &self,
         excluded_types: &[u8],
     ) -> Result<Option<u64>> {
+        self.latest_learned_at_excluding_entity_types_at(
+            excluded_types,
+            crate::claim::CallerLocality::OnDevice,
+        )
+    }
+
+    /// [`Self::latest_learned_at_excluding_entity_types`] for a caller at
+    /// `locality`: no row a device-local world keeps dates it for one off
+    /// this device (DEC-0005).
+    pub fn latest_learned_at_excluding_entity_types_at(
+        &self,
+        excluded_types: &[u8],
+        locality: crate::claim::CallerLocality,
+    ) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(self, &txn, locality)?;
         for row in self.store.port_entity_timeline(
             &txn,
             crate::ports::TimelineQuery {
@@ -117,7 +159,9 @@ impl Vault {
                 .store
                 .port_entity_record(&txn, &row.id)?
                 .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
-            if !excluded_types.contains(&entity.entity_type) {
+            if !excluded_types.contains(&entity.entity_type)
+                && !crate::settings::device_local_keeps_among(&self.store, &txn, &flagged, &row.id)?
+            {
                 return Ok(Some(row.timestamp));
             }
         }
@@ -187,7 +231,7 @@ impl Vault {
     /// adopted where none is pinned, refused (`EmbeddingTransformChanged`)
     /// where another is.
     pub fn adopt_embedding_transform(&self, transform: &str) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::store::admit_embedding_transform_in_txn(&self.store, wtxn, transform)
         })
     }
@@ -204,7 +248,7 @@ impl Vault {
         transform: Option<&str>,
         refill: bool,
     ) -> Result<()> {
-        let held = self.with_write_txn(|wtxn| {
+        let held = self.with_write_txn_grouped(|wtxn| {
             self.swap_embedding_space_in_txn(wtxn, new_model, transform, refill)
         })?;
         self.config.embedding_model = Some(new_model.to_owned());
@@ -299,7 +343,12 @@ impl Vault {
     /// Executes a closure within a single LMDB write transaction and allows
     /// callers to return their own error type.
     ///
-    /// The transaction commits on `Ok` return and rolls back on `Err`.
+    /// The transaction commits on `Ok` return and rolls back on `Err`, and
+    /// `Ok` returns once the commit is durable. The closure runs on the
+    /// calling thread. In the vault's group commit (OF-536) this write is a
+    /// group of its own: it joins no group already open, so it never waits on
+    /// what an earlier write's caller holds, and its group commits right after
+    /// it, so no later write waits on a lock or permit its result carries.
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
     /// [`Self::consolidate_claim_vad_now`] to finish that work.
@@ -308,19 +357,92 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
-        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let (result, postcommit) = {
-            let _active_write_txn = crate::store::active_write_txn_guard();
-            let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
-            let result = f(&mut wtxn)?;
-            (result, vad_scope.finish())
-        };
-        let approved_vad_ids =
-            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, postcommit.vad_ids)?;
-        wtxn.commit().map_err(Error::from)?;
+        self.write_txn_door(Callback::Opaque, f)
+    }
+
+    /// [`Self::with_write_txn`] for the engine's own write paths, audited to
+    /// hold nothing across the group commit.
+    #[doc(hidden)]
+    pub fn with_write_txn_grouped<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    {
+        self.try_with_write_txn_grouped(f)
+    }
+
+    /// [`Self::try_with_write_txn`] for the engine's own write paths, audited
+    /// to hold nothing across the group commit: the group goes on after this
+    /// write, so more writes share its fsync.
+    ///
+    /// The caller promises that neither the closure's result (`Ok` or `Err`)
+    /// nor anything the calling thread holds while it waits keeps a lock,
+    /// permit or guard that another write's closure takes. Those stay alive
+    /// until the whole group commits, and the group cannot commit while a
+    /// later member waits on them. A write that breaks the promise deadlocks
+    /// the vault's writer. Hosts use [`Self::try_with_write_txn`].
+    #[doc(hidden)]
+    pub fn try_with_write_txn_grouped<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door(Callback::Audited, f)
+    }
+
+    /// The write door for a closure of either kind (`try_with_write_txn` and
+    /// `try_with_write_txn_grouped` name it).
+    pub(crate) fn write_txn_door<F, T, E>(
+        &self,
+        callback: Callback,
+        f: F,
+    ) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        // One logical write in the single writer's group commit: the closure
+        // runs in a transaction of its own, and `Ok` comes back only once the
+        // shared commit is durable.
+        let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
+            self.store.group_write_as(callback, None, |wtxn| {
+                let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => staged,
+                    Err(err) => return Rows::Discard(Err(E::from(err))),
+                };
+                let (result, postcommit) = {
+                    let _active_write_txn = crate::store::active_write_txn_guard();
+                    let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+                    match f(wtxn) {
+                        Ok(result) => (result, vad_scope.finish()),
+                        Err(err) => return Rows::Discard(Err(err)),
+                    }
+                };
+                let approved =
+                    match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
+                        Ok(approved) => approved,
+                        Err(err) => return Rows::Discard(Err(E::from(err))),
+                    };
+                // A claim delete applied in this write staged its key's
+                // retirement; destroy the key after the commit, not at the
+                // next retention pass.
+                match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => Rows::Commit((
+                        result,
+                        approved,
+                        postcommit.proactivity_changed,
+                        postcommit.task_ids,
+                        staged != retirements_before,
+                    )),
+                    Err(err) => Rows::Discard(Err(E::from(err))),
+                }
+            })?;
         self.store.notify_attempt_observers();
-        if postcommit.proactivity_changed {
+        if proactivity_changed {
             self.store.notify_proactivity_changes();
+        }
+        self.store.notify_task_updates(task_ids);
+        if retirement_staged {
+            self.finish_gate_decision_retirements_after_commit();
         }
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved. The
@@ -380,7 +502,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         check_generic_sync_state_key(key)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
         })
     }
@@ -404,7 +526,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
         check_generic_sync_state_key(key)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_delete(&self.store, wtxn, key)
         })
     }

@@ -48,6 +48,33 @@ pub(crate) fn delete_lfs_lifecycle_in_txn(
     Ok(())
 }
 
+/// Whether a stored row is an LFS chunk that no published object holds yet.
+/// A chunk lands as an ASSET before its object is read whole and published,
+/// so every generic reader takes such a chunk as absent; the LFS store reads
+/// it through its own door. An owner is its upload's journal row until it
+/// publishes and a GC row once refused, cancelled or deleted; an owner in
+/// neither is a live object's.
+pub(crate) fn unpublished_lfs_chunk_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<bool> {
+    if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+        return Ok(false);
+    }
+    let Some(hash) = chunks::CHUNK_MARKS.get(store, txn, id)? else {
+        return Ok(false);
+    };
+    for row in chunks::CHUNK_REFS.iter_from(store, txn, hash.as_slice())? {
+        let ((_, owner), ()) = row?;
+        if !JOURNAL.contains(store, txn, &owner)? && !GC.contains(store, txn, &owner)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Internal chunk bytes never enter Loro windows or generic sync exports.
 #[cfg(feature = "sync")]
 pub(crate) fn is_lfs_chunk_asset_in_txn(
@@ -63,7 +90,7 @@ impl Vault {
     /// resurrection; the OID marker also blocks new manifests with new chunking.
     pub fn delete_lfs_object(&self, oid: LfsOid) -> Result<bool> {
         let Some(object) = self.lfs_object(oid)? else {
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 DELETED.put(&self.store, txn, &oid, &())?;
                 Ok(())
             })?;
@@ -85,7 +112,16 @@ impl Vault {
         if budget == 0 {
             return Ok(0);
         }
-        self.with_write_txn(|txn| {
+        // Every committed batch asks; almost always there is nothing to
+        // collect, and a read snapshot says so without a turn at the writer.
+        // The writer re-checks. A thread already holding a snapshot asks the
+        // writer directly.
+        if let Ok(rtxn) = self.store.env.read_txn()
+            && GC.iter_from(&self.store, &rtxn, &[])?.next().is_none()
+        {
+            return Ok(0);
+        }
+        self.with_write_txn_grouped(|txn| {
             let pending = GC.iter_from(&self.store, txn, &[])?.next().transpose()?;
             let Some((owner, ())) = pending else {
                 return Ok(0);
@@ -134,7 +170,7 @@ impl Vault {
     /// Cancellation is transactional. A still-running uploader observes its
     /// missing journal before its next chunk or publication and fails closed.
     pub fn recover_lfs_uploads_before(&self, cutoff: u64) -> Result<usize> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut rows = Vec::new();
             for row in JOURNAL.iter_from(&self.store, txn, &[])? {
                 let (owner, value) = row?;
@@ -156,7 +192,7 @@ impl Vault {
 
     /// Removes at most 128 obsolete Git ref rows after explicit object deletion.
     pub fn collect_deleted_lfs_ref_rows(&self) -> Result<usize> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut rows = Vec::new();
             for row in super::store::REFS.iter_from(&self.store, txn, &[])? {
                 let (key, _) = row?;

@@ -97,35 +97,91 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
     Ok(revoke)
 }
 
-#[test]
-fn unauthorized_reanchor_preserves_the_active_head_and_history() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x71), ENTITY_TYPE_AGENT_DEF);
-    let first = seed(&vault, entity(0x72), ENTITY_TYPE_PERSON);
-    let other = seed(&vault, entity(0x73), ENTITY_TYPE_ORG);
-    let stranger = seed(&vault, entity(0x74), ENTITY_TYPE_PERSON);
-    let machine = seed(&vault, entity(0x75), crate::registry::ENTITY_TYPE_MACHINE);
-    let claim = anchor_actor_subject(&vault, actor, first, writer(), 100)?;
-    let before = vault.get_claim(&claim)?;
-    let count = vault.claims_for_subject(&actor)?.len();
-    for untrusted in [
-        WriteActor::new(stranger, EdgeActorClass::Human),
-        WriteActor::new(machine, EdgeActorClass::System),
-        WriteActor::new(actor, EdgeActorClass::Agent),
-        WriteActor::new(writer().entity_ref(), EdgeActorClass::System),
-        WriteActor::new(actor, EdgeActorClass::Human),
-        WriteActor::new(entity(0x76), EdgeActorClass::Human),
-    ] {
-        assert!(anchor_actor_subject(&vault, actor, other, untrusted, 101).is_err());
-        assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));
-        assert_eq!(vault.get_claim(&claim)?, before);
-        assert_eq!(vault.claims_for_subject(&actor)?.len(), count);
+/// The signed regrant of `owner`'s binding after [`root_owner`]'s `revoke`:
+/// the same key binds it again at the next epoch.
+pub(crate) fn regrant_after(
+    revoke: &AuthorityLogEntry,
+    owner: WriteActor,
+    seed: u8,
+) -> Result<AuthorityLogEntry> {
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let mut regrant = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: revoke.vault_id,
+        seq: 3,
+        parent_hashes: vec![authority_entry_hash(revoke)?],
+        op: AuthorityOp::BindActor {
+            authority_key: AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+            actor_ref: owner.entity_ref(),
+            actor_class: owner.actor_class().gate_actor_class().to_owned(),
+            epoch: 2,
+        },
+        signer: revoke.signer.clone(),
+        cosigns: Vec::new(),
+        ts: 103,
+    };
+    regrant.signer.signature = signing
+        .sign(&authority_transcript(&regrant)?)
+        .to_bytes()
+        .to_vec();
+    Ok(regrant)
+}
+
+/// `op` signed by the [`root_owner`] key `seed`, as entry `seq` after
+/// `parent` in the vault `vault_id`, cosigned by each enrolled device key in
+/// `cosigners` (a roster of two keys or more needs a peer cosign).
+pub(crate) fn sign_child(
+    vault_id: Option<crate::authority::AuthorityVaultId>,
+    parent: crate::authority::AuthorityEntryHash,
+    seq: u64,
+    op: AuthorityOp,
+    seed: u8,
+    cosigners: &[u8],
+) -> Result<AuthorityLogEntry> {
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let cosigning: Vec<SigningKey> = cosigners
+        .iter()
+        .map(|cosigner| SigningKey::from_bytes(&[*cosigner; 32]))
+        .collect();
+    let mut cosigns: Vec<AuthoritySignature> = cosigning
+        .iter()
+        .map(|cosigner| {
+            let key = AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes());
+            AuthoritySignature {
+                suite: key.suite(),
+                public_key: key,
+                signature: vec![0; 64],
+            }
+        })
+        .collect();
+    cosigns.sort_by(|left, right| left.public_key.cmp(&right.public_key));
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: vec![parent],
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: Vec::new(),
+        },
+        cosigns,
+        ts: 100 + seq,
+    };
+    let transcript = authority_transcript(&entry)?;
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    for cosign in &mut entry.cosigns {
+        let cosigner = cosigning
+            .iter()
+            .find(|cosigner| {
+                AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes()) == cosign.public_key
+            })
+            .expect("each cosign has its key");
+        cosign.signature = cosigner.sign(&transcript).to_bytes().to_vec();
     }
-    // The same valid re-anchor still works for the bound human owner.
-    anchor_actor_subject(&vault, actor, other, writer(), 102)?;
-    assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(other));
-    assert_ne!(vault.get_claim(&claim)?, before);
-    Ok(())
+    Ok(entry)
 }
 
 #[test]

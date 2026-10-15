@@ -95,28 +95,53 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
     };
     let weak = signed(action(1), 1, true);
     let strong = signed(action(2), 3, false);
-    let mut entries = vec![genesis, enroll, floor, weak.clone(), strong.clone()];
+    let mut entries = vec![genesis, enroll, floor.clone(), weak.clone(), strong.clone()];
     let expected = fold_legacy_authority_log(&entries);
+    // At the Software floor in its own ancestry the software cosigner still
+    // makes quorum for the floor raise. A row concurrent with the raise is
+    // judged under it, its cosigners too (H71 residual, W2-T8): neither the
+    // software signer's row nor the hardware signer's row, whose second
+    // participant is the software key, stands.
+    assert!(
+        expected
+            .valid_entries
+            .contains(&authority_entry_hash(&floor).unwrap())
+    );
     assert!(
         !expected
             .valid_entries
             .contains(&authority_entry_hash(&weak).unwrap())
     );
     assert!(
-        expected
+        !expected
             .valid_entries
             .contains(&authority_entry_hash(&strong).unwrap())
     );
+    assert!(expected.issues.contains(&AuthorityFoldIssue::MissingQuorum(
+        authority_entry_hash(&strong).unwrap()
+    )));
     assert_eq!(expected.tier_floor, Some(AuthorityTier::Hardware));
     entries.reverse();
     assert_eq!(expected, fold_legacy_authority_log(&entries));
 }
 
+/// H71 residual (W2-T8): under a Hardware floor a software cosigner is no
+/// quorum participant. Two hardware participants still meet quorum.
 #[test]
-fn floor_softening_applies_at_once_and_stays_causal() {
-    let hardware = p256_key(92);
-    let key = authority_key_from_p256(&hardware);
-    let delay = DEFAULT_PENDING_WIDEN_DELAY_SECS;
+fn hardware_floor_counts_no_software_cosigner_toward_quorum() {
+    let owner = p256_key(92);
+    let second = p256_key(93);
+    let software = ed_key(94);
+    let owner_key = authority_key_from_p256(&owner);
+    let second_key = authority_key_from_p256(&second);
+    let software_key = authority_key_from_ed(&software);
+    let p256_sig = |key: &P256SigningKey, transcript: &[u8]| {
+        let mut signature: P256Signature = key.sign(transcript);
+        if let Some(normalized) = signature.normalize_s() {
+            signature = normalized;
+        }
+        signature.to_bytes().to_vec()
+    };
     let genesis = sign_p256(
         unsigned_entry(
             None,
@@ -124,67 +149,102 @@ fn floor_softening_applies_at_once_and_stays_causal() {
             vec![],
             AuthorityOp::Genesis {
                 device: device(
-                    key.clone(),
+                    owner_key.clone(),
                     ROLE_OWNER | ROLE_ADMIN,
                     AuthorityTier::Hardware,
                 ),
                 genesis_nonce: [92; 32],
                 tier_floor: AuthorityTier::Hardware,
-                pending_widen_delay_secs: delay,
+                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             },
-            key.clone(),
+            owner_key.clone(),
             1,
         ),
-        &hardware,
+        &owner,
     );
     let vault = genesis_vault_id(&genesis).unwrap();
-    let genesis_hash = authority_entry_hash(&genesis).unwrap();
-    let soften = sign_p256(
+    let enroll_second = sign_p256(
         unsigned_entry(
             Some(vault),
             1,
-            vec![genesis_hash],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Software,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(second_key.clone(), ROLE_AGENT, AuthorityTier::Hardware),
             },
-            key.clone(),
+            owner_key.clone(),
             2,
         ),
-        &hardware,
+        &owner,
     );
-    let soften_hash = authority_entry_hash(&soften).unwrap();
-    // First seen NOW: the lowered floor still lands at once, because the
-    // delayed-widen ceremony is dead (identity canon, "Device-key widen
-    // ceremony (dead 2026-08-05)").
-    let seen = BTreeMap::from([(soften_hash, 10)]);
-    let entries = vec![genesis.clone(), soften.clone()];
-    let lowered = fold_legacy_authority_log_with_seen_times(&entries, &seen, 10);
-    assert_eq!(lowered.tier_floor, Some(AuthorityTier::Software));
-    assert!(lowered.valid_entries.contains(&soften_hash));
-    assert_eq!(
-        fold_legacy_authority_log(&entries).tier_floor,
-        Some(AuthorityTier::Software)
-    );
-    let concurrent = sign_p256(
-        unsigned_entry(
+    // Two active participants from here on: every quorum op needs a cosigner.
+    let cosigned = |parent: &AuthorityLogEntry, seq, op, software_cosigner: bool| {
+        let cosigner = if software_cosigner {
+            software_key.clone()
+        } else {
+            second_key.clone()
+        };
+        let mut entry = unsigned_entry(
             Some(vault),
+            seq,
+            vec![authority_entry_hash(parent).unwrap()],
+            op,
+            owner_key.clone(),
             3,
-            vec![genesis_hash],
-            AuthorityOp::SetTierFloor {
-                tier_floor: AuthorityTier::Hardware,
-            },
-            key,
-            4,
-        ),
-        &hardware,
+        );
+        entry.cosigns.push(AuthoritySignature {
+            suite: cosigner.suite(),
+            public_key: cosigner,
+            signature: vec![0; 64],
+        });
+        let transcript = authority_transcript(&entry).unwrap();
+        entry.signer.signature = p256_sig(&owner, &transcript);
+        entry.cosigns[0].signature = if software_cosigner {
+            software.sign(&transcript).to_bytes().to_vec()
+        } else {
+            p256_sig(&second, &transcript)
+        };
+        entry
+    };
+    let enroll_software = cosigned(
+        &enroll_second,
+        2,
+        AuthorityOp::EnrollDevice {
+            device: device(software_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+        false,
     );
-    let mut fork = vec![genesis, soften, concurrent];
-    let constrained = fold_legacy_authority_log_with_seen_times(&fork, &seen, 10);
-    assert_eq!(constrained.tier_floor, Some(AuthorityTier::Hardware));
-    fork.reverse();
-    assert_eq!(
-        constrained,
-        fold_legacy_authority_log_with_seen_times(&fork, &seen, 10)
+    let confirm = |id| {
+        AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+            kind: AuthorityConfirmKind::Accept,
+            confirm_id: [id; 32],
+            peer_vault_id: [8; 32],
+            epoch: 1,
+            nonce: [id; 16],
+        })
+    };
+    let software_quorum = cosigned(&enroll_software, 3, confirm(1), true);
+    let hardware_quorum = cosigned(&enroll_software, 4, confirm(2), false);
+    let entries = vec![
+        genesis,
+        enroll_second,
+        enroll_software.clone(),
+        software_quorum.clone(),
+        hardware_quorum.clone(),
+    ];
+    let fold = fold_authority_log(&entries);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&enroll_software).unwrap())
+    );
+    assert!(
+        !fold
+            .valid_entries
+            .contains(&authority_entry_hash(&software_quorum).unwrap()),
+        "a software cosigner must not meet quorum under a Hardware floor"
+    );
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&hardware_quorum).unwrap())
     );
 }

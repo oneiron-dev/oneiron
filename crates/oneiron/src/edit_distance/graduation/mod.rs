@@ -172,7 +172,7 @@ mod tests;
 // every graduation-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::{answers::*, receipts::*, threshold_policy::*};
+use self::{answers::*, threshold_policy::*};
 #[cfg(test)]
 use crate::consent::AuthenticatedOwner;
 #[cfg(test)]

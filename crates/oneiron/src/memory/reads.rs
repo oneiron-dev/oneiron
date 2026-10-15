@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, PointRead, ScopedReadResult};
 fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
-    let mut value = crate::companion::companion_value_to_json(value);
-    crate::batch::export::redact_credentials(&mut value);
-    value
+    crate::batch::export::served_messagepack_json(value.clone())
 }
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -159,6 +157,7 @@ impl Memory<'_> {
             refs,
             &targets,
             "does not resolve at requested revision",
+            false,
         )
     }
 
@@ -166,6 +165,24 @@ impl Memory<'_> {
     /// entity views. Unresolvable refs are typed errors — hydrate is the
     /// OF-096 round-trip contract — and that `NOT_FOUND` carries the receipt.
     pub fn hydrate(&self, refs: &[String]) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
+        self.hydrate_reading(refs, false)
+    }
+
+    /// [`Self::hydrate`] for a door that renders the views through a pack
+    /// writer: a body the write door refuses is withheld whole
+    /// ([`Self::read_views_whole_body`]).
+    pub(super) fn hydrate_whole_body(
+        &self,
+        refs: &[String],
+    ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
+        self.hydrate_reading(refs, true)
+    }
+
+    fn hydrate_reading(
+        &self,
+        refs: &[String],
+        whole_body: bool,
+    ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let targets = refs
             .iter()
@@ -177,7 +194,7 @@ impl Memory<'_> {
                 None => self.read_target(reference, crate::vault::ReadMode::Live),
             })
             .collect::<MemoryResult<Vec<_>>>()?;
-        self.hydrated(&lane, refs, &targets, "does not resolve")
+        self.hydrated(&lane, refs, &targets, "does not resolve", whole_body)
     }
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that
@@ -188,8 +205,13 @@ impl Memory<'_> {
         refs: &[String],
         targets: &[ReadTargetSlot],
         unresolved: &str,
+        whole_body: bool,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let ScopedReadResult { value, receipt } = self.read_views(lane, targets)?;
+        let ScopedReadResult { value, receipt } = if whole_body {
+            self.read_views_whole_body(lane, targets)?
+        } else {
+            self.read_views(lane, targets)?
+        };
         let mut views = Vec::with_capacity(value.len());
         for (reference, view) in refs.iter().zip(value) {
             let Some(view) = view else {
@@ -309,9 +331,29 @@ impl Memory<'_> {
         })
     }
 
-    /// Lists gated writes parked for consent, newest lane state first.
+    /// Lists gated writes parked for consent, newest lane state first. A
+    /// caller off this device sees none about a device-local claim, and none
+    /// takes a place in its page.
     pub fn pending_writes(&self, limit: usize) -> MemoryResult<Vec<PendingWrite>> {
-        let records = self.vault.pending_gate_consents(limit)?;
+        let off_device = self.locality == crate::claim::CallerLocality::OffDevice;
+        let mut records =
+            self.vault
+                .pending_gate_consents(if off_device { usize::MAX } else { limit })?;
+        if off_device {
+            let mut admitted = Vec::new();
+            for record in records {
+                if admitted.len() == limit {
+                    break;
+                }
+                if !self
+                    .vault
+                    .device_local_keeps(&EntityId::from_bytes(record.claim_id)?)?
+                {
+                    admitted.push(record);
+                }
+            }
+            records = admitted;
+        }
         Ok(records
             .into_iter()
             .map(|record| PendingWrite {
@@ -324,9 +366,32 @@ impl Memory<'_> {
             .collect())
     }
 
-    /// Lists gate decision receipts.
+    /// Lists gate decision receipts. A caller off this device sees none about
+    /// a device-local claim, and none takes a place in its page.
     pub fn receipts(&self, limit: usize) -> MemoryResult<Vec<MemoryReceipt>> {
-        let records = self.vault.gate_decisions(limit)?;
+        let mut records = Vec::new();
+        let mut before = None;
+        while records.len() < limit {
+            let page = self.vault.store.gate_decisions_page(before, limit)?;
+            let exhausted = page.len() < limit;
+            before = page.last().map(|record| record.decision_id);
+            for record in page {
+                if records.len() == limit {
+                    break;
+                }
+                let kept = self.locality == crate::claim::CallerLocality::OffDevice
+                    && match record.claim_id {
+                        Some(id) => self.vault.device_local_keeps(&EntityId::from_bytes(id)?)?,
+                        None => false,
+                    };
+                if !kept {
+                    records.push(record);
+                }
+            }
+            if exhausted || before.is_none() {
+                break;
+            }
+        }
         Ok(records
             .into_iter()
             .map(|record| MemoryReceipt {
@@ -448,18 +513,31 @@ impl Memory<'_> {
     }
 
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
+        // A claim whose parts read as a secret together serves none of them.
+        let secret = crate::batch::export::claim_reads_as_secret(body);
+        let served = |value: &rmpv::Value| {
+            if secret {
+                serde_json::Value::String("[redacted]".to_owned())
+            } else {
+                companion_value_to_json(value)
+            }
+        };
         Ok(ClaimView {
             claim_ref: id.to_hex(),
             short_ref: self.short_ref_of(id)?,
-            predicate: body.predicate.clone(),
+            predicate: if secret {
+                "[redacted]".to_owned()
+            } else {
+                body.predicate.clone()
+            },
             subject_ref: subject_ref_string(&body.subject),
-            value: companion_value_to_json(&body.value),
+            value: served(&body.value),
             confidence: body.confidence,
             approval: body.approval.as_str().to_owned(),
             lifecycle: body.lifecycle.as_str().to_owned(),
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
-            scope: body.scope.as_ref().map(companion_value_to_json),
+            scope: body.scope.as_ref().map(served),
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,

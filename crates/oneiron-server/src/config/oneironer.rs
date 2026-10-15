@@ -71,8 +71,7 @@ impl fmt::Display for OneironerProvider {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum OneironerMode {
-    /// A vault with a tagger saves its tags (owner ruling 2026-09-29). Not
-    /// built yet: refused at startup.
+    /// A vault with a tagger saves its tags (owner ruling 2026-09-29).
     #[default]
     Save,
     /// Tag and write nothing but the marker's settlement: the test switch.
@@ -113,6 +112,13 @@ pub struct OneironerConfig {
     /// The checkpoint the tagger must report: 16 lowercase hex digits of the
     /// SHA-256 of its weights. Also half of every marker's dedupe key.
     pub checkpoint_sha16: Option<String>,
+    /// The served stack the tagger must report, when pinned: 16 lowercase
+    /// hex digits of the SHA-256 of its stack card, which names the trunk
+    /// and every head. Pinned, it joins the checkpoint in every marker's
+    /// dedupe key, so a head swap owes every turn a new pass. Unpinned, any
+    /// stack serving the checkpoint is accepted, and each answer's stack
+    /// still enters its tags' derivation envelope.
+    pub stack_sha16: Option<String>,
     /// How many labels the tagger must report.
     pub label_count: Option<u32>,
     /// Model label to engine entity kind (a registry kind such as `PERSON`).
@@ -148,6 +154,7 @@ impl Default for OneironerConfig {
             mode: OneironerMode::default(),
             url: None,
             checkpoint_sha16: None,
+            stack_sha16: None,
             label_count: None,
             labels: BTreeMap::new(),
             timeout_ms: DEFAULT_TIMEOUT_MS,
@@ -170,22 +177,29 @@ impl OneironerConfig {
 
     /// The checkpoint a write's marker is committed for, when markers are on.
     ///
-    /// Only an endpoint arms markers in this build: the local provider and
-    /// save mode stop `serve` before a write could commit one.
+    /// Only an endpoint arms markers in this build: the local provider stops
+    /// `serve` before a write could commit one.
     pub fn marker_checkpoint(&self) -> Option<&str> {
         (self.provider == OneironerProvider::Endpoint)
             .then_some(self.checkpoint_sha16.as_deref())
             .flatten()
     }
 
-    /// The vault's marker configuration, when markers are on: the checkpoint,
-    /// the live window and the trace history.
+    /// The vault's marker configuration, when markers are on: the checkpoint
+    /// and pinned stack, the live window, the trace history, the mode and the
+    /// label table.
     pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
         let checkpoint = self.marker_checkpoint()?;
         Some(oneiron::tagging::TaggingMarkerConfig {
             checkpoint: checkpoint.to_owned(),
+            stack: self.stack_sha16.clone(),
             live_window_tokens: self.live_window_tokens,
             trace_history: self.trace_history(),
+            mode: match self.mode {
+                OneironerMode::Save => oneiron::tagging::TaggingMode::Save,
+                OneironerMode::Shadow => oneiron::tagging::TaggingMode::Shadow,
+            },
+            labels: self.label_kinds(),
         })
     }
 
@@ -217,6 +231,9 @@ impl OneironerConfig {
         }
         if over.checkpoint_sha16.is_some() {
             self.checkpoint_sha16 = over.checkpoint_sha16;
+        }
+        if over.stack_sha16.is_some() {
+            self.stack_sha16 = over.stack_sha16;
         }
         if over.label_count.is_some() {
             self.label_count = over.label_count;
@@ -251,8 +268,7 @@ impl OneironerConfig {
     }
 
     /// Refuses a section that cannot produce a working slot. The local
-    /// provider and save mode pass here and are refused, typed, when the slot
-    /// is built.
+    /// provider passes here and is refused, typed, when the slot is built.
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.live_window_tokens > oneiron::tagging::MAX_LIVE_WINDOW_TOKENS {
             anyhow::bail!("oneironer.live_window_tokens must be at most 2048");
@@ -267,8 +283,13 @@ impl OneironerConfig {
             if label.is_empty() || label.len() > MAX_LABEL_BYTES {
                 anyhow::bail!("oneironer.labels keys must be 1 to 64 bytes");
             }
-            if registry_type_byte(kind).is_none() {
+            let Some(byte) = registry_type_byte(kind) else {
                 anyhow::bail!("oneironer.labels maps a label to unknown entity kind {kind:?}");
+            };
+            if !oneiron::tagging::label_kind_admitted(byte) {
+                anyhow::bail!(
+                    "oneironer.labels maps a label to {kind}, a kind with no identity key; leave the label out to keep it a tag"
+                );
             }
         }
         if self.provider != OneironerProvider::Endpoint {
@@ -284,6 +305,13 @@ impl OneironerConfig {
             anyhow::bail!(
                 "oneironer.provider = \"endpoint\" requires oneironer.checkpoint_sha16, 16 lowercase hex digits"
             );
+        }
+        if self
+            .stack_sha16
+            .as_deref()
+            .is_some_and(|stack| oneiron::tagging::TaggingMarkerConfig::new(stack).is_err())
+        {
+            anyhow::bail!("oneironer.stack_sha16 must be 16 lowercase hex digits");
         }
         if self.label_count.is_none_or(|count| count == 0) {
             anyhow::bail!(
@@ -323,6 +351,7 @@ pub struct OneironerConfigOverride {
     pub mode: Option<OneironerMode>,
     pub url: Option<String>,
     pub checkpoint_sha16: Option<String>,
+    pub stack_sha16: Option<String>,
     pub label_count: Option<u32>,
     pub labels: Option<BTreeMap<String, String>>,
     pub timeout_ms: Option<u64>,
@@ -356,6 +385,9 @@ pub struct OneironerArgs {
     /// The checkpoint the tagger must report (16 lowercase hex digits).
     #[arg(long = "oneironer-checkpoint-sha16")]
     pub oneironer_checkpoint_sha16: Option<String>,
+    /// The served stack the tagger must report (16 lowercase hex digits).
+    #[arg(long = "oneironer-stack-sha16")]
+    pub oneironer_stack_sha16: Option<String>,
     /// How many labels the tagger must report.
     #[arg(long = "oneironer-label-count")]
     pub oneironer_label_count: Option<u32>,
@@ -374,6 +406,7 @@ impl From<&OneironerArgs> for OneironerConfigOverride {
             mode: args.oneironer_mode,
             url: args.oneironer_url.clone(),
             checkpoint_sha16: args.oneironer_checkpoint_sha16.clone(),
+            stack_sha16: args.oneironer_stack_sha16.clone(),
             label_count: args.oneironer_label_count,
             labels: args.oneironer_labels.clone(),
             timeout_ms: args.oneironer_timeout_ms,
@@ -405,6 +438,7 @@ pub(super) fn lookup_oneironer_override(
         mode: lookup_parse(lookup, "ONEIRON_ONEIRONER_MODE")?,
         url: lookup("ONEIRON_ONEIRONER_URL"),
         checkpoint_sha16: lookup("ONEIRON_ONEIRONER_CHECKPOINT_SHA16"),
+        stack_sha16: lookup("ONEIRON_ONEIRONER_STACK_SHA16"),
         label_count: lookup_parse(lookup, "ONEIRON_ONEIRONER_LABEL_COUNT")?,
         labels: lookup("ONEIRON_ONEIRONER_LABELS")
             .map(|value| parse_labels(&value).map_err(anyhow::Error::msg))

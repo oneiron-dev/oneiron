@@ -195,7 +195,7 @@ pub fn elect_campaign_home_node_designation(
 ) -> Result<Option<CampaignHomeNodeDesignation>> {
     let designation = select_campaign_home_node(candidates, now)?;
     let row = designation.map(encode_designation);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         match row.as_ref() {
             Some(row) => HOME_NODE.put(&vault.store, wtxn, &(), row)?,
             None => {

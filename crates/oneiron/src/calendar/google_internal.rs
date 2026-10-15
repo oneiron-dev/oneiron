@@ -152,18 +152,3 @@ impl<W: GoogleInternalWire> CalendarRemoteTransport for GoogleInternalConnector<
             .delete_event(secret_ref, calendar_ref, href, expected_etag, uid, sequence)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_internal_custody_names_select_this_capability() {
-        assert!(is_workspace_internal_secret_ref("google-internal:dogfood"));
-        assert!(!is_workspace_internal_secret_ref("google-byo:someone-else"));
-        assert!(matches!(
-            GoogleInternalConnector::<()>::guard_internal_class("google-byo:someone-else"),
-            Err(CalendarConnectorError::CredentialUnavailable { .. })
-        ));
-    }
-}

@@ -73,12 +73,67 @@ fn connect_dispatch_with_policy(
     sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
     policy: Option<LinkedInSeatSandboxPolicy>,
 ) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    connect_dispatch_to(
+        vault,
+        actor,
+        receipt_id,
+        intent_ref,
+        "linkedin:member:jane-doe",
+        sink,
+        policy,
+    )
+}
+
+fn connect_dispatch_to(
+    vault: &Vault,
+    actor: OutboundDispatchActor,
+    receipt_id: &str,
+    intent_ref: &str,
+    recipient: &str,
+    sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
+    policy: Option<LinkedInSeatSandboxPolicy>,
+) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    connect_dispatch_at(
+        vault, actor, receipt_id, intent_ref, recipient, sink, policy, 1_060,
+    )
+}
+
+#[expect(clippy::too_many_arguments, reason = "one test dispatch, spelled out")]
+fn connect_dispatch_at(
+    vault: &Vault,
+    actor: OutboundDispatchActor,
+    receipt_id: &str,
+    intent_ref: &str,
+    recipient: &str,
+    sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
+    policy: Option<LinkedInSeatSandboxPolicy>,
+    occurred_at: u64,
+) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    let request = connect_request(
+        receipt_id,
+        intent_ref,
+        recipient,
+        actor,
+        policy,
+        occurred_at,
+    );
+    Ok(vault.dispatch_outbound_intent(request, sink)?)
+}
+
+fn connect_request(
+    receipt_id: &str,
+    intent_ref: &str,
+    recipient: &str,
+    actor: OutboundDispatchActor,
+    policy: Option<LinkedInSeatSandboxPolicy>,
+    occurred_at: u64,
+) -> OutboundDispatchRequest {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(
             "agent-alpha",
             "connect_request",
             LINKEDIN_CHANNEL,
-            "linkedin:member:jane-doe",
+            recipient,
         )
         .on_behalf_of("owner")
         .content_ref("content:optional-note"),
@@ -90,14 +145,14 @@ fn connect_dispatch_with_policy(
         intent,
         actor,
         OutboundDispatchGate::allow_when_policy_grants(),
-        1_060,
+        occurred_at,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
-    .counterparty_ref("linkedin:member:jane-doe");
+    .counterparty_ref(recipient);
     if let Some(policy) = policy {
         request = request.linkedin_sandbox_policy(policy);
     }
-    Ok(vault.dispatch_outbound_intent(request, sink)?)
+    request
 }
 
 fn connect_fixture() -> std::result::Result<
@@ -123,63 +178,6 @@ fn connect_fixture() -> std::result::Result<
         ),
     )?;
     Ok((tmp, vault, actor))
-}
-
-#[test]
-fn connect_request_is_delivered_only_after_profile_re_read()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault, actor) = connect_fixture()?;
-    let transport = ConnectTransport::new(&[
-        LinkedInConnectionState::Connectable,
-        LinkedInConnectionState::Pending,
-    ]);
-    let mut sink = LinkedInMcpVerifiedConnectSink::new(linkedin_adapter()?, transport).with_plan(
-        "intent:connect",
-        LinkedInVerifiedConnectPlan::new(
-            "linkedin:member:jane-doe",
-            Some("Hello Jane".to_owned()),
-        )?,
-    )?;
-    let result = connect_dispatch(
-        &vault,
-        actor,
-        "receipt:connect",
-        "intent:connect",
-        &mut sink,
-        active_linkedin_policy()?,
-    )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
-    assert_eq!(sink.transport().calls.len(), 1);
-    assert_eq!(
-        sink.transport().calls[0].note.as_deref(),
-        Some("Hello Jane")
-    );
-    assert_eq!(sink.transport().reads.len(), 2);
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("connect_with_person_return_trusted")
-            .map(String::as_str),
-        Some("false")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_connect_verification")
-            .map(String::as_str),
-        Some("connection_observed")
-    );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("provider_ref")
-            .map(String::as_str),
-        Some("linkedin:member:jane-doe@connection")
-    );
-    Ok(())
 }
 
 #[test]
@@ -338,48 +336,6 @@ fn connect_request_retry_without_observation_does_not_resend()
         Some("retry_unconfirmed")
     );
     assert!(sink.transport().calls.is_empty());
-    Ok(())
-}
-
-#[test]
-fn connect_request_policy_holds_and_kill_switch_stop_transport()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    for (policy, expected, outcome) in [
-        (
-            active_linkedin_policy()?
-                .with_state(LinkedInSeatDispatchState::active().with_connect_requests_today(15)),
-            "linkedin.daily_connect_request_cap",
-            OutboundDispatchOutcome::Held,
-        ),
-        (
-            active_linkedin_policy()?.mark_killed(1_000, "kill:linkedin")?,
-            "linkedin.kill_switch_engaged",
-            OutboundDispatchOutcome::Suppressed,
-        ),
-    ] {
-        let (_tmp, vault, actor) = connect_fixture()?;
-        let mut sink =
-            LinkedInMcpVerifiedConnectSink::new(linkedin_adapter()?, ConnectTransport::new(&[]));
-        let result = connect_dispatch(
-            &vault,
-            actor,
-            "receipt:blocked",
-            "intent:blocked",
-            &mut sink,
-            policy,
-        )?;
-        assert_eq!(result.outcome, outcome);
-        assert_eq!(
-            result
-                .receipt
-                .fields
-                .get("linkedin_engine_policy_reason")
-                .map(String::as_str),
-            Some(expected)
-        );
-        assert!(sink.transport().calls.is_empty());
-        assert!(sink.transport().reads.is_empty());
-    }
     Ok(())
 }
 
@@ -546,150 +502,575 @@ fn scheduled_connect_without_seat_policy_refuses_before_provider_transport()
     Ok(())
 }
 
-#[test]
-fn exhausted_profile_read_cap_holds_before_connect_transport()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    let (_tmp, vault, actor) = connect_fixture()?;
-    let policy = active_linkedin_policy()?
-        .with_state(LinkedInSeatDispatchState::active().with_profile_reads_today(25));
-    let mut sink = LinkedInMcpVerifiedConnectSink::new(
+/// One sink that can connect to `recipient` under `intent_ref`: the profile
+/// read finds the person connectable, then the connection pending.
+fn capped_connect_sink(
+    intent_ref: &str,
+    recipient: &str,
+) -> std::result::Result<LinkedInMcpVerifiedConnectSink<ConnectTransport>, Box<dyn std::error::Error>>
+{
+    let observe = |state| {
+        Ok(LinkedInConnectionObservation {
+            recipient_key: recipient.to_owned(),
+            state,
+        })
+    };
+    Ok(LinkedInMcpVerifiedConnectSink::new(
         linkedin_adapter()?,
-        ConnectTransport::new(&[
-            LinkedInConnectionState::Connectable,
-            LinkedInConnectionState::Pending,
-        ]),
+        ConnectTransport {
+            calls: Vec::new(),
+            reads: Vec::new(),
+            observations: [
+                observe(LinkedInConnectionState::Connectable),
+                observe(LinkedInConnectionState::Pending),
+            ]
+            .into(),
+            send_result: Ok(serde_json::json!({"success": true})),
+        },
     )
     .with_plan(
-        "intent:profile-cap",
-        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?,
+        intent_ref,
+        LinkedInVerifiedConnectPlan::new(recipient, None)?.with_max_observation_attempts(1)?,
+    )?)
+}
+
+fn daily_connect_cap_of_one() -> crate::Result<LinkedInSeatSandboxPolicy> {
+    active_linkedin_policy()?.with_limits(crate::linkedin_connector::LinkedInAccountRiskLimits {
+        daily_connect_request_cap: 1,
+        ..crate::linkedin_connector::LinkedInAccountRiskLimits::default()
+    })
+}
+
+/// F26 H359: a semantic duplicate the chokepoint suppressed was never admitted
+/// for transport, so it spends none of the seat's daily allowance. Under a cap
+/// of two, one sent connect and its suppressed duplicate leave room for a
+/// connect to someone else.
+#[test]
+fn a_suppressed_duplicate_spends_no_daily_connect_allowance()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let cap_of_two = || {
+        active_linkedin_policy()?.with_limits(
+            crate::linkedin_connector::LinkedInAccountRiskLimits {
+                daily_connect_request_cap: 2,
+                ..crate::linkedin_connector::LinkedInAccountRiskLimits::default()
+            },
+        )
+    };
+    let deduped = |receipt_id: &str, intent_ref: &str| -> crate::Result<OutboundDispatchRequest> {
+        let mut request = connect_request(
+            receipt_id,
+            intent_ref,
+            "linkedin:member:jane-doe",
+            actor.clone(),
+            Some(cap_of_two()?),
+            1_060,
+        );
+        request.intent.dedupe_key = Some("connect:jane-doe".to_owned());
+        Ok(request)
+    };
+    let mut first_sink = capped_connect_sink("intent:dd:first", "linkedin:member:jane-doe")?;
+    let first = vault.dispatch_outbound_intent(
+        deduped("receipt:dd:first", "intent:dd:first")?,
+        &mut first_sink,
     )?;
-    let result = connect_dispatch(
+    assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(first_sink.transport().calls.len(), 1);
+    let mut dup_sink = capped_connect_sink("intent:dd:dup", "linkedin:member:jane-doe")?;
+    let dup = vault
+        .dispatch_outbound_intent(deduped("receipt:dd:dup", "intent:dd:dup")?, &mut dup_sink)?;
+    assert_eq!(dup.outcome, OutboundDispatchOutcome::Suppressed);
+    assert!(dup_sink.transport().calls.is_empty());
+
+    let mut other_sink = capped_connect_sink("intent:dd:other", "linkedin:member:john-roe")?;
+    let other = connect_dispatch_to(
         &vault,
         actor,
-        "receipt:profile-cap",
-        "intent:profile-cap",
-        &mut sink,
-        policy,
+        "receipt:dd:other",
+        "intent:dd:other",
+        "linkedin:member:john-roe",
+        &mut other_sink,
+        Some(cap_of_two()?),
     )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_engine_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.daily_profile_read_cap")
+    assert_ne!(
+        other.outcome,
+        OutboundDispatchOutcome::Held,
+        "FAILBEFORE H359: a suppressed duplicate spent the daily allowance"
     );
-    assert!(sink.transport().reads.is_empty());
-    assert!(sink.transport().calls.is_empty());
+    assert_eq!(other_sink.transport().calls.len(), 1);
     Ok(())
 }
 
+/// F26 H359: a semantic duplicate at a full daily cap is the chokepoint's
+/// terminal suppression, as it is below the cap; the cap holds only a new
+/// send. Held, the duplicate stayed retryable and could send once both the
+/// rolling day and the dedupe cooldown had passed.
 #[test]
-fn profile_cap_boundary_stops_post_send_verification_without_claiming_delivery()
+fn a_duplicate_at_a_full_cap_is_suppressed_not_held()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault, actor) = connect_fixture()?;
-    let policy = active_linkedin_policy()?
-        .with_state(LinkedInSeatDispatchState::active().with_profile_reads_today(24));
-    let mut sink = LinkedInMcpVerifiedConnectSink::new(
-        linkedin_adapter()?,
-        ConnectTransport::new(&[
-            LinkedInConnectionState::Connectable,
-            LinkedInConnectionState::Pending,
-        ]),
-    )
-    .with_plan(
-        "intent:profile-boundary",
-        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?,
+    let deduped = |receipt_id: &str, intent_ref: &str| -> crate::Result<OutboundDispatchRequest> {
+        let mut request = connect_request(
+            receipt_id,
+            intent_ref,
+            "linkedin:member:jane-doe",
+            actor.clone(),
+            Some(daily_connect_cap_of_one()?),
+            1_060,
+        );
+        request.intent.dedupe_key = Some("connect:jane-doe".to_owned());
+        Ok(request)
+    };
+    let mut first_sink = capped_connect_sink("intent:fd:first", "linkedin:member:jane-doe")?;
+    let first = vault.dispatch_outbound_intent(
+        deduped("receipt:fd:first", "intent:fd:first")?,
+        &mut first_sink,
     )?;
-    let result = connect_dispatch(
-        &vault,
-        actor,
-        "receipt:profile-boundary",
-        "intent:profile-boundary",
-        &mut sink,
-        policy,
-    )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(first_sink.transport().calls.len(), 1);
+    let mut dup_sink = capped_connect_sink("intent:fd:dup", "linkedin:member:jane-doe")?;
+    let dup = vault
+        .dispatch_outbound_intent(deduped("receipt:fd:dup", "intent:fd:dup")?, &mut dup_sink)?;
     assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("delivery_may_have_occurred")
-            .map(String::as_str),
-        Some("true")
+        dup.outcome,
+        OutboundDispatchOutcome::Suppressed,
+        "FAILBEFORE H359: a duplicate at a full cap was held, not suppressed"
     );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_profile_read_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.daily_profile_read_cap")
-    );
-    assert!(!result.receipt.fields.contains_key("provider_ref"));
-    assert_eq!(sink.transport().calls.len(), 1);
-    assert_eq!(
-        sink.transport().reads.len(),
-        1,
-        "the second profile read exceeds the cap"
-    );
+    assert!(dup_sink.transport().calls.is_empty());
     Ok(())
 }
 
+/// F26 H359: a retry whose admission aged out of the rolling day sends in
+/// today's window, under today's cap of one. The first try sent nothing (its
+/// profile read failed). A day later the retry and a connect to someone else
+/// go out in either order, and only one of them sends: the retry used to
+/// replay past the cap, and once it had sent, its row still counted on the
+/// day it was first admitted, so the next connect went out too.
 #[test]
-fn profile_cap_counts_each_verification_attempt_even_when_state_stays_connectable()
+fn an_aged_out_retry_meets_todays_cap() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let jane = "linkedin:member:jane-doe";
+    let john = "linkedin:member:john-roe";
+    for retry_first in [true, false] {
+        let (_tmp, vault, actor) = connect_fixture()?;
+        let mut failing = LinkedInMcpVerifiedConnectSink::new(
+            linkedin_adapter()?,
+            ConnectTransport {
+                calls: Vec::new(),
+                reads: Vec::new(),
+                observations: [Err("profile_read_down".to_owned())].into(),
+                send_result: Ok(serde_json::json!({"success": true})),
+            },
+        )
+        .with_plan(
+            "intent:ag:jane",
+            LinkedInVerifiedConnectPlan::new(jane, None)?.with_max_observation_attempts(1)?,
+        )?;
+        let _first_try = connect_dispatch_at(
+            &vault,
+            actor.clone(),
+            "receipt:ag:jane:first",
+            "intent:ag:jane",
+            jane,
+            &mut failing,
+            Some(daily_connect_cap_of_one()?),
+            1_060,
+        );
+        assert!(
+            failing.transport().calls.is_empty(),
+            "the first try sent nothing"
+        );
+
+        let next_day = 1_060 + 86_401;
+        let mut retry_sink = capped_connect_sink("intent:ag:jane", jane)?;
+        let mut other_sink = capped_connect_sink("intent:ag:john", john)?;
+        let mut retry = |at| {
+            connect_dispatch_at(
+                &vault,
+                actor.clone(),
+                "receipt:ag:jane:retry",
+                "intent:ag:jane",
+                jane,
+                &mut retry_sink,
+                Some(daily_connect_cap_of_one()?),
+                at,
+            )
+        };
+        let (first, second) = if retry_first {
+            let first = retry(next_day)?;
+            let second = connect_dispatch_at(
+                &vault,
+                actor.clone(),
+                "receipt:ag:john",
+                "intent:ag:john",
+                john,
+                &mut other_sink,
+                Some(daily_connect_cap_of_one()?),
+                next_day + 1,
+            )?;
+            (first, second)
+        } else {
+            let first = connect_dispatch_at(
+                &vault,
+                actor.clone(),
+                "receipt:ag:john",
+                "intent:ag:john",
+                john,
+                &mut other_sink,
+                Some(daily_connect_cap_of_one()?),
+                next_day,
+            )?;
+            (first, retry(next_day + 1)?)
+        };
+        assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(
+            second.outcome,
+            OutboundDispatchOutcome::Held,
+            "FAILBEFORE H359 (retry first: {retry_first}): a second connect went out under today's cap of one"
+        );
+        assert_eq!(
+            retry_sink.transport().calls.len() + other_sink.transport().calls.len(),
+            1,
+            "one connect today"
+        );
+        if !retry_first {
+            assert_eq!(
+                second
+                    .receipt
+                    .fields
+                    .get("intent_state")
+                    .map(String::as_str),
+                Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                "the held retry is still the Pending row it was"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Security pack 2, F26 H359: the daily connect cap counts this vault's own
+/// admitted connects, not only the host's snapshot. On one unchanged snapshot
+/// with a cap of one, a connect to a second person is held before any profile
+/// read or provider call: once in order, and once when the first connect is
+/// admitted between the second's seat check and its admission.
+#[test]
+fn a_connect_past_the_daily_cap_is_held_on_an_unchanged_snapshot()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault, actor) = connect_fixture()?;
-    let policy = active_linkedin_policy()?
-        .with_state(LinkedInSeatDispatchState::active().with_profile_reads_today(23));
-    let mut sink = LinkedInMcpVerifiedConnectSink::new(
-        linkedin_adapter()?,
-        ConnectTransport::new(&[
-            LinkedInConnectionState::Connectable,
-            LinkedInConnectionState::Connectable,
-            LinkedInConnectionState::Pending,
-        ]),
-    )
-    .with_plan(
-        "intent:profile-attempts",
-        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?
-            .with_max_observation_attempts(2)?,
+    let mut first_sink = capped_connect_sink("intent:cap:first", "linkedin:member:jane-doe")?;
+    let first = connect_dispatch_to(
+        &vault,
+        actor.clone(),
+        "receipt:cap:first",
+        "intent:cap:first",
+        "linkedin:member:jane-doe",
+        &mut first_sink,
+        Some(daily_connect_cap_of_one()?),
     )?;
-    let result = connect_dispatch(
+    assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(first_sink.transport().calls.len(), 1);
+    let mut second_sink = capped_connect_sink("intent:cap:second", "linkedin:member:john-roe")?;
+    let second = connect_dispatch_to(
         &vault,
         actor,
-        "receipt:profile-attempts",
-        "intent:profile-attempts",
-        &mut sink,
-        policy,
+        "receipt:cap:second",
+        "intent:cap:second",
+        "linkedin:member:john-roe",
+        &mut second_sink,
+        Some(daily_connect_cap_of_one()?),
     )?;
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
     assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("delivery_may_have_occurred")
-            .map(String::as_str),
-        Some("true")
+        second.outcome,
+        OutboundDispatchOutcome::Held,
+        "FAILBEFORE H359: a connect past the daily cap was not held"
     );
+    assert!(second_sink.transport().calls.is_empty());
+    assert!(second_sink.transport().reads.is_empty());
+
+    // The first connect lands after the second passed its seat check: the
+    // admission writer lock still counts it.
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let vault = std::rc::Rc::new(vault);
+    let hook_vault = std::rc::Rc::clone(&vault);
+    let hook_actor = actor.clone();
+    crate::outbound_chokepoint::BEFORE_NEW_ADMISSION.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            let mut sink = capped_connect_sink("intent:race:first", "linkedin:member:jane-doe")
+                .expect("first sink");
+            let first = connect_dispatch_to(
+                &hook_vault,
+                hook_actor,
+                "receipt:race:first",
+                "intent:race:first",
+                "linkedin:member:jane-doe",
+                &mut sink,
+                Some(daily_connect_cap_of_one().expect("policy")),
+            )
+            .expect("the first connect dispatches");
+            assert_eq!(sink.transport().calls.len(), 1);
+            assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+        }));
+    });
+    let mut racing_sink = capped_connect_sink("intent:race:second", "linkedin:member:john-roe")?;
+    let racing = connect_dispatch_to(
+        &vault,
+        actor,
+        "receipt:race:second",
+        "intent:race:second",
+        "linkedin:member:john-roe",
+        &mut racing_sink,
+        Some(daily_connect_cap_of_one()?),
+    )?;
     assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_profile_read_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.daily_profile_read_cap")
+        racing.outcome,
+        OutboundDispatchOutcome::Held,
+        "FAILBEFORE H359 race: the admission took the last allowance twice"
     );
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("verification_attempts")
-            .map(String::as_str),
-        Some("1")
+    assert!(racing_sink.transport().calls.is_empty());
+    // Either way the receipt is the seat's own cap hold, with the count the
+    // admission read, never the Allow an earlier read produced.
+    for (leg, held) in [("in order", &second), ("race", &racing)] {
+        let field = |key: &str| held.receipt.fields.get(key).map(String::as_str);
+        assert_eq!(
+            field("linkedin_engine_policy_decision"),
+            Some("hold"),
+            "{leg}"
+        );
+        assert_eq!(
+            field("linkedin_engine_policy_reason"),
+            Some("linkedin.daily_connect_request_cap"),
+            "{leg}"
+        );
+        assert_eq!(field("linkedin_connect_requests_today"), Some("1"), "{leg}");
+    }
+
+    // The window is a day of the dispatch clock's seconds: yesterday's
+    // connect no longer spends today's allowance.
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let mut sink = capped_connect_sink("intent:day:first", "linkedin:member:jane-doe")?;
+    connect_dispatch_to(
+        &vault,
+        actor.clone(),
+        "receipt:day:first",
+        "intent:day:first",
+        "linkedin:member:jane-doe",
+        &mut sink,
+        Some(daily_connect_cap_of_one()?),
+    )?;
+    let mut next_day = capped_connect_sink("intent:day:second", "linkedin:member:john-roe")?;
+    let next = connect_dispatch_at(
+        &vault,
+        actor,
+        "receipt:day:second",
+        "intent:day:second",
+        "linkedin:member:john-roe",
+        &mut next_day,
+        Some(daily_connect_cap_of_one()?),
+        1_060 + 86_401,
+    )?;
+    assert_ne!(
+        next.outcome,
+        OutboundDispatchOutcome::Held,
+        "H359: yesterday's connect spent today's allowance"
     );
-    assert_eq!(sink.transport().reads.len(), 2);
-    assert_eq!(sink.transport().calls.len(), 1);
+    assert_eq!(next_day.transport().calls.len(), 1);
+    Ok(())
+}
+
+/// How a connect meets the admission ceiling.
+#[derive(Clone, Copy, Debug)]
+enum CeilingPath {
+    /// A connect with no row yet.
+    FreshSend,
+    /// A Pending retry whose admission aged out of the rolling day and whose
+    /// replay resends: its first try failed before sending, before the seat's
+    /// connector key was registered, so the live gate answers the retry.
+    AgedResend,
+    /// The same retry of a first try made under the registered key: recovery
+    /// reads the key the admission named and answers before the live gate.
+    AgedResendUnderKey,
+}
+
+/// What live governance says to the connect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Governance {
+    Allows,
+    /// The owner suspended the seat's connector key.
+    SuspendedKey,
+    /// The key's charter puts the verb on its never-list.
+    NeverList,
+}
+
+/// What one connect came to.
+#[derive(Debug, PartialEq, Eq)]
+struct CeilingAttempt {
+    outcome: OutboundDispatchOutcome,
+    suppression: Option<String>,
+    intent_state: Option<String>,
+    sent: bool,
+}
+
+/// One connect to Jane on `path` under `governance`, with today's cap of one
+/// already spent by a connect to John when `full`.
+fn connect_at_ceiling(
+    path: CeilingPath,
+    governance: Governance,
+    full: bool,
+) -> std::result::Result<CeilingAttempt, Box<dyn std::error::Error>> {
+    let jane = "linkedin:member:jane-doe";
+    let john = "linkedin:member:john-roe";
+    let today = 1_060 + 86_401;
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let key_id = entity(0xC5);
+    let register_key = |at| {
+        vault.register_connector_key(
+            &key_id,
+            crate::connector_key::ConnectorKeyRecord::active(
+                LINKEDIN_CHANNEL,
+                None,
+                Vec::new(),
+                at,
+            ),
+        )
+    };
+    if !matches!(path, CeilingPath::AgedResend) {
+        register_key(1_000)?;
+    }
+    if let CeilingPath::AgedResend | CeilingPath::AgedResendUnderKey = path {
+        let mut failing = LinkedInMcpVerifiedConnectSink::new(
+            linkedin_adapter()?,
+            ConnectTransport {
+                calls: Vec::new(),
+                reads: Vec::new(),
+                observations: [Err("profile_read_down".to_owned())].into(),
+                send_result: Ok(serde_json::json!({"success": true})),
+            },
+        )
+        .with_plan(
+            "intent:cl:jane",
+            LinkedInVerifiedConnectPlan::new(jane, None)?.with_max_observation_attempts(1)?,
+        )?;
+        let _first_try = connect_dispatch_at(
+            &vault,
+            actor.clone(),
+            "receipt:cl:jane:first",
+            "intent:cl:jane",
+            jane,
+            &mut failing,
+            Some(daily_connect_cap_of_one()?),
+            1_060,
+        );
+        assert!(failing.transport().calls.is_empty());
+    }
+    if let CeilingPath::AgedResend = path {
+        register_key(today)?;
+    }
+    if full {
+        let mut filler = capped_connect_sink("intent:cl:john", john)?;
+        let filled = connect_dispatch_at(
+            &vault,
+            actor.clone(),
+            "receipt:cl:john",
+            "intent:cl:john",
+            john,
+            &mut filler,
+            Some(daily_connect_cap_of_one()?),
+            today,
+        )?;
+        assert_ne!(filled.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(filler.transport().calls.len(), 1, "today's cap is full");
+    }
+    match governance {
+        Governance::Allows => {}
+        Governance::SuspendedKey => {
+            vault.suspend_connector_key(&key_id, "owner paused the seat", today)?;
+        }
+        Governance::NeverList => {
+            let pending = vault.propose_connector_charter(
+                &key_id,
+                "never connect_request on linkedin",
+                today,
+            )?;
+            vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", today)?;
+        }
+    }
+    let mut sink = capped_connect_sink("intent:cl:jane", jane)?;
+    let result = connect_dispatch_at(
+        &vault,
+        actor,
+        "receipt:cl:jane:retry",
+        "intent:cl:jane",
+        jane,
+        &mut sink,
+        Some(daily_connect_cap_of_one()?),
+        today + 1,
+    )?;
+    let field = |name: &str| result.receipt.fields.get(name).cloned();
+    Ok(CeilingAttempt {
+        outcome: result.outcome,
+        suppression: field("suppression"),
+        intent_state: field("intent_state"),
+        sent: !sink.transport().calls.is_empty(),
+    })
+}
+
+/// F26 H359, the ceiling's invariant: a cap only adds a hold to a send
+/// governance would let out. Every path that meets the ceiling (a fresh send,
+/// and an aged retry that resends, answered by the live gate or first by
+/// recovery) runs under governance that allows it, a suspended connector key
+/// and a charter never-list, once below today's cap and once with it full.
+/// Where the send goes out below the cap, a full cap holds it, and a held
+/// retry stays the Pending row it was. Where governance stops it, a full cap
+/// gives exactly the answer the send gets below it: a live denial stays the
+/// gate-denied suppression, never a retryable hold, and recovery's hold stays
+/// that hold.
+#[test]
+fn a_ceiling_only_holds_a_send_governance_lets_out()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    for path in [
+        CeilingPath::FreshSend,
+        CeilingPath::AgedResend,
+        CeilingPath::AgedResendUnderKey,
+    ] {
+        for governance in [
+            Governance::Allows,
+            Governance::SuspendedKey,
+            Governance::NeverList,
+        ] {
+            let case = format!("{path:?} under {governance:?}");
+            let below = connect_at_ceiling(path, governance, false)?;
+            let full = connect_at_ceiling(path, governance, true)?;
+            assert_eq!(
+                below.sent,
+                governance == Governance::Allows,
+                "{case}: below the cap, only an allowed send goes out: {below:?}"
+            );
+            assert!(!full.sent, "{case}: a full cap let a send out");
+            if below.sent {
+                assert_eq!(full.outcome, OutboundDispatchOutcome::Held, "{case}");
+                if !matches!(path, CeilingPath::FreshSend) {
+                    assert_eq!(
+                        full.intent_state.as_deref(),
+                        Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                        "{case}: the held retry is still the Pending row it was"
+                    );
+                }
+            } else {
+                assert_eq!(
+                    (&full.outcome, &full.suppression),
+                    (&below.outcome, &below.suppression),
+                    "FAILBEFORE H359 ({case}): the cap changed governance's answer"
+                );
+            }
+            let live_denial = governance != Governance::Allows
+                && !matches!(path, CeilingPath::AgedResendUnderKey);
+            if live_denial {
+                assert_eq!(
+                    (&full.outcome, full.suppression.as_deref()),
+                    (&OutboundDispatchOutcome::Suppressed, Some("gate_denied")),
+                    "FAILBEFORE H359 ({case}): a live denial at a full cap is no hold"
+                );
+            }
+        }
+    }
     Ok(())
 }

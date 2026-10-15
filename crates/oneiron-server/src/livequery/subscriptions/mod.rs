@@ -20,6 +20,11 @@ pub(crate) struct DerivedView {
     /// Include membership containers, not only current result ids, so
     /// an insertion into an empty view also invalidates it.
     pub dependencies: BTreeSet<String>,
+    /// The dependencies a view follows but serves at no index position, such
+    /// as a TURN's messages, whose words a recall reads live. A change to one
+    /// invalidates the view; its index neither pins the cursor nor holds a
+    /// session that opens while it lags.
+    pub followed: BTreeSet<String>,
 }
 
 /// Implementations must use one authority-bound facade, honor every view
@@ -47,6 +52,13 @@ pub(crate) trait LiveQuerySource: Send + Sync {
     /// Validate/export the scoped document's updates since this VV. `false`
     /// means the cursor is past retention and requires full-state resync.
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError>;
+    /// Whether a device-local world now keeps a row one of `pushes` names
+    /// from this source's caller. Such a retained push never leaves this
+    /// device again (DEC-0005): the subscription gets a gap and a fresh
+    /// snapshot instead.
+    fn withholds(&self, _pushes: &[Push]) -> Result<bool, AppError> {
+        Ok(false)
+    }
     /// Retained, authority-scoped pushes outside the delivery ring.
     fn replay(
         &self,
@@ -114,6 +126,20 @@ pub(crate) struct Push {
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
+    /// The rows its result was derived from: the entity dependencies of that
+    /// derivation. A release judges them again (DEC-0005); they never go on
+    /// the wire.
+    #[serde(skip)]
+    pub rows: Vec<oneiron::EntityId>,
+}
+
+/// The rows a derivation read: its entity dependencies.
+fn derived_rows(dependencies: &BTreeSet<String>) -> Vec<oneiron::EntityId> {
+    dependencies
+        .iter()
+        .filter_map(|path| path.strip_prefix("e:"))
+        .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
+        .collect()
 }
 
 impl Push {
@@ -141,6 +167,33 @@ struct Subscription {
 }
 
 impl Subscription {
+    /// Retire every retained push for one gap at the last cursor sent: the
+    /// client resubscribes and gets a fresh snapshot.
+    fn resync(&mut self, id: u64) {
+        if let Some(cursor) = self
+            .ring
+            .back()
+            .map(|p| p.cursor.clone())
+            .or_else(|| self.acked.clone())
+        {
+            self.ring.clear();
+            self.coalesced.clear();
+            self.coalesced_bytes = 0;
+            self.ring.push_back(Push {
+                subscription_id: id,
+                cursor,
+                kind: "gap",
+                result: None,
+                rows: Vec::new(),
+            });
+            self.bytes = push_bytes(self.ring.make_contiguous()).unwrap_or(4096);
+            let _ = self
+                .budget
+                .resize(self.metadata_bytes + self.bytes.max(4096));
+        }
+        self.needs_resync = true;
+    }
+
     /// Retire owner-feed payloads without retiring the exact cursors that
     /// named them. Capacity/budget overflow becomes an explicit gap, never a
     /// silent loss of ACK eligibility.
@@ -370,20 +423,30 @@ impl LiveQueries {
                 // cursor: the hub may not have drained the notice yet.
                 if self.source.can_resume(cursor)? && !sub.needs_resync {
                     let derived = self.source.derive(&view, channel)?;
-                    if fingerprint(&derived.value)? == sub.current {
-                        if sub.acked.as_ref() == Some(cursor) {
-                            sub.origin = origin;
-                            return Ok(sub.ring.iter().cloned().collect());
-                        }
-                        if let Some(position) = sub.ring.iter().rposition(|p| &p.cursor == cursor) {
-                            sub.origin = origin;
-                            sub.ring.drain(..=position);
+                    let tail = if sub.acked.as_ref() == Some(cursor) {
+                        Some(0)
+                    } else {
+                        sub.ring
+                            .iter()
+                            .rposition(|p| &p.cursor == cursor)
+                            .map(|position| position + 1)
+                    };
+                    // A retained push that names a row a device-local world
+                    // keeps since is not sent again: the resume falls to a
+                    // gap and a fresh snapshot.
+                    if fingerprint(&derived.value)? == sub.current
+                        && let Some(tail) = tail
+                        && !self.source.withholds(&sub.ring.make_contiguous()[tail..])?
+                    {
+                        sub.origin = origin;
+                        if tail > 0 {
+                            sub.ring.drain(..tail);
                             sub.bytes = push_bytes(sub.ring.make_contiguous())?;
                             sub.budget
                                 .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
                             sub.acked = Some(cursor.clone());
-                            return Ok(sub.ring.iter().cloned().collect());
                         }
+                        return Ok(sub.ring.iter().cloned().collect());
                     }
                     latest = Some(derived);
                 }
@@ -410,13 +473,19 @@ impl LiveQueries {
             self.source.derive(&view, channel)?
         };
         if new_subscription && channel == Channel::View {
-            let missing = self.source.pending_at_open(&derived.dependencies)?;
+            let served: BTreeSet<String> = derived
+                .dependencies
+                .difference(&derived.followed)
+                .cloned()
+                .collect();
+            let missing = self.source.pending_at_open(&served)?;
             self.tracker.mark_unavailable_at_open(&missing);
         }
         if channel != Channel::OwnerFeed
             && let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
             && let Some(mut replay) = self.source.replay(&view, channel, cursor)?
+            && !self.source.withholds(&replay)?
         {
             for push in &mut replay {
                 push.subscription_id = id;
@@ -435,6 +504,7 @@ impl LiveQueries {
                     cursor: state.cursor(derived.cursor.clone())?,
                     kind: "data",
                     result: Some(derived.value.clone()),
+                    rows: derived_rows(&derived.dependencies),
                 };
                 self.source
                     .record(&view, channel, std::slice::from_ref(&catch_up))?;
@@ -482,6 +552,7 @@ impl LiveQueries {
                 cursor: next_cursor.clone(),
                 kind: "gap",
                 result: None,
+                rows: Vec::new(),
             });
         }
         pushes.push(Push {
@@ -489,12 +560,14 @@ impl LiveQueries {
             cursor: next_cursor.clone(),
             kind: "snapshot",
             result: Some(derived.value.clone()),
+            rows: derived_rows(&derived.dependencies),
         });
         pushes.push(Push {
             subscription_id: id,
             cursor: next_cursor,
             kind: "eose",
             result: None,
+            rows: Vec::new(),
         });
         let bytes = push_bytes(&pushes)?;
         if bytes > MAX_RING_BYTES {
@@ -609,6 +682,7 @@ impl LiveQueries {
                     subscription_id: id,
                     cursor: cursor.clone(),
                     kind: "data",
+                    rows: derived_rows(&derived.dependencies),
                     result: Some(derived.value),
                 };
                 let bytes = push_bytes(std::slice::from_ref(&push))?;
@@ -639,6 +713,7 @@ impl LiveQueries {
                         cursor,
                         kind: "gap",
                         result: None,
+                        rows: Vec::new(),
                     });
                     sub.bytes = push_bytes(sub.ring.make_contiguous())?;
                     sub.budget
@@ -647,11 +722,35 @@ impl LiveQueries {
                 }
             }
         }
+        // Owner feeds were re-derived above. Any other ring is re-judged
+        // right before it is sent: one that names a row a device-local world
+        // keeps since its derivation is retired for a gap.
+        for (id, sub) in &mut state.subs {
+            if sub.channel != Channel::OwnerFeed
+                && !sub.needs_resync
+                && self.source.withholds(sub.ring.make_contiguous())?
+            {
+                sub.resync(*id);
+            }
+        }
         Ok(state
             .subs
             .values()
             .flat_map(|sub| sub.ring.iter().cloned())
             .collect())
+    }
+
+    /// Retires subscription `id` for a gap: its socket's release withheld a
+    /// body it queued (DEC-0005). The client resubscribes for a fresh
+    /// snapshot.
+    pub(crate) fn retire(&self, id: u64) -> Result<(), AppError> {
+        let mut state = self.state.lock().map_err(|_| state_error())?;
+        if let Some(sub) = state.subs.get_mut(&id)
+            && !sub.needs_resync
+        {
+            sub.resync(id);
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -727,6 +826,7 @@ impl LiveQueries {
             let current = fingerprint(&derived.value)?;
             let changed = sub.current != current;
             let cursor = state.cursor(derived.cursor)?;
+            let rows = derived_rows(&derived.dependencies);
             let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
             sub.dependencies = derived.dependencies;
             sub.current = current;
@@ -738,6 +838,7 @@ impl LiveQueries {
                 cursor: cursor.clone(),
                 kind: "data",
                 result: Some(derived.value),
+                rows,
             };
             self.source
                 .record(&sub.view, sub.channel, std::slice::from_ref(&push))?;
@@ -771,6 +872,7 @@ impl LiveQueries {
                     cursor,
                     kind: "gap",
                     result: None,
+                    rows: Vec::new(),
                 };
                 sub.bytes = push_bytes(std::slice::from_ref(&gap))?;
                 sub.budget

@@ -31,6 +31,7 @@ pub(crate) async fn execute_mcp_execute_code(
         .code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
+    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor));
     let outcome = host
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
@@ -38,9 +39,34 @@ pub(crate) async fn execute_mcp_execute_code(
             run_ref: &args.run_ref,
             task: &args.task,
             run_id,
+            verbs: Arc::clone(&verbs) as Arc<dyn oneiron::code_run::AgentVerbDoor>,
         })
-        .await
-        .map_err(|error| mcp_code_execution_error(&error))?;
+        .await;
+    // Revocation takes effect at once: a credential that died while its run
+    // ran gets its own refusal, never the run's results or failure. The run's
+    // durable record stays for a re-entry its credential admits. A failure is
+    // released as a result is, by the rows the run served before it failed.
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
+            let rows = match server.vault.get_code_run_replay_record(&run_id) {
+                Ok(Some(record)) => record.agent_verb_rows(),
+                Ok(None) => Some(Vec::new()),
+                Err(_) => None,
+            }
+            .map(|mut rows| {
+                rows.extend(verbs.served());
+                rows
+            });
+            return Err(super::device_release::mcp_release_error(
+                server,
+                actor,
+                rows.as_deref(),
+                mcp_code_execution_error(&error),
+            ));
+        }
+    };
 
     let steps = outcome
         .replay_record
@@ -50,7 +76,7 @@ pub(crate) async fn execute_mcp_execute_code(
             json!({
                 "seq": call.seq,
                 "effect": call.effect.as_str(),
-                "outcome": mcp_bridge_outcome_value(&call.outcome),
+                "outcome": mcp_step_outcome_value(call),
             })
         })
         .collect::<Vec<_>>();
@@ -94,20 +120,40 @@ pub(crate) async fn execute_mcp_execute_code(
     if let Some(receipt) = &outcome.seat_receipt {
         structured["model_choice"] = json!(receipt);
     }
-    Ok(mcp_endpoint_result(
+    if let Some(report) = &outcome.compaction {
+        structured["compaction"] = mcp_compaction_value(report);
+    }
+    // Judged by the rows its verb answers listed, as its record keeps them
+    // beside each answer, fresh or replayed, and as this call's verb calls
+    // listed them, recorded or not.
+    let named = super::device_release::mcp_run_named_rows(&server.vault, &structured)
+        .zip(outcome.replay_record.agent_verb_rows())
+        .map(|(mut named, recorded)| {
+            named.extend(recorded);
+            named.extend(verbs.served());
+            named
+        });
+    let result = mcp_endpoint_result(
         server,
         actor,
         "execute_code run recorded",
         structured,
         McpCarrierPolicy::Drain,
     )
-    .await)
+    .await;
+    // Checked after the result's last wait, so no wait parks the run's
+    // results past their credential's death.
+    super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
+    #[cfg(test)]
+    super::device_release::release_hook::run(server);
+    super::device_release::mcp_release_run_result(server, actor, named.as_deref(), result)
 }
 
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
-        | crate::mcp::McpCodeExecutionError::RunBusy => -32020,
+        | crate::mcp::McpCodeExecutionError::RunBusy
+        | crate::mcp::McpCodeExecutionError::RunSaturated => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
     };
@@ -122,7 +168,8 @@ fn mcp_code_run_health(
     match status {
         oneiron::engine_executor::EngineExecutorStatus::Complete => McpRetrievalHealth::Healthy,
         oneiron::engine_executor::EngineExecutorStatus::Waiting(_)
-        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. } => {
+        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. }
+        | oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => {
             McpRetrievalHealth::Partial
         }
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
@@ -149,6 +196,10 @@ fn mcp_code_run_help(status: &oneiron::engine_executor::EngineExecutorStatus) ->
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             vec!["this run reached its hard step limit and will not continue".to_owned()]
         }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => vec![
+            "this run's context window is full and no compacted summary has landed yet".to_owned(),
+            "the same run_ref continues it once compaction lands".to_owned(),
+        ],
     }
 }
 
@@ -188,7 +239,28 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             json!({ "status": "hard_step_limit_reached" })
         }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull {
+            next_step_seq,
+            reason,
+        } => json!({
+            "status": "window_full",
+            "next_step_seq": next_step_seq,
+            "reason": mcp_window_full_reason(*reason),
+        }),
     }
+}
+
+/// One step's outcome as its caller reads it: the recorded outcome, less the
+/// rows a verb's answer keeps for its release (DEC-0005), which are the host
+/// door's, not the verb's output.
+fn mcp_step_outcome_value(call: &oneiron::code_run::CodeRunBridgeCall) -> Value {
+    let mut outcome = mcp_bridge_outcome_value(&call.outcome);
+    if call.effect == oneiron::code_run::SelfEffect::AgentVerb
+        && let Some(entries) = outcome.as_object_mut()
+    {
+        entries.remove("rows");
+    }
+    outcome
 }
 
 /// One recorded bridge-call outcome as JSON, entry for entry.
@@ -360,6 +432,7 @@ fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) ->
 pub(super) async fn execute_mcp_board_verb(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
+    served: &mut Vec<oneiron::EntityId>,
     call: impl FnOnce(
         &mut oneiron::board_verb::BoardVerbContext<'_, McpLiveBoard>,
     ) -> Result<
@@ -376,6 +449,7 @@ pub(super) async fn execute_mcp_board_verb(
     McpGatewayError,
 > {
     let board = mcp_current_board(server, actor).await?;
+    served.extend_from_slice(&board.rows);
     let omissions = board.omissions();
     let source = mcp_live_board(actor, &board)?;
     let scope = oneiron::board_verb::BoardWorldScope::single(mcp_board_world(actor));
@@ -472,3 +546,50 @@ pub(crate) fn mcp_board_verb_page_source(
 
 /// The board section the TASKS producer's omissions belong to.
 pub(crate) const MCP_BOARD_TASKS_SECTION: &str = "TASKS";
+
+/// Why a run parked at its window budget, as typed wire data.
+fn mcp_window_full_reason(reason: oneiron::engine_executor::WindowFullReason) -> Value {
+    match reason {
+        oneiron::engine_executor::WindowFullReason::InFlight => json!({"kind": "in_flight"}),
+        oneiron::engine_executor::WindowFullReason::NothingToCompact => {
+            json!({"kind": "nothing_to_compact"})
+        }
+        oneiron::engine_executor::WindowFullReason::Suppressed(suppression) => {
+            let mut value = mcp_suppression_value(suppression);
+            value["kind"] = json!("suppressed");
+            value
+        }
+    }
+}
+
+/// Why compaction did not run, typed: never a bare "did not run".
+fn mcp_suppression_value(suppression: oneiron::compaction::CompactionSuppression) -> Value {
+    use oneiron::compaction::CompactionSuppression;
+    let mut value = json!({"suppression": suppression.as_str()});
+    match suppression {
+        CompactionSuppression::TurnScoped { check: Some(check) } => {
+            value["check"] = json!(check.as_str());
+        }
+        CompactionSuppression::Sticky { why } => value["why"] = json!(why.as_str()),
+        _ => {}
+    }
+    value
+}
+
+/// A run's compaction after this call (agent-runtime-v1 §d7): its window,
+/// a pass in flight, the last swap, and why it did not run.
+fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> Value {
+    let mut value = json!({
+        "used_tokens": report.used_tokens,
+        "compact_at": report.compact_at,
+        "window_tokens": report.window_tokens,
+        "in_flight": report.in_flight,
+    });
+    if let Some((epoch, first, last)) = report.last_swap {
+        value["last_swap"] = json!({"epoch": epoch, "first_step": first, "last_step": last});
+    }
+    if let Some(suppression) = report.suppressed {
+        value["suppressed"] = mcp_suppression_value(suppression);
+    }
+    value
+}

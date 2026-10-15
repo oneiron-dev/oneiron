@@ -46,6 +46,17 @@ impl OutboundDispatchPipeline {
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         self.dispatch_inner(vault, request, sink, Some((actor, actor_class)), None)
     }
+    pub(in crate::outbound) fn dispatch_as_owner<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
+        let mut prepared = PreparedOutboundDispatch::prepare(vault, request, None, None)?;
+        prepared.owner_proof = Some(owner.clone());
+        self.dispatch_prepared_or_completed(vault, prepared, sink)
+    }
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
@@ -56,6 +67,14 @@ impl OutboundDispatchPipeline {
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         let prepared =
             PreparedOutboundDispatch::prepare(vault, request, verified_actor, step_binding)?;
+        self.dispatch_prepared_or_completed(vault, prepared, sink)
+    }
+    fn dispatch_prepared_or_completed<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        prepared: PreparedOutboundDispatch,
+        sink: &mut S,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         if prepared.replay_done() {
             return Ok(self
                 .dispatch_completed_effect(vault, prepared, sink)?
@@ -120,6 +139,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             space_posting,
             policy_risk,
             payload,
@@ -136,8 +156,12 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             parked: None,
             suppression_receipt: None,
+            // A completed replay sends nothing, so it neither spends nor
+            // rechecks today's allowance.
+            admission_ceiling: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -175,9 +199,12 @@ impl OutboundDispatchPipeline {
             &mut prepared.request,
             &window_decision,
         );
-        let admission = super::admission::AdmissionStage::evaluate(
+        let seat_ledger =
+            super::seat_policy::SeatLedgerCount::for_request(&prepared.request, verb_contract);
+        let mut admission = super::admission::AdmissionStage::evaluate(
             &prepared.request,
             verb_contract,
+            seat_ledger,
             window_resolution,
             window_decision,
         );
@@ -191,6 +218,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             space_posting,
             policy_risk,
             payload,
@@ -220,13 +248,25 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             parked,
+            admission_ceiling: seat_ledger.ceiling,
             suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
                 &request,
                 &admission.window_decision,
                 &admission.window_resolution,
             ),
         })?;
+        // A cap reached under the admission writer lock is the seat's own
+        // hold. The receipt carries the count that lock read and the closed
+        // cap reason, not the Allow the earlier read produced.
+        if let Some(count) = verdict.ceiling_count {
+            admission.seat = super::seat_policy::evaluate_seat_policy(
+                &request,
+                verb_contract,
+                seat_ledger.held_at(verb_contract, count),
+            );
+        }
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,

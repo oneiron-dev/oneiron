@@ -10,6 +10,7 @@ use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::SelfEffect;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::task_verb::sdk::AgentVerb;
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeKind,
     SourceLineage, Vault, WriteEnvelope, WriteProvenance,
@@ -33,6 +34,30 @@ impl HostSelfDispatcher<'_> {
         effect: SelfEffect,
         admission: Option<&consent::CodeEmissionAdmission>,
     ) -> Result<WriteEnvelope> {
+        self.write_envelope_with(effect, admission, Vec::new())
+    }
+
+    /// The envelope a code-mode verb call writes under: the run's own, naming
+    /// the verb and, in a durable run, the call's bridge position.
+    pub(super) fn agent_verb_envelope(
+        &self,
+        verb: AgentVerb,
+        seq: Option<u64>,
+    ) -> Result<WriteEnvelope> {
+        let admission = self.non_candidate_code_emission_admission()?;
+        let mut call = vec![(Value::from("verb"), Value::from(verb.as_str()))];
+        if let Some(seq) = seq {
+            call.push((Value::from("seq"), Value::from(seq)));
+        }
+        self.write_envelope_with(SelfEffect::AgentVerb, admission.as_ref(), call)
+    }
+
+    fn write_envelope_with(
+        &self,
+        effect: SelfEffect,
+        admission: Option<&consent::CodeEmissionAdmission>,
+        call: Vec<(Value, Value)>,
+    ) -> Result<WriteEnvelope> {
         let mut provenance = vec![
             (
                 Value::from(SELF_PROVENANCE_SURFACE_KEY),
@@ -47,6 +72,7 @@ impl HostSelfDispatcher<'_> {
                 Value::from(effect.as_str()),
             ),
         ];
+        provenance.extend(call);
         if let Some(admission) = admission {
             provenance.push((Value::from("runner"), Value::from("dreamer")));
             provenance.push((
@@ -59,11 +85,13 @@ impl HostSelfDispatcher<'_> {
         // effects that persist a claim/edge carry it — the fixture effect
         // persists nothing a lineage could qualify — and only when the host
         // has actually observed an external effect, so an unobserved run
-        // builds the byte-identical trivial envelope it built before.
+        // builds the byte-identical trivial envelope it built before. A verb
+        // call's claims are claims the run wrote, so they carry it too.
         let lineage = match effect {
             SelfEffect::MemoryPutClaim
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
+            | SelfEffect::AgentVerb
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
@@ -128,6 +156,7 @@ impl HostSelfDispatcher<'_> {
                 body,
                 envelope,
                 can_resolve_pending_consent,
+                |_| Ok(()),
             ),
             ExecutorStorage::Session(binding) => binding.session.executor_check_write_gate(
                 &binding.route,
@@ -146,15 +175,23 @@ impl HostSelfDispatcher<'_> {
 /// canonical and post-flip session paths cannot drift into two gate bodies.
 /// The session side reaches it through
 /// [`OffRecordSession::executor_check_write_gate`], which owns the routing.
+///
+/// `landing` runs first in the gate's write transaction, before the actor's
+/// row is read or any decision is recorded: the decision is a durable write,
+/// so a session run's room keeps it only while the write it decides could
+/// land there, and a run removed from the room hears only that, whatever
+/// has become of its row since.
 pub(crate) fn check_write_gate_against_vault(
     vault: &Vault,
     id: EntityId,
     body: &ClaimBody,
     envelope: &WriteEnvelope,
     can_resolve_pending_consent: bool,
+    landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<()> {
-    validate_write_actor_binding(vault, envelope)?;
     let mut wtxn = vault.store.env.write_txn()?;
+    landing(&wtxn)?;
+    validate_write_actor_binding(vault, &wtxn, envelope)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let gate_result = crate::gate::check_claim_policy_for_write(
         &vault.store,
@@ -178,13 +215,16 @@ pub(crate) fn check_write_gate_against_vault(
     gate_result
 }
 
-fn validate_write_actor_binding(vault: &Vault, envelope: &WriteEnvelope) -> Result<()> {
+fn validate_write_actor_binding(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    envelope: &WriteEnvelope,
+) -> Result<()> {
     crate::gate::validate_write_envelope(envelope)?;
     let actor = envelope.actor();
-    let rtxn = vault.store.env.read_txn()?;
     let actor_raw = vault
         .store
-        .port_entity_record(&rtxn, &actor.entity_ref())?
+        .port_entity_record(txn, &actor.entity_ref())?
         .ok_or(Error::EntityNotFound)?;
     crate::provenance::validate_actor_class(actor_raw.entity_type, actor.actor_class())
 }
@@ -254,7 +294,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::ReportBlocked
         | SelfEffect::InferenceDefaultsRead
         | SelfEffect::InferenceDefaultsReplace => false,
-        SelfEffect::WakePolicyWrite => false,
+        SelfEffect::WakePolicyWrite | SelfEffect::AgentVerb => false,
     }
 }
 

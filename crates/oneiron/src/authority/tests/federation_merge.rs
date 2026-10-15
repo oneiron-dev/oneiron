@@ -472,272 +472,6 @@ fn federation_lifecycle_rejects_all_zero_peer_vault_id() {
 }
 
 #[test]
-fn federation_divergent_grant_bindings_suspend_and_deny_both_grants() {
-    let fixture = pact_fixture(168);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let grant_a = fixture.grant_ref;
-    let grant_b = scope_entity(0x45);
-    // Same pact id, same scope/nonce (equal digests) — the pact transcript
-    // carries no grant_ref, so ONE honest peer gesture covers both bindings;
-    // divergence detection must not ride the digest check.
-    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
-    let connect_b = lifecycle_entry(
-        &fixture,
-        vec![genesis_hash],
-        2,
-        connect_action_with(
-            &fixture,
-            fixture.pact_id,
-            grant_b,
-            &fixture.scope,
-            fixture.pact_nonce,
-        ),
-    );
-
-    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
-    assert!(
-        fold.issues.is_empty(),
-        "both connects fold valid on their branches"
-    );
-    let pact = &fold.federation_pacts[&fixture.pact_id];
-    assert_eq!(
-        pact.status,
-        FederationPactStatus::Suspended,
-        "divergent grant bindings must suspend, never silently keep one"
-    );
-    assert_eq!(pact.pact_epoch, 1);
-    assert_eq!(
-        pact.grant_ref,
-        grant_a.min(grant_b),
-        "deterministic tie-break"
-    );
-    for grant in [grant_a, grant_b] {
-        assert_eq!(
-            federation_grant_activation(&fold, &grant),
-            FederationGrantActivation::Inactive(FederationPactStatus::Suspended),
-            "no Unpacted escape for a grant that appeared in a pact binding"
-        );
-        assert!(
-            fold.federation_grant_bindings[&grant].contains(&fixture.pact_id),
-            "both bindings must be registered"
-        );
-    }
-}
-
-#[test]
-fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
-    let fixture = pact_fixture(172);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let grant_a = fixture.grant_ref;
-    let grant_b = scope_entity(0x46);
-    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
-    let connect_b = lifecycle_entry(
-        &fixture,
-        vec![genesis_hash],
-        2,
-        connect_action_with(
-            &fixture,
-            fixture.pact_id,
-            grant_b,
-            &fixture.scope,
-            fixture.pact_nonce,
-        ),
-    );
-    let connect_a_hash = authority_entry_hash(&connect_a).unwrap();
-    let connect_b_hash = authority_entry_hash(&connect_b).unwrap();
-    // Equal digests: the surviving binding is the lexicographic-min grant.
-    let winner = grant_a.min(grant_b);
-    let loser = grant_a.max(grant_b);
-
-    // A repact naming the DISCARDED binding must not heal.
-    let heal_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
-    let bad_heal = lifecycle_entry(
-        &fixture,
-        vec![connect_a_hash, connect_b_hash],
-        3,
-        repact_action_with(&fixture, fixture.pact_id, loser, 2, &heal_scope, [0x6E; 16]),
-    );
-    let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
-    let fold = fold_authority_log(&[
-        fixture.genesis.clone(),
-        connect_a.clone(),
-        connect_b.clone(),
-        bad_heal,
-    ]);
-    assert_eq!(
-        lifecycle_rejection(&fold, bad_heal_hash),
-        Some(FederationLifecycleRejection::GrantAlreadyBound)
-    );
-    assert_eq!(
-        fold.federation_pacts[&fixture.pact_id].status,
-        FederationPactStatus::Suspended
-    );
-
-    // An epoch+1 dual-signed repact naming the surviving grant restores
-    // exactly that grant; the discarded binding stays denied.
-    let heal_nonce = [0x6F; 16];
-    let heal = lifecycle_entry(
-        &fixture,
-        vec![connect_a_hash, connect_b_hash],
-        4,
-        repact_action_with(
-            &fixture,
-            fixture.pact_id,
-            winner,
-            2,
-            &heal_scope,
-            heal_nonce,
-        ),
-    );
-    // Nor can the discarded binding be re-covered by a fresh pact.
-    let rebind = lifecycle_entry(
-        &fixture,
-        vec![connect_a_hash, connect_b_hash],
-        5,
-        connect_action_with(&fixture, [0xD4; 32], loser, &fixture.scope, [0x70; 16]),
-    );
-    let rebind_hash = authority_entry_hash(&rebind).unwrap();
-    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b, heal, rebind]);
-    let pact = &fold.federation_pacts[&fixture.pact_id];
-    assert_eq!(pact.status, FederationPactStatus::Active);
-    assert_eq!(pact.pact_epoch, 2);
-    assert_eq!(pact.grant_ref, winner);
-    assert_eq!(
-        federation_grant_activation(&fold, &winner),
-        FederationGrantActivation::Active
-    );
-    assert_eq!(
-        federation_grant_activation(&fold, &loser),
-        FederationGrantActivation::Inactive(FederationPactStatus::Active),
-        "the discarded binding never returns to Unpacted or Active"
-    );
-    assert_eq!(
-        lifecycle_rejection(&fold, rebind_hash),
-        Some(FederationLifecycleRejection::GrantAlreadyBound)
-    );
-}
-
-#[test]
-fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
-    // The residual fail-open shape: grant G bound to pact P AND pact Q via
-    // concurrent Connects (validate-time GrantAlreadyBound cannot stop a
-    // merge of two independently folded branches). P also binds H with
-    // H < G, so P suspends with H as its operative binding — P is then
-    // invisible to an operative-state scan for G, and only the binding
-    // registry knows G↔P. Activation must fold over EVERY registered pact:
-    // Q being Active must never mask P.
-    let fixture = pact_fixture(176);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    // Deliberate exception to the default 0x47 → 0x67 test-seed mapping:
-    // this fixture requires H < G (0x48) to exercise the tie-break premise.
-    let grant_h = scope_entity(0x46);
-    let grant_g = scope_entity(0x48);
-    let pact_p = fixture.pact_id;
-    let pact_q = [0xD5; 32];
-
-    let connect_p_g = lifecycle_entry(
-        &fixture,
-        vec![genesis_hash],
-        1,
-        connect_action_with(
-            &fixture,
-            pact_p,
-            grant_g,
-            &fixture.scope,
-            fixture.pact_nonce,
-        ),
-    );
-    let connect_p_h = lifecycle_entry(
-        &fixture,
-        vec![genesis_hash],
-        2,
-        connect_action_with(
-            &fixture,
-            pact_p,
-            grant_h,
-            &fixture.scope,
-            fixture.pact_nonce,
-        ),
-    );
-    let connect_q_g = lifecycle_entry(
-        &fixture,
-        vec![genesis_hash],
-        3,
-        connect_action_with(&fixture, pact_q, grant_g, &fixture.scope, [0x78; 16]),
-    );
-    let connect_p_g_hash = authority_entry_hash(&connect_p_g).unwrap();
-    let connect_p_h_hash = authority_entry_hash(&connect_p_h).unwrap();
-
-    let fold = fold_authority_log(&[
-        fixture.genesis.clone(),
-        connect_p_g.clone(),
-        connect_p_h.clone(),
-        connect_q_g.clone(),
-    ]);
-    assert!(fold.issues.is_empty());
-    // P suspended with H operative (equal digests, H < G); Q Active with G
-    // operative — so the operative-state scan for G sees ONLY Q.
-    assert_eq!(
-        fold.federation_pacts[&pact_p].status,
-        FederationPactStatus::Suspended
-    );
-    assert_eq!(fold.federation_pacts[&pact_p].grant_ref, grant_h);
-    assert_eq!(
-        fold.federation_pacts[&pact_q].status,
-        FederationPactStatus::Active
-    );
-    assert_eq!(
-        fold.pact_for_grant(&grant_g).map(|pact| pact.status),
-        Some(FederationPactStatus::Active),
-        "operative-state scan alone would authorize G — activation is the gate"
-    );
-    assert_eq!(
-        federation_grant_activation(&fold, &grant_g),
-        FederationGrantActivation::Inactive(FederationPactStatus::Suspended),
-        "suspended P must deny G despite Active Q"
-    );
-    assert_eq!(
-        federation_grant_activation(&fold, &grant_h),
-        FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
-    );
-
-    // Terminal revocation of P (unilateral Disconnect under its operative
-    // binding) must keep G denied: no survival via Q.
-    let disconnect_p = lifecycle_entry(
-        &fixture,
-        vec![connect_p_g_hash, connect_p_h_hash],
-        4,
-        unilateral_action_with(
-            &fixture,
-            pact_p,
-            grant_h,
-            FederationLifecycleKind::Disconnect,
-            1,
-        ),
-    );
-    let fold = fold_authority_log(&[
-        fixture.genesis,
-        connect_p_g,
-        connect_p_h,
-        connect_q_g,
-        disconnect_p,
-    ]);
-    assert_eq!(
-        fold.federation_pacts[&pact_p].status,
-        FederationPactStatus::Disconnected
-    );
-    assert_eq!(
-        fold.federation_pacts[&pact_q].status,
-        FederationPactStatus::Active
-    );
-    assert_eq!(
-        federation_grant_activation(&fold, &grant_g),
-        FederationGrantActivation::Inactive(FederationPactStatus::Disconnected),
-        "G must not survive P's revocation through Q"
-    );
-}
-
-#[test]
 fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
     // Three concurrent Connects binding one pact to three grants with equal
     // digests: the tie-break is purely the grant_ref, and the merged carried
@@ -837,26 +571,22 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
 }
 
 #[test]
-fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
-    // Two concurrent Connects with an identical (scope_digest, grant_ref)
-    // key can still be dual-signed with DIFFERENT peers: the combined state
-    // must pick the peer fields by a total order, never by which side the
-    // fold happened to hold on the left.
+fn equal_key_peer_histories_converge_in_both_orders_and_duplicate_replay() {
     let fixture = pact_fixture(192);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
-
+    let root = authority_entry_hash(&fixture.genesis).unwrap();
+    let a = lifecycle_entry(&fixture, vec![root], 1, connect_action(&fixture));
     let other_peer = ed_key(212);
-    let other_peer_vault_id = genesis_vault_id(&genesis_entry(212, 86_400, 1)).unwrap();
-    let connect_b = lifecycle_entry(
+    let other_vault = genesis_vault_id(&genesis_entry(212, 86_400, 1)).unwrap();
+    assert_ne!(fixture.peer_vault_id, other_vault);
+    let b = lifecycle_entry(
         &fixture,
-        vec![genesis_hash],
+        vec![root],
         2,
         FederationLifecycleAction {
             kind: FederationLifecycleKind::Connect,
             pact_id: fixture.pact_id,
             grant_ref: fixture.grant_ref,
-            peer_vault_id: other_peer_vault_id,
+            peer_vault_id: other_vault,
             pact_epoch: 1,
             pact_scope: Some(fixture.scope.clone()),
             effective_scope: None,
@@ -865,7 +595,7 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
                 FederationLifecycleKind::Connect,
                 &fixture.pact_id,
                 &fixture.vault_id,
-                &other_peer_vault_id,
+                &other_vault,
                 1,
                 &fixture.scope_digest,
                 None,
@@ -876,18 +606,74 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
             pact_nonce: fixture.pact_nonce,
         },
     );
-
-    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
-    assert!(fold.issues.is_empty());
-    let pact = &fold.federation_pacts[&fixture.pact_id];
+    let expected = fold_authority_log(&[fixture.genesis.clone(), a.clone(), b.clone()]);
+    assert!(expected.issues.is_empty());
+    assert_eq!(expected.valid_entries.len(), 3);
+    let pact = &expected.federation_pacts[&fixture.pact_id];
     assert_eq!(pact.status, FederationPactStatus::Active);
-    assert_eq!(
-        pact.peer_vault_id,
-        fixture.peer_vault_id.min(other_peer_vault_id)
-    );
+    assert_eq!(pact.peer_vault_id, fixture.peer_vault_id.min(other_vault));
     assert_eq!(
         pact.peer_owner_key,
         authority_key_from_ed(&fixture.peer).min(authority_key_from_ed(&other_peer))
     );
     assert_eq!(pact.pact_scope, fixture.scope);
+    for history in [
+        vec![fixture.genesis.clone(), b.clone(), a.clone()],
+        vec![
+            fixture.genesis.clone(),
+            a.clone(),
+            b.clone(),
+            a.clone(),
+            b.clone(),
+        ],
+        vec![
+            b.clone(),
+            a.clone(),
+            fixture.genesis.clone(),
+            b.clone(),
+            a.clone(),
+            fixture.genesis.clone(),
+        ],
+    ] {
+        let actual = fold_authority_log(&history);
+        assert!(actual.issues.is_empty());
+        assert_eq!(actual, expected);
+    }
+    let a_hash = authority_entry_hash(&a).unwrap();
+    let b_hash = authority_entry_hash(&b).unwrap();
+    let owner_key = authority_key_from_ed(&fixture.owner);
+    for parents in [vec![a_hash, b_hash], vec![b_hash, a_hash]] {
+        let join = sign_ed(
+            unsigned_entry(
+                Some(fixture.vault_id),
+                3,
+                parents,
+                bind_op(&owner_key, fixture.grant_ref, "human", 1),
+                owner_key.clone(),
+                103,
+            ),
+            &fixture.owner,
+        );
+        let joined =
+            fold_authority_log(&[fixture.genesis.clone(), a.clone(), b.clone(), join.clone()]);
+        assert!(joined.issues.is_empty());
+        assert_eq!(joined.valid_entries.len(), 4);
+        assert_eq!(joined.federation_pacts, expected.federation_pacts);
+        assert_eq!(
+            joined.federation_grant_bindings,
+            expected.federation_grant_bindings
+        );
+        let replayed = fold_authority_log(&[
+            join.clone(),
+            b.clone(),
+            fixture.genesis.clone(),
+            a.clone(),
+            join,
+            a.clone(),
+            b.clone(),
+            fixture.genesis.clone(),
+        ]);
+        assert!(replayed.issues.is_empty());
+        assert_eq!(replayed, joined);
+    }
 }

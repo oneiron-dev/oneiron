@@ -175,19 +175,20 @@ pub(super) fn owner_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     owner: &AuthenticatedOwner,
-) -> Result<()> {
-    let actor = WriteActor::new(owner.actor(), crate::edge::EdgeActorClass::Human);
+) -> Result<EntityId> {
+    let owner_actor = owner.revalidate_in_txn(vault, txn)?;
+    let actor = WriteActor::new(owner_actor, crate::edge::EdgeActorClass::Human);
     validate_actor(vault, txn, actor)?;
-    crate::memory::verify_owner_actor_binding_in_txn(vault, txn, owner.actor())
+    crate::memory::verify_owner_actor_binding_in_txn(vault, txn, owner_actor)
         .map_err(|_| invalid("owner authority is no longer active"))?;
-    let header = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &owner.actor())?
+    let header = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &owner_actor)?
         .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw));
     if header.is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON) {
         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
             "owner is not a live human",
         )));
     }
-    Ok(())
+    Ok(owner_actor)
 }
 
 pub(super) fn covered(
@@ -199,11 +200,9 @@ pub(super) fn covered(
 ) -> Result<bool> {
     validate_actor(vault, txn, actor)?;
     match auth {
-        DocAuthorization::Owner(owner) => {
-            owner_in_txn(vault, txn, owner)?;
-            Ok(owner.actor() == actor.entity_ref()
-                && actor.actor_class() == crate::edge::EdgeActorClass::Human)
-        }
+        DocAuthorization::Owner(owner) => Ok(owner_in_txn(vault, txn, owner)?
+            == actor.entity_ref()
+            && actor.actor_class() == crate::edge::EdgeActorClass::Human),
         DocAuthorization::ProposeOnly => Ok(false),
         DocAuthorization::StandingGrant => {
             let target = format!("entity:{}", entity.to_hex());
@@ -267,7 +266,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn(|txn| {
+        let out = self.with_write_txn_grouped(|txn| {
             for req in requests {
                 validate_actor(self, txn, req.actor)?;
                 let h = storage::head(&self.store, txn, &req.entity)?;
@@ -352,7 +351,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn(|txn| {
+        let out = self.with_write_txn_grouped(|txn| {
             let bundle = read_bundle(&self.store, txn, proposal)?;
             if bundle.settled {
                 return Err(Error::Artifact(ArtifactError::EditProposalAlreadySettled {

@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 15,
+            "command": "python3 /path/to/oneiron_hook.py session-start --oneiron /path/to/oneiron --url http://127.0.0.1:9090 --credential-file /path/to/claude-code-hooks.cred"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 /path/to/oneiron_hook.py hand-over --oneiron /path/to/oneiron --config /path/to/oneiron.toml"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 /path/to/oneiron_hook.py hand-over --oneiron /path/to/oneiron --config /path/to/oneiron.toml"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "python3 /path/to/oneiron_hook.py hand-over --oneiron /path/to/oneiron --timeout 4 --config /path/to/oneiron.toml"
+          }
+        ]
+      }
+    ]
+  }
+}

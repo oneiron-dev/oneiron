@@ -277,6 +277,32 @@ fn check_rule(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u64) 
     Ok(())
 }
 
+/// Whether the leaders of `projects` may open a direct chat now: the chat
+/// their current leaders form, each as the person they speak as now, passes
+/// the leader and rule checks [`Vault::open_leader_chat`] runs before it
+/// writes, read in `txn` alone.
+pub(crate) fn chat_allowed(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    projects: [EntityId; 2],
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    let actors = [
+        EntityId::from_hex(&project_in(vault, txn, projects[0])?.leader)?,
+        EntityId::from_hex(&project_in(vault, txn, projects[1])?.leader)?,
+    ];
+    let chat = LeaderChat {
+        projects,
+        actors,
+        persons: [
+            speaker_person(vault, txn, actors[0], now)?,
+            speaker_person(vault, txn, actors[1], now)?,
+        ],
+    };
+    ensure_leaders(vault, txn, &chat, now)?;
+    check_rule(vault, txn, &chat, now)
+}
+
 impl Vault {
     /// Open an ordinary direct Conversation without an ask. Both leaders must
     /// still hold their own project roles when a message is witnessed.
@@ -287,7 +313,7 @@ impl Vault {
         actor: WriteActor,
         at: u64,
     ) -> Result<LeaderChat> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let actors = [
                 EntityId::from_hex(&project_in(self, txn, projects[0])?.leader)?,
                 EntityId::from_hex(&project_in(self, txn, projects[1])?.leader)?,

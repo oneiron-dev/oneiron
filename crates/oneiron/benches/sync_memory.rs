@@ -7,6 +7,10 @@
 //! - 1,000 entities rewritten 3 times each (Dreamer consolidation sim)
 //!
 //! Run: cargo bench --bench sync_memory --features sync
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::sync::Arc;
 

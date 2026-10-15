@@ -25,20 +25,12 @@ pub(crate) use self::accessors::{OverlayDb, OverlayStrDb};
 // every overlay-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::merge::*;
+use crate::error::Result;
 #[cfg(test)]
-use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::session_overlay::{
-    OverlayKeyspace, SessionOverlay, SnapshotMergePlan, SnapshotMergeRow,
-};
+use crate::session_overlay::{OverlayKeyspace, SessionOverlay};
 #[cfg(test)]
 use heed::Database;
 #[cfg(test)]
 use heed::types::Bytes;
-#[cfg(test)]
-use std::borrow::Cow;
-#[cfg(test)]
-use std::collections::BTreeSet;
 #[cfg(test)]
 use std::sync::Arc;

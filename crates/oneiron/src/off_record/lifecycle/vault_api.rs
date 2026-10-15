@@ -8,7 +8,8 @@ use crate::receipt::SessionLocalReceiptLog;
 use crate::session_overlay::OverlayKeyspace;
 
 use super::registry::{
-    OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
+    OffRecordSessionEntry, OffRecordSessionEntryState, live_session_entry, session_entry_state,
+    vet_off_record_session_ref,
 };
 use super::session::OffRecordSessionVault;
 use super::types::{
@@ -44,25 +45,33 @@ impl Vault {
         backend: OffRecordBackendClass,
         budget_bytes: usize,
     ) -> Result<OffRecordSessionRecord> {
-        let entry = self.enter_off_record_session_entry(session_ref, backend, budget_bytes)?;
+        let entry =
+            self.enter_off_record_session_entry(session_ref, backend, budget_bytes, None)?;
         Ok(session_entry_state(&entry)?.record.clone())
     }
 
+    /// `room` is `(room, started_by)` for a stretch a participant starts in a
+    /// room; the caller has checked the starter is a member of it.
     pub(super) fn enter_off_record_session_entry(
         &self,
         session_ref: &str,
         backend: OffRecordBackendClass,
         budget_bytes: usize,
+        room: Option<(crate::EntityId, crate::EntityId)>,
     ) -> Result<Arc<OffRecordSessionEntry>> {
         if !self.config.off_record_enabled {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
+        if room.is_none() {
+            vet_roomless_session_ref(session_ref)?;
+        }
         self.store.off_record_sessions.enter(
             session_ref,
             backend,
             budget_bytes,
             OffRecordMode::OffRecord,
+            room,
             &self.store.clock,
         )
     }
@@ -88,11 +97,13 @@ impl Vault {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
+        vet_roomless_session_ref(session_ref)?;
         self.store.off_record_sessions.enter(
             session_ref,
             backend,
             0,
             OffRecordMode::Anonymous,
+            None,
             &self.store.clock,
         )
     }
@@ -108,13 +119,14 @@ impl Vault {
         Ok(self.store.off_record_sessions.record(session_ref))
     }
 
-    /// Flips the session's write-routing mode, in either direction (ARCH-0052
-    /// D5 / K10). Rows already in the room stay in the room across the flip.
+    /// Takes the session back off record (ARCH-0052 D5 / K10). Rows already
+    /// in the room stay in the room across the flip.
     ///
-    /// * `OffRecord -> OnRecord` seals the overlay write path. New writes —
-    ///   telemetry included — route to base ordinarily, under the session's
-    ///   on-record continuation shell; reads stay composed, so the room's
-    ///   earlier turns remain visible in-session.
+    /// * `OffRecord -> OnRecord` is refused here, alone or in a room: on
+    ///   record, later turns land in this vault, which is the owner's consent
+    ///   to give. Only the owner's proof-bound door,
+    ///   [`OffRecordSession::flip_on_record_as`](crate::off_record::OffRecordSession::flip_on_record_as),
+    ///   puts a stretch on record.
     /// * `OnRecord -> OffRecord` REARMS the overlay (`Sealed` -> `Live`). New
     ///   writes route to the overlay again. Pre-flip turns stay overlay-only
     ///   and base-invisible throughout; rearm reopens the write door and
@@ -139,31 +151,22 @@ impl Vault {
         // then failed though the mode never changed). Deadlock-safe:
         // `seal_writes` takes only the overlay's own lock, never `entry.state`.
         let mut state = session_entry_state(&entry)?;
-        if state.record.closing || state.gone {
-            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
-                session_ref: session_ref.to_owned(),
-            }));
+        // A stretch goes on record only through the owner's proof-bound door,
+        // `OffRecordSession::flip_on_record_as`, which also tells a room: on
+        // record, later turns land in this vault (everyone's, in a room). A
+        // closing, anonymous or already on-record session answers as before.
+        if mode == OffRecordMode::OnRecord
+            && state.record.mode == OffRecordMode::OffRecord
+            && !(state.record.closing || state.gone)
+        {
+            return Err(Error::OffRecord(
+                OffRecordError::OffRecordPromoteUnauthenticated {
+                    session_ref: session_ref.to_owned(),
+                    actor_ref: String::new(),
+                },
+            ));
         }
-        if state.record.mode == mode {
-            return Ok(state.record.clone());
-        }
-        // Anonymous is an entry-time choice, never a way to hide an
-        // existing transcript or later publish one. Check both ends before
-        // touching the overlay's lifecycle or publishing another mode.
-        state
-            .record
-            .mode
-            .write_target()
-            .require_recording(session_ref)?;
-        mode.write_target().require_recording(session_ref)?;
-        match mode {
-            OffRecordMode::Anonymous => unreachable!("anonymous mode change refused above"),
-            OffRecordMode::OnRecord => entry.overlay.seal_writes()?,
-            OffRecordMode::OffRecord => entry.overlay.rearm()?,
-        }
-        state.record.mode = mode;
-        entry.publish_state(&state);
-        Ok(state.record.clone())
+        set_entry_mode(&entry, &mut state, session_ref, mode)
     }
 
     /// Opens the session-local emit receipt log bound to a live off-record
@@ -325,4 +328,58 @@ impl Vault {
             promoted_turns_kept: record.promoted_turns.len(),
         })
     }
+}
+
+/// A stretch entered alone may not take a name a room's stretch is keyed by,
+/// so the two never collide.
+fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
+    if session_ref.starts_with(super::room::ROOM_KEY_PREFIX) {
+        return Err(Error::InvalidConfig(format!(
+            "off-record session refs starting with {:?} name a room's stretches",
+            super::room::ROOM_KEY_PREFIX
+        )));
+    }
+    Ok(())
+}
+
+/// Flips `entry`'s mode under its held state lock, so the overlay's seal or
+/// rearm and the record's mode change are one step (see
+/// [`Vault::set_off_record_session_mode`]). A handle passes its own entry, so
+/// the flip lands on the stretch it holds, never on one that took its name
+/// since.
+pub(super) fn set_entry_mode(
+    entry: &OffRecordSessionEntry,
+    state: &mut OffRecordSessionEntryState,
+    session_ref: &str,
+    mode: OffRecordMode,
+) -> Result<OffRecordSessionRecord> {
+    if state.record.closing || state.gone {
+        return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+            session_ref: session_ref.to_owned(),
+        }));
+    }
+    if state.record.mode == mode {
+        return Ok(state.record.clone());
+    }
+    // Anonymous is an entry-time choice, never a way to hide an existing
+    // transcript or later publish one. Check both ends before touching the
+    // overlay's lifecycle or publishing another mode.
+    state
+        .record
+        .mode
+        .write_target()
+        .require_recording(session_ref)?;
+    mode.write_target().require_recording(session_ref)?;
+    match mode {
+        OffRecordMode::Anonymous => unreachable!("anonymous mode change refused above"),
+        OffRecordMode::OnRecord => entry.overlay.seal_writes()?,
+        OffRecordMode::OffRecord => entry.overlay.rearm()?,
+    }
+    state.record.mode = mode;
+    // Off record again, nobody's vault takes the room's turns.
+    if mode != OffRecordMode::OnRecord {
+        state.saver = None;
+    }
+    entry.publish_state(state);
+    Ok(state.record.clone())
 }

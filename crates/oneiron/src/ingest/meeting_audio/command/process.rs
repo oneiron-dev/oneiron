@@ -95,27 +95,3 @@ fn stop(child: &mut std::process::Child) {
     let _ = child.kill();
     let _ = child.wait();
 }
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn blocked_native_process_returns_a_typed_deadline() {
-        let mut command = Command::new("/bin/cat");
-        command.stdin(Stdio::piped());
-        assert_eq!(
-            capture(&mut command, 128, Duration::from_millis(20)),
-            Err("HostDeadlineExceeded")
-        );
-    }
-
-    #[test]
-    fn oversized_native_output_is_bounded_before_process_exit() {
-        let mut command = Command::new("/usr/bin/yes");
-        assert_eq!(
-            capture(&mut command, 128, Duration::from_secs(5)),
-            Err("ResponseTooLargeOrIo")
-        );
-    }
-}

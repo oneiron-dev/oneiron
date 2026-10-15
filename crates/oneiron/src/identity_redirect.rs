@@ -39,9 +39,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::identity_topology::{
-    IdentityTopologyAction, IdentityTopologyOp, fold_identity_topology_log,
-    identity_topology_shell_peers_for_store_in_txn, note_zero_head_split_in_txn,
-    shell_edge_sources_for_store_in_txn, zero_head_split_shells_for_store_in_txn,
+    IdentityTopologyAction, IdentityTopologyOp, SealTrust, decision_in_force_by_seal_in_txn,
+    fold_identity_topology_log, identity_topology_shell_peers_for_store_in_txn,
+    note_zero_head_split_in_txn, shell_edge_sources_for_store_in_txn,
+    zero_head_split_shells_for_store_in_txn,
 };
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
@@ -307,12 +308,24 @@ fn table_inbound_shells_in_txn(
 /// nothing, and counting its source would report a leak that never was. The
 /// fold runs over the RAW event family rather than the effective projection
 /// because that projection drops an op whose participant row is missing —
-/// which is exactly what erasing the head makes true.
+/// which is exactly what erasing the head makes true. Seal standing still
+/// applies (H161): an applied decision no seal this vault counts binds
+/// shells nothing, so a stranger's merge never reads as a leak.
 fn ledger_inbound_shells_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
-    let events = vault.identity_topology_events_in_txn(rtxn)?;
+    let mut trust = SealTrust::default();
+    let mut events = Vec::new();
+    for event in vault.identity_topology_events_in_txn(rtxn)? {
+        let core = vault
+            .identity_topology_event_in_txn(rtxn, &event.event_id)?
+            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if decision_in_force_by_seal_in_txn(&vault.store, rtxn, &event.event_id, &core, &mut trust)?
+        {
+            events.push(event);
+        }
+    }
     let fold = fold_identity_topology_log(&events);
     let mut applied: BTreeMap<EntityId, &IdentityTopologyOp> = BTreeMap::new();
     for event in &events {
@@ -560,7 +573,7 @@ impl Vault {
     /// a cache, so losing it degrades resolution to the pre-topology answer
     /// and never to a wrong head.
     pub fn drop_redirect_projection(&self) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             REDIRECT.delete_from(&self.store, wtxn, &[])?;
             Ok(())
         })
@@ -578,7 +591,7 @@ impl Vault {
     /// loses its row, so a rebuild also repairs a stale table.
     pub fn rebuild_redirect_projection_from_edges(&self) -> Result<()> {
         self.drop_redirect_projection()?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let candidates = shell_edge_sources_for_store_in_txn(&self.store, &*wtxn)?;
             // A rebuild is an explicit maintenance door, so it pays the
             // UNGATED fold: it must find zero-head shells even on a vault

@@ -2,7 +2,9 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::session_overlay::{RouteTarget, SessionWriteRoute};
+use crate::session_overlay::RouteTarget;
+
+use super::on_record::Landing;
 
 /// The retrieval-run REGISTRATION DOOR a retrieval issued INSIDE a room writes
 /// through, minted by [`OffRecordSession::retrieval_telemetry`] (ONE-1570 Arm
@@ -19,28 +21,46 @@ use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 /// holds no route to check — so a recall admitted while the room was ON RECORD
 /// and flipped OFF RECORD mid-assembly published the room's `result_ids`
 /// durably to base, past the K10 boundary. Both targets need the route,
-/// because both of them WRITE.
+/// because both of them WRITE. On record, the base arm also checks
+/// the saver, as every other landing does: the route and the saver go
+/// together as one [`Landing`].
 pub(crate) struct SessionRetrievalTelemetry<'session> {
     pub(super) vault: &'session Vault,
-    pub(super) route: &'session SessionWriteRoute,
+    pub(super) landing: Landing<'session, 'session, 'session>,
 }
 
 impl SessionRetrievalTelemetry<'_> {
     /// Whether the captured route permits ordinary durable retrieval work.
-    /// Only this positive Base check can authorize the embed-enqueue arm.
-    #[cfg(feature = "sync")]
+    /// Only this positive Base check can authorize the embed-enqueue arm or
+    /// a PPR cache flush.
     pub(crate) fn writes_to_base(&self) -> bool {
-        self.route.target() == RouteTarget::Base
+        self.landing.route.target() == RouteTarget::Base
+    }
+
+    /// The check a base PPR cache flush runs inside its own transaction, as
+    /// every other landing does: a room that flipped off record mid-walk, or
+    /// whose saver no longer holds, rolls the cache write back.
+    pub(crate) fn admit_base_write(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        self.landing.in_txn(txn)
     }
 
     /// Anonymous retrievals expose no stored retrieval-run identity.
     pub(crate) fn discards_writes(&self) -> bool {
-        self.route.target() == RouteTarget::Discard
+        self.landing.route.target() == RouteTarget::Discard
     }
 
     /// Even when capture is disabled, a room read must reject a stale route.
     pub(crate) fn revalidate_without_capture(&self) -> Result<()> {
-        self.route.revalidate()
+        self.landing.route.revalidate()
+    }
+
+    /// A base write kept out, because its run read the room's own rows,
+    /// checks what its landing would have: the route and, in a room on
+    /// record, the saver. A run whose saver left is refused, and the saving
+    /// stops, as when the write lands.
+    pub(crate) fn admit_withheld_write(&self) -> Result<()> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.landing.in_txn(&txn)
     }
 
     /// Registers this assembly's retrieval-run row, provisional or published.
@@ -52,8 +72,8 @@ impl SessionRetrievalTelemetry<'_> {
         if !self.vault.store.retrieval_telemetry_capture_enabled() {
             return self.revalidate_without_capture();
         }
-        match self.route.target() {
-            RouteTarget::Discard => self.route.revalidate(),
+        match self.landing.route.target() {
+            RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => self.staged(|view, wtxn| {
                 if provisional {
                     view.record_context_pack_provisional_retrieval_run_in_txn(wtxn, record)
@@ -61,14 +81,10 @@ impl SessionRetrievalTelemetry<'_> {
                     view.record_retrieval_run_in_txn(wtxn, record)
                 }
             }),
-            RouteTarget::Base => self.published(record.run_id, || {
-                if provisional {
-                    self.vault
-                        .store
-                        .record_context_pack_provisional_retrieval_run(record)
-                } else {
-                    self.vault.store.record_retrieval_run(record)
-                }
+            RouteTarget::Base => self.published(record.run_id, |admit| {
+                self.vault
+                    .store
+                    .record_retrieval_run_admitted(record, !provisional, admit)
             }),
         }
     }
@@ -78,15 +94,15 @@ impl SessionRetrievalTelemetry<'_> {
         &self,
         finalize: crate::store::RetrievalRunFinalize<'_>,
     ) -> Result<()> {
-        match self.route.target() {
-            RouteTarget::Discard => self.route.revalidate(),
+        match self.landing.route.target() {
+            RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => self.staged(move |view, wtxn| {
                 view.finalize_context_pack_retrieval_run_in_txn(wtxn, finalize)
             }),
-            RouteTarget::Base => self.published(finalize.run_id, move || {
+            RouteTarget::Base => self.published(finalize.run_id, move |admit| {
                 self.vault
                     .store
-                    .finalize_context_pack_retrieval_run(finalize)
+                    .finalize_context_pack_retrieval_run_admitted(finalize, admit)
             }),
         }
     }
@@ -94,8 +110,8 @@ impl SessionRetrievalTelemetry<'_> {
     /// Removes a provisional row whose assembly failed. A stale Base route
     /// may still clean up its own row, but Discard must not mutate base at all.
     pub(crate) fn discard_run(&self, run_id: crate::store::RetrievalRunId) -> Result<()> {
-        match self.route.target() {
-            RouteTarget::Discard => self.route.revalidate(),
+        match self.landing.route.target() {
+            RouteTarget::Discard => self.landing.route.revalidate(),
             RouteTarget::Overlay => {
                 self.staged(|view, wtxn| view.delete_retrieval_run_in_txn(wtxn, run_id))
             }
@@ -104,7 +120,7 @@ impl SessionRetrievalTelemetry<'_> {
     }
 
     /// One staged overlay write, under the captured route, revalidated INSIDE
-    /// the transaction that publishes it.
+    /// the transaction that publishes it, with a run's participant.
     ///
     /// Base writer FIRST, then the segment permit — the overlay's own
     /// documented order, and the only one that cannot deadlock against a
@@ -118,10 +134,10 @@ impl SessionRetrievalTelemetry<'_> {
     where
         F: FnOnce(&crate::store::SessionStoreView<'_>, &mut heed::RwTxn<'_>) -> Result<()>,
     {
-        let overlay = self.route.overlay();
-        let segment = self.vault.with_write_txn(|wtxn| {
+        let overlay = self.landing.route.overlay();
+        let segment = self.vault.with_write_txn_grouped(|wtxn| {
             let segment = overlay.install_txn_segment()?;
-            self.route.revalidate()?;
+            self.landing.in_overlay_txn(wtxn)?;
             let view = self.vault.store.session_view(overlay.clone())?;
             apply(&view, wtxn)?;
             Ok(segment)
@@ -132,22 +148,23 @@ impl SessionRetrievalTelemetry<'_> {
     /// One BASE-ledger telemetry publication, under the captured route.
     ///
     /// The base telemetry door opens its own transaction and refuses to nest,
-    /// so the route cannot ride inside the publishing transaction the way
-    /// `witness_with_route` puts it. It is therefore checked on BOTH sides:
-    /// the pre-check refuses a room that flipped before the write, and a row
-    /// that landed under a route the room replaced DURING the write is
-    /// withdrawn rather than left standing — the same compensating shape the
-    /// settle contract names for a failed registration. Either way the call
-    /// returns the stale-route refusal; it never returns success over a row
-    /// the room no longer authorizes.
+    /// so `write` hands it the [`Landing`] to run first inside that
+    /// transaction, as `witness_with_route` does: the route still stands and,
+    /// on record, the saver still holds, or nothing is written.
+    /// The route is also checked on both sides: the pre-check refuses a room
+    /// that flipped before the write, and a row that landed under a route the
+    /// room replaced after its transaction checked is withdrawn rather than
+    /// left standing — the same compensating shape the settle contract names
+    /// for a failed registration. Either way the call returns the refusal; it
+    /// never returns success over a row the room no longer authorizes.
     fn published(
         &self,
         run_id: crate::store::RetrievalRunId,
-        write: impl FnOnce() -> Result<()>,
+        write: impl FnOnce(&dyn Fn(&heed::RoTxn<'_>) -> Result<()>) -> Result<()>,
     ) -> Result<()> {
-        self.route.revalidate()?;
-        write()?;
-        if let Err(stale) = self.route.revalidate() {
+        self.landing.route.revalidate()?;
+        write(&|txn| self.landing.in_txn(txn))?;
+        if let Err(stale) = self.landing.route.revalidate() {
             self.vault.store.delete_retrieval_run(run_id)?;
             return Err(stale);
         }

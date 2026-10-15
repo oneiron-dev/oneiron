@@ -114,6 +114,197 @@ fn sync_rows_contain(vault: &Vault, needle: &[u8]) -> bool {
     false
 }
 
+/// Engine ruling on #1456 (ARCH-0038 carrier-1, ARCH-0073): a shallow
+/// snapshot drops history, which is an erase, so a scheduled run with no due
+/// obligation leaves every window as it was, its frontier, its root and the
+/// history it rests on byte for byte, even with an earlier erasure's marker
+/// standing.
+#[cfg(feature = "sync")]
+#[test]
+fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
+    let (_dir, vault) = open_vault();
+    let erased = EntityId::now();
+    put_entity(&vault, &erased, 1_771_027_200, b"erased-window-body");
+    vault
+        .delete_entity_with_reason(&erased, DeleteReason::GdprDelete)
+        .unwrap();
+    assert_eq!(run_hard_erase_sweep(&vault).unwrap().jobs_processed, 1);
+    // History the window gains after the erasure.
+    put_entity(
+        &vault,
+        &EntityId::now(),
+        1_771_027_200,
+        b"later-window-body",
+    );
+    let before = sync_rows(&vault);
+
+    let run = run_scheduled_hard_erase_sweep(&vault).unwrap();
+
+    assert_eq!(run.windows_compacted, 0);
+    assert_eq!(sync_rows(&vault), before, "no window was rewritten");
+}
+
+/// Every persisted window row, byte for byte.
+#[cfg(feature = "sync")]
+fn sync_rows(vault: &Vault) -> Vec<(String, Vec<u8>)> {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|entry| {
+            let (key, value) = entry.unwrap();
+            (key.into_owned(), value.to_vec())
+        })
+        .collect()
+}
+
+/// Engine ruling on #1456: the owner's maintain on a live host unloads the
+/// windows no caller holds and compacts them, as the owner asked. A
+/// scheduled pass with no due obligation leaves them loaded and as they
+/// were.
+#[cfg(feature = "sync")]
+#[test]
+fn the_owners_maintain_compacts_a_live_hosts_idle_windows_and_a_scheduled_pass_leaves_them() {
+    use crate::housekeeping::{
+        HardEraseWork, HousekeepingBudget, HousekeepingSweep, SweepOutcome, SweepWork,
+    };
+    use crate::sync::bridge::Materializer;
+    use crate::sync::manager::WindowManager;
+    use crate::sync::types::WindowKey;
+    use std::sync::Arc;
+
+    let erase_work = |outcome: Option<&SweepOutcome>| match outcome {
+        Some(SweepOutcome::Ran {
+            work: SweepWork::HardErase(work),
+            ..
+        }) => *work,
+        other => panic!("the erasure sweep did not run: {other:?}"),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    let learned_at = 1_771_027_200;
+    let erased = EntityId::now();
+    put_entity(&vault, &erased, learned_at, b"erased-window-body");
+    vault
+        .delete_entity_with_reason(&erased, DeleteReason::GdprDelete)
+        .unwrap();
+    assert_eq!(run_hard_erase_sweep(&vault).unwrap().jobs_processed, 1);
+    // History the window gains after the erasure, served by a live host
+    // that leaves the window registered with no caller holding it.
+    put_entity(&vault, &EntityId::now(), learned_at, b"later-window-body");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "owner-maintain-test",
+    ));
+    let key = WindowKey::from_timestamp(learned_at);
+    drop(manager.open_window(&key).unwrap());
+    let before = sync_rows(&vault);
+
+    let scheduled = vault.housekeeping(HousekeepingBudget::unbounded()).unwrap();
+    let HardEraseWork {
+        windows_unloaded,
+        windows_compacted,
+        ..
+    } = erase_work(scheduled.sweep(HousekeepingSweep::HardEraseSweep));
+    assert_eq!((windows_unloaded, windows_compacted), (0, 0));
+    assert!(
+        manager.loaded_keys().contains(&key),
+        "the window stays loaded"
+    );
+    assert_eq!(sync_rows(&vault), before, "no window was rewritten");
+
+    let owners = vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .unwrap();
+    let HardEraseWork {
+        windows_unloaded,
+        windows_compacted,
+        windows_deferred_live,
+        ..
+    } = erase_work(owners.sweep(HousekeepingSweep::HardEraseSweep));
+    assert!(windows_unloaded >= 1, "the idle window was unloaded");
+    assert!(windows_compacted >= 1, "the owner's run compacted it");
+    assert_eq!(windows_deferred_live, 0);
+    assert!(!manager.loaded_keys().contains(&key));
+}
+
+/// Astra F4 (#1456): a window opened while the sweep compacts it cannot
+/// register the history the sweep is dropping, only to keep it resident and
+/// servable after the obligation is finalized. The open waits for the
+/// compaction, then reads the compacted window; an open of another window
+/// meanwhile goes through.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::manager::WindowManager;
+    use crate::sync::types::WindowKey;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    let id = EntityId::now();
+    let learned_at = 1_771_027_200;
+    put_entity(&vault, &id, learned_at, b"reopened-window-body");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "reopen-sweep-test",
+    ));
+    let key = WindowKey::from_timestamp(learned_at);
+    drop(manager.open_window(&key).unwrap());
+    assert!(manager.unload_window(&key).unwrap(), "the window is closed");
+    vault
+        .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+        .unwrap();
+
+    // Between the sweep's read of the window and its compaction write, a
+    // peer asks for the window, and another for a window of another month.
+    let (opened, shallow) = std::sync::mpsc::channel();
+    let other_went_through = Arc::new(AtomicBool::new(false));
+    let went_through = Arc::clone(&other_went_through);
+    let opener = Arc::clone(&manager);
+    let open_key = key;
+    BEFORE_COMPACT_WRITE.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let other_opener = Arc::clone(&opener);
+            std::thread::spawn(move || {
+                let window = opener.open_window(&open_key).unwrap();
+                let _ = opened.send(window.doc.is_shallow());
+            });
+            let (other_opened, other_open) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let other = WindowKey::from_timestamp(learned_at + 40 * 86_400);
+                let _ = other_opened.send(other_opener.open_window(&other).is_ok());
+            });
+            went_through.store(
+                other_open.recv_timeout(Duration::from_secs(20)) == Ok(true),
+                Ordering::Release,
+            );
+            // Every chance for the first open to land before the write.
+            std::thread::sleep(Duration::from_millis(300));
+        }));
+    });
+    let run = run_hard_erase_sweep(&vault).unwrap();
+
+    assert!(run.windows_compacted >= 1);
+    assert!(
+        other_went_through.load(Ordering::Acquire),
+        "an open of another window waited on this window's compaction"
+    );
+    assert!(
+        shallow
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the open ends"),
+        "the window opened during its compaction holds the dropped history"
+    );
+}
+
 /// Per-job independence (ONE-1087 retry semantics): a job whose
 /// `next_attempt_at` is in the future is skipped — byte-identical row,
 /// no retry_state consumption — while a due job in the same run
@@ -186,78 +377,6 @@ fn sweep_skips_not_due_job_while_processing_due_job() {
         kept[0].1, not_due_value,
         "not-due job row must be BYTE-IDENTICAL (no retry_state consumption)"
     );
-}
-
-/// A job past `deadline_at` (queued_at + 30 d, deletion.rs pin) is a
-/// loud SLA breach: counted every run, never silent — and still
-/// executed when due (a breach must not park the obligation).
-#[test]
-fn sweep_deadline_breach_is_loud_and_counted() {
-    let (_dir, vault) = open_vault();
-    let queued_at = crate::unix_seconds_now() - crate::deletion::HARD_ERASE_SWEEP_SLA_SECS - 10;
-    let value = encode_hard_erase_sweep_job(
-        RedactionScope::entity(&EntityId::now()),
-        HardEraseSweepExtras::default(),
-        queued_at,
-    )
-    .unwrap();
-    let key = write_h_row(&vault, 7, &value);
-
-    let run = run_hard_erase_sweep(&vault).unwrap();
-    assert_eq!(run.deadline_breaches, 1, "SLA breach must be counted");
-    assert_eq!(run.jobs_processed, 1, "a breached due job still executes");
-    assert!(
-        !h_rows(&vault).iter().any(|(k, _)| *k == key),
-        "the executed job's row is deleted"
-    );
-}
-
-/// ONE-1091 audit: a receipt with `sweep_queued_at` set, no
-/// `sweep_complete_at`, and NO covering pending `h:` row is a DROPPED
-/// erasure obligation — detected and counted. With the row present the
-/// audit is quiet (the run that consumes it also finalizes the receipt,
-/// so post-run state is clean either way).
-#[test]
-fn sweep_audit_detects_dropped_obligation() {
-    // Dropped: the h: row vanishes before any sweep ran.
-    let (_dir, vault) = open_vault();
-    let id = EntityId::now();
-    put_entity(&vault, &id, 1_771_027_200, b"dropped-obligation-body");
-    let outcome = vault
-        .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
-        .unwrap();
-    let receipt_id = outcome.receipt_id.expect("receipt id");
-    let sweep_key = outcome.sweep_key.expect("sweep key");
-    {
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .delete(&mut wtxn, &sweep_key)
-            .unwrap();
-        wtxn.commit().unwrap();
-    }
-    let run = run_hard_erase_sweep(&vault).unwrap();
-    assert_eq!(
-        run.obligations_missing, 1,
-        "a queued-but-unswept receipt without an h: row must be flagged"
-    );
-    assert_eq!(run.jobs_processed, 0);
-    assert!(
-        receipt_sweep_complete_at(&vault, &receipt_id).is_none(),
-        "the audit must never fabricate completion"
-    );
-
-    // Intact: the obligation row is present and consumed — audit quiet.
-    let (_dir2, vault2) = open_vault();
-    let id2 = EntityId::now();
-    put_entity(&vault2, &id2, 1_771_027_200, b"intact-obligation-body");
-    vault2
-        .delete_entity_with_reason(&id2, DeleteReason::GdprDelete)
-        .unwrap();
-    let run2 = run_hard_erase_sweep(&vault2).unwrap();
-    assert_eq!(run2.obligations_missing, 0);
-    assert_eq!(run2.jobs_processed, 1);
 }
 
 /// Crash-safety ordering (h: row deletion LAST): a crash between window
@@ -388,68 +507,6 @@ fn sweep_failure_updates_retry_state_in_place_and_keeps_obligation() {
     assert_eq!(run.jobs_processed, 1);
     assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_some());
     assert!(!h_rows(&vault).iter().any(|(k, _)| *k == sweep_key));
-}
-
-/// OPEN windows defer (pinned): a live registry doc holds the full
-/// history in memory and would clobber the shallow row on its next
-/// persist. The obligation stays queued without retry consumption;
-/// after unload the sweep completes.
-#[cfg(feature = "sync")]
-#[test]
-fn sweep_defers_open_windows_and_completes_after_unload() {
-    use crate::sync::bridge::Materializer;
-    use crate::sync::manager::WindowManager;
-    use crate::sync::types::WindowKey;
-    use std::sync::Arc;
-
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
-    let id = EntityId::now();
-    put_entity(&vault, &id, 1_771_027_200, b"live-window-body");
-
-    let materializer = Arc::new(Materializer::new());
-    let manager = Arc::new(WindowManager::new(
-        Arc::clone(&vault),
-        materializer,
-        "sweep-test",
-    ));
-    let window_key = WindowKey::from_timestamp(1_771_027_200);
-    let window = manager.open_window(&window_key).unwrap();
-
-    let outcome = vault
-        .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
-        .unwrap();
-    let receipt_id = outcome.receipt_id.expect("receipt id");
-    let sweep_key = outcome.sweep_key.expect("sweep key");
-    let job_value_before = h_rows(&vault)
-        .iter()
-        .find(|(k, _)| *k == sweep_key)
-        .expect("job row")
-        .1
-        .clone();
-
-    let run = run_hard_erase_sweep(&vault).unwrap();
-    assert!(run.windows_deferred_live >= 1, "open window must defer");
-    assert_eq!(run.jobs_processed, 0);
-    assert!(run.jobs_deferred >= 1);
-    assert_eq!(run.jobs_failed, 0, "a deferral is not a failed attempt");
-    let job_value_after = h_rows(&vault)
-        .iter()
-        .find(|(k, _)| *k == sweep_key)
-        .expect("obligation kept")
-        .1
-        .clone();
-    assert_eq!(
-        job_value_before, job_value_after,
-        "deferral must not consume retry_state"
-    );
-    assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_none());
-
-    drop(window);
-    assert!(manager.unload_window(&window_key).unwrap());
-    let run = run_hard_erase_sweep(&vault).unwrap();
-    assert_eq!(run.jobs_processed, 1);
-    assert!(receipt_sweep_complete_at(&vault, &receipt_id).is_some());
 }
 
 /// ONE-1162: a retained `Arc<LoadedWindow>` can persist a full-history

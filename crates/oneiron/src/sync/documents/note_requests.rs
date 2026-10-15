@@ -24,7 +24,7 @@ impl DocumentRegistry {
         let frame = encode_document(id, document_sub_tags::NOTE_OPS, &bytes)
             .into_result()
             .map_err(|_| denied())?;
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             if self.vault.get_entity_type_in_txn(txn, &id)?
                 != Some(crate::registry::ENTITY_TYPE_NOTE)
                 || !super::DS_E.contains(&self.vault.store, txn, &crate::side_table::HexId(id))?
@@ -85,7 +85,7 @@ impl DocumentRegistry {
         id: EntityId,
         receipt: &NoteOperationReceipt,
     ) -> Result<()> {
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             let key = format!("{}:{}", id.to_hex(), receipt.request_id.to_hex()).into_bytes();
             let Some(frame) = QN_E.get(&self.vault.store, txn, &key)? else {
                 return Ok(());

@@ -199,13 +199,10 @@ impl Vault {
         actor: &EntityId,
         run: &str,
     ) -> Result<HealerRunReceipt> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
+            // The proof is checked where the reversal commits: bound to this
+            // vault, its owner live, its credential (when bound) unrevoked.
+            owner.revalidate_in_txn(self, &*txn)?;
             let receipt = RUN
                 .get(&self.store, txn, &(*actor, run_digest(run)))?
                 .ok_or(Error::EntityNotFound)?;
@@ -223,13 +220,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         check: &ProposalBurstCheck,
     ) -> Result<Vec<HealerRunReceipt>> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, &*txn)?;
             let counter = COUNT
                 .get(&self.store, txn, &check.actor)?
                 .ok_or_else(|| Error::InvalidConfig("actor has no burst check".into()))?;
@@ -254,16 +246,11 @@ impl Vault {
         id: &EntityId,
         release: Option<&str>,
     ) -> Result<Option<PatchPullRequest>> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
         if let Some(release) = release {
             super::validate_ref(release)?;
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, &*txn)?;
             let mut record = PROPOSAL
                 .get(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -287,7 +274,7 @@ impl Vault {
                 patch_ref: patch,
                 schema,
                 release_ref: release.into(),
-                approved_by: owner.actor(),
+                approved_by: actor,
             });
             record.state = match release {
                 Some(release) => ProposalState::Released {
@@ -403,7 +390,7 @@ impl HealerRegistration<'_> {
         // The policy and the healer binding are read under the SAME write
         // transaction that records the proposal. A revocation between preflight
         // and this snapshot therefore denies admission, not just future runs.
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             if let Some(binding) = &binding {
                 binding.require_in_txn(self.vault, txn)?;
             }

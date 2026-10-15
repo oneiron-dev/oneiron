@@ -48,7 +48,7 @@ pub fn drain_pending_session_actor_distills(
             }
             Err(error) => report.failures.push((*session, error)),
         }
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             CURSOR.put(&vault.store, txn, &(), session)?;
             Ok(())
         })?;

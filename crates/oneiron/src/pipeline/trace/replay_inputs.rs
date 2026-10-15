@@ -64,7 +64,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "query_occurred_range": t.query_occurred_range, "effort_anchor": t.effort_anchor,
         })
     });
-    RetrievalReplayInputs {
+    let mut inputs = RetrievalReplayInputs {
         query_ref: builder.replay_query_ref.clone(),
         config: json!({
             "channels": {
@@ -157,5 +157,28 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             }),
         }),
         corpus_snapshot_ref: builder.corpus_snapshot_ref.clone(),
-    }
+    };
+    // `json!` above is at its recursion limit, so these join after it.
+    inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
+    inputs.config["fusion"] = json!({
+        "list_length": crate::fusion::FUSION_LIST_LENGTH,
+        "sparse": ["phonetic"],
+    });
+    let floors = builder.no_match_floors();
+    let space = builder.vault.evidence_space();
+    let kinds = floors.keyed.get(space).map(|kinds| {
+        kinds
+            .iter()
+            .map(|(kind, kind_floors)| {
+                json!({"entity_type": kind, "floor": kind_floors.floor, "strong": kind_floors.strong})
+            })
+            .collect::<Vec<_>>()
+    });
+    inputs.config["vector_evidence"] = json!({
+        "floor": floors.pair.floor,
+        "strong": floors.pair.strong,
+        "space": space,
+        "kinds": kinds.unwrap_or_default(),
+    });
+    inputs
 }

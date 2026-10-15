@@ -70,13 +70,11 @@ mod tests;
 #[cfg(test)]
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 #[cfg(test)]
-use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
+use crate::dreamer_runner::dreamer_turn_role;
 #[cfg(test)]
 use crate::receipt::{
-    FIELD_PREFILTER_DECISION, FIELD_PREFILTER_FEATURE_PREFIX, FIELD_PREFILTER_PASSED,
-    FIELD_PREFILTER_PHASE, FIELD_PREFILTER_ROUND, FIELD_PREFILTER_SCANNED, FIELD_PREFILTER_SCORE,
-    FIELD_PREFILTER_SKIPPED, FIELD_PREFILTER_THRESHOLD, FIELD_PREFILTER_TOKENS_SAVED,
-    FIELD_PREFILTER_TURN, ReceiptKind, ReceiptQuery, ReceiptRecord,
+    FIELD_PREFILTER_PASSED, FIELD_PREFILTER_SCANNED, FIELD_PREFILTER_SKIPPED, FIELD_PREFILTER_TURN,
+    ReceiptKind, ReceiptQuery, ReceiptRecord,
 };
 #[cfg(test)]
 use crate::registry::ENTITY_TYPE_TURN;

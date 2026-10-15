@@ -102,6 +102,7 @@ impl AgentDispatcher<'_> {
             return Ok(WorkflowProgress::Waiting(active.id));
         };
         txn.commit()?;
+        self.vault.store.notify_attempt_observers();
         let status = AgentDispatchStatus { attempt, input };
         let context = self.resolve_attempt_context(status.attempt.id)?;
         let result = execute(&status, context)?;
@@ -127,6 +128,7 @@ impl AgentDispatcher<'_> {
             },
         )?;
         txn.commit()?;
+        self.vault.store.notify_attempt_observers();
         self.advance_workflow(root, now)
     }
 }

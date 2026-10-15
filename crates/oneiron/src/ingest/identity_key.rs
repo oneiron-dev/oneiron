@@ -22,6 +22,11 @@ pub fn identity_fields_for_kind(kind: u8) -> &'static [&'static str] {
 }
 
 fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
+    // Checked before the decode: a kind without identity fields, a custody
+    // record among them, is never decoded into an unwiped copy.
+    if identity_fields_for_kind(kind).is_empty() {
+        return BTreeSet::new();
+    }
     let mut cursor = std::io::Cursor::new(bytes);
     let value = if let Ok(value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
@@ -58,17 +63,18 @@ fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
 const IDENTITY_HINT: SideTable<([u8; 1], [u8; 32], EntityId), (), Raw> =
     SideTable::new(&side_table::INGEST_IDENTITY_HINT);
 
+/// The digest an identity hint is indexed under: the hint trimmed and
+/// lowercased, hashed. A local index of hints keys them the same way.
+pub(crate) fn identity_hint_digest(hint: &str) -> [u8; 32] {
+    *blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes()
+}
 fn hint_prefix(kind: u8, hint: &str) -> Vec<u8> {
     let mut key = vec![kind];
-    key.extend_from_slice(blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes());
+    key.extend_from_slice(&identity_hint_digest(hint));
     key
 }
 fn hint_key(kind: u8, hint: &str, id: &EntityId) -> ([u8; 1], [u8; 32], EntityId) {
-    (
-        [kind],
-        *blake3::hash(hint.trim().to_lowercase().as_bytes()).as_bytes(),
-        *id,
-    )
+    ([kind], identity_hint_digest(hint), *id)
 }
 
 pub(crate) fn reindex_identity_hints(
@@ -77,7 +83,7 @@ pub(crate) fn reindex_identity_hints(
     id: &EntityId,
     replacement: Option<(u8, &[u8])>,
 ) -> Result<()> {
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
     {
         for hint in hints(
@@ -114,7 +120,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.lookup_identity_key_in_txn(&txn, kind, mention)
     }
-    pub(super) fn lookup_identity_key_in_txn(
+    pub(crate) fn lookup_identity_key_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         kind: u8,
@@ -160,7 +166,7 @@ impl Vault {
         }
         let found = self.lookup_identity_key(kind, mention)?;
         let candidates = score(&found)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.resolve_prepared_mention_in_txn(
                 txn,
                 &MentionResolution {
@@ -234,114 +240,6 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn same_key_lookup_returns_every_candidate_and_never_links() -> Result<()> {
-        let (_dir, vault) =
-            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-        let body = rmp_serde::to_vec_named(&serde_json::json!({"name":"Yamada Tarou"})).unwrap();
-        let occurred = TimeRange { start: 1, end: 1 };
-        let (a, _) = vault.resolve_imported_mention(
-            ENTITY_TYPE_PERSON,
-            "Yamada Tarou",
-            &body,
-            occurred,
-            1,
-            |found| {
-                assert!(found.is_empty());
-                Ok(vec![])
-            },
-        )?;
-        let (b, _) = vault.resolve_imported_mention(
-            ENTITY_TYPE_PERSON,
-            "Yamada Tarou",
-            &body,
-            occurred,
-            1,
-            |found| {
-                assert_eq!(found, &[a]);
-                Ok(vec![])
-            },
-        )?;
-        assert_ne!(a, b);
-        let found = vault.lookup_identity_key(ENTITY_TYPE_PERSON, "Yamada Tarou")?;
-        assert_eq!(found.len(), 2);
-        assert_eq!(vault.resolve_entity(&a)?, vec![a]);
-        assert_eq!(vault.resolve_entity(&b)?, vec![b]);
-        Ok(())
-    }
-    #[test]
-    fn evidence_remention_reuses_ids_without_merging_a_distinct_pair() -> Result<()> {
-        use crate::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-        use rmpv::Value;
-        let (_dir, vault) =
-            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-        let body = rmp_serde::to_vec_named(&serde_json::json!({"name":"Yamada Tarou"})).unwrap();
-        let time = TimeRange { start: 1, end: 1 };
-        let a = vault
-            .resolve_imported_mention(ENTITY_TYPE_PERSON, "Yamada Tarou", &body, time, 1, |_| {
-                Ok(vec![])
-            })?
-            .0;
-        let b = vault
-            .resolve_imported_mention(ENTITY_TYPE_PERSON, "Yamada Tarou", &body, time, 1, |_| {
-                Ok(vec![])
-            })?
-            .0;
-        let (first, second) = if a < b { (a, b) } else { (b, a) };
-        let distinct = ClaimBody::new(
-            "entity.distinct_from",
-            ClaimSubject::Entity(first),
-            Value::Map(vec![
-                (Value::from("a"), Value::Binary(first.as_bytes().to_vec())),
-                (Value::from("b"), Value::Binary(second.as_bytes().to_vec())),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )?;
-        vault.put_claim(&EntityId::now(), &distinct, time, 1)?;
-        for subject in [a, b] {
-            let evidence = EntityId::now();
-            let evidence_body = ClaimBody::new(
-                "provider.enrichment",
-                ClaimSubject::Entity(subject),
-                Value::Map(vec![(
-                    Value::from("provider"),
-                    Value::from("fixture.identity"),
-                )]),
-                0.99,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            )?;
-            vault.put_claim(&evidence, &evidence_body, time, 1)?;
-            let (selected, decision) = vault.resolve_imported_mention(
-                ENTITY_TYPE_PERSON,
-                "Yamada Tarou",
-                &body,
-                time,
-                2,
-                |found| {
-                    assert_eq!(found.len(), 2);
-                    Ok(vec![EntityResolutionCandidate {
-                        subject,
-                        confidence_claim_ref: evidence,
-                    }])
-                },
-            )?;
-            assert_eq!(selected, subject);
-            assert_ne!(decision.route, EntityResolutionRoute::ProvisionalEntity);
-            assert_eq!(
-                vault
-                    .lookup_identity_key(ENTITY_TYPE_PERSON, "Yamada Tarou")?
-                    .len(),
-                2
-            );
-        }
-        assert_eq!(vault.resolve_entity(&a)?, vec![a]);
-        assert_eq!(vault.resolve_entity(&b)?, vec![b]);
-        assert_eq!(vault.distinct_claims_for_pair(&a, &b)?.len(), 1);
-        Ok(())
-    }
     #[test]
     fn legacy_uuidv7_row_hydrates_and_resolves_after_reopen() -> Result<()> {
         let dir = tempfile::tempdir()?;

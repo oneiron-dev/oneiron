@@ -200,9 +200,8 @@ impl Memory<'_> {
             }));
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, now)?;
-            // ONE-1702 SEAM (own-task settlement → WAKE/CARRIER): second
-            // producer call site for `mint_own_task_event` → `route_event`.
-            // See `land_consult_result` for why it is not called on this base.
+            // Announced after commit like every TASK put; the board
+            // publisher routes the expiry to the asker.
             Ok(Some(result_ref))
         })
     }

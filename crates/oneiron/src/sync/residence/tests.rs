@@ -136,3 +136,85 @@ fn full_window_promotion_preserves_causality_and_concurrent_merges() {
         map_get_bytes(&device.get_map("entities"), &id)
     );
 }
+
+/// Sol R5 F5: a promotion names every row of the window it admits through
+/// `readable`, and its caller lists those as the rows the snapshot was
+/// derived from (DEC-0005). A local write that lands on the window between
+/// the walk and the export puts a row in the bytes that the walk never
+/// named. The snapshot that leaves carries only rows a walk named.
+#[test]
+fn a_promotion_snapshot_carries_no_row_its_walk_did_not_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let actor = crate::test_util::entity(21);
+    let grant_id = crate::test_util::entity(22);
+    let (first, late) = (crate::test_util::entity(23), crate::test_util::entity(24));
+    let scope = FederationGrantScope::vault(7);
+    let grant = FederationGrant::new(
+        scope,
+        actor,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"title":"A window row"})).unwrap();
+    for id in [first, late] {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .unwrap();
+    }
+    let window = WindowKey::new("1970-01");
+    let source = create_window_doc("source", &window);
+    let raw = vault.get_raw(&first).unwrap().unwrap();
+    map_insert_bytes(&source.get_map("entities"), &first.to_hex(), &raw).unwrap();
+    source.commit();
+    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    // The rows a promotion's snapshot carries, and those its walks named.
+    let promote = || {
+        let mut named = Vec::new();
+        let snapshot = promotion_snapshot(&vault, &source, &window, scope, &selector, |id| {
+            named.push(id);
+            Ok(true)
+        })
+        .unwrap()
+        .expect("the window promotes whole");
+        let carried = LoroDoc::new();
+        carried.import(&snapshot).unwrap();
+        let mut rows = Vec::new();
+        map_for_each_value_bytes(&carried.get_map("entities"), |key, _| {
+            rows.push(EntityId::from_hex(key).unwrap());
+        });
+        (rows, named)
+    };
+    let (rows, named) = promote();
+    assert_eq!(rows, [first]);
+    assert!(named.contains(&first), "{named:?}");
+
+    let raw = vault.get_raw(&late).unwrap().unwrap();
+    promotion_hook::arm(move |doc| {
+        map_insert_bytes(&doc.get_map("entities"), &late.to_hex(), &raw).unwrap();
+        doc.commit();
+    });
+    let (rows, named) = promote();
+    assert!(rows.contains(&late), "the write landed: {rows:?}");
+    assert!(
+        rows.iter().all(|row| named.contains(row)),
+        "{rows:?} carried, {named:?} named"
+    );
+}

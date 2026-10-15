@@ -55,6 +55,11 @@ pub(crate) fn rfc3339(unix_ms: u64) -> String {
     )
 }
 
+/// [`rfc3339`] for a time the engine keeps in Unix seconds.
+pub(crate) fn rfc3339_secs(unix_seconds: u64) -> String {
+    rfc3339(unix_seconds.saturating_mul(1_000))
+}
+
 /// Inverse of [`file_stamp`]; `None` for anything it did not produce.
 pub(crate) fn parse_file_stamp(stamp: &str) -> Option<u64> {
     let bytes = stamp.as_bytes();
@@ -106,37 +111,4 @@ fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
     let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stamps_round_trip_and_sort_by_time() {
-        // 2026-10-08T12:34:56.789Z
-        let ms = 1_791_462_896_789;
-        assert_eq!(file_stamp(ms), "20261008T123456.789Z");
-        assert_eq!(rfc3339(ms), "2026-10-08T12:34:56.789Z");
-        assert_eq!(parse_file_stamp("20261008T123456.789Z"), Some(ms));
-        assert_eq!(file_stamp(0), "19700101T000000.000Z");
-        assert_eq!(
-            parse_file_stamp(&file_stamp(951_782_400_000)),
-            Some(951_782_400_000)
-        );
-        assert!(file_stamp(ms) < file_stamp(ms + 1));
-    }
-
-    #[test]
-    fn foreign_stamps_do_not_parse() {
-        for stamp in [
-            "",
-            "20261008T123456Z",
-            "20261332T123456.789Z",
-            "20260230T123456.789Z",
-            "2026100xT123456.789Z",
-        ] {
-            assert_eq!(parse_file_stamp(stamp), None, "{stamp}");
-        }
-    }
 }

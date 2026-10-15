@@ -259,7 +259,7 @@ impl Vault {
     /// Builds a time-ordered chain for a legacy conversation, once. Existing
     /// bodies and ChildOf edges are untouched; deleted shells are omitted.
     pub fn migrate_conversation_dag(&self, conversation: &EntityId) -> Result<bool> {
-        self.with_write_txn(|txn| migrate_in_txn(self, txn, conversation))
+        self.with_write_txn_grouped(|txn| migrate_in_txn(self, txn, conversation))
     }
 
     pub(crate) fn migrate_all_conversation_dags(&self) -> Result<(u64, Vec<EntityId>)> {

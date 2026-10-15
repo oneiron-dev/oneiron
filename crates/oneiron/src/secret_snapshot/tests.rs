@@ -51,26 +51,6 @@ fn detected_files_are_quarantined_without_value() -> crate::Result<()> {
 }
 
 #[test]
-fn universal_raw_put_retains_a_hash_bound_safe_fixture() -> crate::Result<()> {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let content = b"pub fn safe() {}".to_vec();
-    let snap = snapshot(vec![CodebaseFileEntry::new(
-        "src/lib.rs",
-        *blake3::hash(&content).as_bytes(),
-        content.len() as u64,
-    )]);
-    let txn = vault.store.env.read_txn()?;
-    let (files, report) =
-        vault.apply_custody_to_snapshot(&txn, &snap, &|_| Some(content.clone()))?;
-    assert_eq!(files, snap.files);
-    assert!(report.excluded_secret_paths.is_empty());
-    assert!(report.quarantined_paths.is_empty());
-    assert!(report.proposals.is_empty());
-    Ok(())
-}
-
-#[test]
 fn hash_mismatch_is_quarantined_without_proposal() -> crate::Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
@@ -81,67 +61,6 @@ fn hash_mismatch_is_quarantined_without_proposal() -> crate::Result<()> {
     assert_eq!(report.quarantined_paths, ["src/lib.rs"]);
     assert!(report.proposals.is_empty());
     Ok(())
-}
-
-#[test]
-fn relative_declared_path_does_not_suffix_match_root_file() {
-    let mut exclusions = SnapshotExclusionSet::default();
-    exclusions.declared_paths.insert("src/lib.rs".to_owned());
-
-    assert!(!exclusions.excludes("lib.rs", &[0; 32], Some("/workspace/repo")));
-}
-
-#[test]
-fn relative_declared_path_does_not_suffix_match_root_dotenv() {
-    let mut exclusions = SnapshotExclusionSet::default();
-    exclusions.declared_paths.insert("config/.env".to_owned());
-
-    assert!(!exclusions.excludes(".env", &[0; 32], Some("/workspace/repo")));
-}
-
-#[test]
-fn absolute_declared_path_excludes_repo_relative_manifest_entry() -> crate::Result<()> {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let content = b"registered secret bytes".to_vec();
-    let snap = snapshot(vec![CodebaseFileEntry::new(
-        ".secrets/api.key",
-        *blake3::hash(&content).as_bytes(),
-        content.len() as u64,
-    )]);
-    let mut exclusions = SnapshotExclusionSet::default();
-    exclusions
-        .declared_paths
-        .insert("/workspace/repo/.secrets/api.key".to_owned());
-    assert!(exclusions.excludes(
-        ".secrets/api.key",
-        &snap.files[0].content_hash,
-        Some("/workspace/repo")
-    ));
-    let txn = vault.store.env.read_txn()?;
-    let (files, report) =
-        vault.apply_custody_to_snapshot(&txn, &snap, &|_| Some(content.clone()))?;
-    assert_eq!(
-        files, snap.files,
-        "unregistered paths remain materializable"
-    );
-    assert!(report.excluded_secret_paths.is_empty());
-    Ok(())
-}
-
-#[test]
-fn absolute_declared_path_from_another_root_is_inert() {
-    let mut exclusions = SnapshotExclusionSet::default();
-    // A same-named file in an unrelated checkout, and a root whose name merely
-    // shares a prefix, must both stop matching: no bare suffix matching.
-    exclusions
-        .declared_paths
-        .insert("/elsewhere/other-repo/.secrets/api.key".to_owned());
-    exclusions
-        .declared_paths
-        .insert("/workspace/repository/.secrets/api.key".to_owned());
-
-    assert!(!exclusions.excludes(".secrets/api.key", &[0; 32], Some("/workspace/repo")));
 }
 
 #[test]

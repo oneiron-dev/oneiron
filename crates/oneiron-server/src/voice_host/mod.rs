@@ -5,9 +5,11 @@
 //! module creates no listener, runtime, budget policy, memory store or provider.
 //! Runtime route selection reuses the server summarizer route; it must contain
 //! a fully revisioned TINY model. The default placeholder route fails closed.
-//! The wake supervisor can attach this host to its existing backend and pass
-//! meter. Serving still requires an owner-admitted stream and real output seams.
+//! The wake supervisor attaches this host to its existing backend and pass
+//! meter through `oneiron_driver::PassAttachmentSource` (see `attachment`).
+//! Serving still requires an owner-admitted stream and real output seams.
 
+mod attachment;
 mod connection;
 mod extraction;
 mod serve_bindings;
@@ -36,6 +38,9 @@ pub struct VoiceOutputs<B, T, C> {
 
 /// Trusted, process-local dependencies. Never deserialize these from the peer.
 pub struct VoiceHostBindings {
+    /// The pass's own backend, as the pass attachment hands it over. On this
+    /// server that is the Dreamer's, which admits every call through a run's
+    /// gate; never a provider backend.
     pub backend: Arc<dyn LlmBackend>,
     /// Clone the lifecycle owner's meter; never allocate a per-request budget.
     pub budget: BudgetGuard,
@@ -71,6 +76,9 @@ pub struct VoiceHost {
     state: Mutex<SessionState>,
     extractor: TinyExtractor,
     shutdown: ManagedShutdown,
+    /// The vault's call-mode deadline: every speculative fire and finalize
+    /// of a live call runs under it (ARCH-0061 §6 #recall-in-call).
+    call_deadline: std::time::Duration,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -125,7 +133,9 @@ impl VoiceHost {
             bindings.budget,
             bindings.extraction_prompt,
         )?;
+        let call_deadline = vault.call_mode_deadline();
         Ok(Self {
+            call_deadline,
             state: Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
@@ -174,6 +184,7 @@ impl VoiceHost {
                 max_fires: 4,
                 fire_limit: 8,
                 final_limit: 32,
+                deadline: Some(self.call_deadline),
             },
         )?;
         // Connection-local, monotonically unique correlation. Not authentication.

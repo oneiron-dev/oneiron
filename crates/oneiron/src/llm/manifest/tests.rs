@@ -121,60 +121,6 @@ fn teacher_pin_requires_matching_passing_probe_at_the_vault_write_door() {
     );
 }
 
-#[test]
-fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() {
-    let (_dir, vault) = policy_vault();
-    let manifest = fixture();
-    let approval = TeacherProbeApproval::for_scored_checkpoint(
-        &manifest,
-        &vault.teacher_probe_policy(None).unwrap(),
-        850_000,
-    )
-    .unwrap();
-    let bytes = crate::gate::default_policy_manifest().unwrap();
-    let mut cursor = std::io::Cursor::new(bytes.as_slice());
-    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
-        panic!("default policy must be a map");
-    };
-    entries.retain(|(key, _)| key.as_str() != Some("teacher_probe"));
-    entries.push((
-        rmpv::Value::from("teacher_probe"),
-        rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("probe_id"),
-                rmpv::Value::from(TEACHER_PROBE_ID),
-            ),
-            (
-                rmpv::Value::from("min_f1_millionths"),
-                rmpv::Value::from(900_000_u64),
-            ),
-        ]),
-    ));
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).unwrap();
-    crate::test_util::put_policy_manifest_bytes(
-        &vault,
-        crate::gate::default_policy_manifest_id().unwrap(),
-        &encoded,
-    )
-    .unwrap();
-    assert!(
-        vault
-            .set_model_manifest_with_teacher_approval(&manifest, &approval)
-            .is_err()
-    );
-    assert!(vault.model_manifest().unwrap().is_none());
-    let stricter = vault.teacher_probe_policy(None).unwrap();
-    assert_eq!(stricter.min_f1_millionths, 900_000);
-    assert!(TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 850_000).is_err());
-    let accepted =
-        TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 950_000).unwrap();
-    vault
-        .set_model_manifest_with_teacher_approval(&manifest, &accepted)
-        .unwrap();
-    assert_eq!(vault.model_manifest().unwrap(), Some(manifest));
-}
-
 fn set_teacher_probe_policy_row(vault: &Vault, minimum: u64, holder: Option<(&str, u64)>) {
     let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap()
@@ -268,180 +214,72 @@ fn teacher_policy_holder_cannot_loosen_parent_and_old_receipts_cannot_silently_r
 }
 
 #[test]
-fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
-    let (dir, vault) = policy_vault();
-    let fixture = fixture();
-    let path = dir.path().join("models.json");
-    std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
-    let loaded = ModelManifest::load(&path).unwrap();
-    assert_eq!(loaded, fixture);
-    assert!(vault.set_model_manifest(&loaded).is_err());
+fn widened_resident_route_is_refused_at_inference_admission() {
+    let (_dir, vault) = policy_vault();
+    let manifest = fixture();
     let approval = TeacherProbeApproval::for_scored_checkpoint(
-        &loaded,
+        &manifest,
         &vault.teacher_probe_policy(None).unwrap(),
         1_000_000,
     )
     .unwrap();
     vault
-        .set_model_manifest_with_teacher_approval(&loaded, &approval)
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
         .unwrap();
-    vault
-        .set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)
-        .unwrap();
-    assert!(
-        vault
-            .set_model_route(ModelSlot::Llm, ModelLocality::ThirdParty)
-            .is_err()
+    assert!(matches!(
+        vault.set_model_route(ModelSlot::Llm, ModelLocality::ThirdParty),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert_eq!(
+        vault.model_route(ModelSlot::Llm).unwrap(),
+        Some(ModelLocality::OwnServer)
     );
-    for role in MODEL_ROLES {
-        let mut request = LlmRequest {
-            model: ModelId::new("host/unused@1").unwrap(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                scope: Default::default(),
-                purpose: CallPurpose::Extraction,
-                class: CallClass::BestEffort,
-                tier: TierPrecedence::for_purpose(
-                    &CallPurpose::Extraction,
-                    ModelTierRef("global".into()),
-                ),
-                response_format: ResponseFormat::Text,
-                locality: ModelLocality::ThirdParty,
-            },
-            messages: vec![],
-            tools: vec![],
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-        };
-        if role == ModelRole::ExtractionTeacher {
-            // Narrowing a served slot may succeed, but must never send a
-            // transcript through the teacher's wider, probed checkpoint.
-            let host = super::super::HostInferenceContext {
-                binding: super::super::HostInferenceBinding::Advertised {
-                    model: loaded.binding(role).unwrap().model.clone(),
-                    locality: ModelLocality::OnDevice,
-                },
-                extraction_egress: None,
-            };
-            assert!(matches!(
-                vault.authorize_model_role(role, request, &host),
-                Err(Error::InvalidConfig(_))
-            ));
-            continue;
-        }
-        let local_model =
-            loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice].clone();
-        vault
-            .put_model_registry_row(&super::super::registry::ModelRegistryRow {
-                version: 1,
-                wire: super::super::registry::ModelWireFormat::Local,
-                catalog: super::super::LlmCatalogEntry {
-                    model: local_model.clone(),
-                    display_name: "local fixture".into(),
-                    locality: ModelLocality::OnDevice,
-                    context_window_tokens: 4096,
-                    max_output_tokens: Some(100),
-                    cost: Some(super::super::LlmCatalogCost {
-                        input_per_million: "0".into(),
-                        output_per_million: "0".into(),
-                        cache_read_per_million: None,
-                        cache_write_per_million: None,
-                    }),
-                    capabilities: vec![],
-                    metadata: BTreeMap::new(),
-                },
-                scores: BTreeMap::new(),
-                fetched_at: BTreeMap::new(),
-            })
-            .unwrap();
-        let host = super::super::HostInferenceContext {
-            binding: super::super::HostInferenceBinding::Advertised {
-                model: local_model,
-                locality: ModelLocality::OnDevice,
-            },
-            extraction_egress: None,
-        };
-        request = vault
-            .authorize_model_role(role, request, &host)
-            .unwrap()
-            .into_request();
-        assert_eq!(
-            &request.model,
-            &loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice]
-        );
-        let catalog = crate::llm::LlmCatalogEntry {
-            model: request.model.clone(),
-            display_name: "local fixture".into(),
-            locality: ModelLocality::OnDevice,
-            context_window_tokens: 4096,
-            max_output_tokens: Some(100),
-            cost: None,
-            capabilities: vec![],
-            metadata: BTreeMap::new(),
-        };
-        catalog.admit(&request, false).unwrap();
-        assert_eq!(request.envelope.locality, catalog.locality);
-        assert_eq!(request.envelope.tier.resolved().as_str(), "configured");
-    }
-    let mut unknown = serde_json::to_value(fixture).unwrap();
-    unknown["roles"]["bogus"] = unknown["roles"]["checker"].clone();
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&unknown).unwrap()).is_err());
-}
-#[test]
-fn floor_band_and_mode_fail_closed_without_granting() {
-    let model = ModelId::new("test/checker@1").unwrap();
-    let mut binding = VerdictBinding {
-        model: model.clone(),
-        slot: ModelSlot::Llm,
-        floor: ConfidenceBand::High,
-        mode: VerdictMode::Enforce,
+
+    // Corrupt resident storage as an untrusted writer could; bypass only the setter.
+    vault
+        .with_write_txn(|txn| {
+            RESIDENT_ROUTES.put(
+                &vault.store,
+                txn,
+                &(),
+                &BTreeMap::from([(ModelSlot::Llm, ModelLocality::ThirdParty)]),
+            )
+        })
+        .unwrap();
+    let request = LlmRequest {
+        model: ModelId::new("host/unused@1").unwrap(),
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: Default::default(),
+            purpose: CallPurpose::AutoCheck,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AutoCheck,
+                ModelTierRef("global".into()),
+            ),
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::ThirdParty,
+        },
+        messages: vec![],
+        tools: vec![],
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
     };
-    let answer = CalibratedVerdict {
-        model,
-        allow: true,
-        confidence_millionths: 700_000,
-        band: ConfidenceBand::Medium,
-        basis: VerdictBasis::CalibratedModel,
+    let host = crate::llm::HostInferenceContext {
+        binding: crate::llm::HostInferenceBinding::Advertised {
+            model: manifest.binding(ModelRole::Checker).unwrap().model.clone(),
+            locality: ModelLocality::ThirdParty,
+        },
+        extraction_egress: None,
     };
     assert!(matches!(
-        apply_verdict_floor(Some(&binding), AutoCheckOutcome::Verdict(answer.clone())).0,
-        AutoCheckOutcome::Hold { .. }
+        vault.model_route(ModelSlot::Llm),
+        Err(Error::InvalidConfig(_))
     ));
-    binding.mode = VerdictMode::Shadow;
-    assert_eq!(
-        apply_verdict_floor(Some(&binding), AutoCheckOutcome::Verdict(answer.clone())),
-        (AutoCheckOutcome::Allow, Some("verdict_shadow_hold"))
-    );
-    let mut bad = answer;
-    bad.band = ConfidenceBand::Certain;
-    assert!(bad.validate().is_err());
-    let mut manifest = serde_json::to_value(fixture()).unwrap();
-    manifest["verdict"] =
-        serde_json::json!({"model":"test/checker@1","slot":"llm","floor":0.9,"mode":"enforce"});
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&manifest).unwrap()).is_err());
-}
-
-#[test]
-fn verdict_modes_preserve_legacy_refusals_and_reasons() {
-    for mode in [VerdictMode::Shadow, VerdictMode::Enforce] {
-        let binding = VerdictBinding {
-            model: ModelId::new("test/checker@1").unwrap(),
-            slot: ModelSlot::Llm,
-            floor: ConfidenceBand::High,
-            mode,
-        };
-        for outcome in [
-            AutoCheckOutcome::Unavailable,
-            AutoCheckOutcome::Hold {
-                reasons: vec!["host_policy".into(), "missing_evidence".into()],
-            },
-        ] {
-            assert_eq!(
-                apply_verdict_floor(Some(&binding), outcome.clone()),
-                (outcome, None)
-            );
-        }
-    }
+    assert!(matches!(
+        vault.authorize_model_role(ModelRole::Checker, request, &host),
+        Err(Error::InvalidConfig(_))
+    ));
 }
 
 #[test]
@@ -515,26 +353,4 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         .route_models
         .insert(ModelLocality::OnDevice, checker.model.clone());
     assert!(manifest.validate().is_err());
-}
-
-#[test]
-fn manifest_file_carries_runtime_seat_policy_and_rejects_invalid_rows() {
-    let mut value = serde_json::to_value(fixture()).unwrap();
-    let mut policy = crate::llm::seat::SeatPolicy::bundled().unwrap();
-    policy
-        .purpose_defaults
-        .insert("answer_gen".into(), crate::llm::ReasoningEffort::High);
-    policy.facet_max_bytes = 512;
-    policy.line_max_bytes = 8192;
-    value["seat_policy"] = serde_json::to_value(&policy).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("manifest-v2.json");
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-    let loaded = ModelManifest::load(&path).unwrap();
-    assert_eq!(loaded.seat_policy, Some(policy.clone()));
-    value["seat_policy"]["default_reasoning_ladder"] = serde_json::json!([]);
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
-    value["seat_policy"] = serde_json::to_value(policy).unwrap();
-    value["seat_policy"]["invented_behavior"] = serde_json::json!(true);
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
 }

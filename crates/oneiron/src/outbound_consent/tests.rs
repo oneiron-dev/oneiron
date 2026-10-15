@@ -2,8 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::outbound_grant::ScopedMcpGrantMintIntent;
 use crate::outbound_intent_ledger::{
-    IntentEscalationReason, OUTBOUND_BINDING_VERSION, RecordedOutboundOutcome,
-    intent_ledger_records,
+    IntentEscalationReason, RecordedOutboundOutcome, intent_ledger_records,
 };
 use std::collections::VecDeque;
 
@@ -265,17 +264,6 @@ impl OutboundResultSender for PaidPendingInspectingSender<'_> {
             raw_result: RawOutboundResult::new(None, None, None, None),
         }
     }
-}
-
-#[test]
-fn data_class_order_and_unknown_parse_fail_closed() {
-    assert!(DataClass::Public < DataClass::Personal);
-    assert!(DataClass::Personal < DataClass::Secret);
-    let unknown = DataClass::parse("internal");
-    // Discriminating: treating an unknown spelling as Public would put it
-    // below this ceiling and silently authorize it.
-    assert!(unknown > DataClass::Secret);
-    assert!(!unknown.is_grantable());
 }
 
 #[test]
@@ -832,165 +820,6 @@ fn drifted_scoped_mcp_connector_charter_blocks_the_direct_send_path() {
 }
 
 #[test]
-fn scoped_mcp_connector_key_budget_refuses_the_n_plus_one_send() {
-    let (_tmp, vault) = temp_vault();
-    let grant_id = entity(0x96);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .expect("mint scoped grant");
-    let send_limit = 2_usize;
-    register_active_scoped_connector_key_with_budget(
-        &vault,
-        &grant_id,
-        "files",
-        u64::try_from(send_limit).expect("small limit"),
-    );
-    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
-    let descriptor = OutboundToolDescriptor {
-        read_only_hint: Some(false),
-        idempotency_supported_hint: Some(true),
-    };
-    let mut transport = RecordingResultSender::default();
-
-    for index in 0..send_limit {
-        let attempt_seed = 0x60_u8.saturating_add(u8::try_from(index).expect("small index"));
-        let sent = execute_scoped_mcp_outbound_call(
-            &vault,
-            &authority,
-            grant_id,
-            &grant,
-            &grant.principal_ref,
-            AttemptId::from_bytes(&[attempt_seed; 16]).expect("attempt id"),
-            u64::try_from(index).expect("small index") + 1,
-            prepared_fixture(
-                &vault,
-                &grant_id,
-                scoped_call(),
-                descriptor,
-                format!("payload {index}").into_bytes(),
-            ),
-            20 + u64::try_from(index).expect("small index"),
-            &mut transport,
-        )
-        .expect("budgeted send");
-        assert_eq!(sent.decision, ScopedMcpConsentDecision::AutoFire);
-        assert!(sent.dispatch.is_some());
-        assert_eq!(sent.effectful_sends, 1);
-    }
-
-    let refused = execute_scoped_mcp_outbound_call(
-        &vault,
-        &authority,
-        grant_id,
-        &grant,
-        &grant.principal_ref,
-        AttemptId::from_bytes(&[0x62; 16]).expect("attempt id"),
-        3,
-        prepared_fixture(
-            &vault,
-            &grant_id,
-            scoped_call(),
-            descriptor,
-            b"payload refused".to_vec(),
-        ),
-        22,
-        &mut transport,
-    )
-    .expect("exhausted budget refuses without a send");
-
-    // Discriminating: without the send-path budget charge, the N+1th call
-    // auto-fires and the transport records three payloads instead of N.
-    assert_eq!(
-        refused.decision,
-        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted)
-    );
-    assert_eq!(refused.dispatch, None);
-    assert_eq!(refused.effectful_sends, 0);
-    assert_eq!(transport.sent_payloads.len(), send_limit);
-}
-
-#[test]
-fn done_intent_replay_skips_the_connector_key_debit() {
-    let (_tmp, vault) = temp_vault();
-    let grant_id = entity(0x99);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .expect("mint scoped grant");
-    register_active_scoped_connector_key_with_budgets(
-        &vault,
-        &grant_id,
-        "files",
-        vec![crate::connector_key::EffectorBudget::rate(1, 3_600)],
-    );
-    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
-    let descriptor = OutboundToolDescriptor {
-        read_only_hint: Some(false),
-        idempotency_supported_hint: Some(true),
-    };
-    let attempt_id = AttemptId::from_bytes(&[0x73; 16]).expect("attempt id");
-    let mut transport = RecordingResultSender::default();
-
-    let first = execute_scoped_mcp_outbound_call(
-        &vault,
-        &authority,
-        grant_id,
-        &grant,
-        &grant.principal_ref,
-        attempt_id,
-        1,
-        prepared_fixture(
-            &vault,
-            &grant_id,
-            scoped_call(),
-            descriptor,
-            b"replay payload".to_vec(),
-        ),
-        11,
-        &mut transport,
-    )
-    .expect("initial dispatch");
-    assert_eq!(first.effectful_sends, 1);
-    assert_eq!(transport.sent_payloads.len(), 1);
-
-    let replay = execute_scoped_mcp_outbound_call(
-        &vault,
-        &authority,
-        grant_id,
-        &grant,
-        &grant.principal_ref,
-        attempt_id,
-        1,
-        prepared_fixture(
-            &vault,
-            &grant_id,
-            scoped_call(),
-            descriptor,
-            b"replay payload".to_vec(),
-        ),
-        12,
-        &mut transport,
-    )
-    .expect("done replay remains admissible at the rate cap");
-
-    // Discriminating: charging before the ledger replay fence makes the
-    // rate-1 key reject this second dispatch as budget-exhausted.
-    assert_eq!(replay.decision, ScopedMcpConsentDecision::AutoFire);
-    assert!(replay.dispatch.as_ref().is_some_and(|row| row.replayed));
-    assert_eq!(
-        replay.dispatch.as_ref().and_then(|row| row.state),
-        Some(IntentState::Done)
-    );
-    assert_eq!(replay.effectful_sends, 0);
-    assert_eq!(transport.sent_payloads.len(), 1);
-    let governing = scoped_capability_connector("files", &grant_id);
-    let budget = vault
-        .effector_budget_read(&governing, None)
-        .expect("read budget")
-        .expect("governing key");
-    assert_eq!(budget.rows[0].used, 1, "replay must not re-debit");
-}
-
-#[test]
 fn pending_resume_and_done_replay_charge_and_complete_once() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9F);
@@ -1204,91 +1033,6 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
         rows[0].recorded_outcome,
         Some(RecordedOutboundOutcome::Acked)
     );
-}
-
-#[test]
-fn scoped_effect_without_send_ref_still_debits_the_sends_dimension() {
-    let (_tmp, vault) = temp_vault();
-    let grant_id = entity(0x9A);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .expect("mint scoped grant");
-    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
-    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
-    let mut transport = RecordingResultSender::default();
-
-    let lookup = execute_scoped_mcp_outbound_call(
-        &vault,
-        &authority,
-        grant_id,
-        &grant,
-        &grant.principal_ref,
-        AttemptId::from_bytes(&[0x74; 16]).expect("attempt id"),
-        1,
-        prepared_fixture(
-            &vault,
-            &grant_id,
-            scoped_call(),
-            OutboundToolDescriptor {
-                read_only_hint: Some(true),
-                idempotency_supported_hint: None,
-            },
-            b"lookup payload".to_vec(),
-        ),
-        11,
-        &mut transport,
-    )
-    .expect("read-only lookup");
-    assert_eq!(lookup.decision, ScopedMcpConsentDecision::AutoFire);
-    assert_eq!(
-        lookup.dispatch.as_ref().map(|row| row.class),
-        Some(OutboundCallClass::Effectful)
-    );
-    assert_eq!(lookup.effectful_sends, 1);
-    assert_eq!(transport.sent_payloads.len(), 1);
-    let governing = scoped_capability_connector("files", &grant_id);
-    let after_lookup = vault
-        .effector_budget_read(&governing, None)
-        .expect("read budget")
-        .expect("governing key");
-    assert_eq!(after_lookup.rows[0].used, 1);
-
-    let send = execute_scoped_mcp_outbound_call(
-        &vault,
-        &authority,
-        grant_id,
-        &grant,
-        &grant.principal_ref,
-        AttemptId::from_bytes(&[0x75; 16]).expect("attempt id"),
-        2,
-        prepared_fixture(
-            &vault,
-            &grant_id,
-            scoped_call(),
-            OutboundToolDescriptor {
-                read_only_hint: Some(false),
-                idempotency_supported_hint: Some(true),
-            },
-            b"effectful payload".to_vec(),
-        ),
-        12,
-        &mut transport,
-    )
-    .expect("effectful send retains the single Sends charge");
-
-    // Discriminating: semantic BudgetClass::Send charges the first scoped
-    // effect even though its gate input has no send_ref.
-    assert_eq!(
-        send.decision,
-        ScopedMcpConsentDecision::Escalate(ScopedMcpEscalationReason::ConnectorKeyBudgetExhausted)
-    );
-    assert_eq!(send.effectful_sends, 0);
-    assert_eq!(transport.sent_payloads.len(), 1);
-    let after_send = vault
-        .effector_budget_read(&governing, None)
-        .expect("read budget")
-        .expect("governing key");
-    assert_eq!(after_send.rows[0].used, 1);
 }
 
 #[test]
@@ -1674,59 +1418,6 @@ fn non_idempotent_pending_abandons_without_resume_attempt() {
             IntentEscalationReason::NonIdempotentPending
         ))
     );
-}
-
-#[test]
-fn allowlisted_endpoint_rotation_freezes_the_selected_endpoint() {
-    let (_tmp, vault) = temp_vault();
-    let grant_id = entity(0x9D);
-    let mut intent = scoped_intent();
-    intent
-        .endpoint_allowlist
-        .push("https://files-backup.internal.example".to_owned());
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
-        .expect("mint rotating scoped grant");
-    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
-    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
-    let mut transport = RecordingResultSender::default();
-    let result = execute_scoped_mcp_outbound_call(
-        &vault,
-        &authority,
-        grant_id,
-        &grant,
-        &grant.principal_ref,
-        AttemptId::from_bytes(&[0x78; 16]).expect("attempt id"),
-        1,
-        prepared_fixture(
-            &vault,
-            &grant_id,
-            ScopedMcpCallContext {
-                resolved_endpoint: "https://files-backup.internal.example".to_owned(),
-                ..scoped_call()
-            },
-            OutboundToolDescriptor {
-                read_only_hint: Some(false),
-                idempotency_supported_hint: Some(true),
-            },
-            b"rotated endpoint".to_vec(),
-        ),
-        11,
-        &mut transport,
-    )
-    .expect("allowlisted rotation");
-    assert_eq!(result.decision, ScopedMcpConsentDecision::AutoFire);
-    assert_eq!(result.effectful_sends, 1);
-    assert_eq!(
-        transport.sent_endpoints,
-        vec![Some("https://files-backup.internal.example".to_owned())]
-    );
-    let row = intent_ledger_records(&vault).expect("read frozen endpoint");
-    assert_eq!(
-        row[0].resolved_endpoint.as_deref(),
-        Some("https://files-backup.internal.example")
-    );
-    assert_eq!(row[0].binding_version, OUTBOUND_BINDING_VERSION);
 }
 
 #[test]

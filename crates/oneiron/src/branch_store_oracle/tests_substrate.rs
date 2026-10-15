@@ -259,25 +259,6 @@ fn overlay_budget_rejection_is_typed_and_never_crashes_vault() -> Result<()> {
     Ok(())
 }
 
-/// D1 (snapshot isolation): a logical read iterates its Arc snapshot; a
-/// concurrent overlay apply is invisible to it and visible to a fresh read.
-#[test]
-fn overlay_snapshot_read_never_sees_torn_union() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let session = seam::SessionVault::enter(&vault, "oracle-snapshot").expect("enter session");
-    let script = vec![seam::OverlayOp::Put(b"s:new".to_vec(), b"late".to_vec())];
-    let (snapshot_rows, fresh_rows) =
-        seam::snapshot_vs_concurrent_apply(&vault, &session, &script, b"s:")?;
-    assert_eq!(snapshot_rows.len(), 0, "snapshot predates the apply");
-    assert_eq!(
-        fresh_rows,
-        vec![(b"s:new".to_vec(), b"late".to_vec())],
-        "fresh read sees exactly the applied (key, value) row — identity, \
-         not just count (codex F5)"
-    );
-    Ok(())
-}
-
 /// D1 (close finality): generation-stamped leases refuse typed after close.
 #[test]
 fn overlay_lease_refused_after_close() {

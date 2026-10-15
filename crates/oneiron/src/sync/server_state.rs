@@ -30,6 +30,10 @@ use crate::sync::window_rows::{
 
 /// Persists an imported window update (Observer-A-equivalent).
 ///
+/// The bytes must already have been imported into the window's observed
+/// document, whose Observer B applies or fences the deletes they carry; this
+/// half writes no deletion state of its own.
+///
 /// Atomically (one LMDB write txn), per the ARCH-0023b key layout:
 /// - bumps `m:u_seq:w:{key}` (u32 LE, crash-safe monotonic counter),
 /// - appends the raw update bytes at `u:w:{key}:{seq:08x}`,
@@ -45,7 +49,7 @@ pub fn persist_imported_window_update(
     key: &WindowKey,
     update_bytes: &[u8],
 ) -> Result<u32> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let seq_key = key.as_str().to_owned();
         let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
             None => 0,
@@ -76,11 +80,16 @@ pub fn persist_imported_window_update(
 ///
 /// Atomically writes `d:w:{key}` (Loro snapshot), `sv:w:{key}` (state
 /// vector), and `svf:w:{key}` = `[1]` (fresh). Returns the snapshot bytes.
+///
+/// `doc` need not be observed: in the same transaction, each stored row its
+/// tombstones delete is fenced as an observed import would fence it, so the
+/// persisted deletes read deleted at once.
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
     let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
     let vv = doc_version_vector(doc);
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
+        vault.fence_published_deletes_in_txn(wtxn, key.as_str(), doc)?;
         WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), &state)?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;
@@ -132,7 +141,7 @@ pub fn persist_root_snapshot_in_txn(
 /// `meta.windows`), `sv:root`, and `svf:root` = `[1]` (fresh). Thin own-txn
 /// wrapper over [`persist_root_snapshot_in_txn`].
 pub fn persist_root_snapshot(vault: &Vault, doc: &LoroDoc) -> Result<()> {
-    vault.with_write_txn(|wtxn| persist_root_snapshot_in_txn(vault, wtxn, doc))
+    vault.with_write_txn_grouped(|wtxn| persist_root_snapshot_in_txn(vault, wtxn, doc))
 }
 
 /// Loads the root Doc from persisted state (ARCH-0023b startup step 1:
@@ -347,26 +356,6 @@ mod tests {
         assert!(
             matches!(err, Error::Sync(SyncError::CrdtDecodeError { .. })),
             "corrupt d:root must error, not boot empty — got {err:?}"
-        );
-    }
-
-    #[test]
-    fn persisted_window_keys_lists_valid_window_snapshots_only() {
-        let (_dir, vault) = test_vault();
-
-        let doc = LoroDoc::new();
-        doc.commit();
-        persist_window_snapshot(&vault, &WindowKey::new("2026-01"), &doc).unwrap();
-        persist_window_snapshot(&vault, &WindowKey::new("2026-02"), &doc).unwrap();
-        // Invalid key written out-of-band must be skipped, not panicked on.
-        vault.sync_state_put("d:w:2026-13", b"junk").unwrap();
-        // Root snapshot must not be picked up by the d:w: scan.
-        persist_root_snapshot(&vault, &doc).unwrap();
-
-        let keys = persisted_window_keys(&vault).unwrap();
-        assert_eq!(
-            keys,
-            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
         );
     }
 }

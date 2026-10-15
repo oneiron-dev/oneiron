@@ -95,6 +95,6 @@ use crate::outbound_chokepoint::OutboundTransport;
 #[cfg(test)]
 use crate::outbound_consent::OutboundBindingAuthority;
 #[cfg(test)]
-use crate::outbound_intent_ledger::{IntentDispatchResult, derive_intent_id};
+use crate::outbound_intent_ledger::IntentDispatchResult;
 #[cfg(test)]
 use crate::saved_query::{EVIDENCE_HASH_LEN, MembershipCause, MembershipTransition};

@@ -36,6 +36,7 @@ pub(crate) use oneiron_model::llm::{
 pub mod manifest;
 pub mod registry;
 pub mod routing;
+pub mod run_admission;
 pub mod score_scraper;
 pub mod seat;
 mod step;
@@ -45,11 +46,11 @@ pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
-    DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, StepOutcome,
-    StepProgression, TrapRef, call_as_step, call_as_step_with_fallbacks, consume_trap_signal,
-    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
-    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
-    validate_json_schema,
+    DurableStepContext, DurableStepError, DurableStepResult, PeerResultWaitBinding, ReplyCheck,
+    StepOutcome, StepProgression, TrapRef, call_as_step, call_as_step_checked,
+    call_as_step_with_fallbacks, consume_trap_signal, open_trap, reconcile_peer_result_signals,
+    register_peer_result_wait, register_wait, send_peer_result_signal, send_trap_signal,
+    trap_for_durable_wait, trap_park_owner, validate_json_schema,
 };
 pub(crate) use step::{
     StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim,
@@ -65,7 +66,8 @@ pub use oneiron_model::llm::{
     BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
     BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetPromptTemplate,
     BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
+    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding, DispatchRefused,
+    FAILED_RUNGS_KEY, answered_units, answered_units_wide,
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
@@ -81,14 +83,15 @@ pub use self::role_defaults::RoleModelDefaults;
 pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::{
-    BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
     FatalLlmError, FinishReason, ImageContent, LlmBackend, LlmCapability, LlmCatalogCost,
     LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
     LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent,
     LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
-    PinnedConfigViolation, PinnedModelConfig, ReasoningEffort, ResponseFormat, RetryableLlmError,
-    SafeguardModelBinding, SafeguardModelBindingError, TierPrecedence, UnsupportedCapability,
+    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
+    ResponseFormat, RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError,
+    SingleRouteBackend, SingleSend, TierPrecedence, UnsupportedCapability,
 };
 
 #[cfg(test)]
@@ -100,30 +103,15 @@ mod tests;
 // split the seam re-imports both so `tests.rs` resolves exactly as it did
 // before.
 #[cfg(test)]
-use self::autocheck::{
-    AUTO_CHECK_HOLD_REASON_MAX_BYTES, AUTO_CHECK_MAX_HOLD_REASONS, AUTO_CHECK_PURPOSE_DEFAULT_TIER,
-    auto_check_verdict_schema,
-};
+use self::autocheck::AUTO_CHECK_PURPOSE_DEFAULT_TIER;
 #[cfg(test)]
 use crate::claim::ClaimSource;
 #[cfg(test)]
 use crate::write_envelope::SourceLineage;
 #[cfg(test)]
-use futures_core::Stream;
-#[cfg(test)]
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::Value as JsonValue;
 #[cfg(test)]
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::pin::Pin;
-#[cfg(test)]
-use std::sync::Arc;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
-#[cfg(test)]
-use std::sync::mpsc;
-#[cfg(test)]
-use std::time::Duration;
 
 /// Typed question and outcome contracts.
 pub mod decision;

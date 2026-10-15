@@ -121,8 +121,11 @@ def test_remote_sdk_parity():
     assert_quickstart({
         "witnessed": witnessed, "claimed": claimed, "recalled": recalled, "receipts": receipts,
     })
+    # A server with no reranker serves high recall unreranked, and says so.
+    deep = memory.recall("window seat", effort="high")
+    assert deep["retrieval_meta"]["rerank"] == {"status": "skipped", "reason": "no_reranker"}
     errors = {
-        "deep": refusal(lambda: memory.recall("window seat", effort="high"), "LEASE_REQUIRED"),
+        "kinds": refusal(lambda: memory.recall("window seat", scope={"kinds": []}), "BAD_REQUEST"),
         "rebind": refusal(
             lambda: memory.as_actor("human:00000000000000000000000000000001"), "FORBIDDEN"
         ),
@@ -172,9 +175,18 @@ def test_remote_sdk_parity():
     # Both identical messages must survive. The newer Python message must
     # precede the older Node message, not their creation/ID order. This makes
     # the age separation load-bearing without normalizing away engine ranking.
-    # Recall cites the exact revision it ranked (`ref@revision`); a witness
-    # receipt names the ref alone.
-    short_ids = [item["short_id"].split("@")[0] for item in recalled["items"]]
+    # Recall and witness name a message by the same short id; recall carries
+    # the revision it ranked beside it. A hit on a message comes back as its
+    # TURN, which quotes the message (ARCH-0004).
+    short_ids = [
+        short_id
+        for item in recalled["items"]
+        for short_id in (
+            [quoted["short_id"] for quoted in item.get("cited_messages", [])]
+            if item["kind"] == "TURN"
+            else [item["short_id"]]
+        )
+    ]
     older = normalize(node_written)["witnessed"]["message_short_ids"][0]
     newer = witnessed["message_short_ids"][0]
     assert older in short_ids

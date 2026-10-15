@@ -75,6 +75,7 @@ impl IdempotencyStore {
     fn lookup(
         &self,
         store_key: &str,
+        request_target: &str,
         request_body: &[u8],
     ) -> Result<IdempotencyLookup, IdempotencyStoreError> {
         let Some(raw) = self
@@ -93,7 +94,12 @@ impl IdempotencyStore {
                 .map_err(IdempotencyStoreError::storage)?;
             return Ok(IdempotencyLookup::Miss);
         }
-        if stored.request_body != request_body {
+        if stored.request_body != request_body
+            || stored
+                .request_target
+                .as_deref()
+                .is_some_and(|target| target != request_target)
+        {
             return Ok(IdempotencyLookup::Conflict);
         }
 
@@ -103,10 +109,16 @@ impl IdempotencyStore {
     fn insert(
         &self,
         store_key: &str,
+        request_target: String,
         request_body: Vec<u8>,
         response: CachedHttpResponse,
     ) -> Result<(), IdempotencyStoreError> {
-        let stored = StoredIdempotencyEntry::from_cached(self.now_secs(), request_body, response);
+        let stored = StoredIdempotencyEntry::from_cached(
+            self.now_secs(),
+            request_target,
+            request_body,
+            response,
+        );
         let raw = rmp_serde::to_vec(&stored).map_err(IdempotencyStoreError::encode)?;
         self.vault
             .sync_state_put(store_key, &raw)
@@ -174,9 +186,67 @@ struct CachedHttpResponse {
     status: StatusCode,
     headers: HeaderMap,
     body: Vec<u8>,
+    /// The rows the handler derived `body` from ([`ServedRows`]).
+    rows: Vec<oneiron::EntityId>,
+    /// The rows a replay re-admits ([`ServedRows::admit`]).
+    admit: Option<Vec<oneiron::EntityId>>,
+}
+
+/// The rows a response was derived from, as its handler listed them while it
+/// derived the response. A keyed response keeps them beside its cached
+/// bytes, and a replay's release judges them (DEC-0005).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ServedRows {
+    pub(crate) rows: Vec<oneiron::EntityId>,
+    /// The rows the response named beyond its documents: an identity it
+    /// addressed, a notification it delivered, a rider outcome or a pack
+    /// source. A replay goes out only while the caller's read, as it stands
+    /// then, still reads each of them. `None` when the handler could not list
+    /// them all: a route that keeps them never replays such a response.
+    pub(crate) admit: Option<Vec<oneiron::EntityId>>,
+}
+
+/// A cached success as its release judges it.
+pub(crate) struct Replay<'a> {
+    pub(crate) body: &'a [u8],
+    pub(crate) rows: &'a [oneiron::EntityId],
+    /// [`ServedRows::admit`]; `None` as well for an entry written before it
+    /// was kept.
+    pub(crate) admit: Option<&'a [oneiron::EntityId]>,
+}
+
+/// Whether the caller's read, as it stands now, still reads every row a
+/// replay re-admits: one snapshot, every claim status, so a settled outcome
+/// the caller was shown still counts. Denied and missing rows alike refuse.
+pub(crate) fn replay_admits(
+    server: &SyncServer,
+    auth: Option<&CoreAuth>,
+    admit: &[oneiron::EntityId],
+) -> Result<bool, ApiError> {
+    if admit.is_empty() {
+        return Ok(true);
+    }
+    let Some(auth) = auth else {
+        return Ok(false);
+    };
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    read.recorded_lane()
+        .and_then(|read| read.all_refs_readable(admit))
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "idempotent replay admission failed");
+            ApiError::internal_server_error("idempotent replay admission failed")
+        })
 }
 
 impl CachedHttpResponse {
+    fn replay(&self) -> Replay<'_> {
+        Replay {
+            body: &self.body,
+            rows: &self.rows,
+            admit: self.admit.as_deref(),
+        }
+    }
+
     fn into_response(self) -> Response {
         let mut response = Response::new(Body::from(self.body));
         *response.status_mut() = self.status;
@@ -192,11 +262,25 @@ struct StoredIdempotencyEntry {
     status: u16,
     headers: Vec<(String, Vec<u8>)>,
     response_body: Vec<u8>,
+    /// The method and request target this entry answers: the same key and
+    /// body sent to any other operation is a conflict, never a replay of this
+    /// response. Entries written before it was kept name none.
+    #[serde(default)]
+    request_target: Option<String>,
+    /// The rows the response was derived from, as hex ids. Entries written
+    /// before they were kept list none.
+    #[serde(default)]
+    served_rows: Vec<String>,
+    /// The rows a replay re-admits, as hex ids. Entries written before they
+    /// were kept carry none.
+    #[serde(default)]
+    replay_admits: Option<Vec<String>>,
 }
 
 impl StoredIdempotencyEntry {
     fn from_cached(
         created_at_secs: u64,
+        request_target: String,
         request_body: Vec<u8>,
         cached: CachedHttpResponse,
     ) -> Self {
@@ -211,6 +295,11 @@ impl StoredIdempotencyEntry {
             status: cached.status.as_u16(),
             headers,
             response_body: cached.body,
+            request_target: Some(request_target),
+            served_rows: cached.rows.iter().map(oneiron::EntityId::to_hex).collect(),
+            replay_admits: cached
+                .admit
+                .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
         }
     }
 }
@@ -231,6 +320,22 @@ impl TryFrom<StoredIdempotencyEntry> for CachedHttpResponse {
             status: StatusCode::from_u16(stored.status).map_err(IdempotencyStoreError::status)?,
             headers,
             body: stored.response_body,
+            rows: stored
+                .served_rows
+                .iter()
+                .map(|id| oneiron::EntityId::from_hex(id))
+                .collect::<Result<_, _>>()
+                .map_err(IdempotencyStoreError::rows)?,
+            admit: stored
+                .replay_admits
+                .map(|admit| {
+                    admit
+                        .iter()
+                        .map(|id| oneiron::EntityId::from_hex(id))
+                        .collect::<Result<_, _>>()
+                })
+                .transpose()
+                .map_err(IdempotencyStoreError::rows)?,
         })
     }
 }
@@ -279,6 +384,12 @@ impl IdempotencyStoreError {
         }
     }
 
+    fn rows(error: impl fmt::Display) -> Self {
+        Self {
+            message: format!("idempotency cached rows error: {error}"),
+        }
+    }
+
     fn status(error: impl fmt::Display) -> Self {
         Self {
             message: format!("idempotency cached status error: {error}"),
@@ -297,11 +408,41 @@ pub(crate) async fn idempotency_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    idempotent(state, request, next, |server, auth, replay| {
+        let admitted = replay_admits(server, auth, replay.admit.unwrap_or_default());
+        match admitted {
+            Ok(true) => None,
+            Ok(false) => Some(api_error_response(
+                ApiError::invalid_state(Some("idempotent_replay_unreadable")),
+                true,
+            )),
+            Err(error) => Some(api_error_response(error, true)),
+        }
+    })
+    .await
+}
+
+/// The idempotency layer. `release` sees a cached success before it is
+/// replayed, with the caller's authority as it stands now: a response it
+/// returns is sent in the cached one's place, and the cached entry stays.
+async fn idempotent(
+    state: IdempotencyLayerState,
+    request: Request,
+    next: Next,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &Replay<'_>) -> Option<Response>,
+) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
+    let locality = crate::auth::caller_locality(request.headers(), request.extensions());
     let revoked = state.server.vault().as_ref();
-    let core_auth =
-        is_core_auth_route.then(|| CoreAuth::for_server(request.headers(), &state.server));
+    let core_auth = is_core_auth_route.then(|| {
+        CoreAuth::for_server(request.headers(), &state.server).map(|auth| {
+            auth.at(crate::auth::caller_locality(
+                request.headers(),
+                request.extensions(),
+            ))
+        })
+    });
     let auth_ok = match &core_auth {
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
@@ -325,23 +466,50 @@ pub(crate) async fn idempotency_middleware(
         None => principal_for_non_core_route(&state.server.config),
     };
     let store_key = store_key(&principal, &key);
+    let target = request_target(&request);
     let (parts, body) = request.into_parts();
     let body = match to_bytes(body, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES).await {
         Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(error = %error, "failed to read idempotent request body");
+        Err(_) => {
+            tracing::warn!(
+                reason = "body_read_failed",
+                "failed to read idempotent request body"
+            );
             return StatusCode::PAYLOAD_TOO_LARGE.into_response();
         }
     };
     let request_body = body.to_vec();
 
     let _guard = state.store.lock_for(&store_key).await;
-    match state.store.lookup(&store_key, &request_body) {
-        Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
+    match state.store.lookup(&store_key, &target, &request_body) {
+        Ok(IdempotencyLookup::Replay(response)) => {
+            let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
+            if let Some(refused) = release(&state.server, auth, &response.replay()) {
+                return refused;
+            }
+            // Whatever the route, a replay off this device names no row a
+            // device-local world keeps now (DEC-0005). Its write is not
+            // repeated.
+            if crate::device_local::replay_withheld(
+                state.server.vault(),
+                locality,
+                &response.body,
+                &response.rows,
+            ) {
+                return api_error_response(
+                    ApiError::invalid_state(Some("idempotent_replay_unreadable")),
+                    is_core_auth_route,
+                );
+            }
+            return response.into_response();
+        }
         Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_auth_route),
         Ok(IdempotencyLookup::Miss) => {}
-        Err(error) => {
-            tracing::error!(error = %error, "failed to read idempotency cache");
+        Err(_) => {
+            tracing::error!(
+                reason = "idempotency_cache_read_failed",
+                "failed to read idempotency cache"
+            );
             return api_error_response(
                 ApiError::internal_server_error("failed to read idempotency cache"),
                 is_core_auth_route,
@@ -354,8 +522,11 @@ pub(crate) async fn idempotency_middleware(
     let (parts, body) = response.into_parts();
     let body = match to_bytes(body, IDEMPOTENCY_MAX_RESPONSE_BODY_BYTES).await {
         Ok(body) => body,
-        Err(error) => {
-            tracing::error!(error = %error, "failed to read idempotent response body");
+        Err(_) => {
+            tracing::error!(
+                reason = "body_read_failed",
+                "failed to read idempotent response body"
+            );
             return api_error_response(
                 ApiError::internal_server_error("failed to read idempotent response body"),
                 is_core_auth_route,
@@ -372,14 +543,24 @@ pub(crate) async fn idempotency_middleware(
     // escape is inventing a new key, which defeats the header. Replaying is a
     // promise not to run the effect twice, not a promise to freeze a refusal.
     if parts.status < StatusCode::BAD_REQUEST {
+        let served = parts
+            .extensions
+            .get::<ServedRows>()
+            .cloned()
+            .unwrap_or_default();
         let cached = CachedHttpResponse {
             status: parts.status,
             headers: parts.headers.clone(),
             body: response_body.clone(),
+            rows: served.rows,
+            admit: served.admit,
         };
 
-        if let Err(error) = state.store.insert(&store_key, request_body, cached) {
-            tracing::error!(error = %error, "failed to persist idempotency response");
+        if let Err(_error) = state.store.insert(&store_key, target, request_body, cached) {
+            tracing::error!(
+                reason = "idempotency_cache_write_failed",
+                "failed to persist idempotency response"
+            );
             return api_error_response(
                 ApiError::internal_server_error("failed to persist idempotency response"),
                 is_core_auth_route,
@@ -388,6 +569,43 @@ pub(crate) async fn idempotency_middleware(
     }
 
     Response::from_parts(parts, Body::from(response_body))
+}
+
+/// The idempotency layer for a route that mutates in one request form only.
+/// A keyed request's body tells the form: the mutating form takes the layer,
+/// with `release` judging each replay; any other form runs as if the layer
+/// were absent, never cached and never replayed. The body is read up to
+/// axum's default extractor limit, so no body the route would accept is cut
+/// short.
+pub(crate) async fn idempotency_for_mutating_form(
+    state: IdempotencyLayerState,
+    request: Request,
+    next: Next,
+    mutates: impl FnOnce(&[u8]) -> bool,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &Replay<'_>) -> Option<Response>,
+) -> Response {
+    const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+    if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+        Ok(body) => body,
+        Err(_) => {
+            tracing::warn!(
+                reason = "body_read_failed",
+                "failed to read keyed request body"
+            );
+            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        }
+    };
+    let mutating = mutates(&body);
+    let request = Request::from_parts(parts, Body::from(body));
+    if mutating {
+        idempotent(state, request, next, release).await
+    } else {
+        next.run(request).await
+    }
 }
 
 enum IdempotencyKey {
@@ -411,6 +629,18 @@ fn request_path(request: &Request) -> &str {
         .extensions()
         .get::<OriginalUri>()
         .map_or_else(|| request.uri().path(), |uri| uri.0.path())
+}
+
+/// The method and target (path and query) a request names, as routed.
+fn request_target(request: &Request) -> String {
+    let uri = request
+        .extensions()
+        .get::<OriginalUri>()
+        .map_or_else(|| request.uri(), |uri| &uri.0);
+    let target = uri
+        .path_and_query()
+        .map_or_else(|| uri.path(), axum::http::uri::PathAndQuery::as_str);
+    format!("{} {target}", request.method())
 }
 
 fn is_core_auth_route(path: &str) -> bool {

@@ -1,6 +1,7 @@
 //! Persisted-head convergence through the existing promotion, claim Gate,
 //! semantic-edge and provenance doors. A head is never re-authored to attach
 //! evidence: its value, approval, source and original attribution stay intact.
+use super::corrections;
 use super::*;
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
@@ -22,6 +23,30 @@ pub fn promote_scoped_consolidation(
     }
     let mut outcome = PromotionOutcome::default();
     for (head, candidate, evidence) in write.attachments {
+        // This attempt's own output, met again by a replay after it landed (a
+        // kill before the attempt completed): it already carries these words.
+        // What its grant left to close still closes, once.
+        if head == candidate.claim_id {
+            if let Some(prior) = corrections::superseded_prior(vault, head)? {
+                corrections::close_conflicts_naming(
+                    vault,
+                    run,
+                    &write.fence,
+                    head,
+                    prior,
+                    &candidate.evidence_turn_refs,
+                )?;
+            }
+            outcome.landed.push(head);
+            continue;
+        }
+        // Imported material reaches the vault only through the owner's import
+        // review (ARCH-0027), and an attachment is no claim that review could
+        // hold: a head imported words restate keeps its own evidence.
+        if evidence.meet() == ClaimSource::Imported {
+            outcome.held.push(head);
+            continue;
+        }
         match attach_evidence(
             vault,
             run,
@@ -38,6 +63,32 @@ pub fn promote_scoped_consolidation(
     for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
         candidate.evidence_meet = evidence.meet();
         let id = candidate.claim_id;
+        // The owner declined this claim from these same imported words; a
+        // message landing later in their TURN re-reads them and the Dreamer
+        // finds it again. It is not proposed again.
+        if let Some(declined) = crate::dreamer_consolidation::reviewed::declined_from_same_words(
+            vault,
+            &candidate,
+            &evidence.cited_messages(),
+        )? {
+            outcome.held.push(declined);
+            continue;
+        }
+        let evidence_refs = candidate.evidence_turn_refs.clone();
+        // This attempt's own correction, granted before a kill: what its
+        // grant left to close still closes, once.
+        if let Some(prior) = corrections::granted_correction(vault, &candidate)? {
+            corrections::close_conflicts_naming(
+                vault,
+                run,
+                &write.fence,
+                id,
+                prior,
+                &evidence_refs,
+            )?;
+            outcome.landed.push(id);
+            continue;
+        }
         match promote_one(
             vault,
             run,
@@ -47,7 +98,23 @@ pub fn promote_scoped_consolidation(
             Some(&evidence),
         ) {
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(id),
-            Ok(ClaimApprovalStatus::Proposed) => outcome.pended.push(id),
+            Ok(ClaimApprovalStatus::Proposed) => {
+                match corrections::grant_allowed_replacement(vault, run, &write.fence, id, checker)
+                {
+                    Some(prior) => {
+                        corrections::close_conflicts_naming(
+                            vault,
+                            run,
+                            &write.fence,
+                            id,
+                            prior,
+                            &evidence_refs,
+                        )?;
+                        outcome.landed.push(id);
+                    }
+                    None => outcome.pended.push(id),
+                }
+            }
             Ok(_) => outcome
                 .rejected
                 .push((id, "scoped promotion was not Auto".into())),
@@ -70,25 +137,32 @@ fn attach_evidence(
     let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))?,
+        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain, None))?,
         ClaimApprovalStatus::Auto,
         SourceLineage::of(ClaimSource::Generated).with(source),
     );
     let refs: std::collections::BTreeSet<_> =
         candidate.evidence_turn_refs.iter().copied().collect();
-    vault.with_write_txn(|txn| {
+    // Read on this thread: a grouped commit may run the closure elsewhere.
+    let auto_write_rate = crate::own_rate::auto_write_rate();
+    vault.with_write_txn_grouped(|txn| {
+        // Source grants are judged at this writer's own clock.
+        crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
         let original = vault
             .get_claim_in_txn(txn, &head)?
             .ok_or(Error::EntityNotFound)?;
         // Gate the evidence assertion, not an overwrite of the approved head.
         // Copy the head's complete scope so sensitivity/persona policy cannot be
-        // lowered by a minimally scoped extraction. Keep the normal Dreamer
-        // validity, source/lineage, isolation, checker and receipt machinery.
+        // lowered by a minimally scoped extraction, and its own facet and
+        // project stamps so the decision and its receipt sit where the head
+        // does. Keep the normal Dreamer validity, source/lineage, isolation,
+        // checker and receipt machinery.
         let gate_candidate = candidate
             .candidate
             .clone()
             .with_scope(scope_with_taint(original.scope.clone(), source))
+            .with_scope_stamps(original.scope_facet, original.scope_project)
             .with_evidence(evidence.envelope(Vec::new()));
         let gate_body =
             gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
@@ -118,7 +192,7 @@ fn attach_evidence(
         // below and its receipt share this transaction, including live pins.
         for source_id in &refs {
             let cited = evidence.for_source(*source_id);
-            attach_ref(vault, txn, run, head, *source_id, &cited)?;
+            attach_ref(vault, txn, run, head, *source_id, &cited, auto_write_rate)?;
         }
         if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&original) {
             return Err(Error::InvalidClaimBody(
@@ -136,13 +210,14 @@ fn attach_ref(
     head: EntityId,
     source: EntityId,
     evidence: &VerifiedEvidenceSet,
+    auto_write_rate: crate::own_rate::OwnRate,
 ) -> Result<()> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
     if locators.is_empty()
         || locators
             .iter()
-            .any(|(locator, _)| locator.source_id != source)
+            .any(|(locator, _, _)| locator.source_id != source)
     {
         return Err(Error::InvalidClaimBody(
             "attachment locator source mismatch",
@@ -152,6 +227,15 @@ fn attach_ref(
         .ok_or(Error::EntityNotFound)?;
     let source_raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &source)?
         .ok_or(Error::EntityNotFound)?;
+    let edge = EdgeRef {
+        source,
+        kind: EdgeKind::Supports,
+        target: head,
+    };
+    // The provenance row lands in the one project its source and head share;
+    // a support across projects is refused before its edge is written, and a
+    // replay binds the stored row to that same project.
+    let project = crate::provenance::support_project(vault, txn, &edge, &source_raw, &head_raw)?;
     let head_hash = blake3::hash(&head_raw);
     let source_hash = blake3::hash(&source_raw);
     let mut hash = blake3::Hasher::new();
@@ -161,7 +245,13 @@ fn attach_ref(
     hash.update(head_hash.as_bytes());
     hash.update(source_hash.as_bytes());
     hash.update(evidence_meet.as_str().as_bytes());
-    for (locator, digest) in locators {
+    // A witnessed TURN's revision is its row plus the MESSAGE revisions the
+    // citation names; any other source keeps its row hash exactly.
+    let mut revision = blake3::Hasher::new();
+    revision.update(b"oneiron:dreamer-evidence-source-revision:v1");
+    revision.update(source_hash.as_bytes());
+    let mut named = false;
+    for (locator, digest, messages) in &locators {
         hash.update(&[u8::from(locator.claim_id.is_some())]);
         if let Some(claim) = locator.claim_id {
             hash.update(claim.as_bytes());
@@ -171,24 +261,29 @@ fn attach_ref(
             hash.update(&(start as u64).to_be_bytes());
             hash.update(&(end as u64).to_be_bytes());
         }
-        hash.update(&digest);
+        hash.update(digest);
+        for message in messages {
+            message.hash_into(&mut hash);
+            message.hash_into(&mut revision);
+            named = true;
+        }
     }
+    let source_revision = if named {
+        revision.finalize()
+    } else {
+        source_hash
+    };
     let mut id = [0_u8; 16];
     id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     let id =
         EntityId::from_bytes(id).map_err(|_| Error::InvalidClaimBody("reserved attachment id"))?;
-    let edge = EdgeRef {
-        source,
-        kind: EdgeKind::Supports,
-        target: head,
-    };
     let mut record = EdgeProvenanceClaimBody::new(
         run.agent_actor.entity_ref(),
         1.0,
         SupersessionStatus::Confirmed,
     );
     record.source_revision_ref = Some(
-        source_hash.as_bytes()[..16]
+        source_revision.as_bytes()[..16]
             .try_into()
             .expect("hash prefix"),
     );
@@ -217,6 +312,7 @@ fn attach_ref(
                 error => error,
             })?;
         if existing.scope.as_ref() != Some(&expected_scope)
+            || existing.scope_project != project
             || existing.approval != ClaimApprovalStatus::Auto
             || !edge_consistent
             || forward.as_ref().is_none_or(|edge| {
@@ -269,5 +365,19 @@ fn attach_ref(
             imported_evidence: None,
             generated_evidence: Some(derived_evidence),
         },
-    )
+    )?;
+    // The new evidence assertion is an Auto write by the Dreamer actor, so it
+    // counts on that actor's own-rate window, as a promoted claim does; the
+    // replay above returned before this and counts nothing.
+    crate::own_rate::count_in_txn(
+        &vault.store,
+        txn,
+        crate::own_rate::OwnRateKind::AutoWrite,
+        run.agent_actor.entity_ref(),
+        vault.store.clock.now_recorded_at(),
+        auto_write_rate,
+    )?;
+    #[cfg(test)]
+    crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Attachment);
+    evidence.record_message_dependencies_in_txn(vault, txn, &id)
 }
