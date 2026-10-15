@@ -571,6 +571,7 @@ impl Vault {
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         vault.backfill_row_deletion_fences_on_open()?;
+        vault.backfill_consult_party_facts_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             // The seeded births below stamp the owner's `substrate` FACET,
             // which the owner PERSON put mints. Pinned at 0 like the bootstrap

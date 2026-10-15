@@ -209,6 +209,16 @@ pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, r
 /// schema-1.2 `core:read` grant per reader. A plain scoped-read key reads
 /// nothing until a trusted manifest grants it.
 pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
+    authorize_readers_with(vault, readers, Vec::new());
+}
+
+/// [`authorize_readers`] with `rows` replacing the shipped manifest's rows
+/// under the same keys.
+pub(crate) fn authorize_readers_with(
+    vault: &Vault,
+    readers: &[&str],
+    rows: Vec<(rmpv::Value, rmpv::Value)>,
+) {
     let authority = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
     )
@@ -236,11 +246,14 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
     else {
         panic!("manifest map");
     };
-    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    entries.retain(|(key, _)| {
+        key.as_str() != Some("scoped_grants") && rows.iter().all(|(row, _)| row != key)
+    });
     entries.push((
         rmpv::Value::from("scoped_grants"),
         rmpv::Value::Array(grants),
     ));
+    entries.extend(rows);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries)).expect("manifest encodes");
     put_policy_manifest_bytes(
@@ -262,6 +275,24 @@ pub(crate) fn embedding_test_config() -> VaultConfig {
     config.embedding_model = Some("test/model@v1".to_owned());
     config.max_readers = 16;
     config
+}
+
+/// A store clock pinned at `now` with fresh ids, for fixtures whose records
+/// carry fixed timestamps that the engine's clock must agree with.
+pub(crate) fn pinned_store_clock(now: u64) -> crate::ports::StoreClock {
+    struct Pinned(u64);
+    impl crate::ports::Clock for Pinned {
+        fn now_recorded_at(&self) -> u64 {
+            self.0
+        }
+    }
+    impl crate::ports::IdGen for Pinned {
+        fn ulid(&self) -> [u8; 16] {
+            uuid::Uuid::now_v7().into_bytes()
+        }
+    }
+    let pinned = std::sync::Arc::new(Pinned(now));
+    crate::ports::StoreClock::new(pinned.clone(), pinned)
 }
 
 /// Opens a temporary vault with the supplied config. Returns the

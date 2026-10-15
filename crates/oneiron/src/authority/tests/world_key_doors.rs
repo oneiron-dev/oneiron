@@ -112,7 +112,7 @@ pub(super) fn fresh_install(host: &Host) -> Fresh {
 
 /// [`fresh_install`] opened under `config`.
 pub(super) fn fresh_install_with(host: &Host, config: VaultConfig) -> Fresh {
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     let (vault, _) = Vault::restore_checkpoint(

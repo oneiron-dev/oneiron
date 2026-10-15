@@ -183,6 +183,9 @@ heed = { workspace = true, features = ["posix-sem"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Removing a directory tree relative to the directory that holds each
+# entry, never through a path. The version the workspace already builds.
+rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

@@ -343,6 +343,26 @@ pub(crate) fn validate_reserved_logical_id(id: &EntityId, def: &AgentDefinition)
     )))
 }
 
+/// The ceiling and lineage the seed manifest gives the row at `id`, when `id`
+/// is a seeded row id: what that id answers to before it holds a pin of its
+/// own (see `id_pin`).
+pub(super) fn seeded_lineage(id: &EntityId) -> Result<Option<(AgentCeiling, Option<EntityId>)>> {
+    system_agent_manifest()?
+        .definitions
+        .iter()
+        .find(|seed| seed.entity_id.0 == *id)
+        .map(|seed| {
+            let ceiling = AgentCeiling::parse(&seed.definition.ceiling).ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDefBody("manifest ceiling must be one of auto|proposed"),
+            ))?;
+            Ok((
+                ceiling,
+                seed.definition.forked_from.as_ref().map(|parent| parent.0),
+            ))
+        })
+        .transpose()
+}
+
 /// Seeds/reconciles the canonical roster inside the caller's write
 /// transaction. Takes the open-path input quartet rather than a `&Vault`,
 /// because it runs before any handle exists.
@@ -354,6 +374,9 @@ pub(crate) fn seed_system_agent_definitions(
     text_index_trusted: bool,
 ) -> Result<()> {
     let manifest = parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?;
+    // Rows older than the pin are pinned before anything can delete one, and
+    // before a deleted seeded row re-seeds within its pin (H215).
+    super::id_pin::pin_stored_rows_in_txn(store, wtxn)?;
     reconcile_system_agent_definitions_in(
         store,
         config,
@@ -404,7 +427,15 @@ pub(super) fn reconcile_system_agent_definitions_in(
                 }
             }
             None => {
-                let definition = seed.definition_row(legacy_enabled)?;
+                let mut definition = seed.definition_row(legacy_enabled)?;
+                // A deleted seeded row comes back no wider than the narrowest
+                // ceiling its id has held (H215): an agent that deleted its
+                // own narrowed row gains nothing from the next open.
+                if let Some(pinned) = super::id_pin::pinned_ceiling_in_txn(store, wtxn, &id)?
+                    && definition.ceiling.widens_beyond(pinned)
+                {
+                    definition.ceiling = pinned;
+                }
                 let data = encode_agent_definition(&definition)?;
                 apply_ops(
                     store,

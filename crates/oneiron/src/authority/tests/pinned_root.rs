@@ -100,7 +100,7 @@ fn a_restore_that_makes_a_new_machine_opens_unpinned() {
     let (_, first) = publish_root(&host);
     let (_, second) = publish_root(&host);
     pin(&host.vault, first);
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     pin(&host.vault, second);
@@ -155,7 +155,7 @@ fn an_activated_archive_opens_unpinned() {
     pin(&host.vault, root);
     let Host { _dir, vault, .. } = host;
     let home = vault.store.env.path().to_path_buf();
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let (replacement, _) =
