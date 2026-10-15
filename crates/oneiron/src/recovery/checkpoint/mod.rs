@@ -380,7 +380,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked, made) = Self::restore_image(
+        let (mut vault, report, forked, made) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -390,7 +390,7 @@ impl Vault {
             Custody::Keep,
         )?;
         forked.keep();
-        made.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
@@ -410,7 +410,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked, made) = Self::restore_image(
+        let (mut vault, report, forked, made) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -420,7 +420,7 @@ impl Vault {
             Custody::Fork(Some(&live)),
         )?;
         forked.keep();
-        made.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     /// This vault as the source of a restore beside it
@@ -564,7 +564,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (vault, report, forked, made) = Self::restore_image(
+        let (mut vault, report, forked, made) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -582,7 +582,7 @@ impl Vault {
             return Err(error);
         }
         forked.keep();
-        made.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     fn restore_image(
@@ -623,7 +623,7 @@ impl Vault {
         // it: only a committed restore keeps them (C8).
         let made = MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
-        let vault = Self::open_owned(destination, config.clone())?;
+        let vault = Self::open_under_lease(destination, config.clone(), made.lease()?)?;
         #[cfg(test)]
         fail_at(RestoreStep::FirstOpen)?;
         made.holds(&vault.store)?;
@@ -680,7 +680,7 @@ impl Vault {
         })?;
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
-        let vault = Self::open_owned(destination, config)?;
+        let vault = Self::open_under_lease(destination, config, made.lease()?)?;
         #[cfg(test)]
         fail_at(RestoreStep::SecondOpen)?;
         made.holds(&vault.store)?;

@@ -9,8 +9,7 @@ use crate::analyzer::MultilingualAnalyzer;
 #[cfg(feature = "test-support")]
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::{HostingPrivacyPosture, VaultConfig};
-use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR;
+use crate::entity_id::{EntityId, derived_domains::EMBEDDED_OWNER_ACTOR};
 use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
@@ -18,6 +17,7 @@ use crate::temporal::TimeRange;
 use std::path::Path;
 
 mod config_validation;
+mod lease_door;
 use self::config_validation::validate_open_config;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
