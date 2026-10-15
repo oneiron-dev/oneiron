@@ -40,14 +40,16 @@
 //!   it. The advertisement never offers `push-cert`, whatever the repository's
 //!   config says, and a request whose command section carries one is refused
 //!   before the backend reads a byte. That section, up to its first flush, is
-//!   the one part of a request body read ahead, under a fixed bound
-//!   (`ORIGIN_MAX_COMMAND_SECTION_BYTES`). A body the backend would inflate
-//!   (gzip, as JGit sends one) is inflated here instead, once, so the section
-//!   read is the one receive-pack reads; the backend gets it plain.
+//!   the one part of a request body read ahead. It grows with the refs a push
+//!   names, so it is held whatever its size: in memory up to
+//!   `ORIGIN_COMMAND_SECTION_MEMORY_BYTES`, then in an unnamed file in the
+//!   door root ([`HeldBytes`]). A body the backend would inflate (gzip, as
+//!   JGit sends one) is inflated here instead, once, so the section read is
+//!   the one receive-pack reads; the backend gets it plain.
 //! - **Only journalable refs move.** The door window refuses a push whose
 //!   proposed names the landing could not journal — names outside the GitWire
-//!   ref grammar, a name proposed twice, or a batch larger than the GitWire
-//!   publication bound — WHILE the objects are still quarantined. The landing's
+//!   ref grammar or a name proposed twice — WHILE the objects are still
+//!   quarantined. A push may name any number of refs. The landing's
 //!   own parse is the last line of defence, not the first: discovering an
 //!   unpublishable name after `git receive-pack` has moved refs would leave a
 //!   mutated repository with no receipt.
@@ -83,6 +85,7 @@ mod door;
 mod door_window;
 mod evidence;
 mod exchange_idle;
+mod held;
 mod hooks;
 mod intent;
 mod landing;
@@ -99,6 +102,7 @@ pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
 pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
 pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
+pub use self::held::HeldBytes;
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
 pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already_applied};

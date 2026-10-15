@@ -86,10 +86,10 @@ pub const ORIGIN_REF_UPDATE_BATCH: usize = 64;
 /// bytes nobody is landing.
 pub const ORIGIN_REFUSED_REF_PREFIX: &str = "refs/replace/";
 
-/// Bound on a receive-pack's command section, read ahead of the backend to
-/// refuse a push certificate. [`ORIGIN_MAX_REF_UPDATES`] commands with their
-/// capabilities fit many times over.
-pub(super) const ORIGIN_MAX_COMMAND_SECTION_BYTES: usize = 1024 * 1024;
+/// How much of a receive-pack's command section, read ahead of the backend to
+/// refuse a push certificate, is held in memory. The rest is held in an
+/// unnamed file in the door root: a push may name any number of refs.
+pub(super) const ORIGIN_COMMAND_SECTION_MEMORY_BYTES: usize = 1024 * 1024;
 
 /// Bound on the CGI header block. This bounds a protocol preamble, not a body:
 /// request and response bodies stream unbounded and unbuffered.

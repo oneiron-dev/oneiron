@@ -48,7 +48,6 @@
 //! rate cap is added here, and a large pack rides through without ever being
 
 mod gate;
-mod held;
 mod routes;
 mod serve;
 mod status_codec;

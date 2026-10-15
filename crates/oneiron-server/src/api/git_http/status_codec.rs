@@ -5,8 +5,8 @@
 // The report is read and written as a stream, one pkt-line at a time, so a
 // push of any number of refs is rewritten in memory bounded by one line.
 
-use super::held::HeldBytes;
 use oneiron::origin::smart_http;
+use oneiron::origin::smart_http::HeldBytes;
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 

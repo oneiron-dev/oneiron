@@ -5,7 +5,6 @@
 // ---------------------------------------------------------------------------
 
 use super::gate::text_response;
-use super::held::HeldBytes;
 use super::status_codec::{StatusFault, rewrite_receive_pack_status};
 use crate::api::transfer::{self, BodyPiece, BodyReader};
 use crate::server::SyncServer;
@@ -17,6 +16,7 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
 use oneiron::origin::smart_http;
+use oneiron::origin::smart_http::HeldBytes;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -331,6 +331,12 @@ pub(super) fn serve_failure(
         )) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "git publication is pending; ref effects may be partial; retry to recover".to_owned(),
+        ),
+        // The disk floor: what the exchange holds past memory (its command
+        // section) found no room.
+        Ok(Err(oneiron::Error::Io(error))) if error.kind() == io::ErrorKind::StorageFull => (
+            StatusCode::INSUFFICIENT_STORAGE,
+            "the origin's disk is full; ref effects may be partial; retry later".to_owned(),
         ),
         Ok(Err(_)) => (
             StatusCode::INTERNAL_SERVER_ERROR,

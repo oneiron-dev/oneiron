@@ -1,6 +1,5 @@
 //! Push round-trip and status-codec tests for Git smart-HTTP.
 
-use super::held::HeldBytes;
 use super::serve::{ResponseHead, landed_response, serve_failure};
 use super::status_codec::{
     append_status_packet, rewrite_status_bytes as rewrite_receive_pack_status, status_packet,
@@ -9,6 +8,7 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::http::header::CONTENT_TYPE;
 use oneiron::origin::smart_http;
+use oneiron::origin::smart_http::HeldBytes;
 use std::io::Write;
 
 #[cfg(test)]

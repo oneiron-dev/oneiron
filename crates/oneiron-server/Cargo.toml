@@ -88,8 +88,6 @@ ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
 subtle = "2"
 libc = "0.2"
-# A push's held status report past memory goes to an unnamed file.
-tempfile = "3"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 thiserror = { workspace = true }
@@ -145,6 +143,7 @@ candle-nn = { version = "=0.11.0", features = ["metal"] }
 
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
+tempfile = "3"
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
 # `src/api/tests.rs` and `src/commands/tests.rs` drive requests through. The
 # feature reached us only because axum enables it on its own `tower` edge —

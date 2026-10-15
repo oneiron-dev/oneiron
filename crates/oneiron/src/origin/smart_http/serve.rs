@@ -16,11 +16,12 @@ use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
 use super::exchange_idle::{Progress, ProgressRead, ProgressSink, Watched, stall_as_idle, watch};
+use super::held::HeldBytes;
 use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, ORIGIN_MAX_COMMAND_SECTION_BYTES, SERVE_IDLE_TIMEOUT,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_COMMAND_SECTION_MEMORY_BYTES, SERVE_IDLE_TIMEOUT,
     SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
     origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
@@ -235,7 +236,8 @@ fn serve_request(
             .checkout_credential(ticket, principal, &unpinned_repo_ref(&repo_dir))
             .map_err(|error| super::paths::door_refused(&error))?;
     }
-    let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
+    let door_root = origin_door_root(vault)?;
+    let hooks = DoorHooksDir::materialize(&door_root)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let coordinator = if request.is_receive_pack() {
         let common_dir = repo_common_dir(&repo_dir)?;
@@ -286,12 +288,12 @@ fn serve_request(
             (request, body)
         };
     // A body that stalls here ends at the idle limit, as it would mid-exchange.
-    let commands = if request.is_receive_pack() {
-        read_command_section(body).map_err(stall_as_idle)?
+    let mut commands = if request.is_receive_pack() {
+        read_command_section(body, door_root).map_err(stall_as_idle)?
     } else {
-        Vec::new()
+        HeldBytes::new(0, None)
     };
-    let body = &mut io::Cursor::new(commands).chain(body);
+    let body = &mut commands.reader().map_err(Error::Io)?.chain(body);
     // Between the coordinator and the child, so on every way out the child
     // is reaped first, then what a killed backend left in quarantine is
     // swept, and only then is the coordinator let go. Noted only now: a push
@@ -598,49 +600,52 @@ fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {
 /// store as a blob before any hook runs, so its bytes would stay there with no
 /// door having read them, even on a delete-only push. This origin offers no
 /// signed push (the advertisement drops the capability), and a request that
-/// sends a certificate anyway is refused here. A section this cannot read is
-/// refused too: a malformed pkt-line, or one past
-/// [`ORIGIN_MAX_COMMAND_SECTION_BYTES`]. `body` is what receive-pack would
-/// read, already inflated where the backend would inflate it. Returns the
-/// bytes read, which go to the backend ahead of the rest.
-fn read_command_section(body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
-    let mut section = Vec::new();
+/// sends a certificate anyway is refused here. A section this cannot read, a
+/// malformed pkt-line, is refused too. A push may name any number of refs
+/// (rule 5), so the section is held whatever its size: in memory up to
+/// [`ORIGIN_COMMAND_SECTION_MEMORY_BYTES`], then in an unnamed file in
+/// `door_root`. `body` is what receive-pack would read, already inflated where
+/// the backend would inflate it. Returns the bytes read, which go to the
+/// backend ahead of the rest.
+fn read_command_section(body: &mut (dyn Read + Send), door_root: PathBuf) -> Result<HeldBytes> {
+    let mut section = HeldBytes::new(ORIGIN_COMMAND_SECTION_MEMORY_BYTES, Some(door_root));
+    // One pkt-line at a time: its four-digit length bounds it at 64 KiB.
+    let mut line = Vec::new();
     loop {
-        let start = section.len();
-        // The bound counts every byte read, each header and the flush too.
-        if start + 4 > ORIGIN_MAX_COMMAND_SECTION_BYTES {
-            return Err(push_refused("the push's command section is too large"));
-        }
+        line.clear();
         // A body that ends before its flush goes on as it is: receive-pack's
         // reader dies at that end before any command runs or any certificate
         // is written, and no certificate line here was whole.
-        if !read_exactly(body, &mut section, 4)? {
-            return Ok(section);
-        }
-        let hex = &section[start..];
-        let length = std::str::from_utf8(hex)
-            .ok()
-            .filter(|_| hex.iter().all(u8::is_ascii_hexdigit))
-            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
-            .ok_or_else(|| push_refused("the push's command section is malformed"))?;
-        match length {
-            0 => return Ok(section),
-            1..=3 => return Err(push_refused("the push's command section is malformed")),
-            _ if start + length > ORIGIN_MAX_COMMAND_SECTION_BYTES => {
-                return Err(push_refused("the push's command section is too large"));
+        let whole = read_exactly(body, &mut line, 4)?;
+        if whole {
+            let length = std::str::from_utf8(&line)
+                .ok()
+                .filter(|_| line.iter().all(u8::is_ascii_hexdigit))
+                .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+                .ok_or_else(|| push_refused("the push's command section is malformed"))?;
+            match length {
+                0 => {
+                    section.write_all(&line).map_err(Error::Io)?;
+                    return Ok(section);
+                }
+                1..=3 => return Err(push_refused("the push's command section is malformed")),
+                _ => {}
             }
-            _ => {}
+            if read_exactly(body, &mut line, length - 4)? {
+                // receive-pack's own reading: one trailing newline chomped,
+                // and the line's name ends at the NUL before any
+                // capabilities.
+                let payload = &line[4..];
+                let payload = payload.strip_suffix(b"\n").unwrap_or(payload);
+                if payload.split(|byte| *byte == 0).next() == Some(b"push-cert".as_slice()) {
+                    return Err(push_refused("the origin accepts no push certificate"));
+                }
+                section.write_all(&line).map_err(Error::Io)?;
+                continue;
+            }
         }
-        if !read_exactly(body, &mut section, length - 4)? {
-            return Ok(section);
-        }
-        // receive-pack's own reading: one trailing newline chomped, and the
-        // line's name ends at the NUL before any capabilities.
-        let line = &section[start + 4..];
-        let line = line.strip_suffix(b"\n").unwrap_or(line);
-        if line.split(|byte| *byte == 0).next() == Some(b"push-cert".as_slice()) {
-            return Err(push_refused("the origin accepts no push certificate"));
-        }
+        section.write_all(&line).map_err(Error::Io)?;
+        return Ok(section);
     }
 }
 
