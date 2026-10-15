@@ -767,3 +767,31 @@ fn a_second_mark_lends_its_rows_none_of_the_first_marks_worlds() -> Result<()> {
     assert_eq!(withdrawn_worlds(&vault, &summary)?, None, "after the walk");
     Ok(())
 }
+
+/// A source changed again and again before its walk finishes keeps a walk
+/// row of bounded size: a later mark that answers for an earlier one takes
+/// its place (Astra R4 on #1471).
+#[test]
+fn a_source_changed_again_and_again_mid_walk_keeps_a_bounded_walk() -> Result<()> {
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    let dependents = derive_five(&vault, &source)?;
+    for page in 0..40 {
+        change_docs_source(&vault, &source, &format!("page {page}"))?;
+    }
+    let walk = {
+        let txn = vault.store.env.read_txn()?;
+        super::WALK.get(&vault.store, &txn, &source)?
+    }
+    .expect("the walk is pending");
+    assert!(
+        walk.earlier.is_empty(),
+        "the latest mark answers for every earlier one"
+    );
+    vault.finish_dependent_walks()?;
+    for dependent in &dependents {
+        assert!(withdrawn(&vault, dependent)?);
+    }
+    Ok(())
+}
