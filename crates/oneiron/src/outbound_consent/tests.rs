@@ -1060,7 +1060,7 @@ fn result_scrub_destroys_all_provider_fields_and_debug_content() {
 }
 
 #[test]
-fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
+fn paid_pending_at_the_budget_limit_completes_without_a_second_debit() {
     let (_tmp, vault) = temp_vault();
     // Seed avoids the reserved system-agent-preset id band [0xA1;16]..=[0xA5;16]
     // (entity materialization rejects those as authority-bearing collisions).
@@ -1104,15 +1104,14 @@ fn paid_pending_ignores_later_standing_grant_revocation_and_completes() {
     // materializes as a synced connector-send TASK row.
     assert!(vault.connector_send_tasks().unwrap().is_empty());
 
-    vault
-        .revoke_standing_outbound_grant(&grant_id, 20)
-        .expect("revoke grant");
+    // The grant stays live: revoking it abandons the row instead (H163,
+    // revoked_grant_abandons_paid_pending_without_transport).
     let mut transport = RecordingResultSender::default();
     let recovered =
         recover_authorized_outbound_intents(&vault, &authority, &mut transport, 21, 30_000)
             .expect("authorized recovery");
-    // Discriminating: this already-paid row does not re-run standing-grant
-    // liveness or budget admission; it resumes the authenticated frozen call.
+    // Discriminating: this already-paid row does not re-run budget
+    // admission at used == limit; it resumes the authenticated frozen call.
     assert_eq!(recovered.effectful_sends, 1);
     assert_eq!(recovered.authorization_rejections, 0);
     assert_eq!(recovered.ledger.resent, 1);
