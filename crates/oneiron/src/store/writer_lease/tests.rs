@@ -254,6 +254,42 @@ fn a_lock_file_linked_elsewhere_keeps_its_bytes() {
     }
 }
 
+/// A lock name that is a symbolic link is never followed. Either door refuses
+/// it with an error an owner can act on, and the link's target, there or not,
+/// is left as it was (Engine, after review r5).
+#[cfg(unix)]
+#[test]
+fn a_lock_name_that_is_a_symbolic_link_is_refused_by_its_cause() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for (held, there) in [(false, false), (false, true), (true, false), (true, true)] {
+        let dir = root.path().join(format!("vault-{held}-{there}"));
+        let target = root.path().join(format!("target-{held}-{there}"));
+        std::fs::create_dir(&dir).unwrap();
+        if there {
+            std::fs::write(&target, "placeholder\n").unwrap();
+        }
+        std::os::unix::fs::symlink(&target, dir.join(VAULT_WRITER_LOCK_FILE)).unwrap();
+        let refused = if held {
+            VaultWriterLease::acquire_held(open_root_directory(&dir).unwrap(), &dir)
+        } else {
+            VaultWriterLease::acquire(&dir)
+        };
+        let Err(Error::Io(error)) = refused else {
+            panic!("held {held}, target there {there}: the link was not refused as I/O");
+        };
+        assert_eq!(
+            error.to_string(),
+            "the vault's writer lock oneiron.writer.lock is a symbolic link; remove it",
+            "held {held}, target there {there}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).ok().as_deref(),
+            there.then_some("placeholder\n"),
+            "held {held}, target there {there}"
+        );
+    }
+}
+
 /// Review r4 (Sol F1): a lease refused after its lock was granted unlocks
 /// before it closes, as a held lease does. A child forked while the refused
 /// acquirer held its descriptor keeps the descriptor, never the lock.
