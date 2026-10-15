@@ -525,13 +525,11 @@ impl Vault {
             let scrub_is_the_linearization_point = !authority_settled;
             let mut changed = vec![*id];
             changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
-            let pierced = self.pierce_for_scrub_in_txn(&mut wtxn, id, &tombstone, &mut changed)?;
-            let (existed, had_vector, _ledger_changed) =
-                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            let (staged, existed, had_vector) =
+                self.scrub_piercing_in_txn(&mut wtxn, id, &tombstone, &mut changed)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
-            let staged = self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced, &tombstone)?;
             if existed && let Some(captured) = &captured {
                 changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     &mut wtxn,
@@ -715,12 +713,8 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        let pierced =
-            self.pierce_for_purge_in_txn(&mut wtxn, id, &tombstone, &mut affected, &mut scope)?;
-        let (existed, citing) =
-            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
-        affected.extend(citing);
-        let staged = self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced, &tombstone)?;
+        let (staged, existed) =
+            self.purge_piercing_in_txn(&mut wtxn, id, &tombstone, &mut affected, &mut scope)?;
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.

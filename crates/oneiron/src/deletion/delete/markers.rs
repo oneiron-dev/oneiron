@@ -136,37 +136,43 @@ impl Vault {
         Ok(())
     }
 
-    /// The GDPR/policy scrub's walk (ARCH-0005a, ARCH-0038 carrier 13): HardErase pierces
-    /// refcounting BEFORE the scrub drops the version chain and claim pairs the walk reads; the
-    /// purge walks again for anything that came since. What it took is kept for the purge's
-    /// receipt and sweep row, which a crash before the purge leaves to the replay that completes
-    /// it. Returns the carriers to tombstone once the scrub released the bytes.
-    pub(in crate::deletion) fn pierce_for_scrub_in_txn(
+    /// The GDPR/policy scrub of a hard erase, piercing refcounting around it (ARCH-0005a,
+    /// ARCH-0038 carrier 13). The walk runs BEFORE the scrub drops the version chain and claim
+    /// pairs it reads; the purge walks again for anything that came since. What it took is kept
+    /// for the purge's receipt and sweep row, which a crash before the purge leaves to the replay
+    /// that completes it. The carriers' tombstones stage once the scrub released the bytes.
+    /// Returns them, for [`Self::publish_pierced_tombstones`], and the scrub's
+    /// `(existed, had_vector)`.
+    pub(in crate::deletion) fn scrub_piercing_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         tombstone: &TombstoneValueV2,
         changed: &mut Vec<EntityId>,
-    ) -> Result<Vec<PiercedCarrier>> {
+    ) -> Result<(Vec<PiercedCarrier>, bool, bool)> {
         let pierced =
             self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &tombstone.encode(), true)?;
         changed.extend(pierced.changed);
         crate::blob_artifact::record_erase_scope_in_txn(&self.store, wtxn, id, &pierced.carriers)?;
-        Ok(pierced.tombstoned)
+        let (existed, had_vector, _ledger_changed) =
+            self.soft_erase_active_store_in_txn(wtxn, id)?;
+        let staged = self.stage_pierced_tombstones_in_txn(wtxn, pierced.tombstoned, tombstone)?;
+        Ok((staged, existed, had_vector))
     }
 
-    /// The purge's walk: BEFORE the purge drops the version chain and claim pairs the walk reads,
-    /// and in its transaction, the bytes and every reference to them go with the record. The
-    /// receipt scope gets one line per carrier, the scrub's included. Returns the carriers to
-    /// tombstone once the purge released the bytes.
-    pub(in crate::deletion) fn pierce_for_purge_in_txn(
+    /// The purge of a hard erase, piercing refcounting around it: BEFORE the purge drops the
+    /// version chain and claim pairs the walk reads, and in its transaction, the bytes and every
+    /// reference to them go with the record. The receipt scope gets one line per carrier, the
+    /// scrub's included, and the carriers' tombstones stage once the purge released the bytes.
+    /// Returns them, for [`Self::publish_pierced_tombstones`], and whether the record existed.
+    pub(in crate::deletion) fn purge_piercing_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         tombstone: &TombstoneValueV2,
         affected: &mut Vec<EntityId>,
         scope: &mut RedactionScope,
-    ) -> Result<Vec<PiercedCarrier>> {
+    ) -> Result<(Vec<PiercedCarrier>, bool)> {
         let pierced =
             self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &tombstone.encode(), true)?;
         affected.extend(pierced.changed);
@@ -177,7 +183,11 @@ impl Vault {
         scope
             .entity_ids
             .extend(carriers.iter().map(EntityId::to_hex));
-        Ok(pierced.tombstoned)
+        let (existed, citing) =
+            self.purge_entity_active_store_in_txn(wtxn, id, Some(&tombstone.request_id))?;
+        affected.extend(citing);
+        let staged = self.stage_pierced_tombstones_in_txn(wtxn, pierced.tombstoned, tombstone)?;
+        Ok((staged, existed))
     }
 
     /// Stages the tombstone of each carrier a hard erase pierced (ARCH-0005a) under the erase's
