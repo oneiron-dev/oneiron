@@ -56,13 +56,11 @@ pub enum SameBytesHold {
 pub enum SameBytesOutcome {
     Erased(DeleteReceipt),
     Held(SameBytesHold),
-    /// Its own checked delete refused before it published a tombstone, for one when it no longer
-    /// holds the previewed bytes: nothing of it was erased.
-    Refused(MemoryError),
-    /// Its delete failed after its tombstone and deletion fence were durable, or it could not be
-    /// read back whether they were: the delete is accepted and the record reads as deleted; the
-    /// deletion recovery finishes its purge and receipt.
-    Unfinished(MemoryError),
+    /// Its own checked delete returned this error, for one when it no longer holds the previewed
+    /// bytes. As with a confirmed delete that fails part way, it may be unchanged, or its delete
+    /// may be accepted and pending (it then reads as deleted and the deletion recovery finishes
+    /// it): preview it again to see which.
+    Failed(MemoryError),
 }
 
 /// The confirmed record's receipt, then one row per other record holding its bytes, in id
@@ -123,7 +121,6 @@ impl Memory<'_> {
                 for (holder, hashes) in previewed_holdings(preview) {
                     plan.push(PlannedMatch {
                         hold: self.same_bytes_hold_in_txn(&txn, &holder, options.reason)?,
-                        marked: deletion_marked_in_txn(self.vault, &txn, &holder)?,
                         holder,
                         hashes,
                     });
@@ -156,8 +153,7 @@ impl Memory<'_> {
         Ok(EntityEraseOutcome { first, same_bytes })
     }
 
-    /// One planned match through its own checked delete. A failure is a refusal only while the
-    /// record carries no deletion marker it lacked at planning.
+    /// One planned match through its own checked delete.
     fn erase_match(&self, planned: &PlannedMatch, reason: EraseReason) -> SameBytesOutcome {
         #[cfg(all(test, feature = "sync"))]
         if FAIL_NEXT_MATCH_AFTER_TOMBSTONE.replace(false) {
@@ -170,21 +166,7 @@ impl Memory<'_> {
         );
         match result {
             Ok(receipt) => SameBytesOutcome::Erased(receipt),
-            Err(error) => {
-                let marked = self
-                    .vault
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(Error::from)
-                    .and_then(|txn| deletion_marked_in_txn(self.vault, &txn, &planned.holder))
-                    .unwrap_or(true);
-                if marked && !planned.marked {
-                    SameBytesOutcome::Unfinished(error)
-                } else {
-                    SameBytesOutcome::Refused(error)
-                }
-            }
+            Err(error) => SameBytesOutcome::Failed(error),
         }
     }
 
@@ -259,8 +241,6 @@ struct PlannedMatch {
     holder: EntityId,
     hashes: Vec<[u8; 32]>,
     hold: Option<SameBytesHold>,
-    /// Whether the holder already carried a deletion marker at planning.
-    marked: bool,
 }
 
 #[cfg(all(test, feature = "sync"))]
@@ -274,16 +254,6 @@ thread_local! {
 #[cfg(all(test, feature = "sync"))]
 pub(crate) fn arm_fail_next_match_after_tombstone() {
     FAIL_NEXT_MATCH_AFTER_TOMBSTONE.with(|armed| armed.set(true));
-}
-
-/// Whether this vault's own markers delete `id`: a delete applied or accepted here.
-fn deletion_marked_in_txn(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> crate::error::Result<bool> {
-    let raw = vault.store.entities.get(txn, id.as_bytes())?;
-    crate::deletion::row_deletion_marked(&vault.store, txn, id, raw)
 }
 
 fn carrier_erase_refused() -> MemoryError {

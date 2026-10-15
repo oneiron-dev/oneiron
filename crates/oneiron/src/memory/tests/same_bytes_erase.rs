@@ -437,7 +437,7 @@ fn the_erase_door_refuses_the_byte_carrier_and_every_holder_keeps_its_bytes() {
 
 #[cfg(feature = "sync")]
 #[test]
-fn a_match_whose_delete_fails_after_its_tombstone_reads_unfinished_not_refused() {
+fn a_match_failing_after_its_tombstone_never_hides_the_erases_around_it() {
     let (_dir, vault) = blob_vault();
     let memory = owner_facade(&vault);
     let a = artifact(&memory, &[SHARED]);
@@ -451,11 +451,12 @@ fn a_match_whose_delete_fails_after_its_tombstone_reads_unfinished_not_refused()
 
     let rows = rows(&outcome);
     assert!(
-        matches!(rows.get(&failed), Some(SameBytesOutcome::Unfinished(_))),
-        "a published tombstone is no refusal: {:?}",
+        matches!(rows.get(&failed), Some(SameBytesOutcome::Failed(_))),
+        "{:?}",
         rows.get(&failed)
     );
     assert!(matches!(rows.get(&next), Some(SameBytesOutcome::Erased(_))));
+    assert!(outcome.first.receipt_ref.is_some());
     assert!(erased(&vault, &a) && erased(&vault, &next));
 }
 
