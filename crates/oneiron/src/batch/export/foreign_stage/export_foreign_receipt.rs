@@ -99,7 +99,7 @@ pub struct VaultImportStageReceipt {
     pub confirmed_at_secs: Option<u64>,
     pub failure: Option<VaultImportFailure>,
     /// The blake3 digest of the record of facet stamps a Pending receipt
-    /// keeps ([`STAMPS`]), the empty record included, which its confirmation
+    /// keeps (`VAULT_IMPORT_STAMPS`), the empty record included, which its confirmation
     /// checks before it holds them again. `None` on a Failed receipt and on
     /// one staged before the record existed.
     pub staged_stamps_digest: Option<[u8; 32]>,
