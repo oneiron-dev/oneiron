@@ -249,13 +249,18 @@ fn person_fallback_label(person_ref: &EntityId) -> String {
     format!("person {}", &person_ref.to_hex()[..8])
 }
 
-/// Collapses newline runs to single spaces so vault text can never open a
-/// new markdown block (heading, list item, code fence) inside the card.
+/// Collapses line-break runs to single spaces so vault text can never open a
+/// new markdown block (heading, list item, code fence) inside the card. A
+/// break is CR, LF, or any separator a consumer may split lines on: VT, FF,
+/// NEL, and the Unicode line and paragraph separators (F31).
 pub(super) fn markdown_safe_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_break = false;
     for ch in text.chars() {
-        if ch == '\n' || ch == '\r' {
+        if matches!(
+            ch,
+            '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        ) {
             in_break = true;
             continue;
         }
@@ -266,6 +271,24 @@ pub(super) fn markdown_safe_line(text: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+/// `text` as one markdown code span: one line, fenced by one backtick more
+/// than its longest backtick run, so no backtick inside closes it early.
+pub(super) fn markdown_code_span(text: &str) -> String {
+    let text = markdown_safe_line(text);
+    let (mut longest, mut run) = (0, 0);
+    for ch in text.chars() {
+        run = if ch == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
 }
 
 impl crate::Vault {

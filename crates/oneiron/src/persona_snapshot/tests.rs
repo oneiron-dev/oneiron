@@ -543,6 +543,92 @@ fn markdown_render_collapses_multiline_text() -> Result<()> {
     Ok(())
 }
 
+/// F31 (H126): every caller-controlled field of the card stays on its own
+/// line and inside its own markup, for a consumer that also splits lines on
+/// VT, FF, NEL and the Unicode line and paragraph separators.
+#[test]
+fn markdown_card_keeps_every_caller_field_on_its_own_line() -> Result<()> {
+    let separators = [
+        '\n', '\r', '\u{0b}', '\u{0c}', '\u{85}', '\u{2028}', '\u{2029}',
+    ];
+    let forged = |markdown: &str| {
+        markdown
+            .split(separators)
+            .filter(|line| {
+                let line = line.trim_start();
+                ["# forged", "## forged", "- forged"]
+                    .iter()
+                    .any(|forged| line.starts_with(forged))
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x66)?;
+    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(
+        &vault,
+        subject,
+        "profile.note",
+        "note one\u{2028}# forged by a line separator\u{2029}- forged item",
+        0.8,
+        None,
+    )?;
+    let take_actor = "agent:scout`\n## forged take heading`";
+    let compile = vault.compile_persona_snapshot(
+        &subject,
+        &PersonaSnapshotCompileOptions {
+            include_agent_takes: true,
+            agent_takes: vec![PersonaSnapshotAgentTake {
+                actor_ref: take_actor.to_owned(),
+                text: "take text".to_owned(),
+                about_ref: None,
+            }],
+            ..PersonaSnapshotCompileOptions::default()
+        },
+    )?;
+    let artifact = vault.export_persona_snapshot(
+        &compile,
+        &PersonaSnapshotStrikeList::default(),
+        &owner_consent(&compile),
+    )?;
+    assert_eq!(forged(&artifact.markdown), Vec::<String>::new());
+    assert!(
+        artifact
+            .markdown
+            .contains("note one # forged by a line separator - forged item"),
+        "the text itself stays, collapsed onto one line"
+    );
+    // The provenance ref keeps its backtick inside one code span.
+    assert!(
+        artifact
+            .markdown
+            .contains("``[take:agent:scout` ## forged take heading`]``"),
+        "{}",
+        artifact.markdown
+    );
+
+    let for_audience = vault.compile_persona_snapshot(
+        &subject,
+        &PersonaSnapshotCompileOptions {
+            audience: ScopedReadActorKey::new("contact:kenji\n# forged audience heading"),
+            ..PersonaSnapshotCompileOptions::default()
+        },
+    )?;
+    let artifact = vault.export_persona_snapshot(
+        &for_audience,
+        &PersonaSnapshotStrikeList::default(),
+        &owner_consent(&for_audience),
+    )?;
+    assert_eq!(forged(&artifact.markdown), Vec::<String>::new());
+    assert!(
+        artifact
+            .markdown
+            .contains("- for: contact:kenji # forged audience heading\n")
+    );
+    Ok(())
+}
+
 #[test]
 fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
     let (_dir, vault) = test_vault();
