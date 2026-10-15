@@ -51,6 +51,11 @@ fn failure(error: LlmError) -> Response {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
         }
         LlmError::Retryable(RetryableLlmError::Timeout) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
+        // A privacy hold, not a rate refusal: no offer the call may use on
+        // this device answered.
+        LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "kept_on_device")
+        }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
     (

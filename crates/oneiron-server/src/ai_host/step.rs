@@ -114,7 +114,14 @@ impl StepRunner {
             model: seat.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
-                scope: Default::default(),
+                // The world the step was dispatched in, which every step of
+                // its workflow shares: a fallback goes only where that
+                // world's settings let it. A step dispatched in none is held
+                // on the device while any world stays on it.
+                scope: oneiron::llm::Scope {
+                    world: step.input.scope.as_ref().and_then(|scope| scope.world),
+                    ..oneiron::llm::Scope::default()
+                },
                 tier: TierPrecedence::for_purpose(
                     &purpose,
                     definition

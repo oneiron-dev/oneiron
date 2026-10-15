@@ -37,6 +37,8 @@ mod driven;
 #[cfg(test)]
 mod fallback_tests;
 mod http;
+#[cfg(test)]
+mod kept_on_device_tests;
 mod ladder;
 mod offer;
 mod openai;

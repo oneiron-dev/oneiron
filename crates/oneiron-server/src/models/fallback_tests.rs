@@ -8,8 +8,8 @@ use std::path::Path;
 use futures_util::StreamExt;
 use oneiron::store::ports::ManualClock;
 use oneiron::{
-    EntityId, FatalLlmError, LlmError, LlmResponse, LlmResult, LlmStreamEvent, RetryableLlmError,
-    Vault, VaultConfig,
+    EntityId, FatalLlmError, LlmError, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent,
+    RetryableLlmError, Vault, VaultConfig,
 };
 use serde_json::{Value, json};
 
@@ -18,13 +18,13 @@ use super::*;
 use crate::fake_llm::{FakeLlm, Reply};
 
 /// 2026-10-15T00:00:00Z.
-const T0: u64 = 1_792_022_400;
+pub(super) const T0: u64 = 1_792_022_400;
 /// 2026-10-19T00:00:00Z.
 const OCT_19: u64 = 1_792_368_000;
 /// The shipped `provider_cooldown_default_seconds` row.
 const DEFAULT_REST: u64 = 600;
 
-fn clocked_vault(dir: &Path, clock: &Arc<ManualClock>) -> Arc<Vault> {
+pub(super) fn clocked_vault(dir: &Path, clock: &Arc<ManualClock>) -> Arc<Vault> {
     let mut vault_config = VaultConfig::device();
     vault_config.store_clock = clock.bundle();
     Arc::new(Vault::open(dir, vault_config).unwrap())
@@ -32,7 +32,7 @@ fn clocked_vault(dir: &Path, clock: &Arc<ManualClock>) -> Arc<Vault> {
 
 /// A checker seat: `first` on the vault's own server, then `second` in a
 /// provider's cloud. `extra` lands in the seat's table.
-fn two_offers(first: &FakeLlm, second: &FakeLlm, extra: &str) -> ModelsConfig {
+pub(super) fn two_offers(first: &FakeLlm, second: &FakeLlm, extra: &str) -> ModelsConfig {
     config(&format!(
         r#"
 [providers.first]
@@ -50,7 +50,11 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
 }
 
 /// A runtime whose rests are kept in `vault`, on `clock`.
-fn kept(config: &ModelsConfig, vault: &Arc<Vault>, clock: &Arc<ManualClock>) -> ModelRuntime {
+pub(super) fn kept(
+    config: &ModelsConfig,
+    vault: &Arc<Vault>,
+    clock: &Arc<ManualClock>,
+) -> ModelRuntime {
     ModelRuntime::build_hosted(
         Some(config),
         None,
@@ -58,7 +62,7 @@ fn kept(config: &ModelsConfig, vault: &Arc<Vault>, clock: &Arc<ManualClock>) -> 
     )
 }
 
-fn refusal(status: u16, headers: &[(&str, &str)], body: Value) -> Reply {
+pub(super) fn refusal(status: u16, headers: &[(&str, &str)], body: Value) -> Reply {
     Reply::Error {
         status,
         headers: headers
@@ -75,8 +79,8 @@ async fn ask(seat: &Seat) -> LlmResult<LlmResponse> {
         .await
 }
 
-/// A world the world settings keep on this machine.
-fn private_world(vault: &Vault) -> EntityId {
+/// A world this vault holds, at its default settings: readable everywhere.
+pub(super) fn portable_world(vault: &Vault) -> EntityId {
     let world = EntityId::now();
     vault
         .put_entity(
@@ -87,10 +91,35 @@ fn private_world(vault: &Vault) -> EntityId {
             b"world",
         )
         .unwrap();
+    world
+}
+
+/// A world the world settings keep on this machine.
+pub(super) fn private_world(vault: &Vault) -> EntityId {
+    let world = portable_world(vault);
     vault
         .keep_world_on_this_machine_for_test(world, true)
         .unwrap();
     world
+}
+
+/// A call to `seat` about `world`.
+pub(super) fn about(seat: &Seat, world: EntityId) -> LlmRequest {
+    let mut call = request(&seat.model, "about the world");
+    call.envelope.scope.world = Some(world);
+    call
+}
+
+/// The typed outcome of a call kept on the device, back at `back` when an
+/// offer it may use rests.
+pub(super) fn kept_here(back: Option<(u64, u64)>) -> LlmError {
+    let (retry_after, resets_at) =
+        back.map_or((None, Vec::new()), |(wait, at)| (Some(wait), vec![at]));
+    RetryableLlmError::KeptOnDevice {
+        retry_after,
+        resets_at,
+    }
+    .into()
 }
 
 /// The text a seat streams for one call, which must answer.
@@ -494,32 +523,36 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
 
     // A seat that may leave, called for a world kept on this machine.
     let world = private_world(&vault);
+    let portable = portable_world(&vault);
     let (other_first, other_second) = (
         FakeLlm::start(vec![limit()], None).await,
         FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await,
     );
     let runtime = kept(&two_offers(&other_first, &other_second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
-    let mut private = request(&seat.model, "about the private world");
-    private.envelope.scope.world = Some(world);
+    let private = about(seat, world);
     let error = seat
         .ladder
         .generate(&test_run(), private.clone(), None)
         .await
         .expect_err("the world stays on the device");
-    assert_eq!(error, limited(120, T0 + 120));
+    assert_eq!(error, kept_here(Some((120, T0 + 120))));
     let refused = seat
         .ladder
         .stream(&test_run(), private, None)
         .err()
         .expect("refused before the stream starts");
-    assert_eq!(refused, limited(120, T0 + 120));
+    assert_eq!(refused, kept_here(Some((120, T0 + 120))));
     assert!(
         other_second.seen().is_empty(),
         "the world's text stayed here"
     );
-    // A call that names no private world still falls back.
-    let answer = ask(seat).await.expect("the cloud offer answers");
+    // A call about a world that may leave still falls back.
+    let answer = seat
+        .ladder
+        .generate(&test_run(), about(seat, portable), None)
+        .await
+        .expect("the cloud offer answers");
     assert_eq!(text_of(&answer.message), "from the cloud");
     assert_eq!(
         answer.usage.raw_provider["passed_over"][0]["passed"],
@@ -542,24 +575,27 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
     );
     let runtime = kept(&two_offers(&local, &cloud, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
-    let error = ask(seat).await.expect_err("both offers refused");
+    let error = seat
+        .ladder
+        .generate(&test_run(), about(seat, portable), None)
+        .await
+        .expect_err("both offers refused");
     // It waited two seconds; the cloud offer's second refusal rests it two more.
     assert_eq!(error, limited(2, T0 + 4));
     assert_eq!(cloud.seen().len(), 2, "the portable call waited for it");
-    let mut private = request(&seat.model, "about the private world");
-    private.envelope.scope.world = Some(world);
+    let private = about(seat, world);
     let error = seat
         .ladder
         .generate(&test_run(), private.clone(), None)
         .await
         .expect_err("the private call waits for nothing it may not use");
-    assert_eq!(error, limited(3598, T0 + 3600));
+    assert_eq!(error, kept_here(Some((3598, T0 + 3600))));
     let refused = seat
         .ladder
         .stream(&test_run(), private, None)
         .err()
         .expect("refused before the stream starts");
-    assert_eq!(refused, limited(3598, T0 + 3600));
+    assert_eq!(refused, kept_here(Some((3598, T0 + 3600))));
     assert_eq!(cloud.seen().len(), 2, "the world's text never went out");
 }
 
@@ -652,14 +688,13 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
     ));
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let world = private_world(&vault);
+    let (world, portable) = (private_world(&vault), portable_world(&vault));
     let runtime = kept(&models, &vault, &clock);
     let seat = runtime
         .seat(ModelRole::Checker)
         .expect("the cloud offer serves");
-    let mut private = request(&seat.model, "about the private world");
-    private.envelope.scope.world = Some(world);
-    let refused = LlmError::from(FatalLlmError::InvalidRequest);
+    let private = about(seat, world);
+    let refused = kept_here(None);
     let error = seat
         .ladder
         .generate(&test_run(), private.clone(), None)
@@ -673,7 +708,11 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
         .expect("refused before the stream starts");
     assert_eq!(error, refused);
     assert!(cloud.seen().is_empty(), "the world's text stayed here");
-    let answer = ask(seat).await.expect("a portable call goes to the cloud");
+    let answer = seat
+        .ladder
+        .generate(&test_run(), about(seat, portable), None)
+        .await
+        .expect("a portable call goes to the cloud");
     assert_eq!(answer.usage.raw_provider["rung"], json!(1));
 }
 

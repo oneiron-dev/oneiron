@@ -1,8 +1,9 @@
 //! What one call met on the rungs of its ladder before an answer: each rung
-//! it passed over and why, the receipt's `passed_over`.
+//! it passed over and why, the receipt's `passed_over`, and the closed class
+//! of each failure it met.
 use std::collections::BTreeMap;
 
-use oneiron::LlmError;
+use oneiron::{FatalLlmError, LlmError};
 use serde_json::{Value as JsonValue, json};
 
 use super::cooldown::Rest;
@@ -118,6 +119,14 @@ impl Walk {
             .collect()
     }
 
+    /// Whether the call was last kept from some rung: a fallback to it would
+    /// have taken the work off the device.
+    pub(super) fn kept(&self) -> bool {
+        self.latest()
+            .values()
+            .any(|passed| matches!(passed, Passed::KeptOnDevice))
+    }
+
     /// Whether every rung the call could use rests: none it passed failed
     /// but by a limit refusal.
     pub(super) fn limited(&self) -> bool {
@@ -150,4 +159,41 @@ impl Passed {
             Self::Refused { .. } | Self::Failed { .. } => false,
         }
     }
+}
+
+/// The closed class of a rung failure. An unsupported capability's reason is
+/// a provider's own words, so the log carries the class and not the error.
+pub(super) fn failure_kind(error: &LlmError) -> &'static str {
+    use oneiron::RetryableLlmError;
+    use oneiron::llm::BudgetDenied;
+    match error {
+        LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => "rate_limited",
+        LlmError::Retryable(RetryableLlmError::ServerError) => "server_error",
+        LlmError::Retryable(RetryableLlmError::Timeout) => "timeout",
+        LlmError::Retryable(RetryableLlmError::StreamCut) => "stream_cut",
+        LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => "kept_on_device",
+        LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
+        LlmError::Fatal(FatalLlmError::Auth) => "auth",
+        LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
+        LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
+        LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
+        LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
+        LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
+        LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
+    }
+}
+
+/// A failure that ends the call as it came: the request itself failed (a
+/// 400, filtered content, a capability it needs), so the next offer would
+/// fail it too, or the run refused it, so the next rung's admission meets the
+/// same line. Every other failure hands the call on.
+pub(super) fn ends_call(error: &LlmError) -> bool {
+    matches!(
+        error,
+        LlmError::Fatal(
+            FatalLlmError::InvalidRequest
+                | FatalLlmError::ContentFiltered
+                | FatalLlmError::Unsupported(_)
+        ) | LlmError::BudgetDenied(_)
+    )
 }

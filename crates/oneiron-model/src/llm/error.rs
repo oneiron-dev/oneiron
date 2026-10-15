@@ -30,6 +30,18 @@ pub enum RetryableLlmError {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         resets_at: Vec<u64>,
     },
+    /// No offer the call may use on this device answered, and the next one
+    /// would have taken its work off the device while its world stays here
+    /// (world privacy, "Models": no silent fallback to a cloud model).
+    /// `resets_at` holds when the first resting offer the call may use is
+    /// back, when one rests.
+    #[error("kept on device")]
+    KeptOnDevice {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resets_at: Vec<u64>,
+    },
     #[error("server error")]
     ServerError,
     #[error("timeout")]

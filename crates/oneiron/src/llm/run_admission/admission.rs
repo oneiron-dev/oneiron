@@ -61,6 +61,10 @@ pub enum RunDenied {
     Dispatch { refused: DispatchRefused },
     #[error("a run never edits its own declaration")]
     DeclarationEditRefused,
+    /// A fallback to this offer would take the call's work off the device
+    /// while its world stays here.
+    #[error("the call's world stays on this device")]
+    KeptOnDevice,
 }
 
 impl From<RunDenied> for LlmError {

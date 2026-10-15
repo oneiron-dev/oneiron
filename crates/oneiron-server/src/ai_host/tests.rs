@@ -686,3 +686,131 @@ async fn a_step_rung_its_line_cannot_cover_is_denied_and_never_sent() {
         ["admitted", "dispatched", "settled", "denied"]
     );
 }
+
+/// Runs the saved one-step workflow `workflow` in `world` until it stops.
+async fn step_in(vault: &Arc<Vault>, workflow: EntityId, world: EntityId, host: &AiHost) {
+    use oneiron::agent_dispatch::{
+        AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    };
+    let dispatcher = AgentDispatcher::new(vault);
+    let spawn = AgentSpawnContext {
+        scope: Some(oneiron::llm::Scope {
+            world: Some(world),
+            ..oneiron::llm::Scope::default()
+        }),
+        ..AgentSpawnContext::default()
+    };
+    let key = format!("world-step-{}", world.to_hex());
+    dispatcher
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Workflow(workflow),
+                parent_attempt: None,
+                dedupe_key: Some(key.clone()),
+                run_id: Some(key),
+                now: 10,
+            },
+            spawn,
+        )
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the workflow never stopped; status {:?}",
+        host.handle().status().workflows
+    );
+}
+
+/// Engine ruling 2026-10-15: a workflow step's call carries the world it was
+/// dispatched in and follows that world's setting. A step in a world kept
+/// on this machine never reaches a cloud fallback (each hold receipted); a
+/// step in a world that may leave falls back to it, while that other world
+/// stays here.
+#[tokio::test]
+async fn a_workflow_step_follows_its_worlds_setting_for_a_cloud_fallback() {
+    use oneiron::llm::run_admission::{MemoryReceipts, RunDenied, RunEvent};
+    let device = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let cloud = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("word"))).await;
+    let config = models_toml(&format!(
+        r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.second]
+kind = "openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+[dreamer]
+enabled = false
+[workflows]
+retry_backoff_secs = 0
+"#,
+        device.base_url, cloud.base_url
+    ));
+    let (_dir, vault) = rooted_vault();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+        super::test_support::TEST_SECRET.as_bytes(),
+    )
+    .unwrap();
+    let world = |keep: bool| {
+        let world = EntityId::now();
+        vault
+            .put_entity(
+                &world,
+                oneiron::registry::ENTITY_TYPE_WORLD,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"world",
+            )
+            .unwrap();
+        if keep {
+            vault
+                .keep_world_on_this_machine_under_for_test(&issuer, world, true)
+                .unwrap();
+        }
+        world
+    };
+    let (private, portable) = (world(true), world(false));
+    let only = saved_agent(&vault, "worldly", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("worldly", vec![only]).unwrap(),
+            2,
+        )
+        .unwrap();
+    let receipts = Arc::new(MemoryReceipts::default());
+    let host = AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone()).await;
+
+    step_in(&vault, workflow, private, &host).await;
+    assert!(
+        !device.seen().is_empty(),
+        "the step was tried on the device"
+    );
+    assert!(
+        cloud.seen().is_empty(),
+        "the private world's step stayed here"
+    );
+    let held = receipts
+        .rows()
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.event,
+                RunEvent::Denied {
+                    reason: RunDenied::KeptOnDevice,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(held, device.seen().len(), "each held try is receipted");
+
+    step_in(&vault, workflow, portable, &host).await;
+    assert_eq!(cloud.seen().len(), 1, "the portable world's step fell back");
+    host.shutdown().await;
+}

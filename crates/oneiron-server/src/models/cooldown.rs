@@ -9,8 +9,8 @@ use oneiron::llm::run_admission::OfferBinding;
 use oneiron::{LlmRequest, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
-/// The engine's `MODEL_OFFER_COOLDOWN` side table: LIVE, never replicated
-/// or exported.
+/// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
+/// runtime to a checkpoint, which keeps none.
 const PREFIX: &str = "models:offer-cooldown:v1:";
 
 /// What set a rest's end: the reset time the refusal named, the wait it
@@ -182,16 +182,19 @@ impl OfferCooldowns {
         })
     }
 
-    /// Whether a fallback may take `request` off the device: it names no
-    /// world, or the world settings' one judge lets its world go to another
-    /// machine. A world nobody can judge here stays on the device.
+    /// Whether a fallback may take `request` off the device (world privacy,
+    /// "Models": no silent fallback to a cloud model). A call that names its
+    /// world goes where the world settings' one judge lets that world go,
+    /// and only for a world this vault holds. One that names none may carry
+    /// any world's text, so it goes only while no world stays on the device.
+    /// A call nobody can judge here stays; with no vault, no world's text
+    /// is here to keep.
     pub(super) fn world_may_leave(&self, request: &LlmRequest) -> bool {
-        let Some(world) = request.envelope.scope.world else {
-            return true;
-        };
-        self.vault
-            .as_ref()
-            .is_some_and(|vault| matches!(vault.world_is_device_only(world), Ok(false)))
+        let world = request.envelope.scope.world;
+        match &self.vault {
+            Some(vault) => matches!(vault.model_call_may_leave_device(world), Ok(true)),
+            None => world.is_none(),
+        }
     }
 }
 
