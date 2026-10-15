@@ -9,8 +9,13 @@
 //! A scan counts in a [`ScanCount`] and raises its check after its read
 //! transaction has closed ([`ScanCount::finish`]), or in the write
 //! transaction it ran in ([`ScanCount::finish_in`]). A scan that runs inside
-//! a transaction its caller opened hands its count back to that caller, which
-//! finishes it once the transaction is done.
+//! a transaction its caller opened, which may be a write, leaves a crossing
+//! with the store ([`ScanCount::defer`]); the next count finished where no
+//! write is held, or the host's read of the checks, keeps it. No scan opens a
+//! writer while one is held.
+
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -19,7 +24,7 @@ use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{Store, active_write_txn_depth};
 
 /// Rows one engine scan reads past which it asks whether everything is
 /// okay: ten times the count each of the origin scans once refused at.
@@ -31,6 +36,8 @@ const POLICY: SideTable<[u8; 1], u64, Raw> = SideTable::new(&side_table::ORIGIN_
 /// scope's bytes, or nothing for a vault-wide scan.
 const CHECK: SideTable<([u8; 1], Vec<u8>), ScanCheck, Named> =
     SideTable::new(&side_table::ORIGIN_SCAN_CHECK);
+
+type CheckKey = ([u8; 1], Vec<u8>);
 
 /// Each engine scan whose table grows with use, and so each that once
 /// refused past a row count.
@@ -147,20 +154,28 @@ impl ScanCount {
         self.rows = self.rows.saturating_add(1);
     }
 
-    /// Raises the scan's check when it read past its row, once per scope.
-    /// Call it after the scan's read transaction has closed. The scan has
-    /// served either way, so a check that could not be kept is dropped.
+    /// Raises the scan's check when it read past its row, once per scope,
+    /// and keeps any crossing left with the store. Call it after the scan's
+    /// read transaction has closed. Inside a write it defers instead. The
+    /// scan has served either way, so a check that could not be kept is
+    /// dropped.
     pub(crate) fn finish(self, vault: &Vault) {
+        if self.rows > self.threshold {
+            self.defer(&vault.store);
+        }
+        vault.keep_pending_scan_checks();
+    }
+
+    /// Leaves a crossing with the store, for a scan that ran in a
+    /// transaction its caller opened and may still hold as a write.
+    pub(crate) fn defer(self, store: &Store) {
         if self.rows <= self.threshold {
             return;
         }
-        if let Err(error) = vault.raise_scan_check(&self) {
-            tracing::warn!(
-                kind = ?error.kind(),
-                scan = self.scan.code(),
-                "a scan check was not kept; the scan served"
-            );
-        }
+        let check = self.check();
+        store
+            .pending_scan_checks
+            .park((self.scan.tag(), self.scope), check);
     }
 
     /// [`Self::finish`] for a scan that ran in the write transaction `txn`:
@@ -173,8 +188,9 @@ impl ScanCount {
         if CHECK.contains(store, txn, &key)? {
             return Ok(());
         }
-        CHECK.put(store, txn, &key, &self.check())?;
-        self.warn();
+        let check = self.check();
+        CHECK.put(store, txn, &key, &check)?;
+        warn(&check);
         Ok(())
     }
 
@@ -187,38 +203,90 @@ impl ScanCount {
             raised_at: crate::unix_seconds_now(),
         }
     }
+}
 
-    fn warn(&self) {
-        tracing::warn!(
-            kind = ScanCheck::KIND,
-            scan = self.scan.code(),
-            threshold = self.threshold,
-            rows = self.rows,
-            "a scan read past its threshold row and served; is everything okay?"
-        );
+/// `check.scan` is always an [`EngineScan::code`]: a closed code.
+fn warn(check: &ScanCheck) {
+    tracing::warn!(
+        kind = ScanCheck::KIND,
+        scan = check.scan.as_str(),
+        threshold = check.threshold,
+        rows = check.rows,
+        "a scan read past its threshold row and served; is everything okay?"
+    );
+}
+
+/// Crossings a store holds until a point no write is held keeps them: one
+/// per scan and scope, the first.
+#[derive(Default)]
+pub(crate) struct PendingScanChecks(Mutex<BTreeMap<CheckKey, ScanCheck>>);
+
+impl PendingScanChecks {
+    fn park(&self, key: CheckKey, check: ScanCheck) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(key)
+            .or_insert(check);
+    }
+
+    fn take(&self) -> BTreeMap<CheckKey, ScanCheck> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 }
 
 impl Vault {
-    fn raise_scan_check(&self, count: &ScanCount) -> Result<()> {
-        let key = (count.scan.tag(), count.scope.clone());
+    /// Keeps every crossing left with the store, unless this thread holds a
+    /// write. A crossing that could not be kept is dropped: its scan served.
+    fn keep_pending_scan_checks(&self) {
+        if active_write_txn_depth() > 0 {
+            return;
+        }
+        let mut pending = self.store.pending_scan_checks.take();
+        if pending.is_empty() {
+            return;
+        }
+        if let Err(error) = self.keep_scan_checks(&mut pending) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a scan check was not kept; the scan served"
+            );
+        }
+    }
+
+    /// Keeps each check not kept yet; a scope already checked costs a read.
+    fn keep_scan_checks(&self, pending: &mut BTreeMap<CheckKey, ScanCheck>) -> Result<()> {
         {
             let txn = self.store.env.read_txn()?;
-            if CHECK.contains(&self.store, &txn, &key)? {
-                return Ok(());
+            let mut kept = Vec::new();
+            for key in pending.keys() {
+                if CHECK.contains(&self.store, &txn, key)? {
+                    kept.push(key.clone());
+                }
+            }
+            for key in kept {
+                pending.remove(&key);
             }
         }
-        let check = count.check();
+        if pending.is_empty() {
+            return Ok(());
+        }
         let raised = self.with_write_txn_grouped(|wtxn| {
-            if CHECK.contains(&self.store, wtxn, &key)? {
-                return Ok(false);
+            let mut raised = Vec::new();
+            for (key, check) in pending.iter() {
+                if !CHECK.contains(&self.store, wtxn, key)? {
+                    CHECK.put(&self.store, wtxn, key, check)?;
+                    raised.push(check.clone());
+                }
             }
-            CHECK.put(&self.store, wtxn, &key, &check)?;
-            Ok(true)
+            Ok(raised)
         })?;
-        if raised {
-            count.warn();
-        }
+        raised.iter().for_each(warn);
         Ok(())
     }
 
@@ -239,6 +307,7 @@ impl Vault {
 
     /// Every OF-520 check an engine scan raised. Checks are local-only.
     pub fn scan_checks(&self) -> Result<Vec<ScanCheck>> {
+        self.keep_pending_scan_checks();
         let txn = self.store.env.read_txn()?;
         CHECK
             .iter_from(&self.store, &txn, &[])?
@@ -274,5 +343,34 @@ mod tests {
         let check: ScanCheck = rmp_serde::from_slice(&kept).expect("decode");
         assert_eq!(check.scope.as_deref(), Some("0f".repeat(16).as_str()));
         assert_eq!((check.threshold, check.rows), (2, 3));
+    }
+
+    /// A scan that crosses its row inside a write its caller holds opens no
+    /// second writer (one would wait on the first forever); its check is
+    /// kept once the write is done, one per scope however often it crosses.
+    #[test]
+    fn a_crossing_inside_a_held_write_is_kept_after_it() {
+        let dir = tempfile::tempdir().expect("vault dir");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+        vault
+            .set_scan_threshold(EngineScan::PublicationRows, 1)
+            .expect("threshold");
+        let cross = |txn: &RoTxn<'_>| -> Result<ScanCount> {
+            let mut count = ScanCount::start(&vault.store, txn, EngineScan::PublicationRows, &[])?;
+            count.row();
+            count.row();
+            Ok(count)
+        };
+        vault
+            .with_write_txn(|wtxn| {
+                cross(&**wtxn)?.finish(&vault);
+                cross(&**wtxn)?.defer(&vault.store);
+                Ok(())
+            })
+            .expect("a write that crossed a scan row commits");
+        let checks = vault.scan_checks().expect("checks");
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].scan, EngineScan::PublicationRows.code());
+        assert_eq!((checks[0].threshold, checks[0].rows), (1, 2));
     }
 }
