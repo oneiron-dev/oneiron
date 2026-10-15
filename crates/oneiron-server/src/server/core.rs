@@ -76,6 +76,8 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// OF-520 questions retrieval queries past `config.limits` raised.
+    pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
@@ -256,6 +258,7 @@ impl SyncServer {
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
             transfers: crate::api::Transfers::new(&config.limits),
+            query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
             mcp_registry,

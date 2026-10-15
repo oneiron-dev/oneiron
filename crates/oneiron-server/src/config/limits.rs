@@ -37,6 +37,14 @@ pub struct LimitsConfig {
     /// How long a git or LFS transfer may go without moving a byte, in
     /// milliseconds, before it is ended and its worker and child freed.
     pub transfer_idle_timeout_ms: u64,
+    /// Bytes one retrieval query may carry, counted as sent. A query past it
+    /// is refused with the typed 413 naming this bound, and raises the
+    /// OF-520 question once per caller, door and field.
+    pub retrieval_query_bytes: usize,
+    /// Stored body bytes one multi-row read decodes. A row past it is served
+    /// with a `bodyOmitted` marker in place of its body; a single-entity read
+    /// returns its body whole, whatever its size.
+    pub projection_body_bytes: usize,
 }
 
 impl Default for LimitsConfig {
@@ -54,6 +62,10 @@ impl Default for LimitsConfig {
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
             transfer_idle_timeout_ms: 300_000,
+            // Format bounds far above a question or a page of bodies: 128
+            // times the facade's 8 KiB query and 64 times one entity payload.
+            retrieval_query_bytes: 1 << 20,
+            projection_body_bytes: 4 << 20,
         }
     }
 }
@@ -81,6 +93,8 @@ impl LimitsConfig {
             lfs_transfers_per_principal,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
+            retrieval_query_bytes,
+            projection_body_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(&mut self.max_connections_per_peer, max_connections_per_peer);
@@ -98,6 +112,8 @@ impl LimitsConfig {
         );
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
+        set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
+        set(&mut self.projection_body_bytes, projection_body_bytes);
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -123,6 +139,8 @@ impl LimitsConfig {
             ),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
+            ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
+            ("projection_body_bytes", self.projection_body_bytes as u64),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
@@ -152,4 +170,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) lfs_transfers_per_principal: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
+    pub(super) retrieval_query_bytes: Option<usize>,
+    pub(super) projection_body_bytes: Option<usize>,
 }

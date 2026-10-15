@@ -257,6 +257,9 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     empty: Option<Value>,
+    /// The request's `limit` was past 1,000 and was served at 1,000.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(super) limit_clamped: bool,
 }
 
 pub(crate) async fn run_context_pack_builder(
@@ -467,6 +470,7 @@ pub(crate) fn core_context_pack_response(
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
+        limit_clamped: false,
     }
 }
 

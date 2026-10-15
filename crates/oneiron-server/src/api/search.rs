@@ -13,7 +13,7 @@ use crate::projection::View;
 use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
 use crate::protocol::ResponseMeta;
-use crate::server::SyncServer;
+use crate::server::{QueryDoor, SyncServer, query_caller};
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
@@ -44,6 +44,14 @@ pub(crate) struct ScopedSearchResponse {
     #[serde(flatten)]
     response: super::SearchResponse,
     narrowing: Vec<oneiron::claim::ScopedReadReceipt>,
+}
+impl ScopedSearchResponse {
+    /// Says whether the request's `limit` was served at the ceiling; a page
+    /// its deadline cut says it too.
+    fn limit_clamped(mut self, clamped: bool) -> Self {
+        self.response.meta.limit_clamped = clamped;
+        self
+    }
 }
 impl std::ops::Deref for ScopedSearchResponse {
     type Target = super::SearchResponse;
@@ -156,6 +164,12 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
             content_type = "application/json"
         ),
         (
+            status = 413,
+            description = "`queryText` exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
             status = 500,
             description = "Vector search or projection failed.",
             body = ApiError,
@@ -178,6 +192,15 @@ pub(crate) async fn search_vector(
     let arrived = Instant::now();
     let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
+    if let Some(text) = params.query_text.as_deref() {
+        server.check_retrieval_query(
+            query_caller(&auth),
+            QueryDoor::SearchVector,
+            "queryText",
+            text,
+        )?;
+    }
+    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
     let deadline = search_deadline(params.deadline_ms)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -213,12 +236,12 @@ pub(crate) async fn search_vector(
         depth: params.depth,
         view,
         count_mode,
-        page_limit: params.limit,
+        page_limit,
         auth,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
-        .map(Json)
+        .map(|page| Json(page.limit_clamped(clamped)))
 }
 
 /// Query parameters for BM25 text search.
@@ -301,6 +324,12 @@ pub(crate) struct TextSearchQuery {
             content_type = "application/json"
         ),
         (
+            status = 413,
+            description = "`query` exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
             status = 500,
             description = "Text search or projection failed.",
             body = ApiError,
@@ -323,6 +352,13 @@ pub(crate) async fn search_text(
     let arrived = Instant::now();
     let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
+    server.check_retrieval_query(
+        query_caller(&auth),
+        QueryDoor::SearchText,
+        "query",
+        &params.query,
+    )?;
+    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
     let deadline = search_deadline(params.deadline_ms)?;
     let page = SearchPage {
         probe: SearchProbe::Text {
@@ -331,12 +367,12 @@ pub(crate) async fn search_text(
         depth: params.depth,
         view: params.view.unwrap_or(View::Summary),
         count_mode: params.count_mode.for_search_response(),
-        page_limit: params.limit,
+        page_limit,
         auth,
     };
     search_page_by_deadline(server, arrived, deadline, page)
         .await
-        .map(Json)
+        .map(|page| Json(page.limit_clamped(clamped)))
 }
 
 /// A blank `queryText` is an ABSENT one.
@@ -422,7 +458,20 @@ pub(crate) fn search_response(
     view: View,
     page_limit: usize,
 ) -> Result<oneiron::claim::ScopedReadResult<Vec<Value>>, ApiError> {
-    search_response_with_revisions(scoped_read, results, None, view, page_limit, None, None)
+    let mut bodies = projection::BodyBudget::new(
+        scoped_read.vault(),
+        crate::config::LimitsConfig::default().projection_body_bytes,
+    );
+    search_response_with_revisions(
+        scoped_read,
+        results,
+        None,
+        view,
+        page_limit,
+        None,
+        None,
+        &mut bodies,
+    )
 }
 
 fn search_depth_response(
@@ -430,6 +479,7 @@ fn search_depth_response(
     results: &DepthSearchResult,
     view: View,
     page_limit: usize,
+    bodies: &mut projection::BodyBudget<'_>,
 ) -> Result<oneiron::claim::ScopedReadResult<Vec<Value>>, ApiError> {
     // finish_scoped appends the final intersection of the channel receipts.
     let requested = results
@@ -444,9 +494,14 @@ fn search_depth_response(
         page_limit,
         None,
         requested.as_ref(),
+        bodies,
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the one page projection"
+)]
 pub(crate) fn search_response_with_revisions(
     scoped_read: &ScopedRead<'_>,
     results: Vec<oneiron::ScoredEntity>,
@@ -455,6 +510,7 @@ pub(crate) fn search_response_with_revisions(
     page_limit: usize,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
     requested: Option<&oneiron::RetrievalFilter>,
+    bodies: &mut projection::BodyBudget<'_>,
 ) -> Result<oneiron::claim::ScopedReadResult<Vec<Value>>, ApiError> {
     let selected: Vec<_> = results
         .into_iter()
@@ -491,6 +547,9 @@ pub(crate) fn search_response_with_revisions(
         if response.len() >= page_limit {
             continue;
         }
+        // Standard projects no body; any other view decodes one only while
+        // the page's body budget holds it.
+        let decoded = !matches!(view, View::Standard) && bodies.admits(body.len());
         if let Some(observations) = staged.as_mut()
             && let Some(successor) = observations
                 .observe_snapshot(
@@ -498,7 +557,7 @@ pub(crate) fn search_response_with_revisions(
                     result.id,
                     entity_type,
                     &body,
-                    matches!(view, View::Full),
+                    matches!(view, View::Full) && decoded,
                 )
                 .map_err(|error| {
                     tracing::error!(kind = ?error.kind(), "search observation failed");
@@ -509,8 +568,10 @@ pub(crate) fn search_response_with_revisions(
         }
         let mut value = if matches!(view, View::Standard) {
             json!({"id": result.id.to_hex(), "score": result.score})
-        } else {
+        } else if decoded {
             projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
+        } else {
+            bodies.omitted(&result.id, entity_type, learned_at, body.len(), view)
         };
         if matches!(view, View::Full)
             && let Value::Object(object) = &mut value
@@ -527,10 +588,6 @@ pub(crate) fn search_response_with_revisions(
         receipt,
     })
 }
-
-/// Maximum request text for a semantic read. A query is a question, not a
-/// corpus; anything larger is a document that belongs on the write path.
-const MAX_SEMANTIC_TEXT_BYTES: usize = 8 * 1024;
 
 /// Request body for semantic search.
 #[derive(Deserialize, ToSchema)]
@@ -618,7 +675,7 @@ pub(crate) struct SemanticSearchRequest {
         ),
         (
             status = 413,
-            description = "Query text exceeds the 8 KB cap.",
+            description = "Query text exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -647,6 +704,12 @@ pub(crate) async fn search_semantic(
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;
+    server.check_retrieval_query(
+        query_caller(&auth),
+        QueryDoor::SearchSemantic,
+        "text",
+        &params.text,
+    )?;
     let deadline = search_deadline(params.deadline_ms)?;
     let text = params.text.trim();
     if text.is_empty() {
@@ -655,22 +718,12 @@ pub(crate) async fn search_semantic(
             Some("text"),
         ));
     }
-    if params.text.len() > MAX_SEMANTIC_TEXT_BYTES {
-        return Err(ApiError::payload_too_large(
-            "text",
-            MAX_SEMANTIC_TEXT_BYTES,
-            params.text.len(),
-        ));
-    }
     let descriptor = server
         .embedder_descriptor()
         .ok_or_else(ApiError::embedder_unavailable)?;
     let count_mode = params.count_mode.for_search_response();
-    let (depth, view, page_limit) = (
-        params.depth,
-        params.view.unwrap_or(View::Summary),
-        params.limit,
-    );
+    let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
+    let (depth, view) = (params.depth, params.view.unwrap_or(View::Summary));
     let page_auth = auth.clone();
     let page = move |embedding, question| SearchPage {
         probe: SearchProbe::Vector {
@@ -720,7 +773,7 @@ pub(crate) async fn search_semantic(
             .await?
         }
     };
-    let mut response = serde_json::to_value(page)
+    let mut response = serde_json::to_value(page.limit_clamped(clamped))
         .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
         object.insert(

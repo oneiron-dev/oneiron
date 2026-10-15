@@ -6,6 +6,7 @@ mod leases;
 mod lifecycle;
 mod message_stream;
 mod oversight;
+mod read_shape;
 mod recall;
 mod recall_rerank;
 mod tagging;
@@ -15,6 +16,8 @@ pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
 pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
+pub use self::read_shape::RetrievalQueryCheck;
+pub(crate) use self::read_shape::{QueryDoor, query_caller};
 pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]

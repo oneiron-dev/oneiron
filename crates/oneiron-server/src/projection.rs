@@ -119,6 +119,120 @@ pub fn project_entity_parts(
     }
 }
 
+/// The stored body bytes one multi-row read may still decode
+/// (`[limits].projection_body_bytes`, H27). Each row's body is charged before
+/// it is decoded. A body the rest of the budget cannot hold is not decoded:
+/// its row keeps its id, kind and time, and carries a `bodyOmitted` marker
+/// naming the bound, the body's size and the ref that reads it whole. A
+/// single-entity read takes no budget and returns its body whole.
+pub(crate) struct BodyBudget<'a> {
+    vault: &'a Vault,
+    bound: usize,
+    remaining: usize,
+}
+
+impl<'a> BodyBudget<'a> {
+    pub(crate) fn new(vault: &'a Vault, bound: usize) -> Self {
+        Self {
+            vault,
+            bound,
+            remaining: bound,
+        }
+    }
+
+    /// Charges a body of `bytes` when the rest of the budget holds it.
+    pub(crate) fn admits(&mut self, bytes: usize) -> bool {
+        match self.remaining.checked_sub(bytes) {
+            Some(remaining) => {
+                self.remaining = remaining;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// [`project_entity_parts`] for one row of a multi-row read.
+    pub(crate) fn project(
+        &mut self,
+        id: &EntityId,
+        entity_type: u8,
+        updated_at: u64,
+        body: &[u8],
+        view: View,
+    ) -> Value {
+        if self.admits(body.len()) {
+            project_entity_parts(id, entity_type, updated_at, body, view)
+        } else {
+            self.omitted(id, entity_type, updated_at, body.len(), view)
+        }
+    }
+
+    /// [`project_entity`] for one row of a multi-row read.
+    pub(crate) fn project_entity(
+        &mut self,
+        id: &EntityId,
+        view: View,
+    ) -> oneiron::Result<Option<Value>> {
+        let Some(body) = self.vault.get(id)? else {
+            return Ok(None);
+        };
+        let Some(entity_type) = self.vault.get_entity_type(id)? else {
+            return Ok(None);
+        };
+        let updated_at = self.vault.get_learned_at(id)?;
+        Ok(Some(self.project(id, entity_type, updated_at, &body, view)))
+    }
+
+    /// The row a body left out of the budget projects to: its metadata in
+    /// `view`, the label falling back to its id, and the marker.
+    pub(crate) fn omitted(
+        &self,
+        id: &EntityId,
+        entity_type: u8,
+        updated_at: u64,
+        body_bytes: usize,
+        view: View,
+    ) -> Value {
+        let id_hex = id.to_hex();
+        let mut object = match view {
+            View::Summary => {
+                match summary_object(id_hex.clone(), entity_type, id_hex, updated_at) {
+                    Value::Object(object) => object,
+                    _ => Map::new(),
+                }
+            }
+            View::Standard => Map::new(),
+            View::Full => {
+                let mut object = Map::new();
+                insert_entity_metadata(
+                    &mut object,
+                    id_hex.clone(),
+                    entity_type,
+                    id_hex,
+                    updated_at,
+                );
+                object
+            }
+        };
+        object.insert("bodyOmitted".to_owned(), self.marker(id, body_bytes));
+        Value::Object(object)
+    }
+
+    /// `bodyOmitted`: the closed code, the bound, the body's size, and the
+    /// ref `POST /v1/core/hydrate` reads it whole by (a hex id for a row with
+    /// no short id, read whole by `GET /api/entity/{id}?view=full`).
+    fn marker(&self, id: &EntityId, body_bytes: usize) -> Value {
+        let reference = oneiron::retrieval_depth::short_ref_or_hex(self.vault, id)
+            .unwrap_or_else(|_| id.to_hex());
+        json!({
+            "code": "PROJECTION_BYTES_EXCEEDED",
+            "maxBytes": self.bound,
+            "bodyBytes": body_bytes,
+            "ref": reference,
+        })
+    }
+}
+
 pub fn project_search_result(
     vault: &Vault,
     result: oneiron::ScoredEntity,

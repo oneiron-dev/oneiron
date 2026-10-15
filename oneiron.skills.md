@@ -347,7 +347,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "semantic search this vault"
   - "find memories about"
   - "search by meaning"
-- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` above 8 KB of query text.
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` when the query text passes `[limits].retrieval_query_bytes` (1 MiB unless set).
 
 #### search-text - `GET /api/search/text`
 
@@ -735,8 +735,8 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: comma-separated `f32` values, for example `0.1,0.2,0.3`.
-- `limit` optional: max returned items, default `10`.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
@@ -774,9 +774,9 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 
 Request body:
 
-- `text` required: the natural-language question, at most 8 KB. The server prepends the model's query instruction and embeds it; the caller sends no vector.
-- `limit` optional: max returned items, default `10`.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `text` required: the natural-language question, at most `[limits].retrieval_query_bytes` (1 MiB unless set). The server prepends the model's query instruction and embeds it; the caller sends no vector.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 - `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
@@ -789,7 +789,7 @@ Response:
 Refusals:
 
 - `BAD_REQUEST` (400): `text` is empty, or the body does not parse.
-- `PAYLOAD_TOO_LARGE` (413): `text` is over 8 KB. A query is a question; a document belongs on the write path.
+- `PAYLOAD_TOO_LARGE` (413): `text` is past `[limits].retrieval_query_bytes`; the error names the field, the bound and the bytes received. A query is a question; a document belongs on the write path.
 - `EMBEDDER_UNAVAILABLE` (503): no embedder is configured, or the configured one is not serving yet. Writes still land and text search still answers; retry later, or send your own vector to `GET /api/search/vector`.
 
 Example request:
@@ -828,8 +828,8 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: natural language, exact phrase, identifier fragment, or keyword string.
-- `limit` optional: max returned items, default `10`.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
@@ -969,7 +969,7 @@ Request body:
 
 - `query` optional: retrieval text.
 - `query_vector` optional: numeric vector as an array of `f32` values.
-- `limit` optional: maximum entities to retrieve, default `10`.
+- `limit` optional: maximum entities to retrieve, default `10`; past `1000` it is served at `1000` and `limit_clamped` says so.
 - `depth` optional: `edge_hop` and `max_neighbors` controls.
 - `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.
 - `time` optional: `since`, occurred range, or learned range filters.

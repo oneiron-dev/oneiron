@@ -110,6 +110,8 @@ lfs_transfers = 8                 # LFS uploads, downloads and verifies
 lfs_transfers_per_principal = 4
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight (507 past it)
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
+projection_body_bytes = 4194304   # body bytes one multi-row read decodes
 ```
 
 A loopback peer meets `max_connections` only: it is this device, or a TLS
@@ -117,6 +119,15 @@ proxy whose callers all arrive from its one address. A push to a repository
 another writer holds answers 503 rather than waiting, and an LFS object over
 `--max-lfs-object-bytes` (2 GiB unless set) is refused, by its declared size
 before any byte is read.
+
+The two retrieval rows bound one request's shape, not how much a caller may
+read. A query past `retrieval_query_bytes` is refused with a 413 that names
+the field and the bound, and the first such query from a caller at a door
+leaves a check for the operator. A list, search or query whose decoded bodies
+would pass `projection_body_bytes` serves every row, and the rows past it
+carry `bodyOmitted` in place of their body; reading that row on its own
+returns its body whole. An over-large `limit` is served at 1,000 rows, and
+the response says it was clamped.
 
 ## CJK Dictionaries
 
