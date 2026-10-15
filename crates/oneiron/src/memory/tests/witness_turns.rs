@@ -1692,6 +1692,20 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
     facade
         .witness(&turn(0x64, now + 60))
         .expect("a turn inside the clock skew lands");
+    // The structural door takes a caller learned time, so it holds a TURN to
+    // the same ceiling.
+    let structural = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "TURN".to_owned(),
+            body: serde_json::json!({"speaker": "user"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: now,
+            learned_at: Some(now + 10 * 365 * 86_400),
+        })
+        .expect_err("a far-future structural turn is refused");
+    assert_eq!(structural.code, MEMORY_CODE_BAD_REQUEST);
 
     let advance = production_close_wake(&vault)
         .advance_watermark_to

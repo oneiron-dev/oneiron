@@ -223,6 +223,9 @@ def string_edit_manifest():
         (not gate('pub const DOC: &str = include_str!("../a.md");',
                   'pub const DOC: &str = include_str!("../../b.md");'),
          "include path to another file refused"),
+        (not gate('pub const TEXT: &str = r#"" include_str!("../policy") ""#;',
+                  'pub const TEXT: &str = r#"" include_str!("../../policy") ""#;'),
+         "include-looking raw-string rewrite refused"),
         (gate('pub const DOC: &str = include_str!("../a.md");',
               'pub const DOC: &str = include_str!("../../a.md");'),
          "include path depth change passes"),
@@ -285,6 +288,11 @@ def edit_props():
          "include path made absolute rejected"),
         (R.edit_delta_ok('include_bytes!("x.bin")', 'include_bytes!("../x.bin")'),
          "include_bytes depth change legal"),
+        (not R.edit_delta_ok('let t = r#"" include_str!("../p") ""#;',
+                             'let t = r#"" include_str!("../../p") ""#;'),
+         "include-looking text inside a raw string rejected"),
+        (not R.edit_delta_ok('let t = br"a";', 'let t = br"b";'),
+         "raw byte-string swap rejected"),
     ]
     ok = True
     for good, name in cases:

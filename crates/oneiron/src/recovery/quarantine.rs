@@ -21,7 +21,13 @@ pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Resul
         ));
     }
     for _ in 0..QUARANTINE_NAME_ATTEMPTS {
-        let candidate = invalid_artifact_path(path, &format!("{:016x}", OsRng.next_u64()));
+        let mut suffix = [0_u8; 8];
+        // A failed OS randomness read is an error, never a panic.
+        OsRng
+            .try_fill_bytes(&mut suffix)
+            .map_err(|_| io::Error::other("os randomness unavailable"))?;
+        let candidate =
+            invalid_artifact_path(path, &format!("{:016x}", u64::from_be_bytes(suffix)));
         match rename_no_replace(path, &candidate) {
             Ok(()) => {
                 // Rename consumes exactly one directory entry, not a later

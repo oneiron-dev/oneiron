@@ -160,27 +160,25 @@ fn repeated_invalid_artifact_quarantine_preserves_each_original() -> Result<()> 
     Ok(())
 }
 
+/// Quarantine's rename never replaces an existing leaf, a planted symlink
+/// included, so a writer cannot redirect where the artifact bytes land.
 #[cfg(unix)]
 #[test]
-fn quarantine_skips_symlink_candidate_to_preserve_bytes() -> Result<()> {
+fn quarantine_rename_never_replaces_a_planted_symlink() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let artifact_path = dir.path().join("snapshot.oneiron-artifact");
-    let mut corrupt = encode_recovery_artifact(ARTIFACT_TYPE_FIXTURE, b"payload")?;
-    corrupt[HEADER_LEN] ^= 0x01;
-    fs::write(&artifact_path, &corrupt)?;
-    let planted = invalid_artifact_path(&artifact_path, "1");
-    std::os::unix::fs::symlink(&artifact_path, &planted)?;
+    fs::write(&artifact_path, b"artifact bytes")?;
+    let elsewhere = dir.path().join("elsewhere");
+    fs::write(&elsewhere, b"other bytes")?;
+    let planted = invalid_artifact_path(&artifact_path, "0000000000000001");
+    std::os::unix::fs::symlink(&elsewhere, &planted)?;
 
-    let RecoveryArtifactLoad::Quarantined(quarantined) =
-        load_recovery_artifact(&artifact_path, ARTIFACT_TYPE_FIXTURE)?
-    else {
-        panic!("corrupt artifact should quarantine");
-    };
-
-    assert_eq!(fs::read(&quarantined.quarantine_path)?, corrupt);
-    assert!(!artifact_path.exists(), "source is removed after fallback");
-    assert_invalid_suffix(&quarantined.quarantine_path, &artifact_path);
+    let error = super::quarantine::rename_no_replace(&artifact_path, &planted)
+        .expect_err("an existing symlink is never replaced");
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     assert!(fs::symlink_metadata(&planted)?.file_type().is_symlink());
+    assert_eq!(fs::read(&artifact_path)?, b"artifact bytes");
+    assert_eq!(fs::read(&elsewhere)?, b"other bytes");
     Ok(())
 }
 

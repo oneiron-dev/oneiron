@@ -23,12 +23,14 @@ const WITNESS_OCCURRENCE_SKEW_SECS: u64 = 300;
 
 /// A witnessed row is learned as it occurs, so a time past the store clock's
 /// skew would carry the consolidation watermark past every later turn. It is
-/// refused at the door (F30); an import keeps its own learned time.
-pub(super) fn validate_witness_occurrence(now: u64, occurred_at: u64) -> MemoryResult<()> {
+/// refused at the witness and structural doors (F30); an import keeps its own
+/// learned time.
+pub(in crate::memory) fn validate_witness_occurrence(
+    now: u64,
+    occurred_at: u64,
+) -> MemoryResult<()> {
     if occurred_at > now.saturating_add(WITNESS_OCCURRENCE_SKEW_SECS) {
-        return Err(MemoryError::bad_request(
-            "witnessed turn occurrence is in the future",
-        ));
+        return Err(MemoryError::bad_request("turn time is in the future"));
     }
     Ok(())
 }

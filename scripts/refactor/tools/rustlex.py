@@ -171,7 +171,8 @@ def _lex(text):
     """(token, start, end) stream with comments atomic: a `//` comment runs
     to EOL, a `/* */` comment nests (matching mask()'s lexical reality), a
     string literal is one token. Comment/string interiors are never re-lexed
-    as code."""
+    as code. A raw string (`r#"…"#`, with an optional b/c prefix) is one
+    token as well."""
     out = []
     i, n = 0, len(text)
     while i < n:
@@ -195,6 +196,16 @@ def _lex(text):
                     j += 2
                 else:
                     j += 1
+            out.append((text[i:j], i, j))
+            i = j
+            continue
+        # a raw string is one token too: include-looking text inside one is
+        # never lexed as an include call (F39)
+        m = _RAW_OPEN.match(text, i)
+        if m:
+            close = '"' + m.group(1)
+            j = text.find(close, m.end())
+            j = n if j < 0 else j + len(close)
             out.append((text[i:j], i, j))
             i = j
             continue
