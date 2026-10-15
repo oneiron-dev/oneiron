@@ -299,30 +299,35 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
 
     // F19 review round 1 (Astra F4): a writer whose credential names other
     // records is refused before any lookup, so its own grant stays active and
-    // reads as a missing id does.
-    let attenuated = |id: String| {
+    // reads as a missing id does. FACET-READ: so is one limited to a facet.
+    let attenuated = |bound: String, id: String| {
         route_json(
             server.clone(),
             core_request_with_authz(
                 "POST",
                 &format!("/v1/companion/access-grants/{id}/revoke"),
                 test_bearer(&format!(
-                    "scope=companion:access-grant:write;principal_ref={principal_ref};records={missing}"
+                    "scope=companion:access-grant:write;principal_ref={principal_ref};{bound}"
                 )),
                 Some(&revoke_request),
             ),
         )
     };
-    let (own_status, own_body) = attenuated(grant_id.clone()).await;
-    let (missing_status, missing_body) = attenuated(missing.clone()).await;
-    assert_eq!(own_status, StatusCode::FORBIDDEN, "{own_body}");
-    assert_eq!(
-        (own_status, error_envelope(&own_body)["details"].clone()),
-        (
-            missing_status,
-            error_envelope(&missing_body)["details"].clone()
-        )
-    );
+    for bound in [
+        format!("records={missing}"),
+        format!("facets={}", seeded_test_entity_id(0x1265_0009).to_hex()),
+    ] {
+        let (own_status, own_body) = attenuated(bound.clone(), grant_id.clone()).await;
+        let (missing_status, missing_body) = attenuated(bound, missing.clone()).await;
+        assert_eq!(own_status, StatusCode::FORBIDDEN, "{own_body}");
+        assert_eq!(
+            (own_status, error_envelope(&own_body)["details"].clone()),
+            (
+                missing_status,
+                error_envelope(&missing_body)["details"].clone()
+            )
+        );
+    }
     assert_eq!(
         server
             .vault

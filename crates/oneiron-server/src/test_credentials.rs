@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::{Request, header::AUTHORIZATION};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
-use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
@@ -60,6 +60,18 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         );
     }
     let cache = format!("test:api:slip:{}", hex(&id));
+    if let Some(facets) = fields.get("facets") {
+        scope.facets = ScopeAxis::Some(
+            facets
+                .split(',')
+                .map(|facet| {
+                    ScopeId(
+                        oneiron::EntityId::from_hex(facet.trim()).expect("credential recipe facet"),
+                    )
+                })
+                .collect(),
+        );
+    }
     if let Some(bytes) = server.vault().sync_state_get(&cache).unwrap() {
         let slip = CapabilitySlip::from_token(std::str::from_utf8(&bytes).unwrap()).unwrap();
         assert_eq!(

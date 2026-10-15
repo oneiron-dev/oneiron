@@ -1361,7 +1361,34 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
         assert_eq!(body["results"], json!([]), "{body}");
         (body["state"].clone(), body["empty"].clone())
     };
+    // FACET-READ: the pack and board doors refuse a credential limited to a
+    // facet before they retrieve, so a hidden match moves neither answer.
+    let faceted = || async {
+        let bearer = test_bearer(&format!(
+            "scope=core:read;facets={}",
+            seeded_test_entity_id(0x2519_0013).to_hex()
+        ));
+        let mut answers = Vec::new();
+        for (uri, request) in [
+            (
+                "/v1/core/context-pack",
+                json!({ "query": "quillwort19", "limit": 10 }),
+            ),
+            ("/v1/core/context-board", json!({})),
+        ] {
+            let (status, mut body) = route_json(
+                server.clone(),
+                core_request_with_authz("POST", uri, bearer.clone(), Some(&request)),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
+            body["error"].as_object_mut().unwrap().remove("requestId");
+            answers.push(body);
+        }
+        answers
+    };
     let before = empty().await;
+    let refused = faceted().await;
     // A claim in the base world the clamp admits, which the reader's own
     // grant withholds.
     seed_disclosure_claim_in_world(
@@ -1372,6 +1399,7 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
     );
     assert_eq!(empty().await, before, "a hidden match reads as no match");
     assert_eq!(before.0["reason"], "filter_matched_none", "{before:?}");
+    assert_eq!(faceted().await, refused);
 }
 
 /// F19 review round 3 (Sol F2 = Astra F3): no key reads every row. A claim
