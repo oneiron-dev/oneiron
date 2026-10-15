@@ -606,7 +606,7 @@ mod removed_carriers {
         let vault = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
-        let key = WindowKey::new(&crate::deletion::window_label_from_timestamp(
+        let key = WindowKey::new(crate::deletion::window_label_from_timestamp(
             vault.store.clock.now_recorded_at(),
         ));
         let manager = live_manager(&vault);
@@ -713,7 +713,7 @@ mod removed_carriers {
                 (failed, carries(&doc, fact))
             }
             CarrierRemoval::LocalPublication => {
-                let key = WindowKey::new(&crate::deletion::window_label_from_timestamp(
+                let key = WindowKey::new(crate::deletion::window_label_from_timestamp(
                     vault.store.clock.now_recorded_at(),
                 ));
                 let manager = live_manager(vault);
