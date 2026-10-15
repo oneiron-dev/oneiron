@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::side_table::{self, SideTable, VersionedNamed};
 
 use super::ProposalId;
-use super::proposal::{CompanionProposalRow, PARTICIPANT_TOKEN_DOMAIN};
+use super::proposal::{COMPANION_TOKEN_DOMAIN, CompanionProposalRow, PARTICIPANT_TOKEN_DOMAIN};
 // -------------------------------------------------------------------------
 // Storage
 // -------------------------------------------------------------------------
@@ -47,10 +47,20 @@ pub(super) fn load_live_row(
 /// The proposal id is part of the material, so the same raw token presented
 /// against a different proposal hashes to something that proposal never issued.
 pub(super) fn participant_token_hash(proposal_id: ProposalId, raw_token: &str) -> [u8; 32] {
+    token_hash(PARTICIPANT_TOKEN_DOMAIN, proposal_id, raw_token)
+}
+
+/// The persisted hash of the creating companion's confirm token, bound to its
+/// proposal and in its own domain, so no participant token can stand in.
+pub(super) fn companion_token_hash(proposal_id: ProposalId, raw_token: &str) -> [u8; 32] {
+    token_hash(COMPANION_TOKEN_DOMAIN, proposal_id, raw_token)
+}
+
+fn token_hash(domain: &[u8], proposal_id: ProposalId, raw_token: &str) -> [u8; 32] {
     let mut material = Vec::with_capacity(proposal_id.0.len() + raw_token.len());
     material.extend_from_slice(&proposal_id.0);
     material.extend_from_slice(raw_token.as_bytes());
-    digest_with(PARTICIPANT_TOKEN_DOMAIN, &material)
+    digest_with(domain, &material)
 }
 pub(super) fn refused(detail: impl Into<String>) -> BookingError {
     BookingError::InvalidConstraint(detail.into())

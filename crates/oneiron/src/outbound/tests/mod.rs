@@ -232,6 +232,12 @@ impl ScriptedLinkedInTransport {
         self.send_result = Err(error_code.to_owned());
         self
     }
+
+    /// A send whose result names the message it created, as `result`.
+    fn sending(mut self, result: serde_json::Value) -> Self {
+        self.send_result = Ok(result);
+        self
+    }
 }
 
 impl LinkedInMcpSendTransport for ScriptedLinkedInTransport {

@@ -571,11 +571,28 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
                 )?,
             })
         }
-        Some("interrupted") => Ok(TaskExecutionState::Interrupted {
-            ladder: task_body_optional(entries, "ladder")?
+        Some("interrupted") => {
+            let ladder = task_body_optional(entries, "ladder")?
                 .map(decode_interrupted_ladder_terminal)
-                .transpose()?,
-        }),
+                .transpose()?;
+            // A row written before the flag was persisted never said whether
+            // its interruption asked for consent, so an ordinary one reads as
+            // asking: durably paused progress is not progress.
+            let consent_required = match task_body_optional(entries, "consent_required")? {
+                None => ladder.is_none(),
+                Some(value) => {
+                    value
+                        .as_bool()
+                        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                            "tasks.body.state.consent_required",
+                        )))?
+                }
+            };
+            Ok(TaskExecutionState::Interrupted {
+                ladder,
+                consent_required,
+            })
+        }
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(
             task_body_field(entries, "terminal")?,
         )?)),

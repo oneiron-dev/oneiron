@@ -354,8 +354,13 @@ side_tables! {
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
     TASK_BY_OWNER_FORWARD: VaultMeta b"tasks.by_owner.v1/" Raw;
+    /// Marker that the one-time consult party fact migration has run. Key: ().
+    TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
+    /// Presence marker: an authority fact of this task was refused at admission because its id
+    /// was deleted here first, so the task's facts read as a refusal. Key: id16 (task).
+    TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
     /// Owner-authority fact to forward index key. Key: id16.

@@ -258,11 +258,18 @@ fn task_execution_state_value(state: &TaskExecutionState) -> Value {
             (Value::from("state"), Value::from("working")),
             (Value::from("started_at"), Value::from(*started_at)),
         ]),
-        TaskExecutionState::Interrupted { ladder } => Value::Map(vec![
+        TaskExecutionState::Interrupted {
+            ladder,
+            consent_required,
+        } => Value::Map(vec![
             (Value::from("state"), Value::from("interrupted")),
             (
                 Value::from("ladder"),
                 ladder.map_or(Value::Nil, |state| ladder_terminal_state_value(&state)),
+            ),
+            (
+                Value::from("consent_required"),
+                Value::from(*consent_required),
             ),
         ]),
         TaskExecutionState::Terminal(record) => Value::Map(vec![

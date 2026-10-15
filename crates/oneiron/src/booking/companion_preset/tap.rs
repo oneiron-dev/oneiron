@@ -1,12 +1,14 @@
 //! Proposal taps, the authorized common intersection, and soft confirmation.
 
+use crate::Vault;
 use crate::booking::lifecycle::booking_writer;
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::temporal::TimeRange;
-use crate::{EntityId, Vault};
 
 use super::render::validate_participant_token;
-use super::storage::{PROPOSAL, load_live_row, participant_token_hash, refused, surface};
+use super::storage::{
+    PROPOSAL, companion_token_hash, load_live_row, participant_token_hash, refused, surface,
+};
 use super::{
     ChoiceId, CompanionProposal, CompanionSoftConfirmation, ProposalChoice, ProposalId,
     ProposalTap, TapAggregate,
@@ -113,8 +115,10 @@ pub fn ranked_authorized_common_intersection(
 /// Picks the group's answer and records it, inside the home-node booking
 /// writer.
 ///
-/// The caller supplies no choice — it supplies identity and a clock. The
-/// function reloads the proposal and its taps, refuses an expired proposal,
+/// The caller supplies no choice — it supplies the confirm token creation
+/// handed the companion, and a clock. The confirmation names the companion
+/// that token was minted for; no caller argument does. The function reloads
+/// the proposal and its taps, refuses an expired proposal,
 /// recomputes the authorized intersection from stored state, and walks it from
 /// the highest rank down, taking the first slot the oracle still offers under
 /// the same writer lease that records the answer. That last part is the whole
@@ -132,11 +136,21 @@ pub fn soft_confirm_highest_common_on_home_node(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     proposal_id: ProposalId,
-    companion_ref: EntityId,
+    companion_token: &str,
     now_utc: u64,
 ) -> Result<Option<CompanionSoftConfirmation>, BookingError> {
+    let hash = companion_token_hash(proposal_id, companion_token);
+
     booking_writer(vault, |wtxn| {
         let mut row = load_live_row(vault, &*wtxn, proposal_id, now_utc)?;
+        let companion_ref = match &row.companion {
+            Some(binding) if binding.token_hash == hash => binding.companion_ref,
+            _ => {
+                return Err(refused(
+                    "only the companion that made this proposal confirms it",
+                ));
+            }
+        };
         // A retry is answered with the answer it was answered with the first
         // time; a second confirmation would be a second authority.
         if let Some(recorded) = &row.confirmation {

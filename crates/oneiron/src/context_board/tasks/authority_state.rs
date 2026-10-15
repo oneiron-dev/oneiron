@@ -81,6 +81,8 @@ fn put_task_state_fact_in_txn(
             kind,
             actor_ref: actor,
             assigned_ref: None,
+            actor_generation: None,
+            assigned_generation: None,
             occurred_at: now,
         },
     )

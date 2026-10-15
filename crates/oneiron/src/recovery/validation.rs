@@ -89,6 +89,17 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             .map(|row| (row.source, row.kind, row.target)),
     )?;
     strict(snapshot.tombstones.iter().map(|row| row.id))?;
+    strict(snapshot.suppressed_tasks.iter())?;
+    for task in &snapshot.suppressed_tasks {
+        let held = snapshot
+            .entity_blobs
+            .binary_search_by_key(task, |row| row.id)
+            .ok()
+            .and_then(|at| EntityMetadataHeader::parse(&snapshot.entity_blobs[at].blob));
+        if held.is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TASK) {
+            return Err(invalid("suppressed task outside the window"));
+        }
+    }
     strict(
         snapshot
             .container_manifests

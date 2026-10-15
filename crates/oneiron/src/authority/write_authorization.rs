@@ -1,21 +1,32 @@
 //! Transaction-bound actor authorization for engine-owned write doors.
 
-use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::write_envelope::WriteActor;
+use crate::{EntityId, Vault};
 
-use super::{AuthorityFold, CausalWriteDisposition};
+use super::{AuthorityFold, AuthorityKey, CausalWriteDisposition, FoldedActorBinding};
 use crate::error::ClaimError;
+use crate::task_authority::{BindingGeneration, BindingId};
 
 impl Vault {
     /// Captures this host's observed authority frontier for a new local write.
     /// Transport replay must retain its original frontier instead of calling this door.
     pub fn observed_write_actor(&self, writer: WriteActor) -> Result<WriteActor> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        self.observed_write_actor_in_txn(&txn, writer)
+    }
+
+    /// [`Self::observed_write_actor`] in the caller's transaction, so a door
+    /// checks the authority it commits under.
+    pub(crate) fn observed_write_actor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: WriteActor,
+    ) -> Result<WriteActor> {
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         for (key, binding) in &fold.actor_bindings {
             if binding.actor_ref == writer.entity_ref()
                 && binding.actor_class == writer.actor_class().gate_actor_class()
@@ -26,12 +37,79 @@ impl Vault {
                     .and_then(|frontiers| frontiers.iter().next_back())
             {
                 let observed = writer.with_authority_frontier(*hash);
-                self.verify_write_actor_in_txn(&txn, &observed)?;
+                self.verify_write_actor_in_txn(txn, &observed)?;
                 return Ok(observed);
             }
         }
-        self.verify_write_actor_in_txn(&txn, &writer)?;
+        self.verify_write_actor_in_txn(txn, &writer)?;
         Ok(writer)
+    }
+
+    /// The binding generation `actor` holds now: its live bindings, of any
+    /// class, or `None` when it holds none (an unrooted vault included). At
+    /// the cap the lowest binding of each class is kept first, so no class
+    /// the actor holds is left out.
+    pub(crate) fn actor_binding_generation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+    ) -> Result<Option<BindingGeneration>> {
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let held: Vec<_> = fold
+            .actor_bindings
+            .iter()
+            .filter(|(_, binding)| {
+                binding.actor_ref == actor && binding.status == super::ActorBindingStatus::Active
+            })
+            .map(|(key, binding)| (binding.actor_class.as_str(), actor_binding_id(key, binding)))
+            .collect();
+        Ok(BindingGeneration::from_classed_bindings(&held))
+    }
+
+    /// [`Self::verify_write_actor_in_txn`] at this host's observed frontier,
+    /// for a writer that must still hold one of the bindings `generation`
+    /// records. A writer rebound or revoked and regranted since holds a new
+    /// binding, not one of those. With none recorded, it must hold its key's
+    /// first binding (epoch 1; every rebind or regrant is a later epoch) and
+    /// have no revocation in its history. A generation that names no binding
+    /// (replicas that recorded none in common) admits nobody, rooted or not.
+    pub(crate) fn verify_write_actor_generation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: WriteActor,
+        generation: Option<BindingGeneration>,
+    ) -> Result<()> {
+        let refused = || {
+            Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                reason: "writer's binding is not one the consult recorded",
+            }))
+        };
+        let writer = self.observed_write_actor_in_txn(txn, writer)?;
+        if generation.is_some_and(|generation| generation.bindings().is_empty()) {
+            return refused();
+        }
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_id.is_none() {
+            return Ok(());
+        }
+        let class = writer.actor_class().gate_actor_class();
+        let mut live = fold.actor_bindings.iter().filter(|(_, binding)| {
+            binding.actor_ref == writer.entity_ref()
+                && binding.actor_class == class
+                && binding.status == super::ActorBindingStatus::Active
+        });
+        let held = match generation {
+            Some(generation) => {
+                live.any(|(key, binding)| generation.names(&actor_binding_id(key, binding)))
+            }
+            None => {
+                !fold
+                    .actor_revocation_affected_writers
+                    .contains(&(writer.entity_ref(), class.to_owned()))
+                    && live.any(|(_, binding)| binding.epoch == 1)
+            }
+        };
+        if held { Ok(()) } else { refused() }
     }
 
     /// Resolve the asserted class and current binding in the mutation snapshot.
@@ -94,4 +172,27 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// One binding's identity: its key, epoch, actor and class. A rebind or a
+/// regrant is a new epoch, so a new identity, and every replica holding the
+/// binding names it alike.
+fn actor_binding_id(key: &AuthorityKey, binding: &FoldedActorBinding) -> BindingId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron/consult-party/v1/binding");
+    match key {
+        AuthorityKey::Ed25519(bytes) => {
+            hasher.update(b"ed25519");
+            hasher.update(bytes);
+        }
+        AuthorityKey::P256(bytes) => {
+            hasher.update(b"p256");
+            hasher.update(&(bytes.len() as u64).to_be_bytes());
+            hasher.update(bytes);
+        }
+    }
+    hasher.update(&binding.epoch.to_be_bytes());
+    hasher.update(binding.actor_ref.as_bytes());
+    hasher.update(binding.actor_class.as_bytes());
+    *hasher.finalize().as_bytes()
 }

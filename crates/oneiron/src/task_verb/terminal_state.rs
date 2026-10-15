@@ -173,6 +173,11 @@ pub enum TaskExecutionState {
         /// same value, and a compare-and-set against the second would move the
         /// first. Absent on every ordinary interruption.
         ladder: Option<LadderTerminalState>,
+        /// The interruption admits only a human verdict. It is fixed when the
+        /// interruption is written and read back from here, never from a
+        /// caller's `expected` state, so a party cannot waive it by
+        /// expecting an interruption that did not ask for consent.
+        consent_required: bool,
     },
     Terminal(TaskTerminalRecord),
 }
@@ -196,7 +201,7 @@ impl TaskExecutionState {
     pub(super) fn settled_ladder_disposition(&self) -> Option<LadderTerminalDisposition> {
         match self {
             Self::Terminal(record) => record.ladder,
-            Self::Interrupted { ladder } => ladder.map(|state| state.disposition),
+            Self::Interrupted { ladder, .. } => ladder.map(|state| state.disposition),
             Self::Queued | Self::Working { .. } => None,
         }
     }

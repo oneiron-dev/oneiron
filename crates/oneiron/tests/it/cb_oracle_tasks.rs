@@ -912,7 +912,8 @@ mod cb_a {
     #[test]
     fn consult_is_synced_assignee_addressed_task_entity() {
         let consult = arm_consult_shape();
-        assert_eq!(consult.consult_task_entities, 2);
+        // The consult TASK, its Owner fact and its ConsultAssignee fact.
+        assert_eq!(consult.consult_task_entities, 3);
         assert_eq!(consult.synced_consult_entities, 1);
         assert_eq!(consult.consult_job_realizations, 0);
         assert_eq!(consult.assignee, "cc-second");

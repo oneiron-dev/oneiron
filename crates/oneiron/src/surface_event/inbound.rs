@@ -267,6 +267,8 @@ pub struct InboundSurfaceEventInput {
     pub payload_ref: Option<String>,
     pub received_at: u64,
     /// Foreign/provider-authored inbound is claims-not-instructions canon.
+    /// Routing stamps it `true` whatever the adapter sent: an adapter relays
+    /// someone else's words and cannot vouch for them as the owner's.
     pub foreign_inbound: bool,
 }
 
@@ -549,10 +551,14 @@ pub(super) fn route_inbound_surface_event(
 pub(crate) fn route_inbound_surface_event_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    input: InboundSurfaceEventInput,
+    mut input: InboundSurfaceEventInput,
 ) -> Result<InboundSurfaceRouteReceipt> {
     input.validate()?;
-    let claims_not_instructions = input.foreign_inbound;
+    // Everything this door routes came in through an adapter, so it is claims
+    // and never instructions (OF-347 R6). The payload's own flag is not
+    // authority: a relayed message cannot declare itself the owner's.
+    input.foreign_inbound = true;
+    let claims_not_instructions = true;
     let Some((identity_ref, identity)) = vault.channel_identity_by_assignment_in_txn(
         txn,
         &input.channel,

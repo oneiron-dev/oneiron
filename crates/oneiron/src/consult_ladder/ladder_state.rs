@@ -315,10 +315,13 @@ pub fn transition_ladder(
         }
         // Re-interrupting is how a contested case becomes a consent-required
         // one (a magistrate recusal, say). A re-interrupt to the SAME state is
-        // a caller no-op, not a transition.
+        // a caller no-op, not a transition, and one that drops a required
+        // consent is a waiver only the human verdict may make.
         (ConsultLadderState::Interrupted(current), LadderTransition::Interrupt(next)) => {
             if *current == next {
                 Err(LadderTransitionError::InvalidTransition)
+            } else if current.consent_required && !next.consent_required {
+                Err(LadderTransitionError::ConsentRequired)
             } else {
                 Ok(ConsultLadderState::Interrupted(next))
             }

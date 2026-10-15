@@ -64,6 +64,11 @@ impl Vault {
     /// ruling was not clean. The propose-lane door for surfaces outside
     /// identity topology.
     ///
+    /// A ruling is the owner's word on a proposal, so the door takes the
+    /// owner's proof and rechecks it in the write's transaction: a streak no
+    /// owner ruled is not evidence, and a ruling no owner gave cannot revoke
+    /// a grant the owner approved.
+    ///
     /// The ruling lands as a durable outcome row FIRST: a counter this door
     /// moved with nothing behind it would be autonomy the ledger cannot
     /// witness, and the next rebuild would take it away again.
@@ -71,15 +76,19 @@ impl Vault {
     /// # Errors
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable
-    /// (checked before the first write), plus storage failures.
+    /// (checked before the first write),
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the proof no
+    /// longer holds here, plus storage failures.
     pub fn record_proposal_outcome_for_ramp(
         &self,
+        owner: &AuthenticatedOwner,
         scope: &RampScope,
         outcome: ProposalOutcome,
     ) -> Result<ScopeOutcomeStats> {
         scope.validate()?;
         let at = self.store.clock.now_recorded_at();
         let counters = self.with_write_txn_grouped(|wtxn| {
+            owner.revalidate_in_txn(self, &*wtxn)?;
             record_outcome_for_scope_in_txn(self, wtxn, scope, outcome, at, OutcomeWitness::Door)
         })?;
         let rtxn = self.store.env.read_txn()?;
@@ -187,24 +196,35 @@ impl Vault {
         })
     }
 
-    /// Demotes a scope back to the propose lane: revokes its standing grant if
-    /// one is live, appends the demotion receipt, and zeroes the clean streak.
+    /// The owner demotes a scope back to the propose lane: revokes its
+    /// standing grant if one is live, appends the demotion receipt, and zeroes
+    /// the clean streak.
     ///
-    /// Reducing one's own authority needs no owner authentication — only
-    /// GRANTING does. What it does need is to be said out loud, which is the
-    /// unconditional receipt (oracle
-    /// `ms06_self_demotion_is_receipted_never_silent`): a scope with no live
-    /// grant still records the act, so "I stopped trusting myself here" is
-    /// never inferred from an absence.
+    /// The grant is the owner's, so taking it away is the owner's act, proved
+    /// and rechecked in the write's transaction. The scope's own actor steps
+    /// back through [`crate::memory::Memory::demote_own_ramp_scope`] instead.
+    /// Either way the act is said out loud, which is the unconditional receipt
+    /// (oracle `ms06_self_demotion_is_receipted_never_silent`): a scope with no
+    /// live grant still records the act, so a demotion is never inferred from
+    /// an absence.
     ///
     /// # Errors
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable,
-    /// plus storage failures.
-    pub fn demote_scope_to_propose(&self, scope: &RampScope, reason: DemotionReason) -> Result<()> {
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the proof no
+    /// longer holds here, plus storage failures.
+    pub fn demote_scope_to_propose(
+        &self,
+        owner: &AuthenticatedOwner,
+        scope: &RampScope,
+        reason: DemotionReason,
+    ) -> Result<()> {
         scope.validate()?;
         let at = self.store.clock.now_recorded_at();
-        self.with_write_txn_grouped(|wtxn| append_demotion_in_txn(self, wtxn, scope, reason, at))
+        self.with_write_txn_grouped(|wtxn| {
+            owner.revalidate_in_txn(self, &*wtxn)?;
+            append_demotion_in_txn(self, wtxn, scope, reason, at)
+        })
     }
 
     /// Overrides one scope's graduation streak floor (ED-05's seam; the
@@ -275,6 +295,44 @@ impl Vault {
                 write_counters_in_txn(&self.store, wtxn, scope, *counters)?;
             }
             Ok(())
+        })
+    }
+}
+
+impl crate::memory::Memory<'_> {
+    /// The scope's own actor steps back to the propose lane on its own
+    /// judgment ([`DemotionReason::AgentJudgment`]), receipted like any
+    /// demotion. Reducing one's own authority needs no owner proof; reducing
+    /// another actor's does, so the scope must name this facade's actor.
+    ///
+    /// # Errors
+    ///
+    /// `forbidden` when the scope belongs to another actor or the actor binding
+    /// fails, plus the scope and storage errors of
+    /// [`Vault::demote_scope_to_propose`].
+    pub fn demote_own_ramp_scope(&self, scope: &RampScope) -> crate::memory::MemoryResult<()> {
+        scope.validate()?;
+        if scope.actor != self.actor().to_hex() {
+            return Err(crate::memory::MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "an actor demotes only its own ramp scope",
+                &["Ask the owner to demote another actor's scope."],
+            ));
+        }
+        let vault = self.vault();
+        let at = vault.store.clock.now_recorded_at();
+        // Only the actor's own binding, never a content-write grant: a
+        // narrowly scoped member giving up its own standing grant is a
+        // restriction, and restrictions always land.
+        vault.write_txn_door(crate::store::Callback::Audited, |wtxn| {
+            crate::memory::verify_actor_binding_in_txn(
+                vault,
+                wtxn,
+                self.actor(),
+                self.actor_class(),
+            )?;
+            append_demotion_in_txn(vault, wtxn, scope, DemotionReason::AgentJudgment, at)
+                .map_err(crate::memory::MemoryError::from)
         })
     }
 }

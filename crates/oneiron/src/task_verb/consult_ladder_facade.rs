@@ -4,7 +4,8 @@ use rmpv::Value;
 use crate::claim::ClaimApprovalStatus;
 use crate::consult_ladder::{
     ConsultLadderState, ConsultLineage, ConsultLineageRelation, EntityDeltaArtifact,
-    LadderTerminalDisposition, LadderTransition, LadderTransitionError, transition_ladder,
+    InterruptedState, LadderTerminalDisposition, LadderTransition, LadderTransitionError,
+    transition_ladder,
 };
 use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
@@ -13,6 +14,9 @@ use crate::memory::{
     facade_provenance, verify_actor_binding,
 };
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::task_authority::{
+    TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityFacts, put_task_authority_fact_in_txn,
+};
 use crate::temporal::TimeRange;
 
 use super::consult_result::TaskVerbBody;
@@ -63,6 +67,17 @@ impl Memory<'_> {
     /// check between them decides staleness, not immutability: a deferring
     /// terminal persists on the live `Interrupted` register, so the projection
     /// alone cannot tell a settled ladder from a resumable interruption.
+    ///
+    /// Only the consult's parties move its ladder: the asker or the party it
+    /// was addressed to, as its ConsultAssignee fact named them when it was
+    /// minted. That is decided in the same transaction as the write, which
+    /// also rechecks that the caller is a live actor still holding the
+    /// binding it held then.
+    ///
+    /// Once an interruption has asked for a human verdict, the consult's
+    /// ConsentRequired fact holds that requirement whatever its body says
+    /// later: nothing but a finish or a re-interruption that keeps asking
+    /// moves the ladder.
     pub fn compare_and_set_consult_ladder(
         &self,
         task_ref: EntityId,
@@ -73,6 +88,7 @@ impl Memory<'_> {
         let expected_state = project_consult_ladder_state(expected);
         let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+            let facts = self.require_consult_party_in_txn(&*wtxn, task_ref)?;
             if body.settled_ladder_disposition().is_some() {
                 return Err(ladder_refusal(LadderTransitionError::TerminalImmutable));
             }
@@ -83,11 +99,30 @@ impl Memory<'_> {
                     "Re-read the TASK body and retry the transition against its current state.",
                 ));
             }
-            let next = transition_ladder(expected, transition).map_err(ladder_refusal)?;
+            let current = consent_bound_ladder(expected, facts.consent_required, &transition)?;
+            let next = transition_ladder(&current, transition).map_err(ladder_refusal)?;
             let next_state = project_consult_ladder_state(&next);
             body.state = Some(next_state.clone());
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, now_for_ladder(&next))?;
+            if let ConsultLadderState::Interrupted(interrupted) = &next
+                && interrupted.consent_required
+                && !facts.consent_required
+            {
+                put_task_authority_fact_in_txn(
+                    self.vault(),
+                    wtxn,
+                    TaskAuthorityFact {
+                        task_ref,
+                        kind: TaskAuthorityFactKind::ConsentRequired,
+                        actor_ref: self.actor(),
+                        assigned_ref: None,
+                        actor_generation: None,
+                        assigned_generation: None,
+                        occurred_at: interrupted.interrupted_at,
+                    },
+                )?;
+            }
             Ok((next, next_state))
         })?;
         Ok(LadderTransitionReceipt {
@@ -97,13 +132,52 @@ impl Memory<'_> {
         })
     }
 
+    /// The asker or the addressed assignee, as the consult's replicated
+    /// ConsultAssignee fact names them (never the body's mutable `owner_ref`
+    /// or `assignee`), and a caller that is a live, undeleted actor still
+    /// holding the binding generation the fact recorded: a revoked or
+    /// deleted party settles nothing, and one regranted since is a new
+    /// binding, not the party. Returns the consult's facts.
+    fn require_consult_party_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> MemoryResult<TaskAuthorityFacts> {
+        let actor = self.actor();
+        let facts = self.vault().task_authority_facts_in(txn, task_ref)?;
+        let refusal = || {
+            consult_refusal(
+                MEMORY_CODE_FORBIDDEN,
+                "only the consult's asker or its addressed assignee may move its ladder",
+                "Move the ladder as the actor that asked, or the actor it was addressed to.",
+            )
+        };
+        let standing = facts.consult_standing(actor).ok_or_else(refusal)?;
+        let live_type =
+            crate::vault::live_entity_row_in_txn(&self.vault().store, txn, &actor)?.live_type();
+        if !live_type.is_some_and(|entity_type| {
+            crate::provenance::validate_actor_class(entity_type, self.actor_class()).is_ok()
+        }) {
+            return Err(refusal());
+        }
+        self.vault()
+            .verify_write_actor_generation_in_txn(
+                txn,
+                crate::WriteActor::new(actor, self.actor_class()),
+                standing.generation,
+            )
+            .map_err(MemoryError::from)?;
+        Ok(facts)
+    }
+
     /// Mints one counter TASK, and — when the original is still open —
     /// terminalizes it as rejected-with-counter-lineage in the SAME
     /// transaction.
     ///
     /// A counter is never an edit. The original keeps its own terminal row
     /// forever; an ALREADY-terminal original is left byte-identical and only
-    /// the new task is written.
+    /// the new task is written. Only the original's asker or addressed
+    /// assignee may counter it.
     pub fn mint_counter_task(
         &self,
         parent_task_ref: EntityId,
@@ -133,6 +207,9 @@ impl Memory<'_> {
         let rate_now = self.vault().store.clock.now_recorded_at();
         let (task_ref, route) = self.with_verified_actor_write_txn(|wtxn| {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
+            // A counter settles its open parent, so only the parent's parties
+            // may mint one, as only they may move its ladder.
+            self.require_consult_party_in_txn(&*wtxn, parent_task_ref)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
             record_task_create(
                 self.vault(),
@@ -246,6 +323,10 @@ pub struct LadderTransitionReceipt {
 
 /// Projects the pure ladder state onto the fields ONE-1699 already persists.
 ///
+/// An interruption keeps its `consent_required` flag, so the compare-and-set
+/// door compares a caller's `expected` interruption against the stored flag
+/// and a party cannot expect consent away.
+///
 /// `Escalated` is deliberately NOT a terminal record: the case is waiting on
 /// the follow-on assignee named in its escalation receipt, so it persists as
 /// `Interrupted`. `Approved`/`Overridden` both persist as `Completed` and
@@ -257,7 +338,10 @@ pub fn project_consult_ladder_state(state: &ConsultLadderState) -> TaskExecution
         ConsultLadderState::Working(working) => TaskExecutionState::Working {
             started_at: working.started_at,
         },
-        ConsultLadderState::Interrupted(_) => TaskExecutionState::Interrupted { ladder: None },
+        ConsultLadderState::Interrupted(interrupted) => TaskExecutionState::Interrupted {
+            ladder: None,
+            consent_required: interrupted.consent_required,
+        },
         ConsultLadderState::Terminal(terminal) => {
             if terminal.disposition.defers_to_follow_on() {
                 // The deferring terminal rides INSIDE the interrupted register
@@ -266,6 +350,7 @@ pub fn project_consult_ladder_state(state: &ConsultLadderState) -> TaskExecution
                 // an ordinary interruption that may still move.
                 return TaskExecutionState::Interrupted {
                     ladder: Some(*terminal),
+                    consent_required: false,
                 };
             }
             TaskExecutionState::Terminal(TaskTerminalRecord {
@@ -322,6 +407,35 @@ const fn now_for_ladder(state: &ConsultLadderState) -> u64 {
         ConsultLadderState::Working(working) => working.started_at,
         ConsultLadderState::Interrupted(interrupted) => interrupted.interrupted_at,
         ConsultLadderState::Terminal(terminal) => terminal.finished_at,
+    }
+}
+
+/// The ladder state a transition is judged from. A ConsentRequired fact keeps
+/// the requirement whatever the body says now: a stored interruption still
+/// asks for consent, and a stored working state (which no compare-and-set
+/// reaches from a consent-required interruption) moves only by a finish or a
+/// re-interruption that keeps asking.
+fn consent_bound_ladder(
+    expected: &ConsultLadderState,
+    consent_required: bool,
+    transition: &LadderTransition,
+) -> MemoryResult<ConsultLadderState> {
+    if !consent_required {
+        return Ok(*expected);
+    }
+    match (expected, transition) {
+        (ConsultLadderState::Interrupted(interrupted), _) => {
+            Ok(ConsultLadderState::Interrupted(InterruptedState {
+                consent_required: true,
+                ..*interrupted
+            }))
+        }
+        (ConsultLadderState::Working(_), LadderTransition::Interrupt(next))
+            if !next.consent_required =>
+        {
+            Err(ladder_refusal(LadderTransitionError::ConsentRequired))
+        }
+        _ => Ok(*expected),
     }
 }
 

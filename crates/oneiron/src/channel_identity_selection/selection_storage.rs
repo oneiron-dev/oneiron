@@ -145,6 +145,7 @@ impl Vault {
     ) -> ChannelIdentitySelectionResult<ChannelIdentitySelectionRuleSet> {
         let builtins = builtin_channel_identity_selection_rules();
         self.try_with_write_txn_grouped(|wtxn| {
+            writer.revalidate_in_txn(self, &*wtxn)?;
             let stored = stored_rule_set(&self.store, &*wtxn)?;
             let current = stored.as_ref().map_or(0, |set| set.revision);
             if current != expected_revision {

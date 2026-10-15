@@ -250,6 +250,17 @@ pub fn recover_vault_window(
     let candidate = rebuild_vault_window_from_canonical(snapshot)?;
     crate::sync::bridge::preflight_canonical_recovery(vault, materializer, snapshot, &candidate)?;
     let prepared = prepare_recovery(path, snapshot, budget)?;
+    // A task whose fact the source refused reads as a refusal here before
+    // the replay can read its authority.
+    if !snapshot.suppressed_tasks.is_empty() {
+        vault.with_write_txn(|txn| {
+            crate::task_authority::restore_suppressed_in_txn(
+                &vault.store,
+                txn,
+                &snapshot.suppressed_tasks,
+            )
+        })?;
+    }
     let key = crate::sync::types::WindowKey::new(&snapshot.window);
     crate::sync::window::forward_recovery(vault, &prepared.window, materializer, &key, snapshot)?;
     // Forward replay may quarantine semantic/authority failures. Never mark a
