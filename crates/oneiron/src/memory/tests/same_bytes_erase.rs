@@ -26,6 +26,12 @@ fn blob_vault() -> (tempfile::TempDir, crate::Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::default())
 }
 
+/// The embedded owner's facade: the live owner of a personal vault, who alone sets the
+/// same-bytes flag there.
+fn owner_facade(vault: &crate::Vault) -> Memory<'_> {
+    facade_for(vault, vault.ensure_embedded_owner_actor().expect("owner"))
+}
+
 /// A blob artifact `facade`'s actor registers and fills with `versions`, in order.
 fn artifact(facade: &Memory<'_>, versions: &[&[u8]]) -> EntityId {
     let receipt = facade
@@ -142,7 +148,7 @@ fn without_the_flag_an_erase_leaves_shared_bytes_to_the_other_record() {
 #[test]
 fn the_flag_erases_every_record_holding_the_same_bytes_each_with_its_own_receipt() {
     let (_dir, vault) = blob_vault();
-    let memory = facade_for(&vault, put_person(&vault, 0xE1));
+    let memory = owner_facade(&vault);
     let a = artifact(&memory, &[SHARED]);
     let b = artifact(&memory, &[ONLY_B, SHARED]);
     let c = artifact(&memory, &[SHARED]);
@@ -186,30 +192,36 @@ fn the_flag_erases_every_record_holding_the_same_bytes_each_with_its_own_receipt
 }
 
 #[test]
-fn only_the_owner_previews_or_confirms_a_same_bytes_erase() {
-    let (_dir, vault) = blob_vault();
-    let person = put_person(&vault, 0xE1);
-    let memory = facade_for(&vault, person);
-    let a = artifact(&memory, &[SHARED]);
-    let b = artifact(&memory, &[SHARED]);
-    let preview = memory.preview_entity_delete(&a).expect("owner preview");
-    let agent = vault.memory(person, EdgeActorClass::Agent);
+fn only_a_live_vault_owner_confirms_a_same_bytes_erase() {
+    let (_dir, vault, owner, member) = shared_vault();
+    let mine = facade_for(&vault, owner);
+    let theirs = facade_for(&vault, member);
+    let a = artifact(&mine, &[SHARED]);
+    let b = artifact(&mine, &[SHARED]);
+    let m = artifact(&theirs, &[SHARED]);
+    let previews = [
+        mine.preview_entity_delete(&a).expect("owner preview"),
+        theirs.preview_entity_delete(&m).expect("member preview"),
+    ];
+    let agent = vault.memory(owner, EdgeActorClass::Agent);
 
-    let refused = agent.preview_entity_delete(&a).expect_err("agent preview");
-    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
-    for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
-        let refused = agent
-            .confirm_entity_erase(
-                &preview,
-                EraseOptions {
-                    reason,
-                    also_same_bytes: true,
-                },
-            )
-            .expect_err("agent confirm");
-        assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    for preview in &previews {
+        for reason in [EraseReason::UserHardDelete, EraseReason::GdprDelete] {
+            let options = EraseOptions {
+                reason,
+                also_same_bytes: true,
+            };
+            for (who, facade) in [("member", &theirs), ("agent", &agent)] {
+                let refused = facade
+                    .confirm_entity_erase(preview, options)
+                    .expect_err(who);
+                assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{who}");
+            }
+        }
     }
-    assert!(live(&vault, &a) && live(&vault, &b));
+    for id in [a, b, m] {
+        assert!(live(&vault, &id), "a refused flag erased {id:?}");
+    }
     assert!(live(&vault, &asset(SHARED)));
 }
 
@@ -270,7 +282,7 @@ fn a_gdpr_erase_takes_every_holder_without_waiting_for_another_owner() {
 #[test]
 fn the_preview_tells_a_last_reference_from_one_of_several_and_goes_stale_with_a_new_holder() {
     let (_dir, vault) = blob_vault();
-    let memory = facade_for(&vault, put_person(&vault, 0xE1));
+    let memory = owner_facade(&vault);
     let a = artifact(&memory, &[ONLY_A, SHARED]);
     let b = artifact(&memory, &[SHARED]);
     let preview = memory.preview_entity_delete(&a).expect("preview");
@@ -298,7 +310,7 @@ fn the_preview_tells_a_last_reference_from_one_of_several_and_goes_stale_with_a_
 #[test]
 fn an_lfs_preview_tells_shared_chunks_and_the_flag_erases_only_that_object() {
     let (_dir, vault) = blob_vault();
-    let memory = facade_for(&vault, put_person(&vault, 0xE1));
+    let memory = owner_facade(&vault);
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
     let first: Vec<u8> = (0..300 * 1024)
         .map(|_| {
@@ -384,7 +396,7 @@ fn an_lfs_preview_tells_shared_chunks_and_the_flag_erases_only_that_object() {
 #[test]
 fn after_a_same_bytes_erase_the_same_bytes_can_be_added_again() {
     let (_dir, vault) = blob_vault();
-    let memory = facade_for(&vault, put_person(&vault, 0xE1));
+    let memory = owner_facade(&vault);
     let a = artifact(&memory, &[SHARED]);
     artifact(&memory, &[SHARED]);
     let preview = memory.preview_entity_delete(&a).expect("preview");
@@ -396,4 +408,76 @@ fn after_a_same_bytes_erase_the_same_bytes_can_be_added_again() {
     assert_eq!(version(&vault, &again, 1), Some(SHARED.to_vec()));
     let preview = memory.preview_entity_delete(&again).expect("preview");
     assert!(preview.held_bytes()[0].is_last_reference());
+}
+
+#[test]
+fn the_erase_door_refuses_the_byte_carrier_and_every_holder_keeps_its_bytes() {
+    let (_dir, vault) = blob_vault();
+    let memory = owner_facade(&vault);
+    let a = artifact(&memory, &[SHARED]);
+    let b = artifact(&memory, &[SHARED]);
+    let preview = memory
+        .preview_entity_delete(&asset(SHARED))
+        .expect("carrier preview");
+    let mut holders = vec![a, b];
+    holders.sort_unstable();
+    assert_eq!(held(&preview, SHARED).other_holders().to_vec(), holders);
+
+    for options in [EraseOptions::default(), FLAG] {
+        let refused = memory
+            .confirm_entity_erase(&preview, options)
+            .expect_err("carrier erase");
+        assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
+    }
+    assert!(live(&vault, &asset(SHARED)));
+    for id in [a, b] {
+        assert_eq!(version(&vault, &id, 1), Some(SHARED.to_vec()));
+    }
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn a_match_whose_delete_fails_after_its_tombstone_reads_unfinished_not_refused() {
+    let (_dir, vault) = blob_vault();
+    let memory = owner_facade(&vault);
+    let a = artifact(&memory, &[SHARED]);
+    let b = artifact(&memory, &[SHARED]);
+    let c = artifact(&memory, &[SHARED]);
+    let (failed, next) = if b < c { (b, c) } else { (c, b) };
+    let preview = memory.preview_entity_delete(&a).expect("preview");
+
+    crate::memory::entity_erase::arm_fail_next_match_after_tombstone();
+    let outcome = memory.confirm_entity_erase(&preview, FLAG).expect("erase");
+
+    let rows = rows(&outcome);
+    assert!(
+        matches!(rows.get(&failed), Some(SameBytesOutcome::Unfinished(_))),
+        "a published tombstone is no refusal: {:?}",
+        rows.get(&failed)
+    );
+    assert!(matches!(rows.get(&next), Some(SameBytesOutcome::Erased(_))));
+    assert!(erased(&vault, &a) && erased(&vault, &next));
+}
+
+#[test]
+fn a_holder_whose_version_claim_was_deleted_is_held_and_keeps_its_bytes() {
+    let (_dir, vault, owner, member) = shared_vault();
+    let mine = facade_for(&vault, owner);
+    let a = artifact(&mine, &[SHARED]);
+    let b = artifact(&facade_for(&vault, member), &[SHARED]);
+    let claim = vault.blob_artifact_versions(&b).expect("versions")[0].claim_id;
+    vault
+        .delete_entity(&claim)
+        .expect("soft-delete the version claim");
+    let preview = mine.preview_entity_delete(&a).expect("preview");
+    assert_eq!(preview.same_bytes_matches(), vec![b]);
+
+    let outcome = mine.confirm_entity_erase(&preview, FLAG).expect("erase");
+
+    assert_eq!(
+        rows(&outcome).get(&b),
+        Some(&SameBytesOutcome::Held(SameBytesHold::AnotherOwnersRecord))
+    );
+    assert!(erased(&vault, &a));
+    assert!(live(&vault, &b) && live(&vault, &asset(SHARED)));
 }

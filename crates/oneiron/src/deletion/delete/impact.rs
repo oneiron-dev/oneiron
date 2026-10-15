@@ -6,7 +6,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// One content hash the previewed record holds, and every other record in this vault that keeps
-/// the same bytes from release. A default delete drops only this record's hold.
+/// the same bytes from release. A default delete drops only this record's hold. When the
+/// previewed record is the bytes' carrier (the content-addressed ASSET), the other holders are
+/// every record that reads them through it: a plain delete of it takes the bytes from all of
+/// them, and the erase door refuses it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeldBytes {
     content_hash: [u8; 32],

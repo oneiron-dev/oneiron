@@ -1,11 +1,14 @@
 //! Owner erase that can also take every record in this vault holding the same bytes. The
-//! default drops one record and its own hold on shared bytes; the same-bytes flag is an owner's
-//! act by hand.
+//! default drops one record and its own hold on shared bytes; the same-bytes flag is a live
+//! vault owner's act by hand.
 
 use std::collections::BTreeMap;
 
 use super::support::verify_deletion_authority_in_txn;
-use super::{DeleteReceipt, Memory, MemoryError, MemoryResult, SafeDeleteReason};
+use super::{
+    DeleteReceipt, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, Memory, MemoryError,
+    MemoryResult, SafeDeleteReason,
+};
 use crate::deletion::DeleteEntityPreview;
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -53,8 +56,13 @@ pub enum SameBytesHold {
 pub enum SameBytesOutcome {
     Erased(DeleteReceipt),
     Held(SameBytesHold),
-    /// Its own checked delete refused, for one when it no longer holds the previewed bytes.
+    /// Its own checked delete refused before it published a tombstone, for one when it no longer
+    /// holds the previewed bytes: nothing of it was erased.
     Refused(MemoryError),
+    /// Its delete failed after its tombstone and deletion fence were durable, or it could not be
+    /// read back whether they were: the delete is accepted and the record reads as deleted; the
+    /// deletion recovery finishes its purge and receipt.
+    Unfinished(MemoryError),
 }
 
 /// The confirmed record's receipt, then one row per other record holding its bytes, in id
@@ -70,15 +78,20 @@ impl Memory<'_> {
     /// previewed brief grants, publishes its tombstone, purges it and writes
     /// its receipt. Bytes it shares stay while another record holds them.
     ///
-    /// With `also_same_bytes`, every other record the preview names as holding
-    /// the same blob bytes ([`DeleteEntityPreview::same_bytes_matches`]) is then
-    /// erased the same way, in id order, each through its own checked delete
-    /// with its own tombstone, purge and receipt. In a shared vault a record
-    /// another actor wrote is held, not erased, unless the reason is a GDPR
-    /// request. Owner authority, the preview and every holder's classification
-    /// are read in one snapshot before anything is destroyed. A failure on the
-    /// confirmed record returns the error and erases nothing else; a later
-    /// row's refusal never hides an earlier completed erase.
+    /// With `also_same_bytes`, which only a live owner of this vault may set,
+    /// every other record the preview names as holding the same blob bytes
+    /// ([`DeleteEntityPreview::same_bytes_matches`]) is then erased the same
+    /// way, in id order, each through its own checked delete with its own
+    /// tombstone, purge and receipt. In a shared vault a record another actor
+    /// wrote is held, not erased, unless the reason is a GDPR request. Owner
+    /// authority, the preview and every holder's classification are read in
+    /// one snapshot before anything is destroyed. A failure on the confirmed
+    /// record returns the error and erases nothing else; a later row's
+    /// failure never hides an earlier completed erase.
+    ///
+    /// A byte carrier (the content-addressed ASSET every holder reads its
+    /// bytes through) is refused: erasing it would take the bytes from every
+    /// holder at once. Erase a record that holds them instead.
     pub fn confirm_entity_erase(
         &self,
         preview: &DeleteEntityPreview,
@@ -93,11 +106,27 @@ impl Memory<'_> {
                 .map_err(crate::Error::from)?;
             verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
             preview.check_before_unshare(self.vault, &txn)?;
+            let target = self
+                .vault
+                .store
+                .entities
+                .get(&txn, preview.entity().as_bytes())
+                .map_err(crate::Error::from)?;
+            if let Some(raw) = target
+                && crate::blob_artifact::carrier_content_hash(preview.entity(), raw)?.is_some()
+            {
+                return Err(carrier_erase_refused());
+            }
             let mut plan = Vec::new();
             if options.also_same_bytes {
+                self.require_live_owner_in_txn(&txn)?;
                 for (holder, hashes) in previewed_holdings(preview) {
-                    let hold = self.same_bytes_hold_in_txn(&txn, &holder, options.reason)?;
-                    plan.push((holder, hashes, hold));
+                    plan.push(PlannedMatch {
+                        hold: self.same_bytes_hold_in_txn(&txn, &holder, options.reason)?,
+                        marked: deletion_marked_in_txn(self.vault, &txn, &holder)?,
+                        holder,
+                        hashes,
+                    });
                 }
             }
             plan
@@ -116,20 +145,63 @@ impl Memory<'_> {
             })?;
         let same_bytes = plan
             .into_iter()
-            .map(|(holder, hashes, hold)| {
-                let outcome = match hold {
+            .map(|planned| {
+                let outcome = match planned.hold {
                     Some(hold) => SameBytesOutcome::Held(hold),
-                    None => match self.safe_delete_checked(&holder.to_hex(), reason, |txn| {
-                        self.still_erasable_in_txn(txn, &holder, &hashes, options.reason)
-                    }) {
-                        Ok(receipt) => SameBytesOutcome::Erased(receipt),
-                        Err(refusal) => SameBytesOutcome::Refused(refusal),
-                    },
+                    None => self.erase_match(&planned, options.reason),
                 };
-                (holder, outcome)
+                (planned.holder, outcome)
             })
             .collect();
         Ok(EntityEraseOutcome { first, same_bytes })
+    }
+
+    /// One planned match through its own checked delete. A failure is a refusal only while the
+    /// record carries no deletion marker it lacked at planning.
+    fn erase_match(&self, planned: &PlannedMatch, reason: EraseReason) -> SameBytesOutcome {
+        #[cfg(all(test, feature = "sync"))]
+        if FAIL_NEXT_MATCH_AFTER_TOMBSTONE.replace(false) {
+            crate::deletion::arm_fail_after_tombstone_before_purge();
+        }
+        let result = self.safe_delete_checked(
+            &planned.holder.to_hex(),
+            reason.safe_delete_reason(),
+            |txn| self.still_erasable_in_txn(txn, &planned.holder, &planned.hashes, reason),
+        );
+        match result {
+            Ok(receipt) => SameBytesOutcome::Erased(receipt),
+            Err(error) => {
+                let marked = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(Error::from)
+                    .and_then(|txn| deletion_marked_in_txn(self.vault, &txn, &planned.holder))
+                    .unwrap_or(true);
+                if marked && !planned.marked {
+                    SameBytesOutcome::Unfinished(error)
+                } else {
+                    SameBytesOutcome::Refused(error)
+                }
+            }
+        }
+    }
+
+    /// The same-bytes flag reaches records the caller did not name, so it asks for a live owner
+    /// of this vault, not only deletion authority.
+    fn require_live_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        if crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &self.actor)? {
+            return Ok(());
+        }
+        Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!(
+                "actor {} is no live owner of this vault; the same-bytes erase is an owner's act",
+                self.actor.to_hex()
+            ),
+            &["Erase the one record without the same-bytes flag, or ask a vault owner."],
+        ))
     }
 
     /// `None` when this caller may erase `holder` with the record it confirmed:
@@ -157,8 +229,9 @@ impl Memory<'_> {
         Ok(Some(SameBytesHold::AnotherOwnersRecord))
     }
 
-    /// Rechecked in the holder's own delete transactions: it still holds one
-    /// of the bytes the preview named for it, and this caller may still erase it.
+    /// Rechecked in the holder's own delete transactions: the caller is still a
+    /// live owner, the holder still holds one of the bytes the preview named
+    /// for it, and this caller may still erase it.
     fn still_erasable_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -166,6 +239,7 @@ impl Memory<'_> {
         hashes: &[[u8; 32]],
         reason: EraseReason,
     ) -> MemoryResult<()> {
+        self.require_live_owner_in_txn(txn)?;
         for hash in hashes {
             if crate::blob_artifact::content_holders_in_txn(&self.vault.store, txn, hash)?
                 .contains(holder)
@@ -178,6 +252,48 @@ impl Memory<'_> {
         }
         Err(Error::ConcurrentWrite("delete preview stale").into())
     }
+}
+
+/// One other holder of the previewed bytes, classified in the planning snapshot.
+struct PlannedMatch {
+    holder: EntityId,
+    hashes: Vec<[u8; 32]>,
+    hold: Option<SameBytesHold>,
+    /// Whether the holder already carried a deletion marker at planning.
+    marked: bool,
+}
+
+#[cfg(all(test, feature = "sync"))]
+thread_local! {
+    static FAIL_NEXT_MATCH_AFTER_TOMBSTONE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Arms the delete rail's one-shot failure after a durable tombstone for the next same-bytes
+/// match, not the confirmed record.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn arm_fail_next_match_after_tombstone() {
+    FAIL_NEXT_MATCH_AFTER_TOMBSTONE.with(|armed| armed.set(true));
+}
+
+/// Whether this vault's own markers delete `id`: a delete applied or accepted here.
+fn deletion_marked_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<bool> {
+    let raw = vault.store.entities.get(txn, id.as_bytes())?;
+    crate::deletion::row_deletion_marked(&vault.store, txn, id, raw)
+}
+
+fn carrier_erase_refused() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_BAD_REQUEST,
+        "this record is the byte carrier its holders read through; erasing it would take the bytes from every holder",
+        &[
+            "Erase a record that holds these bytes; with the same-bytes flag, every holder goes and the bytes with the last.",
+        ],
+    )
 }
 
 /// Every other holder the preview names, sorted, with the hashes it held.

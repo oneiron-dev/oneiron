@@ -39,7 +39,8 @@ pub use self::body::{
     encode_blob_artifact_body,
 };
 pub(crate) use self::holders::{
-    artifact_author_in_txn, content_holders_in_txn, held_content_hashes_in_txn,
+    artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
+    held_content_hashes_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;

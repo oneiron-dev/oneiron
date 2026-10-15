@@ -6,7 +6,7 @@
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
@@ -49,27 +49,31 @@ pub(super) fn artifact_hashes(
 }
 
 /// The content hashes the stored record `raw` at `id` holds: an artifact's own bytes, or the one
-/// hash a content-addressed version ASSET stores (its id is derived from the hash of its body).
-/// Any other record holds none.
+/// hash a byte carrier stores ([`carrier_content_hash`]). Any other record holds none.
 pub(crate) fn held_content_hashes_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
 ) -> Result<Vec<ContentHash>> {
-    match EntityMetadataHeader::parse(raw).map(|header| header.entity_type) {
-        Some(ENTITY_TYPE_BLOB_ARTIFACT) => artifact_hashes(store, txn, id),
-        Some(ENTITY_TYPE_ASSET) => {
-            let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-            let hash: ContentHash = *blake3::hash(body).as_bytes();
-            Ok(if blob_artifact_asset_entity_id(&hash)? == *id {
-                vec![hash]
-            } else {
-                Vec::new()
-            })
-        }
-        _ => Ok(Vec::new()),
+    if EntityMetadataHeader::parse(raw).map(|header| header.entity_type)
+        == Some(ENTITY_TYPE_BLOB_ARTIFACT)
+    {
+        return artifact_hashes(store, txn, id);
     }
+    Ok(carrier_content_hash(id, raw)?.into_iter().collect())
+}
+
+/// The hash whose bytes the stored record `raw` at `id` carries, when it is a content-addressed
+/// version ASSET: its id is derived from the hash of its body. Every holder of those bytes reads
+/// them through it, so deleting it takes them from all of them.
+pub(crate) fn carrier_content_hash(id: &EntityId, raw: &[u8]) -> Result<Option<ContentHash>> {
+    if EntityMetadataHeader::parse(raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_ASSET)
+    {
+        return Ok(None);
+    }
+    let hash: ContentHash = *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
+    Ok((blob_artifact_asset_entity_id(&hash)? == *id).then_some(hash))
 }
 
 /// Every record that keeps the bytes under `hash` from release, sorted: each `asset_ref` row's
@@ -93,8 +97,8 @@ pub(crate) fn content_holders_in_txn(
 /// envelope of each version's `blob.version` claim (ARCH-0043: the actor is read, never claimed).
 ///
 /// `None` when it does not resolve to one actor: no version on this vault's chain, a version
-/// claim gone or unauthenticated, versions by different actors, or bytes held only through a
-/// claim that arrived from another vault, whose writer this vault cannot prove.
+/// claim gone, deleted or unauthenticated, versions by different actors, or bytes held only
+/// through a claim that arrived from another vault, whose writer this vault cannot prove.
 pub(crate) fn artifact_author_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -104,6 +108,9 @@ pub(crate) fn artifact_author_in_txn(
     let mut chain = Vec::new();
     for entry in VERSIONS.iter_from(&vault.store, txn, artifact.as_bytes())? {
         let (_, record) = entry?;
+        if !claim_is_live(&vault.store, txn, &record.claim_id)? {
+            return Ok(None);
+        }
         let Some(body) = vault.get_claim_in_txn(txn, &record.claim_id)? else {
             return Ok(None);
         };
@@ -129,4 +136,16 @@ pub(crate) fn artifact_author_in_txn(
         return Ok(None);
     }
     Ok(author)
+}
+
+/// A stored claim row with its body, under no delete this vault holds. A soft delete leaves a
+/// header-only shell, which names no author.
+fn claim_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    crate::deletion::row_deletion_marked(store, txn, id, Some(raw.as_ref())).map(|marked| !marked)
 }
