@@ -6,14 +6,7 @@ use crate::{TimeRange, VaultConfig};
 fn setup() -> Result<(tempfile::TempDir, Vault, AuthenticatedOwner)> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let person = crate::EntityId::from_bytes([0x71; 16])?;
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"policy owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor()?;
     let owner = vault.authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())?;
     Ok((dir, vault, owner))
 }

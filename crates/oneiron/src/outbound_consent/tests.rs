@@ -150,16 +150,7 @@ fn register_active_scoped_connector_key_with_budgets(
     vault
         .stage_connector_manifest(&key_id, manifest.clone(), "R1", &Suite, 11)
         .expect("qualify fixture");
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("owner person");
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,
@@ -1509,16 +1500,7 @@ fn register_scoped_key(vault: &Vault, key_id: &EntityId, grant_id: &EntityId, se
     vault
         .stage_connector_manifest(key_id, manifest.clone(), "R1", &Suite, 11)
         .unwrap();
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,
@@ -1866,16 +1848,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
     vault
         .stage_connector_manifest(&key_id, changed.clone(), "R1", &Suite, 13)
         .unwrap();
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let auth = vault
         .authenticate_owner(
             owner,

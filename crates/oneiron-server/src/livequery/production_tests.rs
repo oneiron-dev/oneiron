@@ -2195,10 +2195,16 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
 
         // The owner edits the other message: its text moves into its document.
         crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
-        let writer = oneiron::WriteActor::new(actor, EdgeActorClass::Human);
+        let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+        let writer = oneiron::WriteActor::new(owner_id, EdgeActorClass::Human);
         let owner = server
             .vault()
-            .authenticate_owner(actor, ACTOR, true, oneiron::store::GateDecisionId::now())
+            .authenticate_owner(
+                owner_id,
+                &owner_id.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
             .unwrap();
         let authorization = DocAuthorization::Owner(&owner);
         server

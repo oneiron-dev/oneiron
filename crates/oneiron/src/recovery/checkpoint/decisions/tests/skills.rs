@@ -5,7 +5,6 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME;
 use crate::edge::EdgeKind;
 use crate::recovery::checkpoint::RestoreReason;
-use crate::registry::ENTITY_TYPE_PERSON;
 use crate::skill::{SkillContentHash, SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 use crate::skill_hub::pack_catalog::{
     PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackInstallStatus, PackPermissions,
@@ -135,8 +134,7 @@ fn pack_vault() -> Result<(tempfile::TempDir, Vault, ForeignSkillPublisher, Enti
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
     let at = TimeRange { start: 1, end: 1 };
-    let (owner, hub) = (entity(0xC5), entity(0xC6));
-    vault.put_entity(&owner, ENTITY_TYPE_PERSON, at, 1, b"owner")?;
+    let (owner, hub) = (vault.ensure_embedded_owner_actor()?, entity(0xC6));
     let owner =
         vault.authenticate_owner(owner, "principal:pack-owner", true, GateDecisionId::now())?;
     let record = SkillHubRecord::new(

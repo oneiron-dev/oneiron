@@ -1178,8 +1178,10 @@ fn receipt_retention_keeps_active_share_admission_gate() -> Result<()> {
         EntityId::now(),
         &crate::gate::default_policy_manifest().unwrap(),
     )?;
+    // Retention is the vault owner's setting, not the share issuer's.
+    let owner_id = vault.ensure_embedded_owner_actor()?;
     let owner = vault.authenticate_owner(
-        issuer.entity_ref(),
+        owner_id,
         "principal:share-retention",
         true,
         GateDecisionId::now(),

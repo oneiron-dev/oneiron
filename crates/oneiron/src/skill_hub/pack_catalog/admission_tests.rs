@@ -113,9 +113,8 @@ fn fixture(
     // legacy helper deindexes it and cannot serve this fixture.
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let at = TimeRange { start: 1, end: 1 };
-    vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
     let owner = vault.authenticate_owner(
         owner,
         "principal:pack-owner",
@@ -289,8 +288,7 @@ fn model_catalog_loader_refuses_installed_bytes_outside_the_scan_ledger() -> Res
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
     let at = TimeRange { start: 1, end: 1 };
-    let owner = EntityId::now();
-    vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner,
         "principal:catalog-owner",

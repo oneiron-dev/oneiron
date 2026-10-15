@@ -6,16 +6,7 @@ use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 fn setup() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let (dir, vault) = open_test_vault_with(embedding_test_config());
-    let id = entity(0x52);
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(id, "principal:owner", true, GateDecisionId::now())
         .unwrap();

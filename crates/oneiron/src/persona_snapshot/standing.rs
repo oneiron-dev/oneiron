@@ -345,15 +345,13 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::ENTITY_TYPE_PERSON;
     use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
     #[test]
     fn handles_refuse_text_and_session_floor_evictions_rebuild_deterministically() -> Result<()> {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        let actor = entity(0x51);
+        let actor = vault.ensure_embedded_owner_actor().unwrap();
         let world = entity(0x52);
         let at = TimeRange { start: 1, end: 1 };
-        vault.put_entity(&actor, ENTITY_TYPE_PERSON, at, 1, b"fixture")?;
         vault.put_entity(
             &world,
             crate::registry::ENTITY_TYPE_WORLD,

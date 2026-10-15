@@ -40,7 +40,7 @@ fn agent_memory_request_requires_exact_owner_confirmation_before_policy_changes(
     use crate::{EdgeActorClass, WriteActor};
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     crate::test_util::provision_engine_machines(&vault);
-    let owner_id = entity(0x75);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let agent_id = entity(0x76);
     for id in [owner_id, agent_id] {
         vault.put_entity(
@@ -151,7 +151,8 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
     };
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     crate::test_util::provision_engine_machines(&vault);
-    let person = entity(0x61);
+    // The digest is the owner's: the asked person is the vault's owner.
+    let person = vault.ensure_embedded_owner_actor()?;
     let other = entity(0x62);
     let skill = entity(0x63);
     for id in [person, other] {

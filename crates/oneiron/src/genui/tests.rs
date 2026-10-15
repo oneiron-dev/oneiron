@@ -50,7 +50,10 @@ fn owner_context() -> (
 ) {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let owner = authenticated_person(&vault, 0x71, "owner");
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(owner_id, "owner", true, crate::store::GateDecisionId::now())
+        .expect("owner proof");
     (dir, vault, owner)
 }
 

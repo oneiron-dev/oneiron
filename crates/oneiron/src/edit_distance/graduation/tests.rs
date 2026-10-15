@@ -20,19 +20,7 @@ fn scope() -> RampScope {
 }
 
 fn owner(vault: &Vault) -> AuthenticatedOwner {
-    let actor = crate::test_util::entity(0x25);
-    vault
-        .put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-            b"graduation fixture owner",
-        )
-        .expect("put owner");
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner")

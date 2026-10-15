@@ -42,12 +42,7 @@ fn an_owner_purge_keeps_the_message_version_a_live_claim_cites() -> Result<()> {
         vault.check_entity_text_purge(&cited, &latest).is_err(),
         "a live citation floors the purge"
     );
-    let owner = vault.authenticate_owner(
-        writer,
-        &writer.to_hex(),
-        true,
-        crate::store::GateDecisionId::now(),
-    )?;
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let receipt =
         vault.purge_entity_text_history(&cited, &latest, &DocAuthorization::Owner(&owner), 20)?;
     assert_ne!(

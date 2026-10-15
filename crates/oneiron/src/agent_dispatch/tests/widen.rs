@@ -17,6 +17,12 @@ fn owner(vault: &Vault, id: EntityId) -> Result<AuthenticatedOwner> {
     vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
 }
 
+/// The vault's embedded owner's proof: who owns the board and lands a widen.
+fn vault_owner(vault: &Vault) -> Result<AuthenticatedOwner> {
+    let id = vault.ensure_embedded_owner_actor()?;
+    vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
+}
+
 fn board(vault: &Vault, actor: EntityId, row: EntityId) -> AttemptId {
     // The TASK and Owner fact are minted by the shipped facade, not raw rows.
     let creator = EntityId::from_bytes([0xE1; 16]).expect("first-party creator");
@@ -78,7 +84,7 @@ fn proposed(outcome: AgentDispatchOutcome) -> Box<ContextWidenProposal> {
 #[test]
 fn proposed_widen_is_inert_replay_bound_and_only_board_owner_lands() -> Result<()> {
     let (_dir, vault) = open_board_vault();
-    let owner = owner(&vault, test_id(0xA0))?;
+    let owner = vault_owner(&vault)?;
     let outsider = self::owner(&vault, test_id(0xB2))?;
     let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
     let turn = chat_turn(&vault)?;
@@ -163,7 +169,7 @@ fn proposed_widen_is_inert_replay_bound_and_only_board_owner_lands() -> Result<(
 #[test]
 fn owner_approval_cannot_exceed_board_live_recursive_slice() -> Result<()> {
     let (_dir, vault) = open_board_vault();
-    let owner = owner(&vault, test_id(0xA0))?;
+    let owner = vault_owner(&vault)?;
     let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
     chat_turn(&vault)?;
     let board = board(&vault, owner.actor(), row);
@@ -219,7 +225,7 @@ fn owner_approval_cannot_exceed_board_live_recursive_slice() -> Result<()> {
 #[test]
 fn missing_board_authority_depth_and_sibling_refusals_never_enqueue() -> Result<()> {
     let (_dir, vault) = open_board_vault();
-    let owner = owner(&vault, test_id(0xA0))?;
+    let owner = vault_owner(&vault)?;
     let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
     chat_turn(&vault)?;
     let dispatcher = AgentDispatcher::new(&vault);
@@ -309,7 +315,7 @@ fn different_request_cannot_reuse_a_parked_dedupe_key() -> Result<()> {
 #[test]
 fn approval_does_not_skip_an_excluding_ancestor() -> Result<()> {
     let (_dir, vault) = open_board_vault();
-    let owner = owner(&vault, test_id(0xA0))?;
+    let owner = vault_owner(&vault)?;
     let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
     chat_turn(&vault)?;
     let seeded_board = board(&vault, owner.actor(), row);
@@ -389,7 +395,7 @@ struct WorkflowWidenFixture {
 
 fn workflow_widen_fixture() -> Result<WorkflowWidenFixture> {
     let (dir, vault) = open_board_vault();
-    let owner = owner(&vault, test_id(0xA0))?;
+    let owner = vault_owner(&vault)?;
     let board_row = put_row(&vault, 0xB3, "workflow.board", AgentCeiling::Auto)?;
     let parent_row = put_row(&vault, 0xB4, "workflow.parent", AgentCeiling::Proposed)?;
     let first = put_row(&vault, 0xB5, "workflow.first", AgentCeiling::Auto)?;
@@ -736,7 +742,7 @@ mod foreign_owner_proof {
     #[test]
     fn a_foreign_owner_proof_lands_no_widen() -> Result<()> {
         let (_dir, vault) = open_board_vault();
-        let owner = owner(&vault, test_id(0xA0))?;
+        let owner = vault_owner(&vault)?;
         let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
         chat_turn(&vault)?;
         let board = board(&vault, owner.actor(), row);

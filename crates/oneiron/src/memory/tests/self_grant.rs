@@ -197,7 +197,7 @@ fn runtime_supersede_trap_refuses_foreign_authored_head_before_receipts() {
 #[test]
 fn daemon_needs_exact_owner_delegation_even_for_its_own_skill() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x51);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let machine = put_machine(&vault, 0x52);
     root_vault_binding(&vault, 0x53, owner, "human");
     let proof = owner_proof(&vault, owner);
@@ -591,7 +591,7 @@ fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
 fn own_skill_edit_survives_a_receipt_retention_sweep() {
     let (_dir, vault) = open_vault();
     let resident = put_person(&vault, 0x25);
-    let owner = put_person(&vault, 0x26);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let memory = vault.memory(resident, EdgeActorClass::Agent);
     let saved = memory.skill_save(id(0x27), &skill(), None, 100).unwrap();
     crate::test_util::backdate_claim_gate_decisions(&vault, 1).unwrap();

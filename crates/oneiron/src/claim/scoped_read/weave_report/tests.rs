@@ -178,15 +178,8 @@ fn person_sees_only_self_and_member_project_rows_and_touching_live_links() -> Re
 #[test]
 fn owner_and_agent_have_distinct_sections_and_actor_bound_reads() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x51);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let agent = entity(0x52);
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
     vault.put_entity(
         &agent,
         crate::registry::ENTITY_TYPE_PERSON,
@@ -350,7 +343,8 @@ fn retracted_provenance_excludes_direct_and_edge_claim_links_for_person_and_owne
     use crate::edge::{EdgeActorClass, EdgeConfirmationStatus};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let person = entity(0x81);
+    // The owner reads as themselves too: the vault's embedded owner.
+    let person = vault.ensure_embedded_owner_actor()?;
     let peer = entity(0x82);
     for id in [person, peer] {
         vault.put_entity(

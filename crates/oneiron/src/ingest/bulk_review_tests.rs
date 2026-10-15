@@ -14,10 +14,9 @@ fn fixture() -> Result<(
 )> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), VaultConfig::default())?;
-    let actor = EntityId::now();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     let subject = EntityId::now();
     let time = TimeRange { start: 1, end: 1 };
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"owner")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time, 1, b"subject")?;
     let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
     let batch = ImportedClaimBatch {
@@ -135,9 +134,8 @@ fn decisions_for(
 
 /// Another live owner of the same vault, as on a shared vault.
 fn second_owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
-    let actor = EntityId::now();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     let time = TimeRange { start: 1, end: 1 };
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"second owner")?;
     vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
 }
 

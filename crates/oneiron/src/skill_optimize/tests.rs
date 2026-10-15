@@ -3523,10 +3523,7 @@ fn judged_verdict_rejects_unsupported_world_axes_and_unbound_counts() -> Result<
 }
 
 fn vector_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let id = EntityId::now();
-    vault
-        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"goal owner")
-        .expect("person");
+    let id = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             id,
@@ -4905,10 +4902,7 @@ fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> R
 
 // ONE-2115: a pending tradeoff climbs rule → Jev band → responsible A/B.
 fn tradeoff_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let person = EntityId::now();
-    vault
-        .put_entity(&person, ENTITY_TYPE_PERSON, t(1), 1, b"responsible")
-        .unwrap();
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .authenticate_owner(
             person,
