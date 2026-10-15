@@ -5,7 +5,8 @@
 //! exchanges past the bound are refused while a stalled one holds its permit,
 //! the permit returns once the stalled child is gone, and a slow transfer
 //! that keeps moving is never cut. One push names no limit on its ref count
-//! (rule 5): two hundred refs land in one exchange.
+//! (rule 5): two hundred refs land in one exchange, and a status report past
+//! the memory the bridge holds is held on disk.
 
 use super::routes::git_http_routes;
 use crate::config::{LimitsConfig, SyncServerConfig};
@@ -31,6 +32,8 @@ struct Origin {
     /// The token and binding stock git presents, as `-c` arguments.
     git_auth: [String; 2],
     oid: String,
+    /// The vault's per-request door root, where a held report spills.
+    door_root: std::path::PathBuf,
     source: tempfile::TempDir,
     _vault_dir: tempfile::TempDir,
     _serving: tokio::task::JoinHandle<()>,
@@ -54,6 +57,12 @@ fn stock_git(root: &Path, args: &[&str]) -> String {
 /// A served `demo.git` holding one commit, behind the git routes with the
 /// given limits, and a registered pusher's credential for it.
 async fn origin(limits: LimitsConfig) -> Origin {
+    origin_holding(limits, None).await
+}
+
+/// [`origin`], holding at most `status_memory` bytes of a push's report in
+/// memory when given.
+async fn origin_holding(limits: LimitsConfig, status_memory: Option<usize>) -> Origin {
     let vault_dir = tempfile::tempdir().expect("vault");
     let vault = Arc::new(
         oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default())
@@ -69,7 +78,14 @@ async fn origin(limits: LimitsConfig) -> Origin {
         crate::test_credentials::RECIPE_PREFIX,
         oneiron::EntityId::now().to_hex()
     );
-    let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
+    let mut server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
+    if let Some(bytes) = status_memory {
+        Arc::get_mut(&mut server)
+            .expect("the only server handle")
+            .transfers
+            .git_status_memory = bytes;
+    }
+    let door_root = smart_http::origin_door_root(&vault).expect("door root");
     let request = axum::http::Request::builder()
         .header(AUTHORIZATION, token)
         .body(Body::empty())
@@ -121,6 +137,7 @@ async fn origin(limits: LimitsConfig) -> Origin {
         headers,
         git_auth,
         oid,
+        door_root,
         source,
         _vault_dir: vault_dir,
         _serving: serving,
@@ -410,4 +427,74 @@ async fn a_slow_fetch_that_keeps_moving_is_not_cut() {
         body.windows(4).any(|window| window == b"PACK"),
         "the fetch delivers its pack"
     );
+}
+
+/// One receive-pack request creating `count` branches at the origin's commit,
+/// asking for side-band status, with the empty pack stock git sends for it.
+fn creations(origin: &Origin, count: usize) -> Vec<u8> {
+    let zero = "0".repeat(origin.oid.len());
+    let mut request = String::new();
+    for n in 0..count {
+        let capabilities = if n == 0 {
+            "\0report-status side-band-64k"
+        } else {
+            ""
+        };
+        request.push_str(&pkt(&format!(
+            "{zero} {} refs/heads/spill-{n:03}{capabilities}\n",
+            origin.oid
+        )));
+    }
+    request.push_str("0000");
+    let pack = std::process::Command::new("git")
+        .current_dir(origin.source.path())
+        .args(["pack-objects", "--stdout"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("stock Git packs");
+    assert!(pack.status.success() && pack.stdout.starts_with(b"PACK"));
+    let mut bytes = request.into_bytes();
+    bytes.extend_from_slice(&pack.stdout);
+    bytes
+}
+
+fn door_entries(origin: &Origin) -> Vec<std::ffi::OsString> {
+    let mut entries: Vec<_> = std::fs::read_dir(&origin.door_root)
+        .expect("door root")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// A push's status report past the memory the bridge holds for it is held on
+/// disk, never refused (rule 5). With that memory lowered to 1 KiB, a push of
+/// 300 creations lands, its report is byte for byte the one an origin holding
+/// it in memory sends, and nothing it held is left in the door root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_push_report_past_the_held_memory_spills_and_lands() {
+    let in_memory = origin(LimitsConfig::default()).await;
+    let spilled = origin_holding(LimitsConfig::default(), Some(1024)).await;
+    let before = door_entries(&spilled);
+    let mut reports = Vec::new();
+    for origin in [&in_memory, &spilled] {
+        let request = creations(origin, 300);
+        let mut stream = rpc(origin, "git-receive-pack", request.len(), &request).await;
+        let (status, body) = response(&mut stream).await;
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+        reports.push(body);
+    }
+    let count = |haystack: &[u8], needle: &[u8]| {
+        haystack
+            .windows(needle.len())
+            .filter(|window| *window == needle)
+            .count()
+    };
+    assert!(reports[1].len() > 1024, "{} report bytes", reports[1].len());
+    assert_eq!(count(&reports[1], b"ok refs/heads/spill-"), 300);
+    assert_eq!(reports[0], reports[1]);
+    let (status, advertised) = advertisement(&spilled).await;
+    assert_eq!(status, 200);
+    assert_eq!(count(&advertised, b" refs/heads/spill-"), 300);
+    assert_eq!(door_entries(&spilled), before);
 }

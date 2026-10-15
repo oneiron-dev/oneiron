@@ -59,3 +59,4 @@ mod tests_lifetime;
 mod tests_push;
 
 pub(crate) use self::routes::git_http_routes;
+pub(crate) use self::serve::GIT_HTTP_MAX_HELD_BYTES;

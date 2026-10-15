@@ -32,6 +32,8 @@ pub(crate) struct Transfers {
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
     pub(crate) idle: Duration,
+    /// Bytes of one push's status report held while its landing is journaled.
+    pub(crate) git_status_memory: usize,
 }
 
 impl Transfers {
@@ -42,6 +44,7 @@ impl Transfers {
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
+            git_status_memory: crate::api::git_http::GIT_HTTP_MAX_HELD_BYTES,
         }
     }
 

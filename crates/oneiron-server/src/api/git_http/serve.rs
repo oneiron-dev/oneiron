@@ -31,7 +31,7 @@ const GIT_HTTP_STREAM_CHUNKS: usize = 4;
 const GIT_HTTP_BODY_PIECE: usize = 64 * 1024;
 
 // Status reports only; fetch packs continue to stream without this bound.
-pub(super) const GIT_HTTP_MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const GIT_HTTP_MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
 
 pub(super) const GIT_HTTP_MAX_HELD_CHUNKS: usize = 4096;
 
@@ -55,6 +55,7 @@ pub(super) async fn run_serve(
     // A push is held until its landing is journaled; everything else streams.
     let held = request.is_receive_pack();
     let idle = server.transfers.idle;
+    let status_memory = server.transfers.git_status_memory;
     let (request_tx, request_rx) = mpsc::channel::<BodyPiece>(GIT_HTTP_STREAM_CHUNKS);
     let (head_tx, head_rx) = oneshot::channel::<ResponseHead>();
     let (response_tx, response_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
@@ -91,7 +92,7 @@ pub(super) async fn run_serve(
     });
 
     if held {
-        return held_response(head_rx, response_rx, worker).await;
+        return held_response(head_rx, response_rx, worker, status_memory).await;
     }
     match head_rx.await {
         // The backend answered, and a fetch's answer is the pack itself: it
@@ -117,6 +118,7 @@ pub(super) async fn held_response(
     head: oneshot::Receiver<ResponseHead>,
     mut chunks: mpsc::Receiver<Bytes>,
     worker: tokio::task::JoinHandle<oneiron::Result<smart_http::ServeReport>>,
+    limit: usize,
 ) -> Response {
     let head = head.await.ok();
     let mut body = Vec::new();
@@ -126,9 +128,7 @@ pub(super) async fn held_response(
     // strand the blocking producer before it journals the effects already made.
     while let Some(chunk) = chunks.recv().await {
         if !exceeded {
-            if chunk.len() > GIT_HTTP_MAX_HELD_BYTES.saturating_sub(bytes)
-                || body.len() >= GIT_HTTP_MAX_HELD_CHUNKS
-            {
+            if chunk.len() > limit.saturating_sub(bytes) || body.len() >= GIT_HTTP_MAX_HELD_CHUNKS {
                 exceeded = true;
                 body.clear();
             } else {

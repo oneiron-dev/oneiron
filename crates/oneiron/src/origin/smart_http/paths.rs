@@ -207,7 +207,7 @@ pub fn origin_serving_root(vault: &Vault) -> Result<PathBuf> {
 
 /// The per-request door root. Never inside the serving root, so it is never
 /// addressable as a repository.
-pub(super) fn origin_door_root(vault: &Vault) -> Result<PathBuf> {
+pub fn origin_door_root(vault: &Vault) -> Result<PathBuf> {
     let root = vault.store.env.path().join(ORIGIN_DOOR_ROOT_NAME);
     fs::create_dir_all(&root)?;
     Ok(root.canonicalize()?)
