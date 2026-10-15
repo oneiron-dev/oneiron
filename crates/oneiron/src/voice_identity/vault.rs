@@ -310,8 +310,17 @@ impl Vault {
         voice_session_ref: &str,
     ) -> Result<Option<VoiceSessionRosterV1>> {
         let rtxn = self.store.env.read_txn()?;
+        self.voice_session_roster_in_txn(&rtxn, voice_session_ref)
+    }
+
+    /// [`Self::voice_session_roster`] in the caller's snapshot.
+    pub(crate) fn voice_session_roster_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        voice_session_ref: &str,
+    ) -> Result<Option<VoiceSessionRosterV1>> {
         let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
-        ROSTER.get(&self.store, &rtxn, &digest)
+        ROSTER.get(&self.store, rtxn, &digest)
     }
 
     /// Display-only corroboration for a voice grant offer. No caller boolean

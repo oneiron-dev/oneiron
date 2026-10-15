@@ -97,8 +97,9 @@ impl SyncServer {
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
     /// Starts the periodic lifecycle loop. Each tick, the first at once,
-    /// expires sync leases, drains reassert markers and starts a housekeeping
-    /// pass through `admit`, the host's write gate.
+    /// expires sync leases, drains reassert markers, finishes the dependent
+    /// walks left past their first batch and starts a housekeeping pass
+    /// through `admit`, the host's write gate.
     pub(crate) fn spawn_lifecycle_scheduler(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
@@ -121,6 +122,7 @@ impl SyncServer {
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
+                server.finish_dependent_walks_once().await;
                 // The pass and the maintenance run on tasks of their own, so
                 // neither holds back the next tick's lease expiry, nor one
                 // the other.
@@ -135,6 +137,19 @@ impl SyncServer {
         LifecycleScheduler {
             tick,
             server: Arc::clone(self),
+        }
+    }
+
+    /// Finishes the dependent walks an erase, a purge or a changed source
+    /// left past its first batch; reads honour them until then.
+    async fn finish_dependent_walks_once(&self) {
+        let vault = std::sync::Arc::clone(self.vault());
+        match tokio::task::spawn_blocking(move || vault.finish_dependent_walks()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "dependent walk pass failed");
+            }
+            Err(error) => tracing::warn!(panicked = error.is_panic(), "dependent walk task failed"),
         }
     }
 

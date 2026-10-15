@@ -350,3 +350,84 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
         Some(watch)
     );
 }
+
+/// F15 review (Astra R1 F2): every write stores at the body's `query_ref`, so
+/// a SAVED_QUERY row whose body names another row turned authority over the
+/// first row into an overwrite of the second. A row reads only under its own
+/// id; a body naming another reads as absent, and the victim stays as it was.
+#[test]
+fn a_saved_query_row_answers_only_for_its_own_id() {
+    use crate::campaign::register_crm_pack;
+    use crate::registry::TypeByteFamily;
+    use crate::{TimeRange, VaultConfig};
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
+        .expect("open vault");
+    register_crm_pack(&vault, 107, 108, TypeByteFamily::Productivity).expect("pack");
+    let (victim_owner, attacker) = (id(0xC1), id(0xC2));
+    let definition = sample_definition();
+    let request = CreateSavedQueryRequest {
+        schema_version: SAVED_QUERY_SCHEMA_VERSION,
+        scope: definition.scope.clone(),
+        filter: definition.filter.clone(),
+        matcher: definition.matcher.clone(),
+        eval: definition.eval,
+    };
+    let victim = create_saved_query(&vault, victim_owner, &request, 10).expect("victim");
+    let alias = create_saved_query(&vault, attacker, &request, 11).expect("alias");
+    // The attacker's own row, rewritten so its body names the victim's row.
+    let kind = super::storage::saved_query_type_byte(&vault).expect("kind");
+    let raw = vault.get_raw(&alias.query_ref).expect("raw").expect("row");
+    let forged = String::from_utf8(raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec())
+        .expect("json body")
+        .replace(&alias.query_ref.to_hex(), &victim.query_ref.to_hex());
+    vault
+        .put_entity(
+            &alias.query_ref,
+            kind,
+            TimeRange { start: 11, end: 11 },
+            12,
+            forged.as_bytes(),
+        )
+        .expect("put the forged row");
+
+    let update = UpdateSavedQueryRequest {
+        expected_definition_version: 1,
+        scope: request.scope.clone(),
+        filter: FilterAst::All { terms: Vec::new() },
+        matcher: request.matcher.clone(),
+        eval: request.eval,
+    };
+    assert!(matches!(
+        update_saved_query(&vault, attacker, alias.query_ref, &update, 20),
+        Err(Error::EntityNotFound)
+    ));
+    assert!(matches!(
+        archive_saved_query(&vault, attacker, alias.query_ref, 1, 21),
+        Err(Error::EntityNotFound)
+    ));
+    let drift = PackDrift {
+        from_pack_id: "crm".to_owned(),
+        from_version: "1".to_owned(),
+        to_pack_id: "crm".to_owned(),
+        to_version: "2".to_owned(),
+        affected_predicates: vec!["crm.fit".to_owned()],
+    };
+    assert!(matches!(
+        repair_pack_drift(
+            &vault,
+            attacker,
+            alias.query_ref,
+            &alias.definition,
+            &drift,
+            22
+        ),
+        Err(Error::EntityNotFound)
+    ));
+    assert_eq!(
+        read_saved_query(&vault, victim_owner, victim.query_ref)
+            .expect("read")
+            .expect("the victim's query survives"),
+        victim
+    );
+}

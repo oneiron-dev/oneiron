@@ -9,8 +9,7 @@ use crate::analyzer::MultilingualAnalyzer;
 #[cfg(feature = "test-support")]
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::{HostingPrivacyPosture, VaultConfig};
-use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR;
+use crate::entity_id::{EntityId, derived_domains::EMBEDDED_OWNER_ACTOR};
 use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
@@ -18,6 +17,7 @@ use crate::temporal::TimeRange;
 use std::path::Path;
 
 mod config_validation;
+mod lease_door;
 use self::config_validation::validate_open_config;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
@@ -571,6 +571,7 @@ impl Vault {
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_consult_party_facts_on_open()?;
+        vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             // The seeded births below stamp the owner's `substrate` FACET,
             // which the owner PERSON put mints. Pinned at 0 like the bootstrap
@@ -610,8 +611,7 @@ impl Vault {
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
         while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
         while vault.collect_lfs_garbage(32)? != 0 {}
-        // An erase or sweep interrupted after its commit resumes here.
-        vault.finish_gate_decision_retirements_after_commit();
+        vault.resume_erases_after_commit();
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),
