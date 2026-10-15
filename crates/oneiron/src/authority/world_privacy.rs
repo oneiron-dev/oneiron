@@ -386,19 +386,31 @@ impl PrivacyMeet {
     }
 
     pub(super) fn meet(&self, other: &Self) -> Self {
-        Self {
-            named: match (&self.named, &other.named) {
-                (None, named) | (named, None) => named.clone(),
-                (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
-            },
-            mine_only: self.mine_only || other.mine_only,
-            contenders: self.contenders.union(&other.contenders).copied().collect(),
-            sealed: self.sealed.min(other.sealed),
-            models: if self.models == other.models {
-                self.models.clone()
-            } else {
-                EffectiveModelOrder::Conflicted
-            },
+        #[cfg(test)]
+        super::world_strength::WORLD_MEET_COPIES
+            .with(|copies| copies.set(copies.get() + self.contenders.len()));
+        let mut meet = self.clone();
+        meet.meet_with(other);
+        meet
+    }
+
+    /// [`Self::meet`] in place: the accumulated sets grow or shrink where
+    /// they are, so a walk over many edits copies none of them (Sol S2-R3
+    /// S3-F3).
+    pub(super) fn meet_with(&mut self, other: &Self) {
+        #[cfg(test)]
+        super::world_strength::WORLD_MEET_COPIES
+            .with(|copies| copies.set(copies.get() + other.contenders.len()));
+        match (&mut self.named, &other.named) {
+            (_, None) => {}
+            (named @ None, Some(right)) => *named = Some(right.clone()),
+            (Some(left), Some(right)) => left.retain(|machine| right.contains(machine)),
+        }
+        self.mine_only |= other.mine_only;
+        self.contenders.extend(other.contenders.iter().copied());
+        self.sealed = self.sealed.min(other.sealed);
+        if self.models != other.models {
+            self.models = EffectiveModelOrder::Conflicted;
         }
     }
 

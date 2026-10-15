@@ -170,6 +170,9 @@ thread_local! {
     /// The edits [`world_meet`] visited on this thread: contract §4's cost
     /// oracle.
     pub(super) static WORLD_MEET_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The machine ids the meets copied on this thread: the same oracle for
+    /// the one-machine picks a read accumulates (Sol S2-R3 S3-F3).
+    pub(super) static WORLD_MEET_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The meet of every live edit's contribution to `world` under `view`. A
@@ -198,14 +201,14 @@ pub(super) fn world_meet(
     for (hash, edit) in &frontier.live {
         #[cfg(test)]
         WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
-        meet = meet.meet(&PrivacyMeet::of(&edit.settings));
+        meet.meet_with(&PrivacyMeet::of(&edit.settings));
         if visited.insert(*hash) && !full_strength(standing, hash, edit, view) {
             pending.push(edit.as_ref());
         }
     }
     while let Some(next) = pending.pop() {
         if next.replaced.is_empty() || next.disputed {
-            meet = meet.meet(&default());
+            meet.meet_with(&default());
         }
         for replaced in &next.replaced {
             if !visited.insert(*replaced) {
@@ -220,7 +223,7 @@ pub(super) fn world_meet(
             };
             #[cfg(test)]
             WORLD_MEET_VISITS.with(|visits| visits.set(visits.get() + 1));
-            meet = meet.meet(&PrivacyMeet::of(&prior.settings));
+            meet.meet_with(&PrivacyMeet::of(&prior.settings));
             if !full_strength(standing, replaced, prior, view) {
                 pending.push(prior.as_ref());
             }

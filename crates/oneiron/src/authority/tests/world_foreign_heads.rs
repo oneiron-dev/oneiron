@@ -4,8 +4,11 @@
 //! rows fold the same in every arrival order.
 use super::machine_identity::{host, request_for};
 use super::owner_anchor::{YOURS, pin, profile, publish, root_record, signed};
-use super::support::{authority_key_from_ed, device, ed_key, genesis_entry};
-use super::world_chain_reads::{edit, fold_under, hash};
+use super::support::{
+    EnrollSpec, authority_key_from_ed, cosign_ed, device, ed_key, enroll_device_entry,
+    genesis_entry,
+};
+use super::world_chain_reads::{edit, fold_under, hash, seeing};
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, kit_seed, set};
 use super::world_privacy::world_row;
 use super::*;
@@ -90,11 +93,14 @@ fn forty_foreign_roots_never_crowd_a_root_door() {
     );
 }
 
-/// Ruling 2's check (a). The owner removes M through its pinned anchor and
-/// through the roster after M widened a world. Beside that, a foreign anchor
-/// publishes a root and marks M "yours" without naming the removals. In both
-/// arrival orders, on an install pinned to the owner's root and on an
-/// unpinned one, M is not mine, and the two orders fold the same.
+/// Ruling 2's check (a), on the race shape of 7c (Sol R1d-F3). M keeps W
+/// on itself, then widens it to `MyMachines`; concurrently the owner removes
+/// M through its anchor and through the roster, each removal listing only
+/// the first edit. Beside that, a foreign anchor publishes a root and marks
+/// M "yours" without naming the removals. In both arrival orders, on an
+/// install pinned to the owner's root and on an unpinned one, both removals
+/// stand, M is not mine, the widening only narrows, and the two orders fold
+/// the same.
 #[test]
 fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
     let owner_key = ed_key(150);
@@ -103,6 +109,7 @@ fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
     let (owner_root, owner_anchor, owner_published) = publish(id, &genesis);
     let machine_key = ed_key(151);
     let request = request_for(id, EntityId::now(), &machine_key);
+    let m = (request.machine, &machine_key);
     let roster_mark = signed(
         id,
         &[&owner_published],
@@ -118,34 +125,40 @@ fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
         profile(&request, YOURS, 1),
     );
     let world = EntityId::now();
-    let widened = edit(
+    let kept = edit(
         id,
         &[&anchor_mark],
-        (request.machine, &machine_key),
+        m,
         1,
+        world,
+        ReadLocation::OneMachine(request.machine),
+    );
+    let widened = edit(
+        id,
+        &[&anchor_mark, &kept],
+        m,
+        2,
         world,
         ReadLocation::MyMachines,
     );
-    let removed = MachineRole::Removed;
+    let removal = |signer, seq| {
+        signed(
+            id,
+            &[&anchor_mark],
+            signer,
+            seq,
+            seeing(&request, MachineRole::Removed, 2, &[&kept]),
+        )
+    };
+    let removals = [removal(&owner_anchor, 3), removal(&owner_key, 2)];
     let owner_side = [
-        owner_published.clone(),
-        roster_mark.clone(),
+        owner_published,
+        roster_mark,
         anchor_mark.clone(),
-        widened.clone(),
-        signed(
-            id,
-            &[&widened],
-            &owner_anchor,
-            3,
-            profile(&request, removed, 2),
-        ),
-        signed(
-            id,
-            &[&widened],
-            &owner_key,
-            2,
-            profile(&request, removed, 2),
-        ),
+        kept,
+        widened,
+        removals[0].clone(),
+        removals[1].clone(),
     ];
     let (_, foreign_anchor, foreign_published) = publish(id, &genesis);
     let foreign_mark = signed(
@@ -173,44 +186,71 @@ fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
             agreed(&first, request.machine, world),
             agreed(&second, request.machine, world)
         );
-        assert!(first.valid_entries.contains(&hash(&foreign_mark)));
+        for entry in removals.iter().chain([&foreign_mark]) {
+            assert!(first.valid_entries.contains(&hash(entry)));
+        }
         let folded = first.machine(request.machine).unwrap();
         assert!(!folded.is_mine(root.map(pin).as_ref()));
-        assert_ne!(first.world_privacy(world).read, EffectiveRead::Everywhere);
+        assert_eq!(
+            first.world_privacy(world).read,
+            EffectiveRead::OneMachine(request.machine)
+        );
     }
 }
 
-/// Ruling 2's check (b). The owner revokes roster device D while D's key,
-/// as an anchor, publishes a root of its own that does not name the revoke.
-/// In both arrival orders, pinned to the owner's root and unpinned, D is
-/// revoked, its root stays foreign, and the two orders fold the same.
+/// Ruling 2's check (b). The owner, with a second owner device's cosign,
+/// revokes roster device D while D's key, as an anchor, publishes a root of
+/// its own that does not name the revoke. In both arrival orders, pinned to
+/// the owner's root and unpinned, the revoke stands, D is revoked, its root
+/// stays foreign, and the two orders fold the same.
 #[test]
 fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() {
     let owner_key = ed_key(160);
     let genesis = genesis_entry(160, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (owner_root, _, owner_published) = publish(id, &genesis);
+    let second_admin = enroll_device_entry(
+        id,
+        &owner_published,
+        &owner_key,
+        EnrollSpec {
+            seed: 161,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let second_key = ed_key(161);
     let seed = RecoveryRootSeed::generate().unwrap();
     let anchor = seed.anchor();
     let device_key = authority_key_from_ed(&anchor);
     let theirs = seed.public(&id).unwrap();
-    let enrolled = signed(
-        id,
-        &[&owner_published],
+    let enrolled = cosign_ed(
+        signed(
+            id,
+            &[&second_admin],
+            &owner_key,
+            2,
+            AuthorityOp::EnrollDevice {
+                device: device(device_key.clone(), ROLE_ADMIN, AuthorityTier::Software),
+            },
+        ),
         &owner_key,
-        1,
-        AuthorityOp::EnrollDevice {
-            device: device(device_key.clone(), ROLE_ADMIN, AuthorityTier::Software),
-        },
+        &second_key,
     );
-    let revoked = signed(
-        id,
-        &[&enrolled],
+    let revoked = cosign_ed(
+        signed(
+            id,
+            &[&enrolled],
+            &owner_key,
+            3,
+            AuthorityOp::RevokeDevice {
+                revoked_key: device_key.clone(),
+            },
+        ),
         &owner_key,
-        2,
-        AuthorityOp::RevokeDevice {
-            revoked_key: device_key.clone(),
-        },
+        &second_key,
     );
     let their_root = signed(
         id,
@@ -222,6 +262,7 @@ fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() 
     let owner_first = vec![
         genesis.clone(),
         owner_published.clone(),
+        second_admin.clone(),
         enrolled.clone(),
         revoked.clone(),
         their_root.clone(),
@@ -229,9 +270,10 @@ fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() 
     let root_first = vec![
         genesis,
         owner_published,
+        second_admin,
         enrolled,
         their_root.clone(),
-        revoked,
+        revoked.clone(),
     ];
     let (nobody, world) = (EntityId::now(), EntityId::now());
     for root in [Some(&owner_root), None::<&RecoveryRoot>] {
@@ -241,6 +283,7 @@ fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() 
             agreed(&first, nobody, world),
             agreed(&second, nobody, world)
         );
+        assert!(first.valid_entries.contains(&hash(&revoked)));
         assert!(first.roster[&device_key].revoked);
         assert!(first.valid_entries.contains(&hash(&their_root)));
         assert!(first.root_anchors()[&theirs.anchor_key].contains(&theirs.id));
