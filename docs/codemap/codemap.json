@@ -743,7 +743,8 @@
       "HealerSlot",
       "HealerSlotOutcome",
       "KillOutcome",
-      "KillProposal"
+      "KillProposal",
+      "KillerLease"
      ],
      "path": "src/agent_dispatch/types.rs",
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
@@ -752,7 +753,7 @@
       "crate-vis": 14,
       "enum": 5,
       "fn": 7,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -1615,7 +1616,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum predicates",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -1647,6 +1648,16 @@
      "surface": {
       "crate-vis": 11,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/fold_schedule.rs",
+     "purpose": "The fold's per-entry scheduler",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -1714,6 +1725,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/import_order.rs",
+     "purpose": "The order a store door is handed several AUTHORITY_LOG rows in (H72)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -1736,6 +1757,21 @@
      "purpose": "The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuthorityLogCheck"
+     ],
+     "path": "src/authority/log_budget.rs",
+     "purpose": "Pinned bounds on authority-fold work, and the store-door checks that keep a stored log inside them (H72)",
+     "surface": {
+      "const": 5,
+      "crate-vis": 22,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -1827,8 +1863,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 23
+      "crate-vis": 13,
+      "re-export": 24
      }
     },
     {
@@ -1840,7 +1876,7 @@
      "path": "src/authority/observation_policy.rs",
      "purpose": "Device-local authority observation policy and its versioned duration row",
      "surface": {
-      "const": 3,
+      "const": 6,
       "crate-vis": 1,
       "fn": 2,
       "struct": 1
@@ -1863,7 +1899,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -2082,6 +2118,24 @@
      "surface": {}
     },
     {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/fold_budget.rs",
+     "purpose": "Authority-fold work stays bounded, and the store doors keep a log inside the bounds (H72, W2-T3)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/fold_schedule.rs",
+     "purpose": "Oracle comparison: the queued scheduler folds exactly as the full rescan it replaced (H72), on random logs…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -2145,7 +2199,9 @@
      "notable": [],
      "path": "src/authority/tests/machine_fold.rs",
      "purpose": "World privacy P1 acceptance in the authority fold: who may answer for a machine, and which other authority…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -2369,7 +2425,7 @@
      "path": "src/authority/write_authorization.rs",
      "purpose": "Transaction-bound actor authorization for engine-owned write doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -3244,7 +3300,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/apply/mod.rs",
@@ -4457,7 +4513,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChoiceId",
@@ -4474,7 +4530,7 @@
      "purpose": "Companion proposal state, creation, and the curated shortlist",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 9
      }
@@ -4498,7 +4554,7 @@
      "path": "src/booking/companion_preset/storage.rs",
      "purpose": "Companion proposal row storage, token hashing, and error constructors",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -7521,8 +7577,8 @@
      "path": "src/channel_identity_selection/selection_rules.rs",
      "purpose": "Rule and rule-set types for channel-identity selection law",
      "surface": {
-      "crate-vis": 7,
-      "fn": 3,
+      "crate-vis": 8,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -11473,7 +11529,7 @@
      "purpose": "Public Vault doors plus the shared accept-offer txn helper used by ED-05",
      "surface": {
       "crate-vis": 1,
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -26084,7 +26140,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -26379,7 +26435,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/linkedin_send.rs",
@@ -30830,7 +30886,7 @@
      "path": "src/saved_query/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -34783,7 +34839,7 @@
      "path": "src/subject_model/tests/authorization.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -34957,7 +35013,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34977,7 +35033,7 @@
      "path": "src/sweep/mod.rs",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -35136,6 +35192,14 @@
      "notable": [],
      "path": "src/sync/bridge/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/bridge/tests/fact_suppression.rs",
+     "purpose": "F24 round 7 (H219): a task whose authority fact was tombstoned before it arrived keeps reading as a refusal…",
      "surface": {}
     },
     {
@@ -35573,7 +35637,17 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/order.rs",
+     "purpose": "The order one pass or delta visits AUTHORITY_LOG rows in",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -36311,7 +36385,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 6,
       "mod": 1,
       "re-export": 6,
@@ -36357,13 +36431,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 11,
       "fn": 3
      }
     },
@@ -36564,6 +36638,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BindingGeneration"
+     ],
+     "path": "src/task_authority/binding_generation.rs",
+     "purpose": "The binding generation a consult party held when its consult was minted",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1,
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36575,14 +36665,15 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_authority/tests.rs",
@@ -36928,6 +37019,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/consult_party_backfill.rs",
+     "purpose": "One-time open migration for consults minted before ConsultAssignee facts existed",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConsultPayload",
       "ConsultPayloadRef",
@@ -37116,7 +37217,7 @@
      "path": "src/task_verb/presence_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -37335,7 +37436,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/board_ack.rs",
@@ -37380,6 +37481,32 @@
      "notable": [],
      "path": "src/task_verb/tests/consult_lifecycle.rs",
      "purpose": "Task verb tests: Consult create and schema, result contract, replica settle, answer-vs-expiry, fan-out…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/tests/consult_party.rs",
+     "purpose": "Task verb tests: a consult's parties and its consent requirement are the facts its doors minted, never a…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/tests/consult_party_generation.rs",
+     "purpose": "Task verb tests: a consult party's binding generation names the bindings it held, so a rebind away and back…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/tests/consult_party_migration.rs",
+     "purpose": "Task verb tests: the one-time open migration that gives a consult minted before party facts existed the fact…",
      "surface": {}
     },
     {
@@ -37780,9 +37907,17 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 10,
+      "fn": 21,
       "struct": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/thread_lens/tests.rs",
+     "purpose": "H131: the send card a person approves shows what its action dispatches",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -38105,7 +38240,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/vault/open/mod.rs",
@@ -39893,7 +40028,7 @@
      "path": "tests/it/merge_split_oracle.rs",
      "purpose": "Identity-topology forward test oracle (ARCH-0055, ONE-1742 epic) — authored by the ONE-1743 path opener",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 42
      }
     },
     {
@@ -40083,7 +40218,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_maintenance_quota.rs",
@@ -40386,7 +40521,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 78,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40402,7 +40537,7 @@
     "batch": {
      "files": 99,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -41534,7 +41669,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 122,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41548,14 +41683,14 @@
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…"
     },
     "task_authority": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 75,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41597,10 +41732,10 @@
      "purpose": "—"
     },
     "thread_lens": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5)"
     },
     "thread_passport": {
@@ -41620,7 +41755,7 @@
     "vault": {
      "files": 28,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
@@ -41681,10 +41816,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 39,
+   "over_bar": 41,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2525,
-   "test_files": 819
+   "source_files": 2531,
+   "test_files": 826
   },
   "oneiron-android": {
    "files": [

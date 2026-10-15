@@ -114,6 +114,26 @@ impl SlotOracle for ScriptedOracle {
     }
 }
 
+/// The creating companion's facade: a live agent-capable row of this vault.
+fn companion(vault: &Vault) -> crate::memory::Memory<'_> {
+    if vault
+        .get_entity_type(&id(COMPANION))
+        .expect("entity type")
+        .is_none()
+    {
+        vault
+            .put_entity(
+                &id(COMPANION),
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"companion",
+            )
+            .expect("companion row");
+    }
+    vault.memory(id(COMPANION), crate::edge::EdgeActorClass::Agent)
+}
+
 /// Creates a proposal for `participants` people, expiring an hour out.
 fn propose(
     vault: &Vault,
@@ -121,7 +141,7 @@ fn propose(
     participants: usize,
 ) -> CompanionProposalCreation {
     create_companion_proposal(
-        vault,
+        &companion(vault),
         oracle,
         id(OWNER),
         &preset(),
@@ -141,10 +161,16 @@ fn tap(vault: &Vault, token: &str, proposal_id: ProposalId, choice: u16) -> TapA
 fn confirm(
     vault: &Vault,
     oracle: &dyn SlotOracle,
-    proposal_id: ProposalId,
+    created: &CompanionProposalCreation,
 ) -> Option<CompanionSoftConfirmation> {
-    soft_confirm_highest_common_on_home_node(vault, oracle, proposal_id, id(COMPANION), NOW)
-        .expect("confirm runs")
+    soft_confirm_highest_common_on_home_node(
+        vault,
+        oracle,
+        created.proposal.id,
+        &created.companion_token,
+        NOW,
+    )
+    .expect("confirm runs")
 }
 
 /// Every byte in `vault_meta`, so a search for a raw secret cannot miss a
@@ -215,6 +241,10 @@ fn proposal_creation_returns_raw_tokens_once_and_stores_only_hashes() {
             "a raw participant token must never be at rest"
         );
     }
+    assert!(
+        !contains(&stored, created.companion_token.as_bytes()),
+        "the raw companion token must never be at rest"
+    );
     // What IS at rest is the proposal-scoped hash set, and only that: the
     // row has no field a raw value could travel in.
     let row = stored_row(&vault, created.proposal.id);
@@ -310,7 +340,7 @@ fn tap_after_expires_at_fails_lazily() {
             &vault,
             &oracle,
             created.proposal.id,
-            id(COMPANION),
+            &created.companion_token,
             expires_at,
         )
         .is_err(),
@@ -355,7 +385,7 @@ fn confirm_recomputes_and_picks_highest_ranked_common_choice() {
         2,
     );
 
-    let answer = confirm(&vault, &oracle, created.proposal.id).expect("an answer");
+    let answer = confirm(&vault, &oracle, &created).expect("an answer");
     assert_eq!(answer.selected.id, ChoiceId(1));
     assert_eq!(answer.selected.slot, slot(12, 0.7));
     assert_eq!(answer.confirmed_by_companion, id(COMPANION));
@@ -363,6 +393,148 @@ fn confirm_recomputes_and_picks_highest_ranked_common_choice() {
 
     // Reloaded from stored state, not from the caller: a retry lands on the
     // very answer the first confirm recorded.
-    let retry = confirm(&vault, &oracle, created.proposal.id).expect("a retry");
+    let retry = confirm(&vault, &oracle, &created).expect("a retry");
     assert_eq!(retry, answer);
+}
+
+/// H216: a participant link discloses the proposal id. Its holder can tap,
+/// but cannot finalize the proposal or name a companion on it: only the
+/// token creation handed the companion confirms, and the answer names the
+/// companion that token was minted for.
+#[test]
+fn a_participant_cannot_confirm_in_a_companion_name() {
+    let (_dir, vault) = open_vault();
+    let oracle = ScriptedOracle::new(scripted_slots());
+    let created = propose(&vault, &oracle, 2);
+    let participant = created.participant_tokens[0].raw_token.clone();
+    tap(&vault, &participant, created.proposal.id, 1);
+
+    let guessed = "0".repeat(64);
+    for forged in [participant.as_str(), guessed.as_str(), ""] {
+        assert!(
+            soft_confirm_highest_common_on_home_node(
+                &vault,
+                &oracle,
+                created.proposal.id,
+                forged,
+                NOW
+            )
+            .is_err(),
+            "a confirm without the companion's token is refused"
+        );
+    }
+    assert!(
+        stored_row(&vault, created.proposal.id)
+            .confirmation
+            .is_none()
+    );
+
+    let answer = confirm(&vault, &oracle, &created).expect("the companion confirms");
+    assert_eq!(answer.confirmed_by_companion, id(COMPANION));
+}
+
+/// F24 review (H216): the companion a confirmation names is the actor that
+/// created the proposal, never an id the creator chose. A facade whose actor is
+/// no live row of this vault creates nothing.
+#[test]
+fn only_a_live_companion_actor_creates_a_proposal() {
+    let (_dir, vault) = open_vault();
+    let oracle = ScriptedOracle::new(scripted_slots());
+    let refused = create_companion_proposal(
+        &vault.memory(id(0x7E), crate::edge::EdgeActorClass::Agent),
+        &oracle,
+        id(OWNER),
+        &preset(),
+        monday(),
+        None,
+        "UTC".to_owned(),
+        1,
+        NOW + HOUR,
+    );
+    assert!(
+        refused.is_err(),
+        "an unknown actor cannot create a proposal"
+    );
+
+    let created = propose(&vault, &oracle, 1);
+    tap(
+        &vault,
+        &created.participant_tokens[0].raw_token,
+        created.proposal.id,
+        1,
+    );
+    let answer = confirm(&vault, &oracle, &created).expect("an answer");
+    assert_eq!(answer.confirmed_by_companion, id(COMPANION));
+}
+
+/// F24 review (H216): a companion row that still exists is not a companion
+/// that may act. Once the vault is rooted, a companion whose binding was
+/// revoked mints no fresh confirmation token, and neither does a deleted one.
+/// One regranted since is bound again, and creates.
+#[test]
+fn a_revoked_or_deleted_companion_creates_no_proposal() {
+    let (_dir, vault) = open_vault();
+    let oracle = ScriptedOracle::new(scripted_slots());
+    let companion_ref = companion(&vault).actor();
+    let writer = crate::WriteActor::new(companion_ref, crate::edge::EdgeActorClass::Agent);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xE9)
+        .expect("root the vault with the companion bound");
+    let regrant = crate::subject_model::tests::authorization::regrant_after(&revoke, writer, 0xE9)
+        .expect("sign the regrant");
+    propose(&vault, &oracle, 1);
+    vault
+        .put_authority_log_entries(&[(
+            revoke,
+            TimeRange {
+                start: 102,
+                end: 102,
+            },
+            102,
+        )])
+        .expect("revoke the companion's binding");
+    let create = |companion: &crate::memory::Memory<'_>| {
+        create_companion_proposal(
+            companion,
+            &oracle,
+            id(OWNER),
+            &preset(),
+            monday(),
+            None,
+            "UTC".to_owned(),
+            1,
+            NOW + HOUR,
+        )
+    };
+    assert!(
+        create(&companion(&vault)).is_err(),
+        "a revoked companion creates no proposal"
+    );
+    vault
+        .put_authority_log_entries(&[(
+            regrant,
+            TimeRange {
+                start: 103,
+                end: 103,
+            },
+            103,
+        )])
+        .expect("regrant the companion");
+    assert!(
+        create(&companion(&vault)).is_ok(),
+        "a companion regranted since creates again"
+    );
+
+    let (_deleted_dir, deleted) = open_vault();
+    let facade = companion(&deleted);
+    assert!(
+        create(&facade).is_ok(),
+        "positive control: a live companion"
+    );
+    deleted
+        .delete_entity(&companion_ref)
+        .expect("delete the companion");
+    assert!(
+        create(&facade).is_err(),
+        "a deleted companion creates no proposal"
+    );
 }

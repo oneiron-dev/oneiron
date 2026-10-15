@@ -169,6 +169,7 @@ impl Store {
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             authority_fold_cache: Mutex::new(None),
+            authority_door_view: Mutex::new(None),
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             machine_history_issuer: Mutex::new(None),

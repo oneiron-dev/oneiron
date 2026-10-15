@@ -109,6 +109,12 @@ pub enum ChannelIdentitySelectionError {
     #[error("this actor class cannot amend channel identity selection rules")]
     WriterClassNotAmendable,
 
+    #[error("the owner amends channel identity selection rules only with an owner proof")]
+    OwnerWriterNeedsOwnerProof,
+
+    #[error("the channel identity selection writer is not a live actor of this vault")]
+    WriterNotInVault,
+
     #[error("channel identity selection rule is not agent-amendable")]
     RuleNotAgentAmendable,
 
