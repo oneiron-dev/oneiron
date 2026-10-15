@@ -544,6 +544,7 @@ impl Vault {
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
             message_streams: Default::default(),
+            world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             housekeeping: Default::default(),
             #[cfg(feature = "sync")]
