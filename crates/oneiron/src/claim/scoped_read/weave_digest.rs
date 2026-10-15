@@ -405,12 +405,7 @@ impl Vault {
         }
         let bytes = serde_json::to_vec(&WireSchedule::from_row(row)).map_err(|_| invalid())?;
         self.with_write_txn_grouped(|txn| {
-            // A person sets their own person schedule; the owner role's
-            // schedule and any other reader's are the owner's to set.
-            let actor = owner.revalidate_person_in_txn(self, txn)?;
-            if row.reader != WeaveDigestReader::Person(actor) {
-                owner.revalidate_in_txn(self, txn)?;
-            }
+            owner.revalidate_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
             self.store
@@ -427,12 +422,7 @@ impl Vault {
         reader: WeaveDigestReader,
     ) -> Result<Option<WeaveDigestSchedule>> {
         let txn = self.store.env.read_txn()?;
-        // A person reads their own person schedule; the owner role's and any
-        // other reader's are the owner's to read.
-        let actor = owner.revalidate_person_in_txn(self, &txn)?;
-        if reader != WeaveDigestReader::Person(actor) {
-            owner.revalidate_in_txn(self, &txn)?;
-        }
+        owner.revalidate_in_txn(self, &txn)?;
         self.store
             .vault_meta
             .get(&txn, &reader.key(SCHEDULE_PREFIX))?

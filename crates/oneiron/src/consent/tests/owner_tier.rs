@@ -28,13 +28,16 @@ fn owner_and_person() -> (
     (dir, vault, owner, person)
 }
 
-/// Sample owner doors in consent, dreamer maintenance and the gate: each
-/// refuses a live non-owner person's credential-less proof and takes the
-/// owner's.
+/// Sample owner doors in consent, dreamer maintenance, the gate and the
+/// weave digest: each refuses a live non-owner person's credential-less proof
+/// and takes the owner's.
 #[test]
 fn a_non_owner_persons_proof_opens_no_owner_door() {
+    use crate::claim::WeaveDigestReader;
     let (_dir, vault, owner, person) = owner_and_person();
     let now = vault.store.clock.now_recorded_at();
+    let digest = ComposedEffect::new(irreversible_send_facts()).digest();
+    let person_actor = person.actor_for_read(&vault).unwrap();
     let cadence = crate::dreamer_runner::maintenance::digest::ProactivityCadence {
         period_secs: 100,
         group_by_facet: true,
@@ -43,12 +46,25 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
     let doors: [(
         &str,
         &dyn Fn(&AuthenticatedOwner) -> crate::error::Result<()>,
-    ); 4] = [
+    ); 6] = [
         ("consent: create_standing_grant", &|proof| {
             vault
                 .create_standing_grant(proof, action_bound("agent-a", "send", &["channel:email"]))
                 .map(drop)
         }),
+        // Self-heal reads each denial as the owner's signal.
+        ("consent: deny_consent", &|proof| {
+            vault.deny_consent(proof, digest).map(drop)
+        }),
+        // The schedule is owner-authorized even for the person's own digest.
+        (
+            "weave digest: weave_digest_schedule (the person's own)",
+            &|proof| {
+                vault
+                    .weave_digest_schedule(proof, WeaveDigestReader::Person(person_actor))
+                    .map(drop)
+            },
+        ),
         ("dreamer maintenance: set_proactivity_cadence", &|proof| {
             vault.set_proactivity_cadence(proof, &cadence)
         }),
@@ -78,23 +94,12 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
 
 /// The person tier, over doors a person uses on their own behalf: each takes
 /// a live non-owner's proof for that person's own rows, keyed by the proof's
-/// actor, and a self-scoped read reaches no other reader's row. Positive
-/// control: the owner reads that they own the vault.
+/// actor. Positive control: the owner reads that they own the vault.
 #[test]
 fn every_person_tier_door_takes_a_non_owner_for_their_own_rows_only() {
-    use crate::claim::WeaveDigestReader;
     use crate::policy_model::PolicyNotificationMode;
     let (_dir, vault, owner, person) = owner_and_person();
-    let actor = person.actor_for_read(&vault).unwrap();
-    let owner_id = owner.actor_for_read(&vault).unwrap();
-    let digest = ComposedEffect::new(irreversible_send_facts()).digest();
-    let doors: [(&str, &dyn Fn() -> crate::error::Result<()>); 6] = [
-        ("consent: deny_consent (their own refusal)", &|| match vault
-            .deny_consent(&person, digest)?
-        {
-            ConsentReceipt::Denied { .. } => Ok(()),
-            other => panic!("a refusal receipt, got {other:?}"),
-        }),
+    let doors: [(&str, &dyn Fn() -> crate::error::Result<()>); 4] = [
         ("policy: is_live_vault_owner (false, not an error)", &|| {
             assert!(!vault.is_live_vault_owner(&person)?);
             Ok(())
@@ -111,33 +116,11 @@ fn every_person_tier_door_takes_a_non_owner_for_their_own_rows_only() {
             "skill optimize: set_judge_digest_minutes (their own budget)",
             &|| crate::skill_optimize::set_judge_digest_minutes(&vault, &person, 5),
         ),
-        (
-            "weave digest: weave_digest_schedule (their own person schedule)",
-            &|| {
-                vault
-                    .weave_digest_schedule(&person, WeaveDigestReader::Person(actor))
-                    .map(drop)
-            },
-        ),
     ];
     let mut failures = Vec::new();
     for (door, call) in doors {
         if let Err(error) = call() {
             failures.push(format!("{door}: refused ({:?})", error.kind()));
-        }
-    }
-    for (reader, name) in [
-        (
-            WeaveDigestReader::Owner(owner_id),
-            "the owner role's schedule",
-        ),
-        (
-            WeaveDigestReader::Person(owner_id),
-            "another person's schedule",
-        ),
-    ] {
-        if !refused(vault.weave_digest_schedule(&person, reader)) {
-            failures.push(format!("weave_digest_schedule read {name}"));
         }
     }
     if !vault.is_live_vault_owner(&owner).unwrap() {

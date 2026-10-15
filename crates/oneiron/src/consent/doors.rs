@@ -560,9 +560,9 @@ impl Vault {
             decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             effect_digest,
         };
-        // A refusal decides no act: it is the person's own, so it takes the
-        // person tier, where every other consent receipt takes the owner's.
-        owner.revalidate_person_in_txn(self, &*wtxn)?;
+        // A refusal is the owner's decision: self-heal reads each denial as
+        // an owner signal, so it takes the owner tier like every receipt.
+        owner.revalidate_in_txn(self, &*wtxn)?;
         self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), &receipt, None)?;
         Ok(receipt)
     }
