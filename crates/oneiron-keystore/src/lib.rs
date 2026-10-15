@@ -133,7 +133,6 @@ pub trait DeviceKeystore: Send + Sync + 'static {
 /// - `service` names the keychain service on Apple.
 /// - `dir` is the key directory on other Unix systems. It must lie outside every
 ///   vault directory in `vault_dirs`.
-#[allow(unused_variables)]
 pub fn platform_keystore(
     service: &str,
     dir: &std::path::Path,
@@ -141,16 +140,19 @@ pub fn platform_keystore(
 ) -> Result<std::sync::Arc<dyn DeviceKeystore>> {
     #[cfg(target_vendor = "apple")]
     {
+        let _ = (dir, vault_dirs);
         Ok(std::sync::Arc::new(AppleKeychain::new(service)?))
     }
     #[cfg(all(unix, not(target_vendor = "apple")))]
     {
+        let _ = service;
         Ok(std::sync::Arc::new(LocalFileKeystore::open(
             dir, vault_dirs,
         )?))
     }
     #[cfg(not(unix))]
     {
+        let _ = (service, dir, vault_dirs);
         Err(KeystoreError::Unavailable(
             "no adapter for this platform yet",
         ))
