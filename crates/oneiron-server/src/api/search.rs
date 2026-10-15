@@ -533,7 +533,7 @@ pub(crate) fn search_response_with_revisions(
     let mut receipt = read.receipt;
     let mut staged = observations.as_deref().cloned();
     let mut response = Vec::with_capacity(selected.len().min(page_limit));
-    for ((result, _), row) in selected.into_iter().zip(read.value) {
+    for ((result, mode), row) in selected.into_iter().zip(read.value) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
             learned_at,
@@ -547,17 +547,19 @@ pub(crate) fn search_response_with_revisions(
         if response.len() >= page_limit {
             continue;
         }
-        // Standard projects no body; any other view decodes one only while
-        // the page's body budget holds it.
-        let decoded = !matches!(view, View::Standard) && bodies.admits(body.len());
-        if let Some(observations) = staged.as_mut()
+        // A body is decoded, to project it or to observe it, only while the
+        // page's body budget holds it; Standard alone projects none.
+        let decoded =
+            (matches!(view, View::Standard) && staged.is_none()) || bodies.admits(body.len());
+        if decoded
+            && let Some(observations) = staged.as_mut()
             && let Some(successor) = observations
                 .observe_snapshot(
                     scoped_read,
                     result.id,
                     entity_type,
                     &body,
-                    matches!(view, View::Full) && decoded,
+                    matches!(view, View::Full),
                 )
                 .map_err(|error| {
                     tracing::error!(kind = ?error.kind(), "search observation failed");
@@ -571,7 +573,7 @@ pub(crate) fn search_response_with_revisions(
         } else if decoded {
             projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
         } else {
-            bodies.omitted(&result.id, entity_type, learned_at, body.len(), view)
+            bodies.omitted(&result.id, entity_type, learned_at, &body, view, mode)
         };
         if matches!(view, View::Full)
             && let Value::Object(object) = &mut value

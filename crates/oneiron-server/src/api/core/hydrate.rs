@@ -329,7 +329,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
     let mut results = Vec::with_capacity(req.refs.len());
     for (reference, parsed) in req.refs.into_iter().zip(parsed) {
         let item = match parsed {
-            Ok((short_id, content_hash, _)) => {
+            Ok((short_id, content_hash, mode)) => {
                 match project_hydrated_short_id(
                     &scoped_read,
                     short_id,
@@ -341,7 +341,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
                         start: narrowing.clone(),
                         response: &mut batch_narrowing,
                     },
-                    Some(&mut bodies),
+                    Some((&mut bodies, mode)),
                 )? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
@@ -442,7 +442,7 @@ pub(crate) fn project_hydrated_short_id(
     hydrated: Option<oneiron::claim::ReadRow>,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
     receipts: ItemReceipts<'_>,
-    bodies: Option<&mut projection::BodyBudget<'_>>,
+    bodies: Option<(&mut projection::BodyBudget<'_>, oneiron::memory::ReadMode)>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let ItemReceipts {
         start: mut narrowing,
@@ -472,19 +472,21 @@ pub(crate) fn project_hydrated_short_id(
             item: None,
         }));
     };
-    // One of a batch decodes its body only while the batch's budget holds it.
+    // One of a batch decodes its body, to project it or to observe it, only
+    // while the batch's budget holds it.
     let (decoded, bodies) = match bodies {
-        Some(bodies) => (bodies.admits(body.len()), Some(bodies)),
+        Some((bodies, mode)) => (bodies.admits(body.len()), Some((bodies, mode))),
         None => (true, None),
     };
-    if let Some(observations) = observations
+    if decoded
+        && let Some(observations) = observations
         && let Some(successor) = observations
             .observe_snapshot(
                 scoped_read,
                 id,
                 entity_type,
                 &body,
-                matches!(view, View::Full) && decoded,
+                matches!(view, View::Full),
             )
             .map_err(|error| core_engine_error("session body observation failed", error))?
     {
@@ -492,7 +494,9 @@ pub(crate) fn project_hydrated_short_id(
         response.restrict_with(&successor);
     }
     let item = match bodies {
-        Some(bodies) if !decoded => bodies.omitted(&id, entity_type, learned_at, body.len(), view),
+        Some((bodies, mode)) if !decoded => {
+            bodies.omitted(&id, entity_type, learned_at, &body, view, mode)
+        }
         _ => projection::project_entity_parts(&id, entity_type, learned_at, &body, view),
     };
     Ok(Some(CoreHydrateResponse {

@@ -158,17 +158,19 @@ pub(crate) async fn core_query(
         if response.len() >= limit {
             continue;
         }
-        // Standard projects no body; any other view decodes one only while
-        // the response's body budget holds it.
-        let decoded = !matches!(view, View::Standard) && bodies.admits(body.len());
-        if let Some(observations) = staged.as_mut()
+        // A body is decoded, to project it or to observe it, only while the
+        // response's body budget holds it; Standard alone projects none.
+        let decoded =
+            (matches!(view, View::Standard) && staged.is_none()) || bodies.admits(body.len());
+        if decoded
+            && let Some(observations) = staged.as_mut()
             && let Some(successor) = observations
                 .observe_snapshot(
                     &scoped_read,
                     result.id,
                     entity_type,
                     &body,
-                    matches!(view, View::Full) && decoded,
+                    matches!(view, View::Full),
                 )
                 .map_err(|error| core_engine_error("session body observation failed", error))?
         {
@@ -179,7 +181,14 @@ pub(crate) async fn core_query(
         } else if decoded {
             projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
         } else {
-            bodies.omitted(&result.id, entity_type, learned_at, body.len(), view)
+            bodies.omitted(
+                &result.id,
+                entity_type,
+                learned_at,
+                &body,
+                view,
+                oneiron::memory::ReadMode::Indexed,
+            )
         };
         if matches!(view, View::Full)
             && let Value::Object(object) = &mut value

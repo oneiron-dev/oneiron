@@ -570,7 +570,7 @@ fn collect_evidence(
         };
         let mode = read.mode;
         if !bodies.admits(body.len()) {
-            omitted.push(bodies.omitted(&id, kind, learned_at, body.len(), View::Summary));
+            omitted.push(bodies.omitted(&id, kind, learned_at, &body, View::Summary, mode));
             continue;
         }
         let Value::Object(fields) =

@@ -347,4 +347,44 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
     assert_eq!(status, StatusCode::OK);
     assert_eq!(whole["txt"].as_str().map(str::len), Some(large_txt.len()));
     assert!(whole.get("bodyOmitted").is_none());
+
+    // The marker's ref hydrates the very body the row left out, and a pinned
+    // one still does after the row is edited (round 1, Sol F2 = Astra F2).
+    let hydrate = |reference: &Value| {
+        core_request_with_authz(
+            "POST",
+            "/v1/core/hydrate",
+            owner_bearer(),
+            Some(&json!({"ref": reference, "view": "full"})),
+        )
+    };
+    let (status, hydrated) = route_json(server.clone(), hydrate(&marker["ref"])).await;
+    assert_eq!(status, StatusCode::OK, "{hydrated}");
+    assert_eq!(
+        hydrated["item"]["txt"].as_str().map(str::len),
+        Some(large_txt.len())
+    );
+    let pinned = omitted["bodyOmitted"]["ref"].clone();
+    let edited = rmp_serde::to_vec_named(&json!({"txt": "edited", "spkr": "user", "at": 101_u64}))
+        .expect("encode edit");
+    server
+        .vault
+        .put_entity(
+            &large,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            101,
+            &edited,
+        )
+        .expect("edit turn");
+    let (status, hydrated) = route_json(server.clone(), hydrate(&pinned)).await;
+    assert_eq!(status, StatusCode::OK, "{pinned}: {hydrated}");
+    assert_eq!(
+        hydrated["item"]["txt"].as_str().map(str::len),
+        Some(large_txt.len()),
+        "{pinned} names the omitted revision"
+    );
 }
