@@ -7,6 +7,7 @@ mod leases;
 mod lifecycle;
 mod message_stream;
 mod oversight;
+mod presence;
 mod recall;
 mod recall_rerank;
 mod tagging;

@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use oneiron::sync::{EphemeralStore, EphemeralWireState, decode_ephemeral_states};
+use oneiron::sync::{
+    EphemeralStore, EphemeralWireState, decode_ephemeral_states, encode_ephemeral_states,
+};
 
 use crate::protocol::{self, ProtocolError};
 use crate::server::SyncServer;
@@ -14,35 +16,51 @@ const MAX_EPHEMERAL_FUTURE_SKEW_MS: i64 = 60_000;
 /// Flat ephemeral keys are control-plane identifiers, not arbitrary blobs.
 const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
 
-pub(super) fn encode_late_join_ephemeral_snapshot(
+/// The hub's live presence for a socket that just joined, in frames of at
+/// most `max_ephemeral_snapshot_bytes` each: a hub larger than that is sent
+/// in parts, never skipped (rule 5, row 19).
+pub(super) fn encode_late_join_ephemeral_snapshots(
     server: &SyncServer,
     conn_id: u32,
-) -> Option<Vec<u8>> {
-    server.ephemeral_store.remove_outdated();
-    let snapshot = server.ephemeral_store.encode_all();
-    match decode_ephemeral_states(&snapshot) {
-        Ok(states) if states.is_empty() => return None,
-        Ok(_) => {}
+) -> Vec<Vec<u8>> {
+    let snapshot = {
+        let mut presence = server.presence.lock();
+        presence.expire(&server.ephemeral_store);
+        server.ephemeral_store.encode_all()
+    };
+    let states = match decode_ephemeral_states(&snapshot) {
+        Ok(states) => states,
         Err(e) => {
             tracing::warn!(
                 conn_id,
                 error = protocol::transport_err_msg(e),
                 "failed to decode ephemeral snapshot"
             );
-            return None;
+            return Vec::new();
         }
+    };
+    let mut frames = Vec::new();
+    let mut part: Vec<EphemeralWireState> = Vec::new();
+    let mut part_bytes = 0;
+    for state in states {
+        let bytes = encode_ephemeral_states(std::slice::from_ref(&state)).map_or(0, |b| b.len());
+        if !part.is_empty() && part_bytes + bytes > server.config.max_ephemeral_snapshot_bytes {
+            frames.extend(late_join_frame(conn_id, &std::mem::take(&mut part)));
+            part_bytes = 0;
+        }
+        part_bytes += bytes;
+        part.push(state);
     }
-    if snapshot.len() > server.config.max_ephemeral_snapshot_bytes {
-        tracing::warn!(
-            conn_id,
-            size = snapshot.len(),
-            max = server.config.max_ephemeral_snapshot_bytes,
-            "ephemeral snapshot exceeds cap; skipping late-join snapshot"
-        );
-        return None;
+    if !part.is_empty() {
+        frames.extend(late_join_frame(conn_id, &part));
     }
+    frames
+}
 
-    match protocol::encode_ephemeral(&snapshot).into_result() {
+fn late_join_frame(conn_id: u32, states: &[EphemeralWireState]) -> Option<Vec<u8>> {
+    let encoded = encode_ephemeral_states(states)
+        .and_then(|payload| protocol::encode_ephemeral(&payload).into_result());
+    match encoded {
         Ok(msg) => Some(msg),
         Err(e) => {
             tracing::warn!(
@@ -89,15 +107,14 @@ pub(super) fn validate_ephemeral_payload(
     Ok(states)
 }
 
-/// Charges the hub's presence, with this frame's, to the server's
-/// retained-memory line (rule 5: charged, never capped per hub). `false`
-/// when the line is full: the frame meets the memory floor, is not kept and
-/// the socket stays open. Presence larger than the whole line runs alone.
-pub(super) fn ensure_ephemeral_hub_budget(
+/// The size of the hub with this frame applied, which the caller charges to
+/// the server's retained-memory line (rule 5: charged, never capped per
+/// hub). Each key's canonical frame stays within one frame's bound.
+pub(super) fn ephemeral_hub_candidate(
     server: &SyncServer,
     payload: &[u8],
     states: &[EphemeralWireState],
-) -> Result<bool, ProtocolError> {
+) -> Result<usize, ProtocolError> {
     let current_snapshot = server.ephemeral_store.encode_all();
     let candidate = EphemeralStore::new(server.config.ephemeral_timeout_ms);
     if !current_snapshot.is_empty() {
@@ -126,16 +143,7 @@ pub(super) fn ensure_ephemeral_hub_budget(
         }
     }
 
-    let mut held = server
-        .ephemeral_held
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let held = held.get_or_insert_with(|| server.retained.empty());
-    Ok(server.retained.try_resize(
-        held,
-        candidate_snapshot.len(),
-        server.wire_telemetry.limit_questions(),
-    ))
+    Ok(candidate_snapshot.len())
 }
 
 pub(super) fn canonical_ephemeral_frames(

@@ -26,8 +26,8 @@ struct Session {
     attached: AtomicU32,
     touched: Mutex<Instant>,
     /// The session's turn under `limits.live_sessions`, held while the hub
-    /// keeps it.
-    _turn: Option<Permit>,
+    /// keeps it; a revoked session gives it back at once.
+    turn: Mutex<Option<Permit>>,
 }
 
 pub(crate) struct Hub {
@@ -97,6 +97,14 @@ impl Hub {
                 .server
                 .upgrade()
                 .is_some_and(|server| session.auth.credential_is_live(server.vault().as_ref()));
+            if !live {
+                // A socket may still hold the session; its turn is not its own.
+                session
+                    .turn
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+            }
             live && (session.attached.load(Ordering::Acquire) != 0
                 || session
                     .touched
@@ -156,11 +164,9 @@ impl Hub {
         )
     }
 
-    /// Whether `document` names a session the hub keeps.
-    fn keeps(&self, document: &str) -> bool {
-        self.sessions
-            .lock()
-            .is_ok_and(|sessions| sessions.contains_key(document))
+    /// The session the hub keeps under `document`.
+    fn kept(&self, document: &str) -> Option<Arc<Session>> {
+        self.sessions.lock().ok()?.get(document).cloned()
     }
 
     fn session(
@@ -169,9 +175,20 @@ impl Hub {
         conn_id: u32,
         cursor: Option<&Cursor>,
         turn: Option<Permit>,
+        resumed: Option<(String, Arc<Session>)>,
     ) -> Result<Arc<Session>, AppError> {
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
-        if let Some(session) = cursor.and_then(|cursor| sessions.get(&cursor.document)) {
+        let mut found = cursor.and_then(|cursor| sessions.get(&cursor.document).cloned());
+        if found.is_none()
+            && let (Some(cursor), Some((document, session))) = (cursor, resumed)
+            && document == cursor.document
+        {
+            // The hub let the session go while this resume waited for its
+            // turn; pinned by the resume, it kept its turns and comes back.
+            sessions.insert(document, Arc::clone(&session));
+            found = Some(session);
+        }
+        if let Some(session) = found {
             if !session.auth.same_authority(auth) {
                 return Err(AppError::unauthorized());
             }
@@ -207,7 +224,7 @@ impl Hub {
             queries,
             attached: AtomicU32::new(conn_id),
             touched: Mutex::new(Instant::now()),
-            _turn: turn,
+            turn: Mutex::new(turn),
         });
         sessions.insert(document, session.clone());
         Ok(session)
@@ -231,7 +248,7 @@ impl Hub {
                     queries: queries.clone(),
                     attached: AtomicU32::new(0),
                     touched: Mutex::new(Instant::now()),
-                    _turn: None,
+                    turn: Mutex::new(None),
                 }),
             );
         queries
@@ -288,6 +305,8 @@ pub(crate) struct Connection {
     /// and a new subscription's.
     session_turn: Option<Permit>,
     subscription_turn: Option<Permit>,
+    /// The kept session a resume names, pinned while the resume waits.
+    resumed: Option<(String, Arc<Session>)>,
     /// The next request waited for a turn past its deadline.
     waited_out: bool,
 }
@@ -305,6 +324,7 @@ impl Connection {
             refused: BTreeSet::new(),
             session_turn: None,
             subscription_turn: None,
+            resumed: None,
             waited_out: false,
         }
     }
@@ -317,6 +337,7 @@ impl Connection {
     pub(crate) async fn admit(&mut self, auth: Option<&CoreAuth>, payload: &[u8]) {
         self.session_turn = None;
         self.subscription_turn = None;
+        self.resumed = None;
         self.waited_out = false;
         let (
             Some(auth),
@@ -330,22 +351,28 @@ impl Connection {
             return;
         };
         let key = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
-        let holds = match &self.session {
-            Some(session) => session.queries.holds(subscription_id),
-            None => {
-                if !cursor.is_some_and(|cursor| self.hub.keeps(&cursor.document)) {
-                    match self.hub.session_line.admit(key.clone()).await {
-                        Ok(turn) => self.session_turn = Some(turn),
-                        Err(_) => {
-                            self.waited_out = true;
-                            return;
-                        }
-                    }
+        // A resume names the session it continues; pinned here, that session
+        // keeps its turns while this request waits.
+        let session = self.session.clone().or_else(|| {
+            let cursor = cursor?;
+            let session = self
+                .hub
+                .kept(&cursor.document)
+                .filter(|session| session.auth.same_authority(auth))?;
+            self.resumed = Some((cursor.document, Arc::clone(&session)));
+            Some(session)
+        });
+        if session.is_none() {
+            match self.hub.session_line.admit(key.clone()).await {
+                Ok(turn) => self.session_turn = Some(turn),
+                Err(_) => {
+                    self.waited_out = true;
+                    return;
                 }
-                false
             }
-        };
-        if !holds {
+        }
+        // A subscription the session already holds keeps its own turn.
+        if !session.is_some_and(|session| session.queries.holds(subscription_id)) {
             match self.hub.subscription_line.admit(key).await {
                 Ok(turn) => self.subscription_turn = Some(turn),
                 Err(_) => self.waited_out = true,
@@ -372,6 +399,7 @@ impl Connection {
         // A turn the request did not use goes back to its line.
         self.session_turn = None;
         self.subscription_turn = None;
+        self.resumed = None;
         self.waited_out = false;
         match result {
             Ok(pushes) => self.frames(pushes),
@@ -392,6 +420,7 @@ impl Connection {
                     self.conn_id,
                     cursor.as_ref(),
                     self.session_turn.take(),
+                    self.resumed.take(),
                 )?);
             } else if matches!(&request, SubRequest::Close { .. }) {
                 return Ok(Vec::new());

@@ -14,7 +14,7 @@ use super::app_tier::{
     handle_app_message_with_connection, handle_sync_message, require_bound_app_auth,
 };
 use super::conn_state::ConnState;
-use super::ephemeral::encode_late_join_ephemeral_snapshot;
+use super::ephemeral::encode_late_join_ephemeral_snapshots;
 use super::hello::{HelloOutcome, await_protocol_hello};
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 
@@ -187,11 +187,11 @@ async fn handle_connection(
     }
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
-    if let Some(msg) = encode_late_join_ephemeral_snapshot(&server, conn_id)
-        && !transport.send_binary(msg).await
-    {
-        tracing::warn!(conn_id, "failed to send ephemeral snapshot");
-        return;
+    for msg in encode_late_join_ephemeral_snapshots(&server, conn_id) {
+        if !transport.send_binary(msg).await {
+            tracing::warn!(conn_id, "failed to send ephemeral snapshot");
+            return;
+        }
     }
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
@@ -295,12 +295,18 @@ async fn handle_connection(
                             Some(&oneiron::sync::transport::TAG_DOCUMENT)
                                 | Some(&oneiron::sync::transport::TAG_BATCH)
                         ) {
-                            let Ok(frames) =
-                                super::documents::document_delivery(&server, &conn_state, &data)
-                            else {
+                            let mut retry = Vec::new();
+                            let Ok(frames) = super::documents::document_delivery_retrying(
+                                &server,
+                                &conn_state,
+                                &data,
+                                &mut retry,
+                            ) else {
                                 break;
                             };
-                            for frame in frames {
+                            // A notice whose export waited out its turn is
+                            // queued again, never consumed (rule 5).
+                            for frame in frames.into_iter().chain(retry) {
                                 let _ = direct_tx.send(frame);
                             }
                             continue;
@@ -442,7 +448,19 @@ async fn handle_connection(
                     Some(&oneiron::sync::transport::TAG_DOCUMENT)
                         | Some(&oneiron::sync::transport::TAG_BATCH)
                 ) {
-                    match super::documents::document_delivery(&server, &conn_state, &data) {
+                    let mut retry = Vec::new();
+                    let delivered = super::documents::document_delivery_retrying(
+                        &server,
+                        &conn_state,
+                        &data,
+                        &mut retry,
+                    );
+                    // A notice whose export waited out its turn is queued
+                    // again, never consumed (rule 5).
+                    for notice in retry {
+                        let _ = direct_tx.send(notice);
+                    }
+                    match delivered {
                         Ok(mut frames) if frames.len() == 1 => data = frames.remove(0),
                         Ok(frames) if frames.is_empty() => continue,
                         _ => break,
@@ -528,12 +546,14 @@ async fn handle_connection(
                         oneiron_vault_contract::now_ts(),
                     );
                 }
-                if let SyncMessage::Sub(payload) = &msg {
-                    // Rule 5: a new session or subscription waits its turn
-                    // here, before the synchronous app tier runs it.
-                    app_connection
-                        .admit(conn_state.bound_auth.as_ref(), payload)
-                        .await;
+                // Rule 5: a new session or subscription waits its turn here,
+                // before the synchronous app tier runs it; only a live bound
+                // credential that may read joins a line.
+                if let SyncMessage::Sub(payload) = &msg
+                    && let Ok(auth) = super::app_tier::require_bound_app_auth(&server, &conn_state)
+                    && auth.require(crate::auth::CoreScope::Read).is_ok()
+                {
+                    app_connection.admit(Some(auth), payload).await;
                 }
                 let handle_result = match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(

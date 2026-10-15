@@ -312,10 +312,23 @@ fn owner_auth<'a>(
 
 /// Raw notices are not exports. Every recipient re-runs admission and the
 /// shallow-since check. Unsubscribed peers receive nothing, including legacy peers.
+#[cfg(test)]
 pub(super) fn document_delivery(
     server: &SyncServer,
     state: &ConnState,
     data: &[u8],
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    document_delivery_retrying(server, state, data, &mut Vec::new())
+}
+
+/// [`document_delivery`] that keeps, in `retry`, the notice of each document
+/// whose export waited for its turn past its deadline (rule 5): the caller
+/// queues it again rather than consume the only notice of a change.
+pub(super) fn document_delivery_retrying(
+    server: &SyncServer,
+    state: &ConnState,
+    data: &[u8],
+    retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let docs = match data.first() {
         Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
@@ -341,12 +354,14 @@ pub(super) fn document_delivery(
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
-            if let Ok(frame) = crate::server::blocking(|| {
+            match crate::server::blocking(|| {
                 server
                     .reassert_manager
                     .export_owner_document(doc.entity, remote_vv)
             }) {
-                out.push(frame);
+                Ok(frame) => out.push(frame),
+                Err(error) if waited_out(&error) => retry.extend(notice(&doc)),
+                Err(_) => {}
             }
             continue;
         }
@@ -359,14 +374,20 @@ pub(super) fn document_delivery(
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
-            if let Ok(frame) = crate::server::blocking(|| {
+            let exported = crate::server::blocking(|| {
                 server.reassert_manager.export_document(
                     doc.entity,
                     selector_grant_scope(),
                     &request.selector,
                     &request.remote_vv,
                 )
-            }) {
+            });
+            if let Err(error) = &exported
+                && waited_out(error)
+            {
+                retry.extend(notice(&doc));
+            }
+            if let Ok(frame) = exported {
                 if doc.kind == document_sub_tags::NOTE_RECEIPT {
                     let receipt: oneiron::note::NoteOperationReceipt =
                         serde_json::from_slice(doc.payload)
@@ -401,6 +422,19 @@ pub(super) fn document_delivery(
         }
     }
     Ok(out)
+}
+
+/// Whether an export ended at its turn's deadline, so its notice is tried
+/// again.
+fn waited_out(error: &oneiron::Error) -> bool {
+    error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
+}
+
+/// The notice of one document, to queue again.
+fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
+    transport::encode_document(doc.entity, doc.kind, doc.payload)
+        .into_result()
+        .ok()
 }
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {

@@ -88,7 +88,7 @@ pub struct SyncServer {
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
-    pub(crate) ephemeral_held: std::sync::Mutex<Option<crate::byte_line::HeldBytes>>,
+    pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -262,21 +262,27 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
+        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
+        let retained = Arc::new(crate::byte_line::ByteLine::new(
+            crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
+            usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),
+        ));
+        let presence = Arc::new(super::presence::PresenceCharge::new(
+            Arc::clone(&retained),
+            Arc::clone(wire_telemetry.limit_questions()),
+        ));
         let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
         super::message_stream::spawn_message_stream_producer(
             &vault,
             &ephemeral_store,
+            &presence,
             &broadcast_tx,
             &config,
         );
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
-        live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
         Ok(Self {
-            retained: Arc::new(crate::byte_line::ByteLine::new(
-                crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
-                usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),
-            )),
-            ephemeral_held: std::sync::Mutex::default(),
+            retained,
+            presence,
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
                 &config.limits,

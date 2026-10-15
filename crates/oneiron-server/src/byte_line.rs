@@ -190,6 +190,11 @@ impl ByteLine {
             line.free += held.bytes - target;
             held.bytes = target;
             line.grant();
+            drop(line);
+            // State that runs alone past the whole line still asks.
+            if bytes > self.total {
+                questions.ask(self.row, self.total as u64, bytes as u64);
+            }
             return true;
         }
         let used = self.total - line.free;
