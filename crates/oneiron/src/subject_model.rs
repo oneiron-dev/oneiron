@@ -542,8 +542,14 @@ pub fn person_substrate(
     at: u64,
 ) -> Result<Option<PersonSubstrate>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut heads = person_substrate_bodies_in_txn(vault, &rtxn, person_ref, at, false)?;
-    let Some((_, body)) = heads.pop() else {
+    // Held heads still conflict in the read; only a settled head names it.
+    let mut substrate = None;
+    for (id, body) in person_substrate_bodies_in_txn(vault, &rtxn, person_ref, at, false)? {
+        if crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &id)? {
+            substrate = Some(body);
+        }
+    }
+    let Some(body) = substrate else {
         return Ok(None);
     };
     body.value
@@ -717,15 +723,7 @@ fn active_bodies_in_txn(
         }
         None::<()>
     })?;
-    // A fact awaiting its owner's critical confirmation is read, not acted
-    // on (ARCH-0026 §G3).
-    let mut settled = Vec::with_capacity(heads.len());
-    for (id, body) in heads {
-        if crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)? {
-            settled.push((id, body));
-        }
-    }
-    Ok(settled)
+    Ok(heads)
 }
 
 /// Eligible concurrent heads on this exact stored subject must agree.

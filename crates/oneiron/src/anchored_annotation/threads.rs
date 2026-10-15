@@ -482,12 +482,20 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let claims = self.active_annotation_claims_in_txn(txn, artifact_id)?;
+        // Heads reduce raw: a held newest head (a drift, say) leaves its thread
+        // unusable instead of letting an older head stand in for it.
+        let newest: std::collections::BTreeSet<EntityId> =
+            threads_from_active_claims(*artifact_id, claims.clone())
+                .into_iter()
+                .map(|thread| thread.head_claim_id)
+                .collect();
         let mut out = Vec::new();
-        for claim_id in self.claims_for_subject_in_txn(txn, artifact_id)? {
-            let Some(body) = self.get_claim_for_effect_in_txn(txn, &claim_id)? else {
+        for (claim_id, body) in claims {
+            if body.predicate == ANNOTATION_THREAD_PREDICATE && !newest.contains(&claim_id) {
                 continue;
-            };
-            if crate::claim::claim_surfaceable(&body) && is_annotation_predicate(&body.predicate) {
+            }
+            if crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &claim_id)? {
                 out.push((claim_id, body));
             }
         }

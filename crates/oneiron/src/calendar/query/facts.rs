@@ -59,11 +59,13 @@ impl<'a> CalendarRead<'a> {
         }
     }
 
+    /// The suppression key of every series exception this lane may not read,
+    /// mapped to whether each exception carrying it awaits its owner's
+    /// critical confirm.
     pub(in crate::calendar) fn withheld_exception_series(
         &self,
-        for_effects: bool,
-    ) -> Result<std::collections::BTreeSet<(EntityId, String)>> {
-        let mut withheld = std::collections::BTreeSet::new();
+    ) -> Result<std::collections::BTreeMap<(EntityId, String), bool>> {
+        let mut withheld = std::collections::BTreeMap::new();
         let Self::Scoped(read, receipt) = self else {
             return Ok(withheld);
         };
@@ -94,7 +96,12 @@ impl<'a> CalendarRead<'a> {
                     &[crate::claim::PointRead::id(*id)],
                     None,
                     |txn, rows| -> Result<_> {
-                        let Some(body) = claim_in_txn(read.vault(), txn, id, for_effects)? else {
+                        let Projected {
+                            body: Some(body),
+                            held,
+                            ..
+                        } = claim_in_txn(read.vault(), txn, id, true)?
+                        else {
                             return Ok(None);
                         };
                         if body.predicate
@@ -106,43 +113,31 @@ impl<'a> CalendarRead<'a> {
                         // Only the suppression key leaves this internal comparison.
                         let exception =
                             crate::calendar::claims::decode_series_exception_value(&body.value)?;
-                        Ok(Some((exception.master_ref, exception.uid)))
+                        Ok(Some(((exception.master_ref, exception.uid), held)))
                     },
                 )?;
                 receipt.borrow_mut().restrict_with(&result.receipt);
-                if let Some(key) = result.value {
-                    withheld.insert(key);
+                if let Some((key, held)) = result.value {
+                    *withheld.entry(key).or_insert(true) &= held;
                 }
             }
             after = ids.last().copied();
         }
     }
 
-    /// Reads a claim and its policy-withheld predicate in the same snapshot.
-    fn claim_projection(
-        &self,
-        id: &EntityId,
-        for_effects: bool,
-    ) -> Result<(Option<ClaimBody>, Option<String>)> {
+    /// Reads a claim, its policy-withheld predicate and, when `check_hold`,
+    /// its hold, in the same snapshot.
+    fn claim_projection(&self, id: &EntityId, check_hold: bool) -> Result<Projected> {
         match self {
             Self::Vault(vault) => {
                 let txn = vault.store.env.read_txn()?;
-                Ok((claim_in_txn(vault, &txn, id, for_effects)?, None))
+                claim_in_txn(vault, &txn, id, check_hold)
             }
             Self::Scoped(read, receipt) => {
                 let result = read.read_projected(
                     &[crate::claim::PointRead::id(*id)],
                     None,
                     |txn, rows| -> Result<_> {
-                        if for_effects
-                            && !crate::gate::claim_critical_confirm_settled_in_txn(
-                                &read.vault().store,
-                                txn,
-                                id,
-                            )?
-                        {
-                            return Ok((None, None));
-                        }
                         let body = rows
                             .into_iter()
                             .next()
@@ -158,7 +153,20 @@ impl<'a> CalendarRead<'a> {
                         } else {
                             None
                         };
-                        Ok((body, withheld))
+                        // A claim this lane withholds stays `Withheld`, held or not.
+                        let held = check_hold
+                            && body.is_some()
+                            && !crate::gate::claim_critical_confirm_settled_in_txn(
+                                &read.vault().store,
+                                txn,
+                                id,
+                            )?;
+                        Ok(Projected {
+                            id: *id,
+                            body,
+                            withheld,
+                            held,
+                        })
                     },
                 )?;
                 receipt.borrow_mut().restrict_with(&result.receipt);
@@ -168,18 +176,46 @@ impl<'a> CalendarRead<'a> {
     }
 }
 
+/// One claim on an EVENT as a read lane projects it.
+struct Projected {
+    id: EntityId,
+    /// The body this lane admits.
+    body: Option<ClaimBody>,
+    /// The predicate of a live claim this lane may not read.
+    withheld: Option<String>,
+    /// The admitted body awaits its owner's critical confirm.
+    held: bool,
+}
+
+/// What an operational read takes from a claim awaiting its owner's
+/// critical confirm.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hold {
+    /// Main's read: the claim counts as written.
+    Raw,
+    /// An action takes nothing from it.
+    Settled,
+    /// Free/busy: it keeps its EVENT a calendar member and its time busy,
+    /// and none of its values frees time.
+    Busy,
+}
+
 fn claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    for_effects: bool,
-) -> Result<Option<ClaimBody>> {
-    let body = if for_effects {
-        vault.get_claim_for_effect_in_txn(txn, id)?
-    } else {
-        vault.get_claim_in_txn(txn, id)?
-    };
-    Ok(body.filter(claim_surfaceable))
+    check_hold: bool,
+) -> Result<Projected> {
+    let body = vault.get_claim_in_txn(txn, id)?.filter(claim_surfaceable);
+    let held = check_hold
+        && body.is_some()
+        && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)?;
+    Ok(Projected {
+        id: *id,
+        body,
+        withheld: None,
+        held,
+    })
 }
 
 /// One single-cardinality calendar fact, as a given read lane can see it.
@@ -194,7 +230,8 @@ fn claim_in_txn(
 /// closed on `Withheld`, toward non-busy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LaneFact<T> {
-    /// No live claim carries this fact.
+    /// No live claim carries this fact, or free/busy pins a held one to the
+    /// default.
     Absent,
     /// This lane read the deciding claim.
     Read(T),
@@ -311,31 +348,7 @@ pub(crate) struct CalendarEventRow {
 /// Returns `None` when the entity carries no admitted `calendar.*` claim at
 /// all: family membership is CAL-00's exact table, never a `calendar.` prefix
 /// match, so an ordinary EVENT is not silently treated as a calendar EVENT.
-fn event_facts(
-    read: &CalendarRead<'_>,
-    event: &EntityId,
-    for_effects: bool,
-) -> Result<Option<CalendarEventFacts>> {
-    reduce_event_facts(read.vault().claims_for_subject(event)?, |id| {
-        read.claim_projection(id, for_effects)
-    })
-}
-
-fn event_facts_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    event: &EntityId,
-    for_effects: bool,
-) -> Result<Option<CalendarEventFacts>> {
-    reduce_event_facts(vault.claims_for_subject_in_txn(txn, event)?, |id| {
-        Ok((claim_in_txn(vault, txn, id, for_effects)?, None))
-    })
-}
-
-fn reduce_event_facts(
-    claim_ids: Vec<EntityId>,
-    mut project: impl FnMut(&EntityId) -> Result<(Option<ClaimBody>, Option<String>)>,
-) -> Result<Option<CalendarEventFacts>> {
+fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<CalendarEventFacts>> {
     let mut family_member = false;
     let mut origin: Option<(EntityId, LaneFact<CalendarOrigin>)> = None;
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
@@ -347,16 +360,16 @@ fn reduce_event_facts(
     let mut series_withheld = false;
     let mut exception_withheld = false;
 
-    for claim_id in claim_ids {
-        let (body, withheld) = project(&claim_id)?;
-        let Some(body) = body else {
+    for claim in projected {
+        let claim_id = claim.id;
+        let Some(body) = &claim.body else {
             // A claim this lane hides still decides the projection when it is
             // one of the two single-cardinality facts, so it enters the same
             // lowest-id contest as an admitted one — as `Withheld`, never as a
             // value. Family membership is deliberately NOT set from a withheld
             // claim: an actor who can read no calendar claim on this EVENT
             // sees no calendar EVENT.
-            match withheld.as_deref() {
+            match claim.withheld.as_deref() {
                 Some(PREDICATE_CALENDAR_ORIGIN) => {
                     replace_when_lower(&mut origin, claim_id, LaneFact::Withheld);
                 }
@@ -377,6 +390,33 @@ fn reduce_event_facts(
             continue;
         };
         if !is_calendar_claim_predicate(&body.predicate) {
+            continue;
+        }
+        // The hold falls on the branch that enables: an action takes no row
+        // from a held claim, and free/busy takes its occupancy (membership,
+        // CAL-00's busy defaults, a passport's system) but no value that
+        // frees time.
+        if claim.held && hold != Hold::Raw {
+            if hold == Hold::Busy {
+                family_member = true;
+                match body.predicate.as_str() {
+                    PREDICATE_CALENDAR_TIME_KIND => {
+                        replace_when_lower(&mut time_kind, claim_id, LaneFact::Absent);
+                    }
+                    PREDICATE_CALENDAR_STATUS => {
+                        replace_when_lower(&mut status, claim_id, LaneFact::Absent);
+                    }
+                    PREDICATE_CALENDAR_PASSPORT => {
+                        let passport = decode_passport_value(&body.value)?;
+                        if passport.presence
+                            == crate::calendar::claims::CalendarPassportPresence::Live
+                        {
+                            systems.push(passport.system);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             continue;
         }
         family_member = true;
@@ -451,18 +491,18 @@ fn replace_when_lower<T>(slot: &mut Option<(EntityId, T)>, id: EntityId, value: 
 
 /// Reads one EVENT's admitted calendar row.
 pub(super) fn event_row(read: &CalendarRead<'_>, id: EntityId) -> Result<Option<CalendarEventRow>> {
-    event_row_in(read, id, false)
+    Ok(event_rows_in(read, id, Hold::Raw)?.map(|(row, _)| row))
 }
 
-fn event_row_in(
-    read: &CalendarRead<'_>,
-    id: EntityId,
-    for_effects: bool,
-) -> Result<Option<CalendarEventRow>> {
+/// An EVENT's row as written and, unless the hold is `Raw`, its row under
+/// that hold.
+type EventRows = (CalendarEventRow, Option<CalendarEventRow>);
+
+fn event_rows_in(read: &CalendarRead<'_>, id: EntityId, hold: Hold) -> Result<Option<EventRows>> {
     let vault = read.vault();
     if matches!(read, CalendarRead::Vault(_)) {
         let txn = vault.store.env.read_txn()?;
-        return event_row_in_txn(vault, &txn, id, for_effects);
+        return event_rows_in_txn(vault, &txn, id, hold);
     }
     let Some(header) = vault.read_entity_header(&id)? else {
         return Ok(None);
@@ -470,85 +510,117 @@ fn event_row_in(
     if header.entity_type != ENTITY_TYPE_EVENT || vault.is_deleted_shell(&id)? {
         return Ok(None);
     }
-    let Some(facts) = event_facts(read, &id, for_effects)? else {
-        return Ok(None);
-    };
-    if facts.origin().is_none() || crate::calendar::origin::invalidated(vault, id)? {
-        return Ok(None);
-    }
-    Ok(Some(CalendarEventRow {
-        id,
-        occurred: if facts.utc_anchored() {
-            occurred_range(&header)
-        } else {
-            None
-        },
-        facts,
-    }))
+    let projected = vault
+        .claims_for_subject(&id)?
+        .iter()
+        .map(|claim| read.claim_projection(claim, hold != Hold::Raw))
+        .collect::<Result<Vec<_>>>()?;
+    event_rows(&header, id, &projected, hold, || {
+        crate::calendar::origin::invalidated(vault, id)
+    })
 }
 
-/// Reads the operational calendar row in the caller's snapshot.
-pub(crate) fn event_row_for_effect_in_txn(
+fn event_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-) -> Result<Option<CalendarEventRow>> {
-    event_row_in_txn(vault, txn, id, true)
-}
-
-fn event_row_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    for_effects: bool,
-) -> Result<Option<CalendarEventRow>> {
+    hold: Hold,
+) -> Result<Option<EventRows>> {
     let Some(header) = vault.entity_header_in_txn(txn, &id)? else {
         return Ok(None);
     };
     if header.entity_type != ENTITY_TYPE_EVENT || vault.port_tombstone_is_deleted(txn, &id)? {
         return Ok(None);
     }
-    let Some(facts) = event_facts_in_txn(vault, txn, &id, for_effects)? else {
+    let projected = vault
+        .claims_for_subject_in_txn(txn, &id)?
+        .iter()
+        .map(|claim| claim_in_txn(vault, txn, claim, hold != Hold::Raw))
+        .collect::<Result<Vec<_>>>()?;
+    event_rows(&header, id, &projected, hold, || {
+        crate::calendar::origin::invalidated_in_txn(vault, txn, id)
+    })
+}
+
+fn event_rows(
+    header: &EntityMetadataHeader,
+    id: EntityId,
+    projected: &[Projected],
+    hold: Hold,
+    invalidated: impl FnOnce() -> Result<bool>,
+) -> Result<Option<EventRows>> {
+    let Some(facts) = reduce_event_facts(projected, Hold::Raw)? else {
         return Ok(None);
     };
-    if facts.origin().is_none() || crate::calendar::origin::invalidated_in_txn(vault, txn, id)? {
+    if facts.origin().is_none() || invalidated()? {
         return Ok(None);
     }
-    Ok(Some(CalendarEventRow {
+    let held = if hold == Hold::Raw {
+        None
+    } else {
+        reduce_event_facts(projected, hold)?
+            .filter(|facts| facts.origin().is_some())
+            .map(|facts| event_row_of(header, id, facts))
+    };
+    Ok(Some((event_row_of(header, id, facts), held)))
+}
+
+fn event_row_of(
+    header: &EntityMetadataHeader,
+    id: EntityId,
+    facts: CalendarEventFacts,
+) -> CalendarEventRow {
+    CalendarEventRow {
         id,
         occurred: if facts.utc_anchored() {
-            occurred_range(&header)
+            occurred_range(header)
         } else {
             None
         },
         facts,
-    }))
+    }
 }
 
 /// Visits every admitted calendar EVENT in type-index order.
 pub(crate) fn visit_calendar_events(
     read: &CalendarRead<'_>,
-    visit: impl FnMut(CalendarEventRow) -> Result<()>,
+    mut visit: impl FnMut(CalendarEventRow) -> Result<()>,
 ) -> Result<()> {
-    visit_calendar_events_in(read, false, visit)
+    visit_calendar_events_in(read, Hold::Raw, |row, _| visit(row))
 }
 
-/// Visits the calendar rows an operational projection may use.
+/// Visits the calendar rows an action may act on: an EVENT its settled claims
+/// alone admit, read as written so a held restriction still applies.
 pub(crate) fn visit_calendar_events_for_effect(
     read: &CalendarRead<'_>,
-    visit: impl FnMut(CalendarEventRow) -> Result<()>,
+    mut visit: impl FnMut(CalendarEventRow) -> Result<()>,
 ) -> Result<()> {
-    visit_calendar_events_in(read, true, visit)
+    visit_calendar_events_in(read, Hold::Settled, |row, settled| {
+        if settled.is_some() {
+            visit(row)
+        } else {
+            Ok(())
+        }
+    })
+}
+
+/// Visits every admitted calendar EVENT as written and as free/busy reads its
+/// held claims.
+pub(in crate::calendar) fn visit_calendar_events_busy(
+    read: &CalendarRead<'_>,
+    visit: impl FnMut(CalendarEventRow, Option<CalendarEventRow>) -> Result<()>,
+) -> Result<()> {
+    visit_calendar_events_in(read, Hold::Busy, visit)
 }
 
 fn visit_calendar_events_in(
     read: &CalendarRead<'_>,
-    for_effects: bool,
-    mut visit: impl FnMut(CalendarEventRow) -> Result<()>,
+    hold: Hold,
+    mut visit: impl FnMut(CalendarEventRow, Option<CalendarEventRow>) -> Result<()>,
 ) -> Result<()> {
     for id in read.vault().entities_by_type(ENTITY_TYPE_EVENT)? {
-        if let Some(row) = event_row_in(read, id, for_effects)? {
-            visit(row)?;
+        if let Some((row, held)) = event_rows_in(read, id, hold)? {
+            visit(row, held)?;
         }
     }
     Ok(())

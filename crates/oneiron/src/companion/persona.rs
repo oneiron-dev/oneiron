@@ -440,7 +440,6 @@ impl ScopedRead<'_> {
                 || body.scope_project != crate::claim::default_project_id()
                 || (body.scope_facet != crate::claim::substrate_facet_id(*person)?
                     && producer_facet != Some(body.scope_facet))
-                || !self.vault().claim_settled_and_active(&id)?
             {
                 continue;
             }

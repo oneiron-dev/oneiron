@@ -90,6 +90,8 @@ struct StagedOutcome {
 /// derived from exactly the evidence its key names.
 pub(super) struct CollectedEvidence {
     pub(super) evidence: RelevantEvidence,
+    /// A relevant claim awaits its owner's critical confirm.
+    pub(super) held: bool,
     pub(super) subject_vector: Option<Vec<f32>>,
     pub(super) exemplar_vectors: Vec<(EntityId, Option<Vec<f32>>)>,
 }
@@ -135,6 +137,19 @@ impl SavedQueryEvaluator<'_> {
         };
         let collected = self.collect_evidence(&definition, request.entity_ref, request.valid_at)?;
         let evidence_hash = compute_evidence_hash(&definition, &collected.evidence)?;
+        // A held claim may only exclude, and under a negation its absence
+        // would include: the row fails closed until its owner answers, before
+        // any memo (the hash cannot see a hold) and without writing one.
+        if collected.held {
+            return Ok(StagedOutcome {
+                outcome: EvaluationOutcome {
+                    decision: no_match("a relevant claim awaits its critical confirm"),
+                    evidence_hash,
+                    memo_hit: false,
+                },
+                judge_ran: false,
+            });
+        }
         let key = VerdictMemoKey {
             query_ref: request.query_ref,
             entity_ref: request.entity_ref,
@@ -325,7 +340,7 @@ impl SavedQueryEvaluator<'_> {
     ) -> Result<CollectedEvidence> {
         let deps = filter_dependencies(&definition.filter, &definition.matcher);
         let scope_membership = self.scope_membership(entity_ref, &definition.scope)?;
-        let claim_values =
+        let (claim_values, held) =
             self.relevant_claim_values(entity_ref, &deps.claim_predicates, definition, valid_at)?;
         let edge_targets = self.relevant_edge_targets(entity_ref, &deps.edge_kinds)?;
         let subject_vector = if deps.semantic_exemplars.is_empty() {
@@ -351,6 +366,7 @@ impl SavedQueryEvaluator<'_> {
                 semantic_inputs,
                 scope_membership,
             },
+            held,
             subject_vector,
             exemplar_vectors,
         })
@@ -388,17 +404,19 @@ impl SavedQueryEvaluator<'_> {
         Ok(QueryScope { worlds, facets })
     }
 
+    /// The relevant values, and whether a relevant claim is held.
     fn relevant_claim_values(
         &self,
         entity_ref: EntityId,
         predicates: &[String],
         definition: &SavedQueryDefinition,
         valid_at: u64,
-    ) -> Result<Vec<(String, Value)>> {
+    ) -> Result<(Vec<(String, Value)>, bool)> {
         if predicates.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
         let mut values = Vec::new();
+        let mut held = false;
         for edge in self.vault.edges_in(&entity_ref)? {
             if edge.kind != EdgeKind::ClaimOf {
                 continue;
@@ -407,6 +425,11 @@ impl SavedQueryEvaluator<'_> {
                 continue;
             };
             if predicates.contains(&body.predicate) && claim_in_scope(&body, &definition.scope) {
+                // Its value is withheld; `evaluate_staged` decides the row.
+                if !self.vault.claim_settled_and_active(&edge.target)? {
+                    held = true;
+                    continue;
+                }
                 values.push((body.predicate, rmpv_to_json(&body.value)));
             }
         }
@@ -415,7 +438,7 @@ impl SavedQueryEvaluator<'_> {
         values.sort_by(|left, right| {
             (&left.0, left.1.to_string()).cmp(&(&right.0, right.1.to_string()))
         });
-        Ok(values)
+        Ok((values, held))
     }
 
     /// The claim body at `claim_ref` IF it is effective truth at `valid_at`.
@@ -439,11 +462,6 @@ impl SavedQueryEvaluator<'_> {
             return Ok(None);
         };
         let body = decode_claim_body(&raw, true)?;
-        // A claim awaiting its owner's critical confirmation is no evidence
-        // for a membership the query acts on (ARCH-0026 §G3).
-        if !self.vault.claim_settled_and_active(claim_ref)? {
-            return Ok(None);
-        }
         Ok(claim_effective_at(&body, valid_at).then_some(body))
     }
 

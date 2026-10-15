@@ -2010,3 +2010,75 @@ fn durable_receipt_replay_survives_party_deletion_and_remint() -> CommResult<()>
     );
     Ok(())
 }
+
+/// A held opt-out still restricts the count and the contact view; a held last
+/// touch shows in neither.
+#[test]
+fn held_opt_out_still_restricts_and_held_touch_never_shows() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "party-held-stop";
+    record_comm_send_receipt(&vault, party, "email", 5)?;
+    record_comm_inbound_stop(&vault, party, "email", 10)?;
+    run_comm_projector(&vault)?;
+    let party_ref = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let stop = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_OPT_OUT, "email")?;
+    let touch = standing_channel_claim_id(&vault, party_ref, PREDICATE_COMM_LAST_TOUCH, "email")?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, stop, 0x73);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, touch, 0x74);
+    let count = |predicate: &str| count_active_comm_claims(&vault, predicate, party, "email");
+    assert_eq!(
+        (
+            count(PREDICATE_COMM_OPT_OUT)?,
+            count(PREDICATE_COMM_LAST_TOUCH)?
+        ),
+        (1, 0)
+    );
+    let view = materialize_contact_record(&vault, party)?;
+    let view = rmpv::decode::read_value(&mut view.as_slice()).expect("contact view decodes");
+    let entries = |key: &str| {
+        view.as_map()
+            .and_then(|map| map.iter().find(|(name, _)| name.as_str() == Some(key)))
+            .and_then(|(_, value)| value.as_array())
+            .map(Vec::len)
+    };
+    assert_eq!(
+        (entries("opt_out"), entries("last_touch")),
+        (Some(1), Some(0))
+    );
+    Ok(())
+}
+
+/// A held leave boundary still vetoes an older join, and a held join makes no
+/// member.
+#[test]
+fn held_leave_boundary_still_vetoes_and_held_join_makes_no_member() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let (party, thread) = ("party-held-thread", "thread-held");
+    let party_ref = resolve_or_create_comm_party(&vault, party)?;
+    let join = |id: EntityId, at: u64| {
+        let value = CommClaimValue::ThreadMember {
+            party_ref,
+            thread_ref: thread.to_owned(),
+            occurred_at: at,
+        };
+        vault.try_with_write_txn(|wtxn| {
+            put_comm_claim_with_id_in_txn(&vault, wtxn, id, &value, at).map(|_| ())
+        })
+    };
+    let members = || count_active_thread_member_claims(&vault, thread, party);
+    join(entity(0x61), 100)?;
+    join(entity(0x62), 150)?;
+    vault.try_with_write_txn(|wtxn| {
+        vault
+            .retract_claim_in_txn(wtxn, &entity(0x62), 200)
+            .map(|_| ())
+    })?;
+    assert_eq!(members()?, 0, "the leave at 200 ends the join at 100");
+    crate::test_util::hold_claim_for_critical_confirm(&vault, entity(0x62), 0x71);
+    assert_eq!(members()?, 0, "a held leave boundary still vetoes");
+    join(entity(0x63), 300)?;
+    assert_eq!(members()?, 1, "a settled later join is a member");
+    crate::test_util::hold_claim_for_critical_confirm(&vault, entity(0x63), 0x72);
+    assert_eq!(members()?, 0, "a held join makes no member");
+    Ok(())
+}

@@ -52,14 +52,17 @@ impl Vault {
             self.annotation_thread_in_txn(txn, &artifact, &thread, true)?
                 .ok_or_else(invalid)?;
             validate_node_in_txn(self, txn, node)?;
-            if let Some(existing) =
+            if let Some((existing, settled)) =
                 self.annotation_conversation_node_for_effect_in_txn(txn, artifact, thread)?
             {
                 validate_node_in_txn(self, txn, existing)?;
-                if existing == node {
+                if existing != node {
+                    return Err(invalid());
+                }
+                // A held binding vetoes another node but never stands in for this one.
+                if settled {
                     return Ok(());
                 }
-                return Err(invalid());
             }
             self.batch_in()
                 .claim_candidate(
@@ -81,10 +84,10 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         artifact: EntityId,
         thread: EntityId,
-    ) -> Result<Option<AnnotationConversationNode>> {
-        let mut result = None;
+    ) -> Result<Option<(AnnotationConversationNode, bool)>> {
+        let mut result: Option<(AnnotationConversationNode, bool)> = None;
         for id in self.claims_for_subject_in_txn(txn, &artifact)? {
-            let Some(body) = self.get_claim_for_effect_in_txn(txn, &id)? else {
+            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
                 continue;
             };
             if body.predicate != NODE_PREDICATE || !claim_surfaceable(&body) {
@@ -93,10 +96,12 @@ impl Vault {
             let Some(node) = decode_node(&body.value, thread)? else {
                 continue;
             };
-            if result.is_some_and(|old| old != node) {
+            if result.is_some_and(|(old, _)| old != node) {
                 return Err(invalid());
             }
-            result = Some(node);
+            let settled =
+                crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)?;
+            result = Some((node, settled || result.is_some_and(|(_, any)| any)));
         }
         Ok(result)
     }

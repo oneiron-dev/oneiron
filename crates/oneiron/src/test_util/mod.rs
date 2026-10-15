@@ -606,6 +606,30 @@ pub(crate) fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
         .expect("clear default policy manifest for legacy test fixture");
 }
 
+/// Attaches an outstanding critical confirm to `claim`, as a critical Auto
+/// write leaves it: the claim is held until its owner answers.
+pub(crate) fn hold_claim_for_critical_confirm(vault: &Vault, claim: EntityId, seed: u8) {
+    let pending = crate::store::PendingGateConsentRecord {
+        version: 0,
+        claim_id: *claim.as_bytes(),
+        decision_id: crate::store::GateDecisionId::from_bytes([seed; 16]),
+        created_at: crate::unix_seconds_now(),
+        diff_handle: vec![seed, seed.wrapping_add(1)],
+        read_frontier_hash: [seed.wrapping_add(2); 32],
+        reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
+        dreamer_run_id: None,
+    };
+    vault
+        .with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &pending))
+        .expect("attach a critical confirm");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &claim)
+            .expect("confirm read"),
+        "the claim must read as held"
+    );
+}
+
 /// A genesis owner entry and its signed critical-confirm answer to `pending`,
 /// ready for `Vault::put_authority_log_entries`.
 pub(crate) fn critical_confirm_owner_entry(

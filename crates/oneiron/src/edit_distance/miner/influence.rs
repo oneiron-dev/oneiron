@@ -39,7 +39,6 @@ pub fn mined_preferences_for_principal(
                     .ok_or(Error::CorruptedIndex("mined preference header"))?;
             if claim_principal_id(&body)? == Some(*principal)
                 && preference_in_force(&body, learned_at, now)?
-                && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &txn, &id)?
             {
                 out.push((id, body));
             }

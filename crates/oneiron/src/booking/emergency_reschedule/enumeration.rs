@@ -121,6 +121,7 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
     predicate: &str,
 ) -> Result<Option<T>, BookingError> {
     let mut found = None;
+    let mut settled = false;
     for id in vault
         .claims_for_subject(&subject)
         .map_err(storage_failure)?
@@ -131,9 +132,6 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
         if body.subject != ClaimSubject::Entity(subject)
             || body.predicate != predicate
             || !claim_surfaceable(&body)
-            || !vault
-                .claim_settled_and_active(&id)
-                .map_err(storage_failure)?
         {
             continue;
         }
@@ -144,6 +142,10 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
         rmpv::encode::write_value(&mut bytes, &body.value).map_err(storage_failure)?;
         found =
             Some(rmp_serde::from_slice(&bytes).map_err(|_| refused("booking fact is malformed"))?);
+        settled = vault
+            .claim_settled_and_active(&id)
+            .map_err(storage_failure)?;
     }
-    Ok(found)
+    // A held fact still competes above; it never enables the booking.
+    Ok(found.filter(|_| settled))
 }

@@ -129,8 +129,9 @@ impl Vault {
         agent: EntityId,
     ) -> Result<Option<(EntityId, ResidentAgentSpec)>> {
         let mut found = None;
+        let mut settled = false;
         for id in self.claims_for_subject_in_txn(txn, &agent)? {
-            let Some(body) = self.get_claim_for_effect_in_txn(txn, &id)? else {
+            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
                 continue;
             };
             if body.predicate != PREDICATE || !claim_surfaceable(&body) {
@@ -140,9 +141,11 @@ impl Vault {
             if found.as_ref().is_some_and(|(_, old)| old != &spec) {
                 return Err(invalid());
             }
+            settled |= crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)?;
             found = Some((id, spec));
         }
-        Ok(found)
+        // A held row still conflicts above; only a settled row binds a wake.
+        Ok(found.filter(|_| settled))
     }
 
     fn resident_binding(&self, agent: EntityId) -> Result<Option<(EntityId, ResidentAgentSpec)>> {

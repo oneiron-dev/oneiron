@@ -266,14 +266,7 @@ impl Vault {
         let pair = distinct_pair_key(*a, *b);
         let mut claims = Vec::new();
         for row in self.active_distinct_claims_in_txn(&rtxn, &pair.0)? {
-            if row.pair == pair
-                && is_effective_approval(row.approval)
-                && crate::gate::claim_critical_confirm_settled_in_txn(
-                    &self.store,
-                    &rtxn,
-                    &row.claim,
-                )?
-            {
+            if row.pair == pair && is_effective_approval(row.approval) {
                 claims.push(row.claim);
             }
         }
@@ -337,14 +330,7 @@ impl Vault {
             for row in self.active_distinct_claims_in_txn(rtxn, subject)? {
                 // `row.pair.0` IS `subject`, so naming the other side is the
                 // whole both-sides-named test.
-                if is_effective_approval(row.approval)
-                    && named.contains(&row.pair.1)
-                    && crate::gate::claim_critical_confirm_settled_in_txn(
-                        &self.store,
-                        rtxn,
-                        &row.claim,
-                    )?
-                {
+                if is_effective_approval(row.approval) && named.contains(&row.pair.1) {
                     return Ok(Some(row.pair));
                 }
             }

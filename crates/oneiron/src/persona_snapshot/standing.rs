@@ -297,7 +297,6 @@ impl Vault {
                 )
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.stale
-                || !self.claim_settled_and_active(&id)?
             {
                 continue;
             }

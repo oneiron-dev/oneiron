@@ -3,7 +3,7 @@
 
 use super::claim::{
     BookingConfirmationContext, calendar_status_value, encode_event_body, read_booking_facts,
-    supersede_exact_claim, write_booking_event,
+    read_booking_facts_to_cancel, supersede_exact_claim, write_booking_event,
 };
 use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot};
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
@@ -539,7 +539,7 @@ pub(crate) fn execute_cancel(
                     calendar: recorded.into_revision(),
                 });
             }
-            let booking = read_booking_facts(vault, &*wtxn, &event_ref)?;
+            let booking = read_booking_facts_to_cancel(vault, &*wtxn, &event_ref)?;
 
             supersede_exact_claim(
                 vault,

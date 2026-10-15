@@ -276,10 +276,7 @@ fn relationship_claims<T>(
         let Some(body) = vault.get_claim(&claim)? else {
             continue;
         };
-        if body.predicate != predicate
-            || body.lifecycle != ClaimLifecycleStatus::Active
-            || !vault.claim_settled_and_active(&claim)?
-        {
+        if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
             continue;
         }
         let approved = match body.approval {

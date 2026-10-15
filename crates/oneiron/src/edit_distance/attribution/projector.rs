@@ -686,7 +686,7 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
     let rtxn = vault.store.env.read_txn()?;
     let mut best: Option<(u64, EntityId, f32)> = None;
     for id in vault.claims_for_subject_in_txn(&rtxn, subject)? {
-        let Some(body) = vault.get_claim_for_effect_in_txn(&rtxn, &id)? else {
+        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
             continue;
         };
         if !matches!(

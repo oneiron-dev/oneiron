@@ -8,9 +8,15 @@ use oneiron::booking::anti_abuse::{
 };
 use oneiron::booking::lifecycle::{confirm_event_type, token_event_type};
 use oneiron::booking::{
-    ActiveHoldSource, BookingError, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
+    ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
+    BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingError, BookingSourcePageValue,
+    BookingStatus, BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
 };
-use oneiron::{EntityId, TimeRange};
+use oneiron::registry::ENTITY_TYPE_EVENT;
+use oneiron::{
+    CalendarReadRequest, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, EntityId,
+    TimeRange, Vault,
+};
 
 use super::BookingTransportContext;
 use super::constants::{INTAKE_DOMAIN, SELECTED_SLOT_DOMAIN};
@@ -263,13 +269,94 @@ fn active_future_bookings_for_email(
     now: u64,
 ) -> Result<u8, ApiError> {
     let contact_ref = booker_contact_ref(email)?;
-    oneiron::booking::active_future_booking_count_for_contact(
-        &server.vault,
-        page_ref,
-        contact_ref,
-        now,
+    let vault = &server.vault;
+    let mut count: u8 = 0;
+    let mut after: Option<EntityId> = None;
+    loop {
+        let page = vault
+            .entities_by_type_page(ENTITY_TYPE_EVENT, after.as_ref(), 512)
+            .map_err(engine_read_error)?;
+        if page.is_empty() {
+            break;
+        }
+        after = page.last().copied();
+        for event_ref in page {
+            if booking_is_active_future_for(vault, event_ref, page_ref, contact_ref, now)? {
+                count = count.saturating_add(1);
+            }
+        }
+    }
+    Ok(count)
+}
+
+/// Whether one EVENT is this page's active, still-upcoming booking for one
+/// contact. Every axis is read from the lifecycle's own claim family; the
+/// occurrence comes from the calendar surface's own read-only projection
+/// rather than a second header decoder.
+fn booking_is_active_future_for(
+    vault: &Vault,
+    event_ref: EntityId,
+    page_ref: EntityId,
+    contact_ref: EntityId,
+    now: u64,
+) -> Result<bool, ApiError> {
+    let claim_ids = vault
+        .claims_for_subject(&event_ref)
+        .map_err(engine_read_error)?;
+    let (mut same_page, mut same_contact, mut confirmed) = (false, false, false);
+    for claim_id in claim_ids {
+        let Some(body) = vault.get_claim(&claim_id).map_err(engine_read_error)? else {
+            continue;
+        };
+        // The engine's surfaceable record only, as the lifecycle writer reads
+        // it: a pending proposal beside it must not shrink this tally.
+        if body.lifecycle != ClaimLifecycleStatus::Active
+            || body.stale
+            || !matches!(
+                body.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+            || body.subject != ClaimSubject::Entity(event_ref)
+        {
+            continue;
+        }
+        match body.predicate.as_str() {
+            BOOKING_SOURCE_PAGE_PREDICATE => {
+                same_page = decode_claim_value::<BookingSourcePageValue>(&body.value)
+                    .is_some_and(|value| value.page_ref == page_ref);
+            }
+            BOOKING_BOOKER_CONTACT_PREDICATE => {
+                same_contact = decode_claim_value::<BookingBookerContactValue>(&body.value)
+                    .is_some_and(|value| value.contact_ref == contact_ref);
+            }
+            BOOKING_STATUS_PREDICATE => {
+                confirmed = decode_claim_value::<BookingStatusValue>(&body.value)
+                    .is_some_and(|value| value.status == BookingStatus::Confirmed);
+            }
+            _ => {}
+        }
+    }
+    if !(same_page && same_contact && confirmed) {
+        return Ok(false);
+    }
+    // Still upcoming: a booking already in the past holds no future slot and
+    // must not consume the cap. Over-counting here would BLOCK a visitor the
+    // engine's under-block posture says to admit.
+    let occurrence = oneiron::calendar::query::read_event(
+        vault,
+        &CalendarReadRequest {
+            event_ref: event_ref.to_hex(),
+        },
     )
-    .map_err(engine_read_error)
+    .map_err(engine_read_error)?;
+    Ok(occurrence.is_none_or(|view| view.end_utc.is_none_or(|end| end > now)))
+}
+
+/// Decodes one opaque MessagePack claim value into a typed booking value.
+fn decode_claim_value<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Option<T> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).ok()?;
+    rmp_serde::from_slice(&bytes).ok()
 }
 
 fn selected_slot_hash(slot: Option<SelectedSlot>) -> [u8; 32] {

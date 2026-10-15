@@ -489,8 +489,6 @@ fn live_config_in_txn(
     if body.predicate != BOOKING_EVENT_TYPE_PREDICATE
         || body.subject != ClaimSubject::Entity(page_ref)
         || !claim_surfaceable(&body)
-        || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, id)
-            .map_err(storage_failure)?
     {
         return Ok(None);
     }
@@ -498,7 +496,20 @@ fn live_config_in_txn(
     // malformed body is a typed failure rather than a silent miss that would
     // fall through to "unconfigured".
     let decoded = decode_event_type_claim_value(&body.value)?;
-    Ok((decoded.config.key == *key).then_some(decoded.config))
+    if decoded.config.key != *key {
+        return Ok(None);
+    }
+    // A configuration both opens the page and carries its limits, so a held
+    // one neither applies nor lets another configuration stand in for it.
+    if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, id)
+        .map_err(storage_failure)?
+    {
+        return Err(BookingError::InvalidConfig(format!(
+            "the booking.event_type configuration for event type {} awaits its owner's confirm",
+            key.0
+        )));
+    }
+    Ok(Some(decoded.config))
 }
 
 fn storage_failure<E>(_: E) -> BookingError {
@@ -636,6 +647,43 @@ mod tests {
         let mut stale_version = claim_value(intro_config());
         stale_version.schema_version = BOOKING_EVENT_TYPE_SCHEMA_VERSION + 1;
         assert!(validate_event_type_claim(&claim_body(&stale_version)).is_err());
+    }
+
+    #[test]
+    fn a_held_configuration_neither_applies_nor_lets_a_wider_one_win() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
+        let at = crate::temporal::TimeRange { start: 1, end: 1 };
+        vault
+            .put_entity(
+                &id(PAGE),
+                crate::registry::ENTITY_TYPE_ASSET,
+                at,
+                1,
+                b"page",
+            )
+            .expect("page");
+        // The lower claim id decides: the capped configuration sorts first.
+        let mut capped = intro_config();
+        capped.daily_cap = Some(1);
+        let narrow = id(0x61);
+        for (claim, config) in [(narrow, capped), (id(0x62), intro_config())] {
+            vault
+                .put_claim(&claim, &claim_body(&claim_value(config)), at, 1)
+                .expect("config claim");
+        }
+        let key = EventTypeKey("intro-call".to_owned());
+        let settled = load_event_type_config(&vault, id(PAGE), &key).expect("settled config");
+        assert_eq!(settled.daily_cap, Some(1));
+
+        crate::test_util::hold_claim_for_critical_confirm(&vault, narrow, 0x71);
+        assert!(
+            matches!(
+                load_event_type_config(&vault, id(PAGE), &key),
+                Err(BookingError::InvalidConfig(_))
+            ),
+            "a held deciding configuration opens nothing, and the uncapped one must not win"
+        );
     }
 
     #[test]

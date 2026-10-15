@@ -298,9 +298,7 @@ fn apply_magistrate_selection_in_txn(
     if selected != case.contested_state_ref
         && claim_is_active_in_txn(vault, wtxn, selected)?
         // Closing the contested head is a restriction: it lands held or not.
-        && vault
-            .get_claim_in_txn(wtxn, &case.contested_state_ref)?
-            .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
+        && claim_is_live_in_txn(vault, wtxn, case.contested_state_ref)?
     {
         vault.supersede_claim_in_txn(wtxn, &selected, &case.contested_state_ref, case.now)?;
     }
@@ -308,7 +306,8 @@ fn apply_magistrate_selection_in_txn(
     for candidate in &case.candidate_delta_refs {
         if *candidate != selected
             && *candidate != case.contested_state_ref
-            && claim_is_active_in_txn(vault, wtxn, *candidate)?
+            // A competing delta opens a conflict, a restriction: held or not.
+            && claim_is_live_in_txn(vault, wtxn, *candidate)?
         {
             competing.push(*candidate);
         }
@@ -335,7 +334,7 @@ fn apply_magistrate_selection_in_txn(
 }
 
 /// Active, and not awaiting its owner's critical confirmation: a ruling
-/// neither supersedes with nor contests by a claim nobody may act on yet.
+/// never supersedes with a claim nobody may act on yet.
 fn claim_is_active_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -343,6 +342,13 @@ fn claim_is_active_in_txn(
 ) -> Result<bool> {
     Ok(vault
         .get_claim_for_effect_in_txn(txn, &claim_ref)?
+        .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active))
+}
+
+/// Active, whether or not its owner has answered a critical confirm.
+fn claim_is_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, claim_ref: EntityId) -> Result<bool> {
+    Ok(vault
+        .get_claim_in_txn(txn, &claim_ref)?
         .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active))
 }
 

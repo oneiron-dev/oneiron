@@ -1003,3 +1003,171 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
     );
     Ok(())
 }
+
+/// Thread heads reduce raw before the hold. A held newest drift head still
+/// stops the sweep rather than letting the older clean head move, and a held
+/// clean head moves nothing; a settled thread still moves.
+#[test]
+fn reanchor_honours_a_held_drift_head_and_never_moves_a_held_head() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact_id = put_workbook(&vault, actor, 10);
+    let open = |range| {
+        vault.open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", range),
+            actor,
+            "thread",
+            test_time(11),
+            11,
+        )
+    };
+    let (drifting, held, settled) = (open("B5")?, open("C5")?, open("D5")?);
+    // A torn supersede left the clean head live beside a newer drift head.
+    let drift_head = ThreadHead {
+        thread_id: drifting.thread_id,
+        origin_version: 1,
+        anchor_version: 1,
+        state: ThreadState::Open,
+        locator: drifting.anchor.locator.clone(),
+        drift: Some(DriftMarker {
+            drifted_at_version: 2,
+            pinned_version: 1,
+        }),
+    };
+    let drift_id = vault.with_write_txn(|wtxn| {
+        vault.write_thread_head_in_txn(
+            wtxn,
+            &artifact_id,
+            &drift_head,
+            actor,
+            "reanchor",
+            test_time(12),
+            12,
+        )
+    })?;
+    assert!(drift_id > drifting.head_claim_id);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, drift_id, 0x7D);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held.head_claim_id, 0x7E);
+
+    vault.append_blob_artifact_version(
+        &artifact_id,
+        b"workbook bytes v2",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(13),
+        13,
+    )?;
+    let summary = vault.reanchor_annotation_threads(
+        &artifact_id,
+        1,
+        2,
+        &[ReanchorOp::InsertRows {
+            sheet: "Sheet1".to_owned(),
+            at_row: 1,
+            count: 2,
+        }],
+        actor,
+        test_time(13),
+        13,
+    )?;
+    let remapped: Vec<_> = summary.remapped.iter().map(|t| t.thread_id).collect();
+    assert_eq!(remapped, vec![settled.thread_id]);
+    assert!(summary.drifted.is_empty());
+    Ok(())
+}
+
+/// A held conversation-node binding still vetoes binding its thread to
+/// another node, but never stands in for the caller's own bind to its node.
+#[test]
+fn a_held_conversation_node_binding_vetoes_rebinding_but_never_stands_in() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let human = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, human, 10);
+    let open = |range| {
+        vault.open_annotation_thread(
+            &xlsx_anchor(artifact, 1, "Sheet1", range),
+            human,
+            "thread",
+            test_time(11),
+            11,
+        )
+    };
+    let (one, two) = (open("A1")?, open("B1")?);
+    let room = EntityId::now();
+    vault.put_entity(
+        &room,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        test_time(12),
+        12,
+        &[0x80],
+    )?;
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, human, true)?;
+    let record = |parent, advance| crate::conversation_dag::AppendRecord {
+        conversation: room,
+        parent,
+        reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
+        advance,
+        kind: crate::registry::ENTITY_TYPE_TURN,
+        occurred: test_time(12),
+        learned_at: 12,
+        body: vec![0x80],
+        text: vec![],
+        session: None,
+        actor: human,
+    };
+    let root = vault.append_dag_record(&record(None, true))?.id;
+    let trunk = vault.append_dag_record(&record(Some(root), true))?.id;
+    let fork = vault.reply_in_thread(root, &record(Some(root), false))?.id;
+    let node = |turn_ref| AnnotationConversationNode {
+        conversation_ref: room,
+        turn_ref,
+    };
+    let bindings = |thread: EntityId| -> Result<Vec<EntityId>> {
+        let mut ids = Vec::new();
+        for id in vault.claims_for_subject(&artifact)? {
+            let Some(body) = vault.get_claim(&id)? else {
+                continue;
+            };
+            let bound = body
+                .value
+                .as_array()
+                .and_then(|a| a.get(1))
+                .and_then(Value::as_str);
+            if body.predicate == "annotation.conversation_node"
+                && bound == Some(thread.to_hex().as_str())
+            {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    };
+    vault.bind_annotation_conversation_node(artifact, one.thread_id, node(fork), human, 13)?;
+    let first = bindings(one.thread_id)?;
+    assert_eq!(first.len(), 1);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, first[0], 0x6C);
+
+    // The held binding still vetoes another node, which is itself bindable.
+    assert!(
+        vault
+            .bind_annotation_conversation_node(artifact, one.thread_id, node(trunk), human, 14)
+            .is_err()
+    );
+    vault.bind_annotation_conversation_node(artifact, two.thread_id, node(trunk), human, 14)?;
+    // Binding the held node again writes the caller's own settled pointer.
+    vault.bind_annotation_conversation_node(artifact, one.thread_id, node(fork), human, 15)?;
+    let both = bindings(one.thread_id)?;
+    assert_eq!(both.len(), 2);
+    let fresh = both
+        .into_iter()
+        .find(|id| *id != first[0])
+        .expect("a fresh binding");
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(crate::gate::claim_critical_confirm_settled_in_txn(
+        &vault.store,
+        &rtxn,
+        &fresh
+    )?);
+    Ok(())
+}

@@ -328,9 +328,7 @@ impl Vault {
         crate::ports::ClaimStore::port_claim_list_by_predicate(self, rtxn, predicate)
     }
 
-    /// Bodies an acting reader may apply: a claim awaiting its owner's
-    /// critical confirmation is skipped (ARCH-0026 §G3).
-    pub(crate) fn effect_claim_bodies_for_subjects_matching(
+    pub(crate) fn claim_bodies_for_subjects_matching(
         &self,
         subjects: &[EntityId],
         mut matches: impl FnMut(&ClaimBody, &EntityId) -> bool,
@@ -355,13 +353,7 @@ impl Vault {
                 let Some(body) = self.claim_body_if_claim_in_txn(&rtxn, &claim_id)? else {
                     continue;
                 };
-                if matches(&body, subject)
-                    && crate::gate::claim_critical_confirm_settled_in_txn(
-                        &self.store,
-                        &rtxn,
-                        &claim_id,
-                    )?
-                {
+                if matches(&body, subject) {
                     claims.push(body);
                 }
             }

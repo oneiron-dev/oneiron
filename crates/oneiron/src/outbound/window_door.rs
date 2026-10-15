@@ -82,8 +82,8 @@ pub(crate) fn stored_delivery_window_policy_claims(
     subjects: &[EntityId],
 ) -> crate::Result<Vec<DeliveryWindowPolicyClaim>> {
     let mut claims = Vec::new();
-    for body in vault
-        .effect_claim_bodies_for_subjects_matching(subjects, delivery_window_claim_for_subject)?
+    for body in
+        vault.claim_bodies_for_subjects_matching(subjects, delivery_window_claim_for_subject)?
     {
         claims.push(DeliveryWindowPolicyClaim::from_claim_body(&body)?);
     }

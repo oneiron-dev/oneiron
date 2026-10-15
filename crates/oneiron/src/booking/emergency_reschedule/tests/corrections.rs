@@ -407,3 +407,116 @@ fn verified_effect_chokepoint_rejects_deleted_owner_even_on_frozen_pick_retry() 
         assert_eq!(sink.calls.len(), count);
     }
 }
+
+#[test]
+fn a_held_status_head_still_competes_and_never_confirms_an_affected_booking() {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    page(&vault, PAGE, OWNER);
+    let contested = book(&vault, PAGE, NOW + 3_600).calendar.event_ref;
+    let unconfirmed = book(&vault, PAGE, NOW + 5_400).calendar.event_ref;
+    let req = logged(&vault);
+    assert_eq!(
+        enumerate_affected_bookings(&vault, &req, NOW)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let value = rmp_serde::to_vec_named(&BookingStatusValue {
+        status: BookingStatus::Cancelled,
+        recorded_at: NOW,
+    })
+    .unwrap();
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(value)).unwrap();
+    let cancel = EntityId::now();
+    vault
+        .put_claim(
+            &cancel,
+            &ClaimBody::new(
+                BOOKING_STATUS_PREDICATE,
+                ClaimSubject::Entity(contested),
+                value,
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+            .unwrap(),
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+        )
+        .unwrap();
+    crate::test_util::hold_claim_for_critical_confirm(&vault, cancel, 0x81);
+    let confirmed = vault
+        .claims_for_subject(&unconfirmed)
+        .unwrap()
+        .into_iter()
+        .find(|claim| {
+            vault
+                .get_claim(claim)
+                .unwrap()
+                .is_some_and(|body| body.predicate == BOOKING_STATUS_PREDICATE)
+        })
+        .unwrap();
+    crate::test_util::hold_claim_for_critical_confirm(&vault, confirmed, 0x82);
+
+    let mut refusals = Vec::new();
+    assert!(
+        enumerate_with_refusals(&vault, &req, NOW, &mut refusals)
+            .unwrap()
+            .is_empty()
+    );
+    // The held cancellation still competes with the settled Confirmed head;
+    // the held Confirmed head is skipped, never enumerated.
+    let refused: Vec<_> = refusals.iter().map(|(event, _)| *event).collect();
+    assert_eq!(refused, vec![contested]);
+}
+
+#[test]
+fn a_lone_held_confirmed_status_still_lets_the_booking_be_cancelled() {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    page(&vault, PAGE, OWNER);
+    let receipt = book(&vault, PAGE, NOW + 3_600);
+    let event = receipt.calendar.event_ref;
+    let confirmed = vault
+        .claims_for_subject(&event)
+        .unwrap()
+        .into_iter()
+        .find(|claim| {
+            vault
+                .get_claim(claim)
+                .unwrap()
+                .is_some_and(|body| body.predicate == BOOKING_STATUS_PREDICATE)
+        })
+        .unwrap();
+    crate::test_util::hold_claim_for_critical_confirm(&vault, confirmed, 0x83);
+    assert!(crate::booking::lifecycle::confirmed_start_for_reminder(&vault, &event).is_err());
+
+    let slot = TimeRange {
+        start: NOW + 3_600,
+        end: NOW + 5_400,
+    };
+    let cancelled = run(
+        &vault,
+        BookingVerbRequest::Cancel(CancelSpec {
+            token: receipt.cancel_token,
+            idempotency_key: None,
+        }),
+        slot,
+    );
+    assert!(matches!(cancelled, BookingVerbReceipt::Cancelled(_)));
+    let status = super::super::enumeration::read_fact::<BookingStatusValue>(
+        &vault,
+        event,
+        BOOKING_STATUS_PREDICATE,
+    )
+    .unwrap()
+    .map(|value| value.status);
+    assert_eq!(status, Some(BookingStatus::Cancelled));
+    assert_eq!(
+        crate::booking::lifecycle::confirmed_start_for_reminder(&vault, &event).unwrap(),
+        None
+    );
+}
