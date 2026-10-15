@@ -223,7 +223,8 @@ fn a_version_claim_arriving_after_its_artifact_delete_takes_the_bytes() -> Resul
     let asset = asset_of(VERSION_BYTES[0])?;
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &replica, &[origin.person, artifact, asset])?;
-    replica.delete_entity_with_reason(&artifact, DeleteReason::UserHardDelete)?;
+    // A plain delete: a version of an artifact a hard erase took is a late reference (ARCH-0005a).
+    replica.delete_entity_with_reason(&artifact, DeleteReason::UserDelete)?;
     assert!(
         stored(&replica, &asset)?,
         "no claim names the bytes yet, so the delete had nothing to release"

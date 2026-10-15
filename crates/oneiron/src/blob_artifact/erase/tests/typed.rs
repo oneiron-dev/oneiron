@@ -178,10 +178,10 @@ fn a_deleted_record_at_the_bytes_id_erases_no_bytes() -> Result<()> {
     Ok(())
 }
 
-/// Bug repro (#1465 R3 Astra 2, R4 Astra F1): a late reference widens an erase only as far as the
-/// replicated put would take it. The same claim with a forged machine signature, or with its
-/// occurred range reversed, both of which the put refuses, leaves the bytes it names and every
-/// reference to them as they were.
+/// Bug repro (#1465 R3 Astra 2, R4 Astra F1, R5 Astra P1): a late reference widens an erase only
+/// as far as the replicated put would take it. The same claim with a forged machine signature, with
+/// its occurred range reversed, or replacing a live claim of another record scope, all of which
+/// the put refuses, leaves the bytes it names and every reference to them as they were.
 #[test]
 fn a_late_reference_the_put_refuses_widens_no_erase() -> Result<()> {
     let (origin, _dir, appender, late) = super::late::erased_with_late_reference()?;
@@ -202,12 +202,37 @@ fn a_late_reference_the_put_refuses_widens_no_erase() -> Result<()> {
     let forged = crate::claim::encode_claim_body(&body)?;
     let mut reversed = header;
     reversed.occurred_start = header.occurred_end + 1;
-    for (case, header, data) in [
-        ("a forged machine signature", header, forged.as_slice()),
-        ("a reversed occurred range", reversed, data),
+    // A live claim in another project: the put refuses the restamp after the claim's projection.
+    let existing = EntityId::now();
+    let mut prior = crate::claim::decode_claim_body(data, true)?;
+    assert_ne!(prior.scope_project, origin.person);
+    prior.predicate = "prefers".to_owned();
+    prior.scope_project = origin.person;
+    vault
+        .batch()
+        .put_replicated(
+            &existing,
+            header.entity_type,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            &crate::claim::encode_claim_body(&prior)?,
+        )
+        .commit()?;
+    for (case, id, header, data) in [
+        (
+            "a forged machine signature",
+            EntityId::now(),
+            header,
+            forged.as_slice(),
+        ),
+        ("a reversed occurred range", EntityId::now(), reversed, data),
+        ("a restamp of a live claim", existing, header, data),
     ] {
         let refused = vault.with_write_txn_grouped(|txn| {
-            vault.refuse_erased_blob_arrival_in_txn(txn, &EntityId::now(), &header, data)
+            vault.refuse_erased_blob_arrival_in_txn(txn, &id, &header, data)
         })?;
         assert!(!refused, "{case}: the gate acted on a body the put refuses");
         let txn = vault.store.env.read_txn()?;
