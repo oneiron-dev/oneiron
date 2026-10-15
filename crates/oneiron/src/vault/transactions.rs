@@ -441,7 +441,7 @@ impl Vault {
                     checks,
                 ))
             })?;
-        crate::scan_check::warn_kept(&checks);
+        checks.committed(&self.store);
         self.store.notify_attempt_observers();
         if proactivity_changed {
             self.store.notify_proactivity_changes();

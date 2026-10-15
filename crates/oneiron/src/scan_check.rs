@@ -21,7 +21,7 @@ use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 
 /// Rows one engine scan reads past which it asks whether everything is
 /// okay: ten times the count each of the origin scans once refused at.
@@ -211,34 +211,63 @@ impl ScanCount {
     }
 }
 
-/// Keeps the crossings waiting with the store in the write `txn`, each scope
-/// once, and hands back those it kept first, to warn of once `txn` commits.
-/// A crossing that cannot be kept waits for the next write: its scan served.
-pub(crate) fn keep_pending_in(store: &impl ManifestDbs, txn: &mut RwTxn<'_>) -> Vec<ScanCheck> {
-    let pending = store.pending_scan_checks().take();
-    let mut kept = Vec::new();
-    for (key, check) in pending {
-        let fresh = match CHECK.contains(store, txn, &key) {
-            Ok(present) => !present,
-            Err(_) => {
-                store.pending_scan_checks().park(key, check);
-                continue;
-            }
-        };
-        if !fresh {
-            continue;
-        }
-        match CHECK.put(store, txn, &key, &check) {
-            Ok(()) => kept.push(check),
-            Err(_) => store.pending_scan_checks().park(key, check),
-        }
-    }
-    kept
+/// What one write kept of the crossings waiting with its vault. They leave
+/// the waiting map, and are warned of, only once that write commits
+/// ([`KeptChecks::committed`]); a write that rolls back leaves them waiting.
+#[must_use = "kept checks leave the waiting map only once their write commits"]
+#[derive(Default)]
+pub(crate) struct KeptChecks {
+    keys: Vec<CheckKey>,
+    fresh: Vec<ScanCheck>,
 }
 
-/// Warns of each check a committed write kept.
-pub(crate) fn warn_kept(checks: &[ScanCheck]) {
-    checks.iter().for_each(warn);
+impl KeptChecks {
+    /// The write that kept these committed.
+    pub(crate) fn committed(self, store: &Store) {
+        store.pending_scan_checks.clear(&self.keys);
+        self.fresh.iter().for_each(warn);
+    }
+}
+
+/// Keeps the crossings waiting with the store inside the host's write
+/// `txn`, each scope once, in a nested transaction of their own: a check that
+/// cannot be written (a full map, a row error) is dropped from this write and
+/// waits for the next one, and the host's write goes on as it would have.
+pub(crate) fn keep_pending_in(store: &Store, txn: &mut RwTxn<'_>) -> KeptChecks {
+    let waiting = store.pending_scan_checks.waiting();
+    if waiting.is_empty() {
+        return KeptChecks::default();
+    }
+    match keep_nested(store, txn, &waiting) {
+        Ok(fresh) => KeptChecks {
+            keys: waiting.into_keys().collect(),
+            fresh,
+        },
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "scan checks were not kept; they wait for the next write"
+            );
+            KeptChecks::default()
+        }
+    }
+}
+
+fn keep_nested(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    waiting: &BTreeMap<CheckKey, ScanCheck>,
+) -> Result<Vec<ScanCheck>> {
+    let mut nested = store.env.nested_write_txn(txn)?;
+    let mut fresh = Vec::new();
+    for (key, check) in waiting {
+        if !CHECK.contains(store, &nested, key)? {
+            CHECK.put(store, &mut nested, key, check)?;
+            fresh.push(check.clone());
+        }
+    }
+    nested.commit()?;
+    Ok(fresh)
 }
 
 /// `check.scan` is always an [`EngineScan::code`]: a closed code.
@@ -273,13 +302,14 @@ impl PendingScanChecks {
             .clone()
     }
 
-    fn take(&self) -> BTreeMap<CheckKey, ScanCheck> {
-        std::mem::take(
-            &mut *self
-                .0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
+    fn clear(&self, keys: &[CheckKey]) {
+        let mut waiting = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for key in keys {
+            waiting.remove(key);
+        }
     }
 }
 
@@ -384,5 +414,74 @@ mod tests {
                 .iter()
                 .all(|check| (check.threshold, check.rows) == (1, 2))
         );
+    }
+
+    /// A waiting crossing leaves the map only with a write that commits: a
+    /// write that keeps it and then rolls back, or a write that fails, leaves
+    /// it waiting for the next.
+    #[test]
+    fn a_waiting_check_leaves_only_with_a_committed_write() {
+        let dir = tempfile::tempdir().expect("vault dir");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+        vault
+            .set_scan_threshold(EngineScan::PublicationRows, 1)
+            .expect("threshold");
+        let txn = vault.store.env.read_txn().expect("read");
+        let mut count =
+            ScanCount::start(&vault.store, &txn, EngineScan::PublicationRows, &[]).expect("count");
+        count.row();
+        count.row();
+        drop(txn);
+        count.finish(&vault);
+
+        let mut wtxn = vault.store.env.write_txn().expect("write");
+        let kept = keep_pending_in(&vault.store, &mut wtxn);
+        drop(kept);
+        drop(wtxn);
+        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
+        let failed: Result<()> = vault.with_write_txn(|_| Err(crate::Error::InvalidKey));
+        assert!(failed.is_err());
+        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
+
+        vault.with_write_txn(|_| Ok(())).expect("a write");
+        assert!(vault.store.pending_scan_checks.waiting().is_empty());
+        let txn = vault.store.env.read_txn().expect("read");
+        assert_eq!(
+            CHECK
+                .iter_from(&vault.store, &txn, &[])
+                .expect("rows")
+                .count(),
+            1
+        );
+    }
+
+    /// A check that cannot be written never fails the write that carries it:
+    /// the host's row commits and the check waits for the next write.
+    #[test]
+    fn a_check_that_cannot_be_kept_never_fails_the_host_write() {
+        let dir = tempfile::tempdir().expect("vault dir");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+        vault
+            .set_scan_threshold(EngineScan::VisibleRefRows, 1)
+            .expect("threshold");
+        // A scope longer than any LMDB key: its check row can never be put.
+        let txn = vault.store.env.read_txn().expect("read");
+        let mut count = ScanCount::start(&vault.store, &txn, EngineScan::VisibleRefRows, &[7; 600])
+            .expect("count");
+        count.row();
+        count.row();
+        drop(txn);
+        count.finish(&vault);
+
+        vault
+            .set_scan_threshold(EngineScan::KeepOwnerRows, 9)
+            .expect("the host write commits");
+        assert_eq!(
+            vault
+                .scan_threshold(EngineScan::KeepOwnerRows)
+                .expect("row"),
+            9
+        );
+        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
     }
 }
