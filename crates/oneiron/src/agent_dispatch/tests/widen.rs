@@ -721,3 +721,40 @@ fn workflow_widen_revalidates_settled_siblings_and_keeps_structural_refusals() -
     assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
     Ok(())
 }
+
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_lands_no_widen() -> Result<()> {
+        let (_dir, vault) = open_board_vault();
+        let owner = owner(&vault, test_id(0xA0))?;
+        let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
+        chat_turn(&vault)?;
+        let board = board(&vault, owner.actor(), row);
+        let dispatcher = AgentDispatcher::new(&vault);
+        let parent = dispatched(dispatcher.dispatch_with_context(
+            input(row, board, "parent"),
+            AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
+        )?);
+        let proposal = proposed(
+            dispatcher.dispatch_with_context(input(row, parent.attempt.id, "child"), request())?,
+        );
+        let before = AttemptQueue::new(&vault).list()?;
+        // The other vault holds the board owner's PERSON too: only the
+        // proof's vault binding tells them apart.
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), &owner.actor().to_hex());
+
+        assert_eq!(
+            dispatcher
+                .approve_context_widen(&foreign, &proposal, 4)
+                .expect_err("another vault's proof")
+                .kind(),
+            ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(AttemptQueue::new(&vault).list()?, before);
+        dispatched(dispatcher.approve_context_widen(&owner, &proposal, 5)?);
+        Ok(())
+    }
+}

@@ -41,6 +41,9 @@ pub struct AuthenticatedOwner {
     /// The vault that authenticated this principal. A proof from a different
     /// vault must never authorize reading or acting on this vault's records.
     vault_path: std::path::PathBuf,
+    /// The open of that vault (`StoreCore::open_nonce`): a path names a
+    /// place, and another vault may open there after a close.
+    vault_open: [u8; 16],
     /// The verified capability that carried this owner's request, when a
     /// transport bound one ([`Vault::bind_owner_credential`]). Every
     /// revalidation then also requires that capability to be live and the
@@ -98,7 +101,9 @@ impl AuthenticatedOwner {
     }
 
     fn check_vault(&self, vault: &Vault) -> Result<()> {
-        if self.vault_path.as_path() != vault.store.env.path() {
+        if self.vault_path.as_path() != vault.store.env.path()
+            || self.vault_open != vault.store.open_nonce
+        {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "owner proof belongs to another vault",
             )));
@@ -302,6 +307,7 @@ impl Vault {
             principal_ref,
             decision_id,
             vault_path: self.store.env.path().to_path_buf(),
+            vault_open: self.store.open_nonce,
             credential: None,
         })
     }

@@ -207,7 +207,7 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(&self.vault, &wtxn)?;
+        let actor = owner.revalidate_in_txn(self.vault, &wtxn)?;
         // Proposal ids are content hashes, not bearer authority. Find the exact
         // saved intent by its stable index, rejecting forged or edited objects.
         let (key_hash, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
