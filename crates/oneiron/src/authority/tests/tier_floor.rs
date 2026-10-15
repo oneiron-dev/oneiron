@@ -253,7 +253,8 @@ fn hardware_floor_counts_no_software_cosigner_toward_quorum() {
 /// old signatures. Its `RevokeActor` on a branch from before the hardware
 /// floor is refused by the fold (below a concurrent floor), yet the
 /// independent revoke proof used to project it anyway, at the epoch the key
-/// chose, and so killed the hardware owner's binding for good.
+/// chose, and so killed the hardware owner's binding for good. The same holds
+/// for a revoke whose quorum rested on that key as a cosigner (H71).
 #[test]
 fn an_outranked_key_cannot_revoke_from_a_branch_below_the_floor() {
     let software = ed_key(92);
@@ -364,6 +365,16 @@ fn an_outranked_key_cannot_revoke_from_a_branch_below_the_floor() {
         ),
         &software,
     );
+    // A hardware key whose quorum rests on the outranked cosigner, on the
+    // branch from before the floor.
+    let cosigned_stale_revoke = cosigned(
+        &bind,
+        &second,
+        1,
+        revoke_actor_op(&hardware_key, u64::MAX),
+        6,
+        None,
+    );
     let mut entries = vec![
         genesis,
         enroll,
@@ -371,16 +382,19 @@ fn an_outranked_key_cannot_revoke_from_a_branch_below_the_floor() {
         bind,
         floor.clone(),
         stale_revoke.clone(),
+        cosigned_stale_revoke.clone(),
     ];
 
     let fold = fold_legacy_authority_log(&entries);
     assert_eq!(fold.tier_floor, Some(AuthorityTier::Hardware));
-    assert!(
-        !fold
-            .valid_entries
-            .contains(&authority_entry_hash(&stale_revoke).unwrap()),
-        "the fold refuses the below-floor revoke"
-    );
+    for refused in [&stale_revoke, &cosigned_stale_revoke] {
+        assert!(
+            !fold
+                .valid_entries
+                .contains(&authority_entry_hash(refused).unwrap()),
+            "the fold refuses a revoke below the floor"
+        );
+    }
     assert_eq!(
         folded_status(&fold, &hardware_key),
         Some(ActorBindingStatus::Active),

@@ -265,16 +265,18 @@ impl RevokeFacts {
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
-    /// Forgets every actor revocation whose signer falls below a floor that
-    /// survived the fold and that the revoke did not precede (H411). The fold
-    /// refuses such a row; its proof re-folds only the revoke's own branch,
-    /// where that floor does not exist, so an outranked key's old signature
-    /// would otherwise still revoke, at any epoch it chose.
+    /// Forgets every actor revocation that falls under a floor that survived
+    /// the fold and that the revoke did not precede (H411): its signer is
+    /// below it, or its consent or quorum rested on a cosigner below it. The
+    /// fold refuses such a row; its proof re-folds only the revoke's own
+    /// branch, where that floor does not exist, so an outranked key's old
+    /// signature would otherwise still revoke, at any epoch it chose.
     pub(super) fn forget_below_concurrent_floors(
         &mut self,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        context: FoldContext<'_>,
     ) {
         let floors = super::tier_floor::concurrent_tier_floors(survivors, entries, &|_| true);
         self.by_hash.retain(|hash, fact| match &fact.kind {
@@ -286,7 +288,17 @@ impl RevokeFacts {
                         entries,
                         ancestors,
                         &floors,
-                        &|_| Ok(()),
+                        // A revoke changes no roster, floor or consent input,
+                        // so its own state judges its participants as its
+                        // parents' merged state would.
+                        &|floor| {
+                            super::tier_floor::participants_with_floor(
+                                (**proof).clone(),
+                                &entries[hash],
+                                floor,
+                                context,
+                            )
+                        },
                     )
                     .is_none()
             }
