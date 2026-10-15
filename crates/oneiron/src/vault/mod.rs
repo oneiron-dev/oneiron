@@ -33,7 +33,6 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
-pub use self::edges::IdScanPage;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
@@ -43,6 +42,7 @@ pub use self::doctor_manifest::{
 pub(crate) use self::doctor_manifest::{
     ensure_text_index_manifest_matches_wtxn, verify_text_index_manifest, write_text_index_manifest,
 };
+pub use self::edges::IdScanPage;
 #[cfg(test)]
 pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
