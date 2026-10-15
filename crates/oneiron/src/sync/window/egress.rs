@@ -82,8 +82,8 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 }
 
 /// Removes local-only diagnostic and secret-custody carriers from the window
-/// doc. Diagnostic observations never sync; secret custody follows its
-/// same-vault locality predicate. Neither refused body may ship in an update.
+/// doc. Diagnostic observations and secret custody never sync. Neither
+/// refused body may ship in an update.
 /// The write-side mirror (`reverse_rematerialize`) already refuses to
 /// insert one; this is the export-side backstop for a carrier that landed
 /// before the seal or arrived from a peer. Deleting the row does not erase its
@@ -105,7 +105,6 @@ pub(super) fn scrub_local_only_carriers(
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
-    let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let lfs_chunk = EntityId::from_hex(raw_key)
@@ -123,26 +122,11 @@ pub(super) fn scrub_local_only_carriers(
         }
         match EntityId::from_hex(raw_key) {
             Ok(id) if id.to_hex() == raw_key => {
-                if lfs_chunk
-                    || is_unsyncable_secret_custody(blob)
-                    || is_delegated_channel_identity_carrier(blob)
-                {
-                    custody_ids.insert(id);
-                } else {
-                    portable_ids.push(id);
-                }
+                custody_ids.insert(id);
             }
             _ => malformed_key_carriers.push(raw_key.to_owned()),
         }
     });
-    for id in portable_ids {
-        if vault
-            .get_raw_unsealed(&id)?
-            .is_some_and(|raw| is_unsyncable_secret_custody(&raw))
-        {
-            custody_ids.insert(id);
-        }
-    }
     // Pin before touching the live map. If storage fails, the carrier stays
     // visible to the next scrub instead of leaving unpinned private history.
     if !custody_ids.is_empty() || !malformed_key_carriers.is_empty() {
@@ -357,6 +341,15 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         require_history_free_window(vault, key)?;
     }
     let entities = doc.get_map("entities");
+    let carriers: Vec<_> = withdrawn
+        .iter()
+        .filter_map(|(raw_key, id)| map_get_bytes(&entities, raw_key).map(|carrier| (*id, carrier)))
+        .collect();
+    super::tombstones::mark_removed_carriers_first(
+        vault,
+        super::tombstones::CarrierRemoval::WithdrawnDeleteScrub,
+        &carriers,
+    )?;
     for (raw_key, _) in &withdrawn {
         map_delete(&entities, raw_key)?;
     }

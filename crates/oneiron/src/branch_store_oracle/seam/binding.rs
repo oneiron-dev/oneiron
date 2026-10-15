@@ -459,7 +459,7 @@ pub(in crate::branch_store_oracle) fn apply_through_a_route_captured_before_a_fl
     .expect("capture the run's route at run entry");
     session
         .session
-        .flip_on_record()
+        .flip_on_record_as(&session.owner_proof())
         .expect("flip the room mid-run");
     let record = crate::code_run::CodeRunReplayRecord::new(
         EntityId::now(),
@@ -487,7 +487,7 @@ pub(in crate::branch_store_oracle) fn search_through_a_route_captured_before_a_f
     .expect("capture the run's route at run entry");
     session
         .session
-        .flip_on_record()
+        .flip_on_record_as(&session.owner_proof())
         .expect("flip the room mid-run");
     match storage.search_text("anything the room might hold", 5) {
         Err(error) => Err(map_executor_error(error)),

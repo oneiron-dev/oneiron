@@ -753,6 +753,160 @@ fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers
     Ok(())
 }
 
+/// Bug repro (review round 5, Astra F2): a replica refuses a row a key a
+/// handoff retired signs that arrives after the handoff, unless the row is
+/// in its line. The order put a handoff first among the rows ready, as a
+/// consent row, so a window holding an owner's row beside the other owner's
+/// handoff, both stored at the source, never recovered. A handoff now goes
+/// after every row beside it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_with_a_row_beside_a_handoff_recovers() -> Result<()> {
+    let source = test_vault();
+    let owner = authority_test_key(67);
+    let genesis = authority_genesis_fixture(67);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 0x7a, 1);
+    let other = authority_test_key(0x7a);
+    let beside = authority_bind_owner_fixture(
+        vault_id,
+        &enroll,
+        &other,
+        EntityId::from_bytes_unchecked([0x7a; 16]),
+        1,
+    );
+    let successor = authority_key_from_signing(&authority_test_key(0x7b));
+    let mut handoff = authority_child_fixture(
+        vault_id,
+        &enroll,
+        &owner,
+        2,
+        3,
+        crate::authority::AuthorityOp::ReRoot {
+            new_device: authority_test_device(successor),
+        },
+    );
+    let other_key = authority_key_from_signing(&other);
+    handoff.cosigns.push(crate::authority::AuthoritySignature {
+        suite: other_key.suite(),
+        public_key: other_key,
+        signature: vec![0; 64],
+    });
+    let transcript = crate::authority::authority_transcript(&handoff)?;
+    handoff.signer.signature = owner.sign(&transcript).to_bytes().to_vec();
+    handoff.cosigns[0].signature = other.sign(&transcript).to_bytes().to_vec();
+    source.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let rows = [&genesis, &enroll, &beside, &handoff];
+    for entry in &rows[1..] {
+        source.put_authority_log_entry(entry, TimeRange { start: 2, end: 2 }, 2)?;
+    }
+    let fold = source.authority_fold()?;
+    assert!(
+        fold.valid_entries
+            .contains(&crate::authority::authority_entry_hash(&handoff)?),
+        "the handoff stands at the source: {:?}",
+        fold.issues
+    );
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    let ids = rows
+        .iter()
+        .map(|entry| crate::authority::authority_log_entity_id(entry))
+        .collect::<Result<Vec<_>>>()?;
+    for entity in &ids {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &source.get_raw_unsealed(entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
+    let target = test_vault();
+    target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let dir = tempfile::tempdir()?;
+    crate::recovery::recover_vault_window(
+        &target,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    for entity in &ids {
+        assert!(target.live_entity_row(entity)?.is_live());
+    }
+    Ok(())
+}
+
+/// H72 (the Engine's census): canonical-window recovery's preflight walked
+/// a window's rows in entity-id order, so a row could come before the
+/// enrollment in the same window that admits its signer. The door held it,
+/// and the preflight refused the whole recovery, with no retry. Authority
+/// rows now go first, parents first, as the forward pass lands them.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_whose_rows_sort_before_their_enrollments_recovers() -> Result<()> {
+    let source = test_vault();
+    let owner = authority_test_key(66);
+    let genesis = authority_genesis_fixture(66);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    source.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let mut pairs = Vec::new();
+    for n in 1..=6_u8 {
+        let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 0x70 + n, u64::from(n));
+        let child = authority_bind_owner_fixture(
+            vault_id,
+            &enroll,
+            &authority_test_key(0x70 + n),
+            EntityId::from_bytes_unchecked([0x70 + n; 16]),
+            1,
+        );
+        pairs.push((enroll, child));
+    }
+    let at = TimeRange { start: 2, end: 2 };
+    let mut ids = Vec::new();
+    for (enroll, child) in &pairs {
+        source.put_authority_log_entries(&[(enroll.clone(), at, 2), (child.clone(), at, 2)])?;
+        let [enroll_id, child_id] = [enroll, child].map(crate::authority::authority_log_entity_id);
+        ids.push((enroll_id?, child_id?));
+    }
+    assert!(
+        ids.iter().any(|(enroll, child)| child < enroll),
+        "some row sorts before the enrollment that admits its signer"
+    );
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    let genesis_id = crate::authority::authority_log_entity_id(&genesis)?;
+    let all: Vec<_> = std::iter::once(genesis_id)
+        .chain(ids.iter().flat_map(|(enroll, child)| [*enroll, *child]))
+        .collect();
+    for entity in &all {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &source.get_raw_unsealed(entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
+    let target = test_vault();
+    target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let dir = tempfile::tempdir()?;
+    crate::recovery::recover_vault_window(
+        &target,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    for entity in &all {
+        assert!(target.live_entity_row(entity)?.is_live());
+    }
+    Ok(())
+}
+
 /// Bug repro (Astra access follow-ups finding 5): a peer's cleanup-archive
 /// tombstone for a live authority record is refused, and while it stays
 /// published in the record's snapshot-backed window the record still reads
@@ -1032,6 +1186,156 @@ fn rejected_authority_envelope_leaves_a_key_squatter_untouched() -> Result<()> {
             .contains(&target_id),
         "the rejected row must not have materialized either"
     );
+    Ok(())
+}
+
+/// H72 bug repro (W2-T3): a key this vault never enrolled signs rows naming
+/// the local vault id. The replicated door holds them as dependency-pending
+/// and never stores them, so the fold never sees them; a legitimate sibling
+/// still lands and the roster is unchanged.
+#[cfg(feature = "sync")]
+#[test]
+fn rows_signed_by_an_unenrolled_key_pend_and_are_never_stored() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(58);
+    let genesis = authority_genesis_fixture(58);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let roster_before = vault.authority_fold()?.roster;
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let stranger = authority_test_key(59);
+    let mut parent = genesis.clone();
+    for seq in 1..=3 {
+        let junk = authority_enroll_fixture(vault_id, &parent, &stranger, 60 + seq as u8, seq);
+        let id = crate::authority::authority_log_entity_id(&junk)?;
+        let blob = authority_log_entity_blob(&junk, seq + 1)?;
+        let step =
+            vault.with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob))?;
+        let EntityStep::Quarantine(refusal) = step else {
+            panic!("a row signed by an unenrolled key must be refused, got {step:?}");
+        };
+        assert_eq!(
+            refusal.retry,
+            crate::sync::ingest::RefusalRetry::DependencyPending
+        );
+        assert_eq!(
+            refusal.err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        assert!(crate::sync::quarantine::remote_rejection_reason(&refusal.err).is_some());
+        assert!(
+            vault.get_raw(&id)?.is_none(),
+            "a pending row is never stored"
+        );
+        parent = junk;
+    }
+
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 64, 1);
+    let enroll_id = crate::authority::authority_log_entity_id(&enroll)?;
+    let blob = authority_log_entity_blob(&enroll, 9)?;
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            ingest_peer_blob(&vault, wtxn, &tombstones, &enroll_id, &blob)?
+                .written()
+                .is_some()
+        );
+        Ok(())
+    })?;
+    let fold = vault.authority_fold()?;
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?.len(), 2);
+    assert_eq!(fold.roster, roster_before);
+    assert!(
+        !fold
+            .roster
+            .contains_key(&authority_key_from_signing(&stranger))
+    );
+    Ok(())
+}
+
+/// H72 bug repro (review round 1): a key the owner enrolled as an agent has
+/// standing but no consent, so the fold applies no row it signs alone. Its
+/// revocations once landed past every bound and counted toward the fold's,
+/// so an agent could fail the owner's vault closed. The replicated door now
+/// holds a row no owner key signed as dependency-pending and never stores
+/// it; the owner's own row still lands.
+#[cfg(feature = "sync")]
+#[test]
+fn rows_an_enrolled_agent_signs_alone_pend_and_are_never_stored() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(58);
+    let genesis = authority_genesis_fixture(58);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_authority_log_entry(&genesis, at, 1)?;
+    let agent = authority_test_key(59);
+    let agent_key = authority_key_from_signing(&agent);
+    let mut device = authority_test_device(agent_key.clone());
+    device.roles = crate::authority::ROLE_AGENT;
+    let enroll = authority_child_fixture(
+        vault_id,
+        &genesis,
+        &owner,
+        1,
+        59,
+        crate::authority::AuthorityOp::EnrollDevice { device },
+    );
+    vault.put_authority_log_entry(&enroll, at, 1)?;
+    assert!(vault.authority_fold()?.roster.contains_key(&agent_key));
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let mut parent = enroll.clone();
+    for seq in 1..=3 {
+        let junk = authority_child_fixture(
+            vault_id,
+            &parent,
+            &agent,
+            seq,
+            70 + seq,
+            crate::authority::AuthorityOp::RevokeDevice {
+                revoked_key: authority_key_from_signing(&owner),
+            },
+        );
+        let id = crate::authority::authority_log_entity_id(&junk)?;
+        let blob = authority_log_entity_blob(&junk, seq + 1)?;
+        let step =
+            vault.with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob))?;
+        let EntityStep::Quarantine(refusal) = step else {
+            panic!("a row no owner key signed must be held, got {step:?}");
+        };
+        assert_eq!(
+            refusal.retry,
+            crate::sync::ingest::RefusalRetry::DependencyPending
+        );
+        assert_eq!(
+            refusal.err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        assert!(vault.get_raw(&id)?.is_none(), "a held row is never stored");
+        parent = junk;
+    }
+
+    let owned = authority_child_fixture(
+        vault_id,
+        &enroll,
+        &owner,
+        2,
+        80,
+        crate::authority::AuthorityOp::SlipRevoke { slip_id: [7; 32] },
+    );
+    let owned_id = crate::authority::authority_log_entity_id(&owned)?;
+    let blob = authority_log_entity_blob(&owned, 9)?;
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            ingest_peer_blob(&vault, wtxn, &tombstones, &owned_id, &blob)?
+                .written()
+                .is_some()
+        );
+        Ok(())
+    })?;
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?.len(), 3);
     Ok(())
 }
 
@@ -1350,6 +1654,55 @@ fn observer_b_does_not_rehydrate_tombstoned_edge_endpoint() {
 /// purge txn, or a failed purge) must never count as "ready". Pre-fix
 /// code returned true on ANY existing row and materialized the edge.
 /// Covers binary AND non-binary tombstone values (fail closed).
+/// Sol R11 F1 on #1432: the edges map can reach Observer B before the
+/// entities map, and its batch then hydrates an endpoint from the document.
+/// That write is the row's birth, so a federated import watching the row
+/// counts it, but only when it wrote the bytes the sender brought (Astra R11
+/// F3): another image's birth is not the sender's.
+#[test]
+fn an_endpoint_the_edge_batch_hydrates_is_a_birth_of_the_bytes_it_wrote() {
+    let range = TimeRange { start: 1, end: 1 };
+    let event = crate::registry::ENTITY_TYPE_EVENT;
+    let blob = crate::test_util::entity_record(event, range, 1, b"row");
+    for (leg, sent) in [
+        ("the sender's bytes", blob.clone()),
+        (
+            "another image",
+            crate::test_util::entity_record(event, range, 1, b"other"),
+        ),
+    ] {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let (row, target) = (EntityId::now(), EntityId::now());
+        vault
+            .put_entity(&target, event, range, 1, b"target")
+            .unwrap();
+        map_insert_bytes(&doc.get_map("entities"), &row.to_hex(), &blob).unwrap();
+        doc.commit();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        let born = crate::sync::ingest::watch_births(&vault, &[(row, sent.clone())], || {
+            map_insert_bytes(
+                &doc.get_map("edges"),
+                &format_edge_key(&row, EdgeKind::Mentions, &target),
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                    .unwrap(),
+            )
+            .unwrap();
+            doc.commit();
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+
+        assert!(
+            vault.entity_exists(&row).unwrap(),
+            "{leg}: precondition, the edge batch hydrated the row"
+        );
+        assert_eq!(born.contains(&row), sent == blob, "{leg}");
+    }
+}
+
 #[test]
 fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() {
     let vault = test_vault();
@@ -2368,6 +2721,343 @@ fn forged_update_against(local: &LoroDoc, craft: impl FnOnce(&LoroDoc)) -> Vec<u
     craft(&fork);
     fork.commit();
     export_updates_since(&fork, &doc_version_vector(local)).unwrap()
+}
+
+/// F24 round 4 (H219): a task authority fact's link is permanent, so a
+/// replicated removal of it is quarantined and the cancellation still reads,
+/// while a replicated removal of an ordinary link of the same kind applies.
+#[test]
+fn observer_b_quarantines_a_replicated_fact_link_removal() {
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    };
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let at = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    let (owner, task, other) = (EntityId::now(), EntityId::now(), EntityId::now());
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            learned_at,
+            b"x",
+        )
+        .unwrap();
+    for id in [&task, &other] {
+        vault
+            .put_entity(
+                id,
+                crate::registry::ENTITY_TYPE_TASK,
+                at,
+                learned_at,
+                &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+            )
+            .unwrap();
+    }
+    let fact = |kind| TaskAuthorityFact {
+        task_ref: task,
+        kind,
+        actor_ref: owner,
+        assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
+        occurred_at: learned_at,
+    };
+    let cancelled = vault
+        .with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(&vault, wtxn, fact(TaskAuthorityFactKind::Owner))?;
+            put_task_authority_fact_in_txn(&vault, wtxn, fact(TaskAuthorityFactKind::Cancelled))
+        })
+        .unwrap();
+    vault
+        .put_edge(&other, EdgeKind::ScopedTo, &task, 0.7)
+        .unwrap();
+    let cancelled_now = |vault: &Vault| {
+        vault
+            .task_authority_state(task)
+            .unwrap()
+            .is_some_and(|state| state.cancelled)
+    };
+    assert!(cancelled_now(&vault), "precondition: the task is cancelled");
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let value =
+        encode_edge_value_for_crdt(EdgeKind::ScopedTo, 0.7, learned_at, None, None).unwrap();
+    let keys = [
+        format_edge_key(&cancelled, EdgeKind::ScopedTo, &task),
+        format_edge_key(&other, EdgeKind::ScopedTo, &task),
+    ];
+    let insert = forged_update_against(&doc, |fork| {
+        for key in &keys {
+            map_insert_bytes(&fork.get_map("edges"), key, &value).unwrap();
+        }
+    });
+    import_doc(&doc, &insert).unwrap();
+    let removal = forged_update_against(&doc, |fork| {
+        for key in &keys {
+            fork.get_map("edges").delete(key).unwrap();
+        }
+    });
+    import_doc(&doc, &removal).unwrap();
+
+    assert!(
+        cancelled_now(&vault),
+        "a replicated removal never lifts a cancellation"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .into_iter()
+            .any(|(_, record)| record.container == QuarantineContainer::Edges),
+        "the removal leaves quarantine evidence"
+    );
+    assert!(
+        vault
+            .edges_out(&other)
+            .unwrap()
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ScopedTo),
+        "positive control: an ordinary link's replicated removal applies"
+    );
+}
+
+/// The owner, tasks and Owner facts the replayed-fact checks below share,
+/// written in the 2026-03 window: `(owner, [(task, owner_fact)])`.
+fn owned_tasks_for_fact_replay(
+    vault: &Vault,
+    learned_at: u64,
+    n: usize,
+) -> (EntityId, Vec<(EntityId, EntityId)>) {
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    };
+    let at = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            learned_at,
+            b"x",
+        )
+        .unwrap();
+    let mut tasks = Vec::with_capacity(n);
+    for _ in 0..n {
+        let task = EntityId::now();
+        vault
+            .put_entity(
+                &task,
+                ENTITY_TYPE_TASK,
+                at,
+                learned_at,
+                &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+            )
+            .unwrap();
+        let owner_fact = vault
+            .with_write_txn(|wtxn| {
+                put_task_authority_fact_in_txn(
+                    vault,
+                    wtxn,
+                    TaskAuthorityFact {
+                        task_ref: task,
+                        kind: TaskAuthorityFactKind::Owner,
+                        actor_ref: owner,
+                        assigned_ref: None,
+                        actor_generation: None,
+                        assigned_generation: None,
+                        occurred_at: learned_at,
+                    },
+                )
+            })
+            .unwrap();
+        tasks.push((task, owner_fact));
+    }
+    (owner, tasks)
+}
+
+fn task_reads_cancelled(vault: &Vault, task: EntityId) -> bool {
+    vault
+        .task_authority_state(task)
+        .unwrap()
+        .is_some_and(|state| state.cancelled)
+}
+
+fn tombstone_value(reason: crate::deletion::TombstoneReason, deleted_at: u64) -> Vec<u8> {
+    crate::deletion::TombstoneValueV2 {
+        reason,
+        deleted_at,
+        request_id: [0x5A; 16],
+    }
+    .encode()
+    .to_vec()
+}
+
+/// F24 round 6 (H219): an own-device tombstone for a stored task authority
+/// fact, soft or hard, is refused by the replay's protection gate and
+/// quarantined, with no retry flagged; the cancellation still reads. Positive
+/// control: the same delta's hard tombstone for an ordinary TASK applies.
+#[test]
+fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
+    use crate::deletion::TombstoneReason;
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    };
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 2);
+    let ((task, owner_fact), (other, _)) = (tasks[0], tasks[1]);
+    let cancelled = vault
+        .with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref: task,
+                    kind: TaskAuthorityFactKind::Cancelled,
+                    actor_ref: owner,
+                    assigned_ref: None,
+                    actor_generation: None,
+                    assigned_generation: None,
+                    occurred_at: learned_at,
+                },
+            )
+        })
+        .unwrap();
+    assert!(task_reads_cancelled(&vault, task), "precondition");
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let forged = forged_update_against(&doc, |fork| {
+        let tombstones = fork.get_map("tombstones");
+        for (id, reason) in [
+            (cancelled, TombstoneReason::GdprDelete),
+            (owner_fact, TombstoneReason::UserDelete),
+            (other, TombstoneReason::GdprDelete),
+        ] {
+            map_insert_bytes(
+                &tombstones,
+                &id.to_hex(),
+                &tombstone_value(reason, learned_at),
+            )
+            .unwrap();
+        }
+    });
+    import_doc(&doc, &forged).unwrap();
+
+    assert!(
+        task_reads_cancelled(&vault, task),
+        "a replayed tombstone never lifts a cancellation or its owner"
+    );
+    for id in [cancelled, owner_fact] {
+        assert!(
+            vault.live_entity_row(&id).unwrap().is_live(),
+            "the fact row stays"
+        );
+    }
+    let refused = crate::sync::quarantine::quarantined_records(&vault)
+        .unwrap()
+        .into_iter()
+        .filter(|(_, record)| record.container == QuarantineContainer::Tombstones)
+        .count();
+    assert_eq!(
+        refused, 2,
+        "each refused tombstone leaves quarantine evidence"
+    );
+    assert!(
+        crate::sync::quarantine::pending_remat_windows(&vault)
+            .unwrap()
+            .is_empty(),
+        "a refusal flags no retry"
+    );
+    assert!(
+        vault.get(&other).unwrap().is_none(),
+        "positive control: an ordinary TASK's hard tombstone applies"
+    );
+}
+
+/// F24 round 6 (H219): a tombstone that reaches this vault before its fact
+/// row suppresses the row, and a suppressed fact reads as a refusal, never
+/// as a cancellation never made. A soft and a hard tombstone name two
+/// cancellations in one import, the rows arrive in the next, and both tasks'
+/// authority reads refuse; a third task with no suppressed fact still reads.
+#[test]
+fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
+    use crate::deletion::TombstoneReason;
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+    };
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let at = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 3);
+    let cancellations: Vec<_> = tasks[..2]
+        .iter()
+        .map(|(task, _)| (EntityId::now(), *task))
+        .collect();
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let tombstones = forged_update_against(&doc, |fork| {
+        let map = fork.get_map("tombstones");
+        for ((fact, _), reason) in cancellations
+            .iter()
+            .zip([TombstoneReason::UserDelete, TombstoneReason::GdprDelete])
+        {
+            map_insert_bytes(&map, &fact.to_hex(), &tombstone_value(reason, learned_at)).unwrap();
+        }
+    });
+    import_doc(&doc, &tombstones).unwrap();
+    let rows = forged_update_against(&doc, |fork| {
+        for (fact, task) in &cancellations {
+            let body = encode_task_authority_fact_body(&TaskAuthorityFact {
+                task_ref: *task,
+                kind: TaskAuthorityFactKind::Cancelled,
+                actor_ref: owner,
+                assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
+                occurred_at: learned_at,
+            });
+            map_insert_bytes(
+                &fork.get_map("entities"),
+                &fact.to_hex(),
+                &entity_blob(ENTITY_TYPE_TASK, at, learned_at, &body),
+            )
+            .unwrap();
+        }
+    });
+    import_doc(&doc, &rows).unwrap();
+
+    for (_, task) in &cancellations {
+        assert_matches!(
+            vault.task_authority_state(*task),
+            Err(Error::InvariantViolation("task authority fact suppressed")),
+            "a cancellation tombstoned before it arrived reads as a refusal"
+        );
+    }
+    assert_eq!(
+        vault
+            .task_authority_state(tasks[2].0)
+            .unwrap()
+            .map(|state| (state.owner_ref, state.cancelled)),
+        Some((owner, false)),
+        "positive control: a task with no suppressed fact still reads"
+    );
 }
 
 /// ONE-1608 forged-retirement regression: `blocks` is retirable ONLY through
@@ -6003,4 +6693,5 @@ fn provenance_claim_tombstone_notifies_both_subject_endpoints_after_commit() {
     }
 }
 
+mod fact_suppression;
 mod resident;

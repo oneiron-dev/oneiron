@@ -34,6 +34,7 @@ use oneiron::off_record::{
     OffRecordBackendClass, OffRecordMode, OffRecordNoticeAct, OffRecordSession,
     OffRecordSessionRecord, OffRecordTalk, SavedTurns,
 };
+use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -289,9 +290,17 @@ async fn save(
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
     let saved = blocking(move || {
-        bind(server.vault(), room, &request.session_ref, actor)?
-            .save_talk_by(actor, credential.as_ref())
-            .map_err(|error| engine_error(error, &request.session_ref))
+        let vault = server.vault();
+        let session = bind(vault, room, &request.session_ref, actor)?;
+        // The save names its person in its receipts: on their own slip, or,
+        // with no slip (a dev server), on the owner's proof for them.
+        match credential {
+            Some(slip) => session.save_talk_by(actor, &slip),
+            None => vault
+                .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+                .and_then(|owner| session.save_talk_as(&owner)),
+        }
+        .map_err(|error| engine_error(error, &request.session_ref))
     })
     .await?;
     Ok(Json(Saved::from(saved)))
@@ -436,13 +445,15 @@ fn engine_error(error: oneiron::Error, session_ref: &str) -> ApiError {
         }
         ErrorKind::OffRecordSessionClosing => ApiError::invalid_state(Some("closing")),
         ErrorKind::OffRecordSessionAlreadyExists => ApiError::invalid_state(Some("exists")),
-        ErrorKind::OffRecordPromoteUnauthenticated => ApiError::new(
-            "this vault is not yours, so the talk cannot be saved into it",
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            ["Take your own copy with POST /v1/core/off-record/export."],
-        ),
+        ErrorKind::OffRecordPromoteUnauthenticated | ErrorKind::ConsentOwnerNotAuthenticated => {
+            ApiError::new(
+                "this vault is not yours, so the talk cannot be saved into it",
+                ApiErrorDetails::Forbidden {
+                    required_scope: None,
+                },
+                ["Take your own copy with POST /v1/core/off-record/export."],
+            )
+        }
         ErrorKind::KillSwitchDisabled => forbidden("off-record stretches are turned off here"),
         ErrorKind::OffRecordTalkOnly => forbidden("an anonymous stretch keeps nothing to save"),
         ErrorKind::OffRecordOverlayFull => ApiError::invalid_state(Some("full")),
