@@ -551,30 +551,30 @@ impl Vault {
             }
         }
         for (oid, size) in &record.required_lfs_oids {
-            // The check reads the object's whole manifest, so it first takes
-            // room for it from the host, by the row it found stored, and
-            // holds it through the check. A wait that runs out is an error
-            // and decides nothing.
-            let room = if self.has_lfs_object(*oid, *size)? {
-                self.lfs_manifest_read_room(*oid)?
-            } else {
-                None
-            };
-            let Some(_room) = room else {
+            if !self.has_lfs_object(*oid, *size)? {
                 return Ok(Some(format!(
                     "required lfs object {} at {size} bytes is not stored in this vault",
                     oid.to_hex()
                 )));
+            }
+            // The check reads the object's whole manifest, so it first takes
+            // room for it from the host, by the row it found stored, and
+            // holds it through the check. A wait that runs out is an error
+            // and decides nothing. An object whose manifest row is gone has
+            // nothing to read, so it is not readable, as the check would find.
+            let readable = match self.lfs_manifest_read_room(*oid)? {
+                Some(_room) => match self.verify_lfs_object(*oid, *size) {
+                    Ok(readable) => readable,
+                    Err(Error::CorruptedIndex(_)) => false,
+                    Err(error) => return Err(error),
+                },
+                None => false,
             };
-            match self.verify_lfs_object(*oid, *size) {
-                Ok(true) => {}
-                Ok(false) | Err(Error::CorruptedIndex(_)) => {
-                    return Ok(Some(format!(
-                        "required lfs object {} is not locally readable at {size} bytes",
-                        oid.to_hex()
-                    )));
-                }
-                Err(error) => return Err(error),
+            if !readable {
+                return Ok(Some(format!(
+                    "required lfs object {} is not locally readable at {size} bytes",
+                    oid.to_hex()
+                )));
             }
         }
         Ok(None)

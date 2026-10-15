@@ -36,7 +36,7 @@ impl Vault {
     }
 
     /// Room to read `oid`'s whole manifest, sized by its stored row; `None`
-    /// when the object is not stored, so there is nothing to read. A wait
+    /// when no manifest row is stored for it, so there is nothing to read. A wait
     /// for the host's room that runs out is
     /// [`CodeError::LfsReadRoomWaitedOut`].
     pub(crate) fn lfs_manifest_read_room(&self, oid: LfsOid) -> Result<Option<LfsReadHold>> {
