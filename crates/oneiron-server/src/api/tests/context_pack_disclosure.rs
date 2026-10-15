@@ -1374,58 +1374,85 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
     assert_eq!(before.0["reason"], "filter_matched_none", "{before:?}");
 }
 
-/// F19 review round 2 (Sol F1, Astra F1): an owner-grade pack whose
-/// interlocutors narrow its read does not read the whole vault. Its empty
-/// pack reads alike whether or not a row its audience cannot read matches.
+/// F19 review round 3 (Sol F2 = Astra F3): no key reads every row. A claim
+/// private to another principal stays unread even to the owner's own key, so
+/// the owner's empty pack reads alike whether or not such a claim matches.
+/// The same claim private to the owner is one the owner's pack finds.
 #[tokio::test]
-async fn an_audience_narrowed_owner_pack_reads_alike_beside_a_hidden_match() {
+async fn an_owners_empty_pack_reads_alike_beside_another_principals_match() {
     let (_dir, server) = interlocutor_test_server();
+    let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        owner_ref.to_hex()
+    ));
     let subject = seed_text_turn(&server, "meadow walk");
-    let request = json!({
-        "query": "larkspur20",
-        "limit": 10,
-        "interlocutors": {
-            "third_parties": [{ "label": "unknown speaker", "claimed_owner": false }]
+    let pack = |query: &'static str| {
+        let owner = owner.clone();
+        let server = server.clone();
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_authz(
+                    "POST",
+                    "/v1/core/context-pack",
+                    owner,
+                    Some(&json!({ "query": query, "limit": 10 })),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body
         }
-    });
-    let empty = || async {
-        let (status, body) = owner_json(
-            server.clone(),
-            "POST",
-            "/v1/core/context-pack",
-            Some(&request),
+    };
+    let private_to = |principal: oneiron::EntityId, text: &str| {
+        let id = oneiron::EntityId::now();
+        let mut claim = oneiron::ClaimBody::new(
+            "event.note",
+            oneiron::ClaimSubject::Entity(subject),
+            rmpv::Value::from(text),
+            1.0,
+            oneiron::ClaimApprovalStatus::Auto,
+            oneiron::ClaimLifecycleStatus::Active,
         )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        .unwrap();
+        claim.scope = Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("principal"),
+            rmpv::Value::Binary(principal.as_bytes().to_vec()),
+        )]));
+        server
+            .vault
+            .put_claim(&id, &claim, oneiron::TimeRange { start: 1, end: 1 }, 1)
+            .unwrap();
+        server
+            .vault
+            .batch()
+            .text(&id, &[("body", text)])
+            .commit()
+            .unwrap();
+        id
+    };
+    let empty = |body: Value| {
         assert_eq!(body["results"], json!([]), "{body}");
         (body["state"].clone(), body["empty"].clone())
     };
-    let before = empty().await;
-    // A public base-world claim the clamp admits. The audience the
-    // interlocutors name resolves to no person, so it reads no row.
-    let mut claim = oneiron::ClaimBody::new(
-        "event.note",
-        oneiron::ClaimSubject::Entity(subject),
-        rmpv::Value::from("larkspur20 public note"),
-        1.0,
-        oneiron::ClaimApprovalStatus::Auto,
-        oneiron::ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    claim.scope = Some(rmpv::Value::Map(vec![(
-        rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("public"),
-    )]));
-    server
-        .vault
-        .put_claim(
-            &oneiron::EntityId::now(),
-            &claim,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-        )
-        .unwrap();
-    assert_eq!(empty().await, before, "a hidden match reads as no match");
+    let before = empty(pack("larkspur20").await);
+    private_to(
+        seeded_test_entity_id(0x2519_0031),
+        "larkspur20 private note",
+    );
+    assert_eq!(
+        empty(pack("larkspur20").await),
+        before,
+        "another principal's match reads as no match"
+    );
+    let own = private_to(owner_ref, "larkspur21 private note");
+    assert!(
+        pack("larkspur21").await["results"]
+            .to_string()
+            .contains(&own.to_hex()),
+        "the owner's pack finds a claim private to the owner"
+    );
 }
 
 /// F19 review round 1 (Astra F2): the clamp's count names a withheld TURN

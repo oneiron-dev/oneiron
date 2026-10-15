@@ -85,18 +85,6 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
-    /// Whether this read reads the whole vault: the vault owner's own key
-    /// (`ScopedReadActorKey::reads_as_vault_owner`), with no world ceiling,
-    /// audience or peer read narrowing what it serves. Any other read may
-    /// withhold a row, so nothing it serves may tell that one exists.
-    #[must_use]
-    pub fn reads_whole_vault(&self) -> bool {
-        self.actor_key.reads_as_vault_owner()
-            && self.actor_key.worlds.is_none()
-            && self.audience.is_none()
-            && self.peer_reads.is_empty()
-    }
-
     /// Number of immutable room ledger snapshots loaded by this read handle.
     pub fn audience_ledger_reads(&self) -> Result<usize> {
         Ok(self

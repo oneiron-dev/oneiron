@@ -229,7 +229,6 @@ pub(crate) async fn run_context_pack(
             results: req.limit,
             neighbors: max_neighbors,
             retrieval: retrieval_budget,
-            whole_vault: req.conversation_id.is_none() && scoped_read.reads_whole_vault(),
         },
         memories,
         disclosure,
@@ -519,9 +518,6 @@ pub(crate) struct ContextPackResponseLimits {
     pub(crate) results: usize,
     pub(crate) neighbors: usize,
     pub(crate) retrieval: oneiron::ContextPackRetrievalBudget,
-    /// The pack's read reads the whole vault (`ScopedRead::reads_whole_vault`)
-    /// and no room narrows it: only then does an empty pack keep its reason.
-    pub(crate) whole_vault: bool,
 }
 
 pub(crate) fn apply_context_pack_response_limits(
@@ -531,7 +527,7 @@ pub(crate) fn apply_context_pack_response_limits(
     apply_context_pack_response_retrieval_budget(pack, limits.retrieval);
     pack.results.truncate(limits.results);
     pack.neighbors.truncate(limits.neighbors);
-    scrub_context_pack_visible_stats(pack, limits.whole_vault);
+    scrub_context_pack_visible_stats(pack);
 }
 
 pub(crate) fn apply_context_pack_response_retrieval_budget(
@@ -559,10 +555,10 @@ pub(crate) fn apply_context_pack_response_retrieval_budget(
     });
 }
 
-/// `whole_vault`: the caller reads the whole vault, so an empty pack keeps
-/// the reason the retrieval found. For any other caller every empty pack
-/// reads alike: a reason would tell a match it cannot read from no match.
-pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack, whole_vault: bool) {
+/// Every empty pack reads alike, whoever reads it: no key reads every row
+/// (another principal's claims stay private even to the owner's key), so a
+/// reason would tell a match its reader cannot read from no match (F19).
+pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) {
     // How many claims the scope withheld is a count of rows the caller may
     // not read: it never leaves as a stat (F19).
     pack.stats.claims_suppressed = 0;
@@ -571,16 +567,12 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack, 
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
     if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
-        if let Some(empty) = pack.empty.as_mut().filter(|_| whole_vault) {
-            empty.total_in_scope = 0;
-        } else {
-            pack.empty = Some(oneiron::EmptyContext {
-                retrieval_quality: pack.retrieval_quality.clone(),
-                reason: oneiron::EmptyReason::FilterMatchedNone,
-                total_in_scope: 0,
-                hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
-            });
-        }
+        pack.empty = Some(oneiron::EmptyContext {
+            retrieval_quality: pack.retrieval_quality.clone(),
+            reason: oneiron::EmptyReason::FilterMatchedNone,
+            total_in_scope: 0,
+            hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
+        });
     } else {
         pack.empty = None;
     }
