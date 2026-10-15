@@ -17,6 +17,22 @@ use crate::gate::{MAX_WITNESS_MESSAGE_ORDER, validate_canonical_witness_message_
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::ManifestDbs;
 
+/// Tolerated clock skew for a witnessed turn's occurrence time (seconds), as
+/// for a reaction's.
+const WITNESS_OCCURRENCE_SKEW_SECS: u64 = 300;
+
+/// A witnessed row is learned as it occurs, so a time past the store clock's
+/// skew would carry the consolidation watermark past every later turn. It is
+/// refused at the door (F30); an import keeps its own learned time.
+pub(super) fn validate_witness_occurrence(now: u64, occurred_at: u64) -> MemoryResult<()> {
+    if occurred_at > now.saturating_add(WITNESS_OCCURRENCE_SKEW_SECS) {
+        return Err(MemoryError::bad_request(
+            "witnessed turn occurrence is in the future",
+        ));
+    }
+    Ok(())
+}
+
 /// Returns the one target an existing structural edge kind names. More than
 /// one target is already a re-parented row and therefore fails closed.
 pub(crate) fn sole_edge_target(
