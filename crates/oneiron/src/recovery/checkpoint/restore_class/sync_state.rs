@@ -98,6 +98,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::USAGE_EVENT, LIVE),
     (&t::VAULT_IMPORT_CONTENT, CONTENT),
     (&t::VAULT_IMPORT_RECEIPT, CONTENT),
+    (&t::WIRE_LIMIT_QUESTION, CONTENT),
     (&t::RC42_WIRE_QUESTION, CONTENT),
     (&t::RC42_WIRE_RECEIPT, CONTENT),
 ];
