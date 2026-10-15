@@ -679,3 +679,78 @@ fn fan_outs_across_scopes_count_in_one_window_against_the_vault_row() {
         (21, 20, 1_000_000_000)
     );
 }
+
+/// Allows the fan-out it rules on, after the clock moves to the next window
+/// and the same actor lands `burst` one-peer fan-outs there.
+struct InterleavingClassifier<'a> {
+    clock: &'a crate::ports::ManualClock,
+    next_window: u64,
+    facade: &'a crate::memory::Memory<'a>,
+    input: &'a ConsultFanOutSpec,
+    burst: usize,
+}
+impl FanoutAskClassifier for InterleavingClassifier<'_> {
+    fn classify(
+        &self,
+        _: &FanoutAskContext,
+        _: &FanoutClassifierView<'_>,
+        _: &FanoutDecisionHistory,
+    ) -> Result<FanoutAskVerdict> {
+        self.clock.set(self.next_window);
+        for _ in 0..self.burst {
+            let landed = self.facade.fan_out_consults(self.input).expect("lands");
+            assert_eq!(landed.task_refs.len(), 1);
+        }
+        Ok(FanoutAskVerdict::Allow)
+    }
+}
+
+/// Review r2 (Astra F1): a fan-out counts at the time it mints, not at the
+/// time its admission began. One held by its classifier across a window
+/// boundary, while the same actor lands 20 requests in the new window, is
+/// that window's 21st and leaves its check.
+#[test]
+fn a_fan_out_held_across_a_window_counts_in_the_window_it_lands_in() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = crate::ports::ManualClock::new(599);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    let actor = own_agent(&vault);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    facade
+        .set_consult_fanout_policy(
+            &owner(&vault),
+            &ConsultFanOutPolicy {
+                create_rate: TaskCreateRateLimit {
+                    limit: 20,
+                    window_seconds: 60,
+                },
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
+    let one = plan(&vault, 1);
+    let classifier = InterleavingClassifier {
+        clock: &clock,
+        next_window: 600,
+        facade: &facade,
+        input: &one,
+        burst: 20,
+    };
+    let held = facade
+        .fan_out_consults_with_classifier(&plan(&vault, 26), Some(&classifier))
+        .unwrap();
+    assert_eq!(held.task_refs.len(), 26);
+    assert_eq!(facade.fan_out_consults(&one).unwrap().task_refs.len(), 1);
+    let check = vault
+        .own_rate_check(actor, OwnRateKind::ConsultFanout)
+        .unwrap()
+        .expect("the window's 21st request left a check");
+    assert_eq!(
+        (check.count, check.threshold, check.window_started_at),
+        (21, 20, 600)
+    );
+}
