@@ -630,32 +630,38 @@ fn a_hinted_claim_mid_walk_leaves_the_limit_to_live_records() -> Result<()> {
 /// on #1471).
 #[test]
 fn a_fill_leased_before_a_same_body_put_mid_walk_writes_nothing() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     let (_tmp, vault) = open_with(crate::test_util::embedding_test_config());
     let source = entity(0x5B);
     put_source(&vault, DependentWalkDoor::SoftErase, &source)?;
     derive_five(&vault, &source)?;
-    let claim = derive_claim(&vault, &source, "matcha order history")?;
-    let (token, row) = {
+    let claim = entity(0x75);
+    let claim_body = crate::claim::encode_claim_body(&ClaimBody::new(
+        "test.walk_fill",
+        ClaimSubject::Entity(entity(0x74)),
+        rmpv::Value::from("filled mid-walk"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?)?;
+    let claim_row = (crate::registry::ENTITY_TYPE_CLAIM, at(10), 11);
+    vault
+        .batch()
+        .put(&claim, claim_row.0, claim_row.1, claim_row.2, &claim_body)
+        .edge(&claim, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    let token = {
         let txn = vault.store.env.read_txn()?;
-        let token = vault.store.pending_embedding_token(&txn, &claim)?;
-        let row = crate::ports::EntityStoreRead::port_entity_record(&vault.store, &txn, &claim)?;
-        (
-            token.expect("a claim is marked for embedding"),
-            row.expect("claim row"),
-        )
-    };
+        vault.store.pending_embedding_token(&txn, &claim)?
+    }
+    .expect("a claim is marked for embedding");
 
     vault.store.test_hooks.stop_dependent_walks_after(0);
     assert!(vault.delete_entity(&source)?);
+    assert!(withdrawn(&vault, &claim)?);
     vault
         .batch()
-        .put(
-            &claim,
-            crate::registry::ENTITY_TYPE_CLAIM,
-            at(10),
-            row.learned_at,
-            &row.body,
-        )
+        .put(&claim, claim_row.0, claim_row.1, claim_row.2, &claim_body)
         .commit()?;
     vault
         .batch()
