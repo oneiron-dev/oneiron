@@ -2,7 +2,8 @@
 //! (Sol and Astra on #1434, round 14): a frozen member keeps its saved checks,
 //! an orphan boundary or a pending malformed companion names no parent, a
 //! dissolved cycle takes its owner question with it, and a ring past the
-//! decision's work budget serves nothing and asks the owner once.
+//! decision's work budget serves nothing and asks the owner once; a room's
+//! facet is the one its project's folded authority names.
 use super::super::fold::reason;
 use super::super::history_policy::ProjectHistoryPolicy;
 use super::super::read::ProjectVerdict;
@@ -245,5 +246,62 @@ fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
     members.sort();
     assert_eq!(questions.len(), 1);
     assert_eq!(questions[0].members, members);
+    Ok(())
+}
+
+/// FACET-READ's room facet (#1432) is the facet of the authority the history
+/// folds to: a replayed older row naming another facet never moves a room's
+/// facet, and a project dark past the cycle bound names none.
+#[cfg(feature = "sync")]
+#[test]
+fn a_rooms_facet_is_the_one_its_project_serves() -> Result<()> {
+    use crate::federation::{ScopeAxis, ScopeId};
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    set_bound(&vault, 1)?;
+    let (root, root_row, holder) = root_leader(&vault)?;
+    let (work, home) = (EntityId::now(), EntityId::now());
+    for facet in [work, home] {
+        let at = TimeRange { start: 1, end: 1 };
+        vault.put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            at,
+            1,
+            b"fixture",
+        )?;
+    }
+    let slice = crate::llm::Scope {
+        facet: Some(work),
+        ..root_row.slice.clone()
+    };
+    let facet_of = |row: &ProjectRecord| -> Result<Option<ScopeAxis<ScopeId>>> {
+        let txn = vault.store.env.read_txn()?;
+        room_facets_in(&vault, &txn, EntityId::from_hex(&row.home_room)?)
+    };
+    let (a, b) = (EntityId::now(), EntityId::now());
+    let a0 = spawn_signed(&vault, root, a, holder, holder, slice.clone(), 2)?;
+    let a1 = signed_over(&vault, a, &a0, holder, |row| row.slice.facet = Some(home))?;
+    vault.put_project(a, &a1, 3)?;
+    let at_home = Some(ScopeAxis::Some([ScopeId(home)].into()));
+    assert_eq!(facet_of(&a1)?, at_home);
+    replay_project(&vault, a, &a0, 4)?;
+    assert_eq!(facet_of(&a1)?, at_home);
+    // A and B name each other past a bound of one world: dark, no facet.
+    let b0 = spawn_signed(&vault, root, b, holder, holder, slice, 5)?;
+    let a2 = signed_over(&vault, a, &a1, holder, |row| {
+        row.parents = vec![b.to_hex()];
+        row.depth_remaining = 0;
+    })?;
+    vault.put_project(a, &a2, 6)?;
+    let b1 = signed_over(&vault, b, &b0, holder, |row| {
+        row.parents = vec![a.to_hex()];
+        row.depth_remaining = 5;
+    })?;
+    let (_, companion) = revisions_of_row(b, &b1)?.pop().ok_or_else(invalid)?;
+    put_companion(&vault, &companion, 7)?;
+    assert!(!lit(&vault, a)? && !lit(&vault, b)?);
+    assert_eq!(facet_of(&a2)?, None);
+    assert_eq!(facet_of(&b0)?, None);
     Ok(())
 }

@@ -192,6 +192,8 @@ pub enum ErrorKind {
     SyncEngineError,
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
+    #[cfg(feature = "sync")]
+    HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
     KillSwitchDisabled,
     OffRecordSessionAlreadyExists,
@@ -277,6 +279,8 @@ pub enum ErrorKind {
     GitHttpInvalidRepoName,
     GitHttpRepoNotFound,
     GitHttpServeFailed,
+    GitHttpExchangeIdle,
+    GitHttpRepositoryBusy,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
     VaultCleanupRestoreNotArchived,
@@ -303,6 +307,7 @@ pub enum ErrorKind {
     HeadAdvanceOffTrunk,
     InvalidConversationDag,
     InvalidScopeSummary,
+    InvalidPairingScope,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,

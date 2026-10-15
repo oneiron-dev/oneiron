@@ -222,11 +222,11 @@ fn a_squatter_or_poisoned_carrier_never_hides_the_signed_removal() -> Result<()>
 #[test]
 fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     let x = EntityId::now();
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_support::restore_tempdir();
     let vault = open(&dir)?;
     let project = board_signed_s0(&vault, &[x], &[], |_| {})?;
     let (id, leader) = (project.id, project.leader);
-    let images = tempfile::tempdir()?;
+    let images = crate::test_support::restore_tempdir();
     let image = images.path().join("before-removal");
     vault.snapshot_checkpoint(&image, 5)?;
     let s1 = signed_over(&vault, id, &project.s0, project.board, without(x))?;
@@ -263,7 +263,7 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     // Nor does a restore of a checkpoint from before the removal: under the
     // current authority it would roll the deleted project back, so the door
     // refuses it (a restore it allows keeps history: the check below).
-    let restored_dir = tempfile::tempdir()?;
+    let restored_dir = crate::test_support::restore_tempdir();
     let refused = Vault::restore_checkpoint_keeping_authority(
         &image,
         &restored_dir.path().join("restored"),
@@ -371,10 +371,10 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
 #[test]
 fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
     let x = EntityId::now();
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_support::restore_tempdir();
     let vault = open(&dir)?;
     let project = board_signed_s0(&vault, &[x], &[], |_| {})?;
-    let images = tempfile::tempdir()?;
+    let images = crate::test_support::restore_tempdir();
     let image = images.path().join("before-removal");
     vault.snapshot_checkpoint(&image, 5)?;
     let s1 = signed_over(&vault, project.id, &project.s0, project.board, without(x))?;

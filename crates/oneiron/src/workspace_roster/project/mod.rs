@@ -72,8 +72,8 @@ pub(crate) use leader_chat::{
     verify_existing_turn as verify_existing_leader_chat_turn,
 };
 pub(crate) use proof::validate_transition as validate_project_transition;
-pub(crate) use read::ProjectReader;
 pub use read::{ProjectQuarantine, ProjectVerdict};
+pub(crate) use read::{ProjectReader, room_facets_in};
 pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;

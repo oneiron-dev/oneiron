@@ -64,6 +64,9 @@ pub struct VerifiedSlip {
     pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
     // Only the verifier can prove that no offline narrowing caveat was present.
     unattenuated: bool,
+    // Only the verifier knows whether a caveat moved the binding key off the
+    // key the slip was minted to.
+    transferred: bool,
 }
 impl VerifiedSlip {
     #[must_use]
@@ -96,6 +99,12 @@ impl VerifiedSlip {
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
     }
+    /// Whether the slip is its mint, with no caveat narrowing it (a scope,
+    /// a pact bound, a shorter lifetime, another key).
+    #[must_use]
+    pub(crate) fn is_unattenuated(&self) -> bool {
+        self.unattenuated
+    }
     /// A verified, unattenuated full-vault instrument, not merely `core:read`.
     #[must_use]
     pub fn is_full_vault_owner_grade(&self) -> bool {
@@ -105,6 +114,13 @@ impl VerifiedSlip {
             && self.claims.records.is_empty()
             && self.claims.channels.is_empty()
             && !self.claims.single_use
+    }
+    /// A caveat handed the slip to another key (`attenuate_to`): whoever
+    /// proves it now is not the holder the mint names, whatever
+    /// `holder_ref` says.
+    #[must_use]
+    pub fn is_transferred(&self) -> bool {
+        self.transferred
     }
     #[must_use]
     pub fn scope(&self) -> &Scope {
@@ -435,6 +451,7 @@ impl CapabilitySlip {
             claims: effective,
             pact,
             unattenuated: self.caveats.is_empty(),
+            transferred: binding_key != self.claims.binding_key,
         };
         verified.witness_pact(fold)?;
         Ok(verified)
