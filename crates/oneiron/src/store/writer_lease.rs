@@ -228,6 +228,11 @@ impl VaultWriterLease {
     fn lock_file(file: &std::fs::File) -> Result<()> {
         use std::os::fd::AsRawFd;
 
+        #[cfg(test)]
+        if let Some(callback) = BEFORE_LOCK.with(|slot| slot.borrow_mut().take()) {
+            callback();
+        }
+
         // SAFETY: `file` is a live, open `std::fs::File` borrowed for the
         // whole call, so `as_raw_fd()` yields a valid descriptor. `flock`
         // reads only that descriptor and the flag word, and writes nothing
@@ -266,6 +271,19 @@ impl VaultWriterLease {
         file.flush()?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` once, on this thread, between the next acquirer's open of
+/// a lock file and its lock.
+#[cfg(test)]
+pub(crate) fn arm_before_lock(callback: impl FnOnce() + 'static) {
+    BEFORE_LOCK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
 impl Drop for VaultWriterLease {

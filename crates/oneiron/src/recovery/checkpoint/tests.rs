@@ -1,3 +1,4 @@
+use super::test_hooks::{arm_restore_failure, arm_restore_panic};
 use super::*;
 use crate::{EntityId, temporal::TimeRange};
 
@@ -1957,4 +1958,72 @@ fn a_refused_restore_unlinks_the_writer_lock_last() {
         "{removed:?}"
     );
     assert!(std::fs::symlink_metadata(&destination).is_err());
+}
+
+/// Review r3 (Sol F4): a restore against the current vault that panics in
+/// its final checks unwinds as one refused there does. The copy closes
+/// before the directory made for it is removed, for a copy kept beside the
+/// current vault and for one that will replace it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_restore_that_panics_in_its_final_checks_closes_its_copy_first() {
+    let root = crate::test_support::restore_tempdir();
+    let base = root.path().canonicalize().unwrap();
+    let current = Vault::open(base.join("vault"), VaultConfig::device()).unwrap();
+    let image = base.join("image");
+    current.snapshot_checkpoint(&image, 100).expect("image");
+    for replacing in [false, true] {
+        let destination = base.join(format!("copy-{replacing}"));
+        let open = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        crate::store::arm_after_root_entry_removed({
+            let (destination, open) = (destination.clone(), open.clone());
+            move |_| open.borrow_mut().push(store_files_open(&destination))
+        });
+        arm_restore_panic();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if replacing {
+                Vault::restore_checkpoint_replacing(
+                    &image,
+                    &destination,
+                    VaultConfig::device(),
+                    &current,
+                    120,
+                )
+            } else {
+                Vault::restore_checkpoint_keeping_authority(
+                    &image,
+                    &destination,
+                    VaultConfig::device(),
+                    &current,
+                    120,
+                )
+            }
+        }));
+        assert!(unwound.is_err(), "replacing {replacing}: no panic");
+        assert_eq!(
+            open.borrow().first(),
+            Some(&false),
+            "replacing {replacing}: the copy was still open as its directory went"
+        );
+        assert!(
+            std::fs::symlink_metadata(&destination).is_err(),
+            "replacing {replacing}"
+        );
+    }
+}
+
+/// Whether this process holds the LMDB files at the root of `dir` open,
+/// unlinked or not.
+#[cfg(target_os = "linux")]
+fn store_files_open(dir: &Path) -> bool {
+    let files = ["data.mdb", "lock.mdb"].map(|name| dir.join(name).to_string_lossy().into_owned());
+    std::fs::read_dir("/proc/self/fd").is_ok_and(|descriptors| {
+        descriptors
+            .filter_map(std::result::Result::ok)
+            .filter_map(|descriptor| std::fs::read_link(descriptor.path()).ok())
+            .any(|target| {
+                let target = target.to_string_lossy();
+                files.iter().any(|file| target.starts_with(file.as_str()))
+            })
+    })
 }

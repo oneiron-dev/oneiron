@@ -573,6 +573,8 @@ impl Vault {
             restored_at,
             custody,
         )?;
+        #[cfg(test)]
+        panic_if_armed();
         if let Err(error) = authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
@@ -740,39 +742,10 @@ impl Vault {
         Ok(epochs)
     }
 }
-/// A step of a restore after its destination is made, which a test fails
-/// as a refusal there would.
 #[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RestoreStep {
-    FirstOpen,
-    ImageWrite,
-    SecondOpen,
-    ReceiptCheck,
-}
-
+mod test_hooks;
 #[cfg(test)]
-thread_local! {
-    static RESTORE_FAILS_AT: std::cell::Cell<Option<RestoreStep>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Fails the next restore on this thread at `step`.
-#[cfg(test)]
-pub(crate) fn arm_restore_failure(step: RestoreStep) {
-    RESTORE_FAILS_AT.with(|slot| slot.set(Some(step)));
-}
-
-#[cfg(test)]
-fn fail_at(step: RestoreStep) -> Result<()> {
-    if RESTORE_FAILS_AT.with(|slot| slot.get()) != Some(step) {
-        return Ok(());
-    }
-    RESTORE_FAILS_AT.with(|slot| slot.set(None));
-    Err(Error::InvalidConfig(
-        "a restore step was failed by a test".into(),
-    ))
-}
+use test_hooks::{RestoreStep, fail_at, panic_if_armed};
 
 #[cfg(test)]
 mod tests;
