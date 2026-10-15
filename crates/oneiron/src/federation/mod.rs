@@ -15,7 +15,7 @@ mod coreference;
 pub mod derivation;
 pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use coreference::person_pair_in_txn;
+pub(crate) use coreference::share_consent_valid_at;
 mod grant;
 pub(crate) mod grant_policy;
 mod membership_gate;

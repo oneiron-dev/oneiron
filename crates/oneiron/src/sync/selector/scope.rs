@@ -7,7 +7,7 @@ use loro::LoroDoc;
 use crate::Vault;
 use crate::authority::{AuthorityFold, FederationPactStatus};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimLifecycleStatus};
+use crate::claim::COREFERENCE_PACT_ID_LEN;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -48,6 +48,8 @@ pub(super) struct CoreferenceExportContext {
     /// with endpoint order normalized — consent is a property of the LINK,
     /// not of which endpoint happens to be stored as the source.
     allowed_links: BTreeSet<(EntityId, EntityId)>,
+    /// The policy-clock second every consent here was judged at.
+    now: u64,
 }
 
 impl CoreferenceExportContext {
@@ -69,7 +71,8 @@ impl CoreferenceExportContext {
     /// * a SHARE-CONSENT claim travels only when it names THIS export's pact.
     ///   Pact Q's consent is not a weaker statement about pact P, it is a
     ///   statement about a relationship P's peer is not party to — shipping it
-    ///   would disclose the existence of another federation.
+    ///   would disclose the existence of another federation. Nor does one
+    ///   travel outside its valid-time window.
     fn claim_travels(&self, body: &crate::claim::ClaimBody) -> bool {
         if !body
             .predicate
@@ -90,6 +93,9 @@ impl CoreferenceExportContext {
         }
         if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT {
             return true;
+        }
+        if !crate::federation::share_consent_valid_at(body, self.now) {
+            return false;
         }
         let mut pacts = self.pact_ids.iter();
         match (
@@ -150,8 +156,8 @@ pub(super) fn coreference_export_context(
     // Single-snapshot export: the caller holds `rtxn` for the whole filter
     // pass, so this reuses it instead of opening nested transactions.
     // `authority_fold` opens its own read+write txns (backfill + clock) and
-    // `coreference_shared_for_pact` opens one per edge/claim read — either
-    // would nest inside the caller's read txn and fail with
+    // `coreference_shared_for_pact` opens its own read txn — either would
+    // nest inside the caller's read txn and fail with
     // `Storage(Mdb(BadRslot))` on LMDB's single-reader-slot-per-thread rule.
     // The readonly fold is pact-equivalent for this check: first-seen timing
     // only gates stale-roster approval expiry, never pact binding or status.
@@ -161,10 +167,13 @@ pub(super) fn coreference_export_context(
         return Ok(CoreferenceExportContext::default());
     }
 
+    let now = vault.now_recorded_at();
     let mut allowed_links = BTreeSet::new();
     'links: for (a, b) in pairs {
         for pact_id in &pact_ids {
-            if !coreference_shared_for_pact_in_txn(vault, rtxn, a, b, pact_id)? {
+            if !crate::federation::coreference_shared_for_pact_in_txn(
+                vault, rtxn, a, b, pact_id, now,
+            )? {
                 continue 'links;
             }
         }
@@ -173,82 +182,8 @@ pub(super) fn coreference_export_context(
     Ok(CoreferenceExportContext {
         pact_ids,
         allowed_links,
+        now,
     })
-}
-
-/// Transaction-composable [`crate::federation::coreference_shared_for_pact`]:
-/// same two-orientation scan, same link-must-exist gate, but every read rides
-/// the caller's `rtxn` so the export filter holds one snapshot.
-///
-/// A copy rather than a call: the federation door opens its own transactions
-/// per read, which cannot nest inside the export's open read txn.
-fn coreference_shared_for_pact_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    a: EntityId,
-    b: EntityId,
-    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
-) -> Result<bool> {
-    // Diary NOTE links are local Empty-scope edges, never federation identity.
-    if !crate::federation::person_pair_in_txn(vault, rtxn, a, b)? {
-        return Ok(false);
-    }
-    for (source, target) in [(a, b), (b, a)] {
-        if edge_exists_in_txn(vault, rtxn, &source, EdgeKind::SameAs, &target)?
-            && coreference_consent_names_pact_in_txn(vault, rtxn, source, target, pact_id)?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Transaction-composable consent scan for ONE stored link orientation.
-/// Mirrors `federation::coreference_consent_names_pact`: Active + Approved +
-/// exact pact + locally authored (`Imported` rows vouch for nothing) + Edge
-/// subject match; a malformed stored consent body is not consent.
-fn coreference_consent_names_pact_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    source: EntityId,
-    target: EntityId,
-    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
-) -> Result<bool> {
-    for claim in vault.claims_for_subject_in_txn(rtxn, &source)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim)? else {
-            continue;
-        };
-        if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT
-            || body.lifecycle != ClaimLifecycleStatus::Active
-            || body.approval != crate::claim::ClaimApprovalStatus::Approved
-            || body.source == Some(crate::claim::ClaimSource::Imported)
-            || body.subject
-                != (crate::claim::ClaimSubject::Edge {
-                    source,
-                    kind: EdgeKind::SameAs,
-                    target,
-                })
-        {
-            continue;
-        }
-        if crate::claim::coreference_share_consent_pact_id(&body)
-            .is_ok_and(|claimed| claimed == *pact_id)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Transaction-composable [`Vault::edge_exists`]: same key, caller's txn.
-fn edge_exists_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    src: &EntityId,
-    kind: EdgeKind,
-    tgt: &EntityId,
-) -> Result<bool> {
-    Ok(crate::ports::EdgeStoreRead::port_edge_get(&vault.store, rtxn, src, kind, tgt)?.is_some())
 }
 
 /// Resolve just the candidate link from the committing document writer.
@@ -265,11 +200,12 @@ pub(super) fn document_coreference_context_in_txn(
     if pact_ids.is_empty() {
         return Ok(CoreferenceExportContext::default());
     }
+    let now = vault.now_recorded_at();
     let mut allowed_links = BTreeSet::new();
     let mut consented = true;
     for pact_id in &pact_ids {
         if !crate::federation::coreference_shared_for_pact_in_txn(
-            vault, txn, source, target, pact_id,
+            vault, txn, source, target, pact_id, now,
         )? {
             consented = false;
             break;
@@ -281,6 +217,7 @@ pub(super) fn document_coreference_context_in_txn(
     Ok(CoreferenceExportContext {
         pact_ids,
         allowed_links,
+        now,
     })
 }
 

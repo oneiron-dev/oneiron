@@ -3672,6 +3672,53 @@ impl CoreferenceExport {
         .expect("write share consent")
     }
 
+    /// A share consent for `pact_id` with a valid-time window, filed the way
+    /// the consent door files one (Edge subject, `claim_of` to the source).
+    fn windowed_consent(
+        &self,
+        pact_id: &[u8; 32],
+        valid_from: Option<u64>,
+        valid_to: Option<u64>,
+    ) -> EntityId {
+        let mut body = ClaimBody::new(
+            crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT,
+            ClaimSubject::Edge {
+                source: self.person_a,
+                kind: EdgeKind::SameAs,
+                target: self.person_b,
+            },
+            Value::Map(vec![(
+                Value::from(crate::claim::COREFERENCE_SHARE_CONSENT_PACT_KEY),
+                Value::from(crate::entity_id::bytes_to_hex_lower(pact_id)),
+            )]),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.valid_from = valid_from;
+        body.valid_to = valid_to;
+        let claim_id = entity_id(0xC9);
+        self.vault
+            .batch()
+            .put(
+                &claim_id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                TimeRange { start: 2, end: 2 },
+                2,
+                &encode_claim_body(&body).unwrap(),
+            )
+            .edge(
+                &claim_id,
+                EdgeKind::ClaimOf,
+                &self.person_a,
+                crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+            )
+            .commit()
+            .expect("write windowed share consent");
+        claim_id
+    }
+
     /// The window as the peer would see it: both people, the link, the
     /// control claim, and every claim in `claims` — each facet-stamped so the
     /// pact-bound ⊥ facet reading (ONE-1591) does not withhold everything for
@@ -6972,5 +7019,74 @@ fn multi_pact_grant_needs_every_pacts_consent_and_ships_no_consent_claim() {
     assert!(
         !ids.contains(&consent_p) && !ids.contains(&consent_q),
         "a pact's consent claim crossed under a shared grant"
+    );
+}
+
+/// H212 — a share consent counts only inside its valid-time window, at every
+/// door that reads one: the federation answer (which the restore comparison
+/// also asks), the export filter, the document writer's context, and whether
+/// the consent row itself travels.
+#[test]
+fn share_consent_counts_only_inside_its_valid_time_window_at_every_reader() {
+    type Window = fn(u64) -> (Option<u64>, Option<u64>);
+    let cases: [(&str, Window, bool); 4] = [
+        ("lapsed", |now| (None, Some(now - 3_600)), false),
+        ("not yet valid", |now| (Some(now + 3_600), None), false),
+        (
+            "inside its window",
+            |now| (Some(now - 3_600), Some(now + 3_600)),
+            true,
+        ),
+        ("unbounded", |_| (None, None), true),
+    ];
+    let mut wrong = Vec::new();
+    for (case, window, live) in cases {
+        let fixture = coreference_export(true);
+        let (valid_from, valid_to) = window(fixture.vault.now_recorded_at());
+        let consent = fixture.windowed_consent(&COREFERENCE_PACT_P, valid_from, valid_to);
+        let (a, b) = (fixture.person_a, fixture.person_b);
+
+        let federation = crate::federation::coreference_shared_for_pact(
+            &fixture.vault,
+            a,
+            b,
+            &COREFERENCE_PACT_P,
+        )
+        .unwrap();
+        let (ids, exported) = fixture.filtered(&[fixture.status_claim, consent]);
+        assert!(
+            ids.contains(&fixture.control_claim),
+            "{case}: the control claim must cross, else this proves nothing"
+        );
+        let document = {
+            let rtxn = fixture.vault.store.env.read_txn().unwrap();
+            let fold = fixture.vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+            let selector = SyncSelector::new(
+                fixture.grant_id,
+                fixture.member,
+                SyncSelectorWorld::All,
+                vec![fixture.facet],
+                vec![SelectorRange::Semantic, SelectorRange::Core],
+            );
+            super::scope::document_coreference_context_in_txn(
+                &fixture.vault,
+                &rtxn,
+                &fold,
+                &selector,
+                a,
+                b,
+            )
+            .unwrap()
+            .allows(a, b)
+        };
+        let answers = [federation, exported, document, ids.contains(&consent)];
+        if answers != [live; 4] {
+            wrong.push((case, answers));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "[federation, export filter, document writer, consent row travels] \
+         disagree with the consent's window: {wrong:?}"
     );
 }
