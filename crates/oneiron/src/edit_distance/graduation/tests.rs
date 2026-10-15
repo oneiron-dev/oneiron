@@ -30,14 +30,15 @@ fn owner(vault: &Vault) -> AuthenticatedOwner {
 /// clean rulings after `losses` rejections, so the streak is `wins` and the
 /// lifetime correction count is `losses`.
 fn record_history(vault: &Vault, scope: &RampScope, wins: u32, losses: u32) {
+    let owner = owner(vault);
     for _ in 0..losses {
         vault
-            .record_proposal_outcome_for_ramp(scope, ProposalOutcome::Rejected)
+            .record_proposal_outcome_for_ramp(&owner, scope, ProposalOutcome::Rejected)
             .expect("record rejection");
     }
     for _ in 0..wins {
         vault
-            .record_proposal_outcome_for_ramp(scope, ProposalOutcome::ApprovedUntouched)
+            .record_proposal_outcome_for_ramp(&owner, scope, ProposalOutcome::ApprovedUntouched)
             .expect("record clean approval");
     }
 }
@@ -257,7 +258,7 @@ fn a_ruling_that_retracts_the_offer_beats_a_tap_already_in_flight() {
     let owner = owner(&vault);
     earn_an_offer(&vault, &scope);
     vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::Rejected)
+        .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::Rejected)
         .expect("the rejection lands first");
 
     assert!(answer_graduation_offer(&vault, &scope, OfferAnswer::GoAuto(&owner)).is_err());
@@ -384,7 +385,7 @@ fn ms06s_own_acceptance_door_answers_the_offer_exactly_as_this_ones_does() {
     // suppress this scope forever the moment a correction took the grant away
     // and the scope re-earned its threshold.
     vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::Rejected)
+        .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::Rejected)
         .expect("a correction demotes the graduated scope");
     record_history(&vault, &scope, DEFAULT_GRADUATION_STREAK_FLOOR * 4, 0);
     assert_eq!(

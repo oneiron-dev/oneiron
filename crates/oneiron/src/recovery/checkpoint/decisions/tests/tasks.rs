@@ -79,6 +79,8 @@ fn mint(
                 kind,
                 actor_ref: actor,
                 assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
                 occurred_at: 10,
             },
         )
@@ -136,7 +138,16 @@ pub(super) fn task_authority() -> Result<Case> {
     put_person(&vault, owner)?;
     put_task(&vault, task, owner)?;
     let cancelled = mint(&vault, task, TaskAuthorityFactKind::Cancelled, owner)?;
-    vault.delete_edge(&cancelled, EdgeKind::ScopedTo, &task)?;
+    // No door unlinks a fact: this is its link arriving after its row.
+    vault.with_write_txn(|txn| {
+        crate::ports::EdgeStoreStaging::port_remove_edge_rows(
+            &vault.store,
+            txn,
+            &cancelled,
+            EdgeKind::ScopedTo,
+            &task,
+        )
+    })?;
     Case::after_backup(
         "task owners and cancellations",
         (dir, vault),

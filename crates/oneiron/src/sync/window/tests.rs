@@ -2813,6 +2813,15 @@ fn reverse_rematerialization_replaces_poisoned_authority_carrier_with_inverted_r
     let genesis = authority_genesis_fixture_for_window(0x71);
     let revoke = authority_revoke_fixture_for_window(&genesis, 0x71, 0x72, 0x73);
     let id = crate::authority::authority_log_entity_id(&revoke)?;
+    // The revocation's signer stands only once its genesis is stored (H72).
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
     vault.put_authority_log_entry(
         &revoke,
         TimeRange {
@@ -2889,6 +2898,15 @@ fn reverse_rematerialization_replaces_divergent_and_malformed_authority_bodies()
         ("malformed", b"not messagepack at all".to_vec()),
     ] {
         let (_dir, vault) = test_vault();
+        // The revocation's signer stands only once its genesis is stored (H72).
+        vault.put_authority_log_entry(
+            &genesis,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+        )?;
         vault.put_authority_log_entry(
             &revoke,
             TimeRange {

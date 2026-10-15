@@ -243,6 +243,9 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// What the authority store doors read of one committed generation.
+    pub(crate) authority_door_view:
+        Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
     /// Rows the authority doors refused because a key a handoff this vault
     /// holds retired signed them (OF-166 evidence). Never persisted.
     pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,

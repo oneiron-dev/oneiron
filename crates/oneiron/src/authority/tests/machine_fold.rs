@@ -196,7 +196,7 @@ fn a_hosted_roots_successor_never_vouches_for_a_machine() {
 }
 
 /// An issuer-signed entry on `parents`, cosigned by `cosigner` when given.
-fn host_entry(
+pub(super) fn host_entry(
     host: &Host,
     seq: u64,
     parents: &BTreeSet<AuthorityEntryHash>,
@@ -226,7 +226,7 @@ fn host_entry(
     entry
 }
 
-fn profile_op(host: &Host, machine: EntityId, key: &SigningKey) -> AuthorityOp {
+pub(super) fn profile_op(host: &Host, machine: EntityId, key: &SigningKey) -> AuthorityOp {
     let request = request_for(host.vault_id, machine, key);
     AuthorityOp::MachineProfile(MachineProfile {
         machine,
