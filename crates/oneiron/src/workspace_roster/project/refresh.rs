@@ -67,21 +67,34 @@ pub(crate) fn refresh_project_frontiers(
         queue: touched.clone(),
         ..Schedule::default()
     };
-    let mut next = None;
-    while let Some(project) = next.take().or_else(|| schedule.queue.pop_first()) {
-        schedule.queue.remove(&project);
+    // The projects to refresh before the queue's own order.
+    let mut ahead = std::collections::VecDeque::new();
+    loop {
+        let project = match ahead.pop_front() {
+            Some(project) if schedule.queue.remove(&project) => project,
+            Some(_) => continue,
+            None => match schedule.queue.pop_first() {
+                Some(project) => project,
+                None => break,
+            },
+        };
         if schedule.spent(&project) {
             continue;
         }
         // A component is decided as one, so every member's record is written
         // from that one decision (Astra #1434b, r14 F4), and after the queued
-        // projects it reads (Sol r18 F2, Astra r18 F1).
-        next = refresh_component(store, txn, posture, kind, project, &mut schedule)?;
-        if next.is_some() {
-            schedule.queue.insert(project);
-            schedule.deferred.insert(project);
-        } else {
-            schedule.deferred.clear();
+        // projects it reads, parents first (Sol r18 F2, Astra r18 F1; one
+        // walk, Sol r19 F1, Astra r19 F1).
+        match refresh_component(store, txn, posture, kind, project, &mut schedule)? {
+            Some(parents) => {
+                schedule.queue.insert(project);
+                schedule.deferred.insert(project);
+                ahead.push_front(project);
+                for parent in parents.into_iter().rev() {
+                    ahead.push_front(parent);
+                }
+            }
+            None => schedule.deferred.clear(),
         }
     }
     Ok(())
@@ -196,9 +209,9 @@ struct Drained {
 /// at the last round a drain is left for the project's next refresh, so no
 /// member's record is written from a decision its drain changed (Sol and
 /// Astra r16 F2). A component holding a member that has spent its rounds is
-/// not decided again and waits for its next refresh (r17 F2). A queued
-/// project the component reads, outside it, is returned to be refreshed
-/// first, before anything is decided (Sol r18 F2, Astra r18 F1).
+/// not decided again and waits for its next refresh (r17 F2). The queued
+/// projects the component reads, outside it, are returned, parents first, to
+/// be refreshed before anything is decided (Sol r18 F2, Astra r18 F1).
 fn refresh_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -206,7 +219,7 @@ fn refresh_component(
     kind: u8,
     project: EntityId,
     schedule: &mut Schedule,
-) -> Result<Option<EntityId>> {
+) -> Result<Option<Vec<EntityId>>> {
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
     let mut authenticated = BTreeSet::new();
     let mut changed: BTreeMap<EntityId, bool> = BTreeMap::new();
@@ -222,7 +235,7 @@ fn refresh_component(
             schedule,
         )?;
         let (decided, dark, plans) = match decision {
-            Step::After(parent) => return Ok(Some(parent)),
+            Step::After(parents) => return Ok(Some(parents)),
             Step::Spent => break,
             Step::Decided(decision) => decision,
         };
@@ -274,8 +287,9 @@ type Decision = (Vec<EntityId>, bool, Vec<(EntityId, Plan)>);
 
 /// What one attempt at a component's decision came to.
 enum Step {
-    /// A queued project the component reads, refreshed first.
-    After(EntityId),
+    /// The queued projects the component reads, parents first: refreshed
+    /// before it.
+    After(Vec<EntityId>),
     /// A member has spent its rounds: nothing is decided.
     Spent,
     Decided(Decision),
@@ -283,7 +297,7 @@ enum Step {
 
 /// One decision of `project`'s component after every member's pending rows
 /// are authenticated, recording what it read. Before the refresh's `first`
-/// decision, a queued project the component reads is refreshed first.
+/// decision, the queued projects the component reads are refreshed first.
 fn decide_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -298,17 +312,18 @@ fn decide_component(
             let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
             let members = reader.component(project)?.to_vec();
             if first {
-                // The component has read every project its parents lead to.
-                let ahead = |id: &EntityId| {
-                    !members.contains(id)
-                        && schedule.queue.contains(id)
-                        && !schedule.spent(id)
-                        && !schedule.deferred.contains(id)
-                };
-                let queued: BTreeSet<EntityId> =
-                    reader.read_projects().into_iter().filter(ahead).collect();
-                if let Some(parent) = first_queued(&reader, &queued)? {
-                    return Ok(Step::After(parent));
+                // The component has read every project its parents lead to,
+                // closed parents first.
+                let ahead: Vec<EntityId> = (reader.parents_first().into_iter())
+                    .filter(|id| {
+                        !members.contains(id)
+                            && schedule.queue.contains(id)
+                            && !schedule.spent(id)
+                            && !schedule.deferred.contains(id)
+                    })
+                    .collect();
+                if !ahead.is_empty() {
+                    return Ok(Step::After(ahead));
                 }
             }
             for member in &members {
@@ -346,40 +361,6 @@ fn decide_component(
             }
         }
     }
-}
-
-/// Of the queued projects a component reads, one that reads no other outside
-/// its own component: refreshed first, so a chain of queued parents is
-/// climbed in one step.
-fn first_queued(
-    reader: &ProjectReader<'_, '_>,
-    queued: &BTreeSet<EntityId>,
-) -> Result<Option<EntityId>> {
-    for candidate in queued {
-        let own = reader.component(*candidate)?;
-        let mut seen = BTreeSet::from([*candidate]);
-        let mut todo = vec![*candidate];
-        let mut reads_other = false;
-        while let Some(at) = todo.pop() {
-            if queued.contains(&at) && !own.contains(&at) {
-                reads_other = true;
-                break;
-            }
-            if let Some(facts) = reader.facts(at)? {
-                todo.extend(
-                    facts
-                        .edges
-                        .iter()
-                        .copied()
-                        .filter(|edge| seen.insert(*edge)),
-                );
-            }
-        }
-        if !reads_other {
-            return Ok(Some(*candidate));
-        }
-    }
-    Ok(queued.first().copied())
 }
 
 /// What one member's refresh writes, read with its old record.

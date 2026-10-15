@@ -183,6 +183,7 @@ impl ProjectReader<'_, '_> {
                     }
                 }
                 members.sort();
+                self.closed.borrow_mut().extend(members.iter().copied());
                 let members = Rc::new(members);
                 for member in members.iter() {
                     self.components

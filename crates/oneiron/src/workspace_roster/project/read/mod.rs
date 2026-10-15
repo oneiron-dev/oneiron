@@ -141,6 +141,8 @@ pub(crate) struct ProjectReader<'a, 't> {
     overlay: Option<Overlay>,
     facts: RefCell<BTreeMap<EntityId, Option<Rc<Facts>>>>,
     components: RefCell<BTreeMap<EntityId, Rc<Vec<EntityId>>>>,
+    /// The members of every component closed, in closing order.
+    closed: RefCell<Vec<EntityId>>,
     decided: RefCell<BTreeMap<EntityId, Option<Rc<Decided>>>>,
     /// Each signed state's and envelope's slip and signature check, by
     /// project and hash.
@@ -176,6 +178,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
             overlay: None,
             facts: RefCell::new(BTreeMap::new()),
             components: RefCell::new(BTreeMap::new()),
+            closed: RefCell::new(Vec::new()),
             decided: RefCell::new(BTreeMap::new()),
             verified: RefCell::new(BTreeMap::new()),
             open: RefCell::new(BTreeSet::new()),
@@ -349,6 +352,12 @@ impl<'a, 't> ProjectReader<'a, 't> {
     /// decisions rest on.
     pub(super) fn read_projects(&self) -> BTreeSet<EntityId> {
         self.facts.borrow().keys().copied().collect()
+    }
+
+    /// Every project of each component this reader closed, parents first: a
+    /// component closes only after every component it reads.
+    pub(super) fn parents_first(&self) -> Vec<EntityId> {
+        self.closed.borrow().clone()
     }
 
     /// The effective authority every permission consumer reads.
