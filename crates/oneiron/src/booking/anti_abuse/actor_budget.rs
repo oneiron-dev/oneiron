@@ -20,8 +20,8 @@ use crate::{EntityId, Vault};
 /// `{window(8 BE), count(8 BE)}`. Key: actor + kind tag.
 const COUNT: SideTable<(EntityId, [u8; 1]), [u8; 16], Raw> =
     SideTable::new(&side_table::BOOKING_ACTOR_BUDGET_COUNT);
-/// One check per actor, kind and window. Key: actor + kind tag + window start.
-const CHECK: SideTable<(EntityId, [u8; 1], u64), BookingBudgetCheck, Named> =
+/// One check per actor and kind, holding its latest crossing. Key: actor + kind tag.
+const CHECK: SideTable<(EntityId, [u8; 1]), BookingBudgetCheck, Named> =
     SideTable::new(&side_table::BOOKING_ACTOR_BUDGET_CHECK);
 
 /// Requests of one kind by one actor in one window past which the check is
@@ -67,12 +67,15 @@ pub struct BookingBudgetReceipt {
     pub count: u64,
 }
 
-/// OF-520 question at the first crossing of the advisory threshold.
+/// OF-520 question for one actor and kind: the latest window whose count
+/// crossed the advisory threshold, and how many windows have. One row per
+/// actor and kind, so a burst that lasts never grows the table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BookingBudgetCheck {
     pub receipt: BookingBudgetReceipt,
     pub threshold: u64,
+    pub windows_crossed: u64,
 }
 
 impl BookingBudgetCheck {
@@ -80,7 +83,7 @@ impl BookingBudgetCheck {
 }
 
 /// Counts one authenticated request of `budget` by `actor`, in its own
-/// transaction, and records the check when this request is the first past
+/// transaction, and updates the check when this request is the first past
 /// the threshold in its window.
 ///
 /// # Errors
@@ -112,12 +115,18 @@ pub fn observe_authenticated_booking(
             count,
         };
         if count == BOOKING_ADVISORY_THRESHOLD + 1 {
+            let windows_crossed = CHECK
+                .get(&vault.store, &*wtxn, &key)
+                .map_err(|error| engine_failure("budget check read", error))?
+                .map_or(0, |check| check.windows_crossed)
+                .saturating_add(1);
             let check = BookingBudgetCheck {
                 receipt: receipt.clone(),
                 threshold: BOOKING_ADVISORY_THRESHOLD,
+                windows_crossed,
             };
             CHECK
-                .put(&vault.store, wtxn, &(actor, budget.tag(), window), &check)
+                .put(&vault.store, wtxn, &key, &check)
                 .map_err(|error| engine_failure("budget check write", error))?;
         }
         let mut value = [0_u8; 16];
@@ -130,7 +139,8 @@ pub fn observe_authenticated_booking(
     })
 }
 
-/// The checks recorded for `actor`, by kind, oldest window first.
+/// The checks recorded for `actor`, one per kind that has crossed, in kind
+/// order.
 ///
 /// # Errors
 ///

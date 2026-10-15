@@ -115,8 +115,9 @@ fn listing(nth: u64) -> Value {
 
 /// With every owner cap at one, an authenticated actor sends three of each
 /// kind in one window: all complete. Each kind's count, carried on to past
-/// the advisory threshold, records its typed question once. The anonymous
-/// route from the same connection is still shed at the cap.
+/// the advisory threshold, records its typed question once per window, in one
+/// row per kind. The anonymous route from the same connection is still shed
+/// at the cap.
 #[tokio::test]
 async fn an_authenticated_burst_past_every_booking_cap_completes() {
     let mut fixture = Fixture::new();
@@ -250,7 +251,31 @@ async fn an_authenticated_burst_past_every_booking_cap_completes() {
                 count: BOOKING_ADVISORY_THRESHOLD + 1,
             },
             threshold: BOOKING_ADVISORY_THRESHOLD,
+            windows_crossed: 1,
         })
         .collect();
     assert_eq!(checks, expected);
+
+    // A burst that lasts updates its kind's one check, window by window.
+    let later = now + 60;
+    for _ in 0..=BOOKING_ADVISORY_THRESHOLD {
+        observe_authenticated_booking(
+            &fixture.server.vault,
+            id(0x77),
+            BookingBudgetKind::Hold,
+            later,
+        )
+        .expect("count");
+    }
+    let checks = booking_budget_checks(&fixture.server.vault, id(0x77)).expect("checks");
+    assert_eq!(checks.len(), BookingBudgetKind::ALL.len());
+    let hold = &checks[1];
+    assert_eq!(
+        (
+            hold.receipt.budget,
+            hold.receipt.window_started_at_secs,
+            hold.windows_crossed
+        ),
+        (BookingBudgetKind::Hold, later / 60 * 60, 2)
+    );
 }

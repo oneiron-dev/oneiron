@@ -10,6 +10,7 @@ use super::evidence::{
     receive_pack_provenance_refused,
 };
 use super::landing::ReceivePackLanding;
+use super::paths::ORIGIN_REF_UPDATE_BATCH;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -309,82 +310,99 @@ impl Vault {
         let mut replay_outcome = None;
         let mut landing: Option<ReceivePackLanding> = None;
         let (request_bytes, response_bytes) = intent.transport_bytes.unwrap_or((0, 0));
-        for index in 0..intent.refs.len() {
-            if intent.refs[index].status != ReceivePackRefStatus::Pending {
-                continue;
+        let pending: Vec<usize> = (0..intent.refs.len())
+            .filter(|&index| intent.refs[index].status == ReceivePackRefStatus::Pending)
+            .collect();
+        // A push may name any number of refs. They are settled in batches:
+        // each batch's observations are saved once, before any of its refs is
+        // published, and its publications once after, so the intent row is
+        // rewritten twice per batch rather than twice per ref. A crash inside
+        // a batch leaves its published refs observed and pending, and the
+        // next pass replays them under their same outcome ids.
+        for batch in pending.chunks(ORIGIN_REF_UPDATE_BATCH) {
+            let mut observed_any = false;
+            let mut realized = Vec::with_capacity(batch.len());
+            for &index in batch {
+                let update = intent.refs[index].update()?;
+                // A failed proof is uncertainty, not permission to replay a ref.
+                match realized_updates(self, root, std::slice::from_ref(&update)) {
+                    Ok(updates) if updates.is_empty() => {
+                        intent.refs[index].status = if intent.refs[index].observed {
+                            ReceivePackRefStatus::Superseded
+                        } else {
+                            ReceivePackRefStatus::NotApplied
+                        };
+                        observed_any = true;
+                    }
+                    Err(_) => {}
+                    Ok(_) => {
+                        observed_any |= !intent.refs[index].observed;
+                        intent.refs[index].observed = true;
+                        realized.push((index, update));
+                    }
+                }
             }
-            let update = intent.refs[index].update()?;
-            // A failed proof is uncertainty, not permission to replay a ref.
-            let observed = realized_updates(self, root, std::slice::from_ref(&update));
-            match observed {
-                Ok(updates) if updates.is_empty() => {
-                    intent.refs[index].status = if intent.refs[index].observed {
-                        ReceivePackRefStatus::Superseded
+            if observed_any {
+                self.save_receive_pack_intent(key, intent)?;
+            }
+            let mut published_any = false;
+            for (index, update) in realized {
+                let outcome = ReceivePackOutcome {
+                    repo_root: root.to_path_buf(),
+                    ref_updates: vec![update.clone()],
+                    lfs_pointers: pointers.clone(),
+                    staged_objects_dir: root.join("objects"),
+                    // These are whole-exchange totals, not a per-ref allocation.
+                    // Only a crash before the checkpoint leaves them unmeasured:
+                    // zero then means unknown, not newly measured recovery traffic.
+                    pack_stats: PackStats {
+                        request_bytes,
+                        response_bytes,
+                        ref_update_count: 1,
+                    },
+                };
+                let door = DoorWindowReport {
+                    verdict: DoorWindowVerdict::Clean,
+                    ref_updates: vec![update],
+                    lfs_pointers: pointers.clone(),
+                    quarantine_path: None,
+                };
+                let result = (|| {
+                    let attribution = self.record_receive_pack_outcome_at(
+                        &stamp,
+                        &door,
+                        &outcome,
+                        0,
+                        EntityId::from_hex(&intent.refs[index].outcome_id)
+                            .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
+                    )?;
+                    if replay_outcome.is_none() {
+                        replay_outcome = Some(outcome.clone());
+                    }
+                    self.apply_receive_pack_update_with_attribution(
+                        &outcome.pinned_repo_ref()?,
+                        &outcome,
+                        &attribution,
+                    )
+                })();
+                if let Ok(receipt) = result {
+                    intent.refs[index].status = ReceivePackRefStatus::Published;
+                    published_any = true;
+                    if let Some(previous) = &mut landing {
+                        previous.replayed &= receipt.replayed;
                     } else {
-                        ReceivePackRefStatus::NotApplied
-                    };
-                    self.save_receive_pack_intent(key, intent)?;
-                    continue;
+                        // The exposed replay outcome must name the same ref and
+                        // source as the first receipt, not an uncertified aggregate.
+                        replay_outcome = Some(outcome);
+                        landing = Some(receipt);
+                    }
                 }
-                Err(_) => continue,
-                Ok(_) => {}
+                // Do not stop after a failed ref: retain its Pending disposition
+                // and recover the other refs independently.
             }
-            if !intent.refs[index].observed {
-                intent.refs[index].observed = true;
+            if published_any {
                 self.save_receive_pack_intent(key, intent)?;
             }
-            let outcome = ReceivePackOutcome {
-                repo_root: root.to_path_buf(),
-                ref_updates: vec![update.clone()],
-                lfs_pointers: pointers.clone(),
-                staged_objects_dir: root.join("objects"),
-                // These are whole-exchange totals, not a per-ref allocation.
-                // Only a crash before the checkpoint leaves them unmeasured:
-                // zero then means unknown, not newly measured recovery traffic.
-                pack_stats: PackStats {
-                    request_bytes,
-                    response_bytes,
-                    ref_update_count: 1,
-                },
-            };
-            let door = DoorWindowReport {
-                verdict: DoorWindowVerdict::Clean,
-                ref_updates: vec![update],
-                lfs_pointers: pointers.clone(),
-                quarantine_path: None,
-            };
-            let result = (|| {
-                let attribution = self.record_receive_pack_outcome_at(
-                    &stamp,
-                    &door,
-                    &outcome,
-                    0,
-                    EntityId::from_hex(&intent.refs[index].outcome_id)
-                        .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
-                )?;
-                if replay_outcome.is_none() {
-                    replay_outcome = Some(outcome.clone());
-                }
-                self.apply_receive_pack_update_with_attribution(
-                    &outcome.pinned_repo_ref()?,
-                    &outcome,
-                    &attribution,
-                )
-            })();
-            if let Ok(receipt) = result {
-                intent.refs[index].status = ReceivePackRefStatus::Published;
-                self.save_receive_pack_intent(key, intent)?;
-                if let Some(previous) = &mut landing {
-                    previous.replayed &= receipt.replayed;
-                } else {
-                    // The exposed replay outcome must name the same ref and
-                    // source as the first receipt, not an uncertified aggregate.
-                    replay_outcome = Some(outcome);
-                    landing = Some(receipt);
-                }
-            }
-            // Do not stop after a failed ref: retain its Pending disposition
-            // and recover the other refs independently.
         }
         Ok((replay_outcome, landing))
     }

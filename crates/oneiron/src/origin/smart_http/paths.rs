@@ -69,12 +69,13 @@ pub const DOOR_PRE_RECEIVE_HOOK_NAME: &str = "pre-receive";
 /// Longest repository name the origin will resolve.
 pub const ORIGIN_MAX_REPO_NAME_BYTES: usize = 100;
 
-/// The most refs one git command of the landing names.
+/// The most refs one step of the landing handles at once.
 ///
 /// A push may move any number of refs. The landing publishes each through its
-/// own publication set, and reads the refs a push named in batches of this
-/// many, so no command it runs grows with the push. It matches GitWire's
-/// publication bound.
+/// own publication set, reads the refs a push named this many to a git
+/// command, and saves the push's journal once per this many refs, so neither
+/// a command it runs nor the journal writes per ref grow with the push. It
+/// matches GitWire's publication bound.
 pub const ORIGIN_REF_UPDATE_BATCH: usize = 64;
 
 /// The ref namespace this origin never lets a push write.

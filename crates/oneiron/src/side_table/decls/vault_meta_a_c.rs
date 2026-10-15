@@ -115,8 +115,8 @@ side_tables! {
     BOOKING_PUBLICATION_WRITE_STAGE: VaultMeta b"booking.public_write.in_txn/" Raw;
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed;
-    /// Advisory booking burst observation for one authenticated actor, budget kind and window.
-    /// Key: id16 + kind u8 + u64be.
+    /// Latest advisory booking burst observation for one authenticated actor and budget kind.
+    /// Key: id16 + kind u8.
     BOOKING_ACTOR_BUDGET_CHECK: VaultMeta b"booking:actor_budget_check:v1:" Named;
     /// One authenticated actor's booking requests of one kind in its current window: window
     /// u64be + count u64be. Key: id16 + kind u8.

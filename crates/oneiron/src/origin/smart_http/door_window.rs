@@ -310,7 +310,8 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
 /// publishes them one at a time.
 pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> Vec<String> {
     let mut reasons = Vec::new();
-    for (index, update) in updates.iter().enumerate() {
+    let mut seen = std::collections::HashSet::with_capacity(updates.len());
+    for update in updates {
         let name = printable_ref_name(&update.name);
         if update.name.starts_with(ORIGIN_REFUSED_REF_PREFIX) {
             reasons.push(format!(
@@ -318,10 +319,7 @@ pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> Vec<String> {
             ));
         } else if GitRefName::parse_full(update.name.clone()).is_err() {
             reasons.push(format!("{name}: not a ref name this origin can journal"));
-        } else if updates[..index]
-            .iter()
-            .any(|earlier| earlier.name == update.name)
-        {
+        } else if !seen.insert(update.name.as_str()) {
             reasons.push(format!("{name}: proposed twice in one push"));
         }
     }
