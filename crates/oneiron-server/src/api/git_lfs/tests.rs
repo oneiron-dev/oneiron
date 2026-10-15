@@ -987,6 +987,58 @@ async fn a_declaration_that_would_cross_the_disk_floor_is_refused_before_a_byte_
 }
 
 #[tokio::test]
+async fn room_one_upload_has_claimed_on_the_disk_is_room_no_other_upload_can_take() {
+    // Room past the reserve for one declared upload's spool and stored copy,
+    // not for two. Each alone fits; the second must not count the first's
+    // room as free (two uploads that both pass a free-space look and then
+    // both write would take the disk below its reserve).
+    const DECLARED: u64 = 256 * 1024 * 1024;
+    let free = crate::machine::free_disk_bytes(&std::env::temp_dir()).expect("free space read");
+    let Some(reserve) = free.checked_sub(3 * DECLARED) else {
+        eprintln!(
+            "under three declared uploads free in the temp dir; the floor is unprovable here"
+        );
+        return;
+    };
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            disk_reserve_bytes: reserve,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let first = hold_upload(&server, &token, DECLARED).await;
+    assert!(
+        !first.is_finished(),
+        "one upload has room for its spool and its stored copy"
+    );
+
+    let oid = LfsOid::digest(b"a second upload the disk has room for only alone");
+    let never = Body::from_stream(futures_util::stream::pending::<
+        Result<axum::body::Bytes, std::io::Error>,
+    >());
+    let (status, _, _) = tokio::time::timeout(
+        PATIENCE,
+        route(&server, sized_put(&oid, &token, DECLARED, never)),
+    )
+    .await
+    .expect("refused on its declaration, without reading the body");
+    assert_eq!(
+        status,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "the room the first upload claimed is not free for the second"
+    );
+    assert_eq!(
+        put(&server, &token, b"a small object beside the held one").await,
+        StatusCode::OK,
+        "work that fits beside the claim still lands"
+    );
+    first.abort();
+}
+
+#[tokio::test]
 async fn an_upload_past_the_object_size_row_lands_and_the_row_asks() {
     let config = SyncServerConfig {
         max_lfs_object_bytes: 1_024,
