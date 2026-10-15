@@ -40,6 +40,7 @@ use oneiron::booking::agent_api::{
     BookingCancelInput, BookingConfirmInput, BookingConstraintInput, BookingHoldInput,
     BookingOperationRequest, BookingOperationResponse, BookingRescheduleInput, SelectedSlot,
 };
+use oneiron::booking::anti_abuse::BookingBudgetKind;
 use oneiron::booking::{
     BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmSpec,
     ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken,
@@ -47,7 +48,9 @@ use oneiron::booking::{
 };
 use oneiron::{EntityId, Vault};
 
-use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
+use super::booking_anti_abuse::{
+    admit_authenticated, enforce_amend, enforce_book, enforce_hold, enforce_slot_list,
+};
 use super::{check_api_auth, json_payload};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
@@ -437,7 +440,20 @@ pub(crate) async fn execute_booking_operation(
         &request,
         public_authority.as_ref(),
     )?;
+    let budget = match &request {
+        BookingOperationRequest::Availability(_) => BookingBudgetKind::SlotList,
+        BookingOperationRequest::Book(BookingBookInput::Hold(_)) => BookingBudgetKind::Hold,
+        BookingOperationRequest::Book(BookingBookInput::Confirm(_)) => BookingBudgetKind::Book,
+        BookingOperationRequest::Reschedule(_) | BookingOperationRequest::Cancel(_) => {
+            BookingBudgetKind::Amend
+        }
+    };
+    // The owner's rates and caps shed the anonymous route; an authenticated
+    // caller is counted, never refused for rate or count (rule 5).
     let disposition = match &request {
+        _ if transport.transport == BookingTransport::PublicHttp => {
+            admit_authenticated(server, facts, budget, transport.authenticated_actor_ref)?
+        }
         BookingOperationRequest::Availability(_) => {
             enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
         }

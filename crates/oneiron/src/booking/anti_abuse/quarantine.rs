@@ -222,22 +222,8 @@ pub fn admit_quarantine_submission(
     created_at: u64,
 ) -> Result<BookingQuarantineAdmission, BookingError> {
     booking_writer(vault, |wtxn| {
-        let claim_id = quarantine_claim_id(facts, reason);
-        let claim_ref = EntityId::from_bytes(claim_id)
-            .map_err(|error| engine_failure("quarantine claim id", error))?;
-        if vault
-            .store
-            .pending_gate_consent_in_txn(&*wtxn, &claim_ref)
-            .map_err(|error| engine_failure("quarantine pending read", error))?
-            .is_some()
-            || vault
-                .get_claim_in_txn(&*wtxn, &claim_ref)
-                .map_err(|error| engine_failure("quarantine claim read", error))?
-                .is_some()
-        {
-            return Ok(BookingQuarantineAdmission::Accepted(quarantine_receipt(
-                claim_id,
-            )));
+        if let Some(receipt) = replayed_quarantine(vault, wtxn, facts, reason)? {
+            return Ok(BookingQuarantineAdmission::Accepted(receipt));
         }
         let scope_hash = digest_with(QUARANTINE_RATE_DOMAIN, facts.page_ref.as_bytes());
         match consume_rate_token_in_txn(
@@ -256,6 +242,49 @@ pub fn admit_quarantine_submission(
             }
         }
     })
+}
+
+/// [`admit_quarantine_submission`] for an authenticated caller: the same
+/// exact-retry replay and first write in one transaction, with no page-wide
+/// budget, since an authenticated caller is never refused for rate (rule 5).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn admit_authenticated_quarantine_submission(
+    vault: &Vault,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    created_at: u64,
+) -> Result<BookingQuarantineReceipt, BookingError> {
+    booking_writer(vault, |wtxn| {
+        match replayed_quarantine(vault, wtxn, facts, reason)? {
+            Some(receipt) => Ok(receipt),
+            None => quarantine_borderline_submission_in_txn(vault, wtxn, facts, reason, created_at),
+        }
+    })
+}
+
+/// The receipt of a quarantine this exact submission already made, if any.
+fn replayed_quarantine(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    facts: &BookingRequestFacts,
+    reason: &str,
+) -> Result<Option<BookingQuarantineReceipt>, BookingError> {
+    let claim_id = quarantine_claim_id(facts, reason);
+    let claim_ref = EntityId::from_bytes(claim_id)
+        .map_err(|error| engine_failure("quarantine claim id", error))?;
+    let made = vault
+        .store
+        .pending_gate_consent_in_txn(wtxn, &claim_ref)
+        .map_err(|error| engine_failure("quarantine pending read", error))?
+        .is_some()
+        || vault
+            .get_claim_in_txn(wtxn, &claim_ref)
+            .map_err(|error| engine_failure("quarantine claim read", error))?
+            .is_some();
+    Ok(made.then(|| quarantine_receipt(claim_id)))
 }
 
 pub fn quarantine_borderline_submission(

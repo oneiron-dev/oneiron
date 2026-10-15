@@ -1,23 +1,16 @@
 //! Rule 5: an authenticated caller is never refused for rate or count. The
-//! owner's booking rates and caps shed the anonymous public route per address.
+//! owner's booking rates and caps shed the anonymous public route per address;
+//! an authenticated actor's requests are counted instead, and a burst past the
+//! advisory threshold raises one typed question (OF-520) per kind and window.
 
 use axum::http::header::AUTHORIZATION;
+use oneiron::booking::anti_abuse::{
+    BOOKING_ADVISORY_THRESHOLD, BookingBudgetCheck, BookingBudgetKind, BookingBudgetReceipt,
+    booking_budget_checks, observe_authenticated_booking,
+};
 
 use super::fixture::*;
 use super::*;
-
-/// The booking kinds, one per admission guard.
-#[derive(Clone, Copy, Debug)]
-enum BookingBudgetKind {
-    SlotList,
-    Hold,
-    Book,
-    Amend,
-}
-
-impl BookingBudgetKind {
-    const ALL: [Self; 4] = [Self::SlotList, Self::Hold, Self::Book, Self::Amend];
-}
 
 /// Every owner cap at one: one listing, one hold and one write a minute per
 /// address, one active hold per session and one upcoming booking per email.
@@ -121,8 +114,9 @@ fn listing(nth: u64) -> Value {
 }
 
 /// With every owner cap at one, an authenticated actor sends three of each
-/// kind in one window: all complete. The anonymous route from the same
-/// connection is still shed at the cap.
+/// kind in one window: all complete. Each kind's count, carried on to past
+/// the advisory threshold, records its typed question once. The anonymous
+/// route from the same connection is still shed at the cap.
 #[tokio::test]
 async fn an_authenticated_burst_past_every_booking_cap_completes() {
     let mut fixture = Fixture::new();
@@ -237,4 +231,26 @@ async fn an_authenticated_burst_past_every_booking_cap_completes() {
     let first = send(&fixture, false, "availability", listing(10)).await;
     let second = send(&fixture, false, "availability", listing(11)).await;
     assert!(first.is_ok() && second.is_err());
+
+    let window = now / 60 * 60;
+    for budget in BookingBudgetKind::ALL {
+        for _ in 3..BOOKING_ADVISORY_THRESHOLD + 3 {
+            observe_authenticated_booking(&fixture.server.vault, id(0x77), budget, now)
+                .expect("count");
+        }
+    }
+    let checks = booking_budget_checks(&fixture.server.vault, id(0x77)).expect("checks");
+    let expected: Vec<_> = BookingBudgetKind::ALL
+        .into_iter()
+        .map(|budget| BookingBudgetCheck {
+            receipt: BookingBudgetReceipt {
+                actor: id(0x77).to_hex(),
+                budget,
+                window_started_at_secs: window,
+                count: BOOKING_ADVISORY_THRESHOLD + 1,
+            },
+            threshold: BOOKING_ADVISORY_THRESHOLD,
+        })
+        .collect();
+    assert_eq!(checks, expected);
 }

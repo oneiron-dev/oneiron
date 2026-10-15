@@ -116,7 +116,9 @@ fn consume_rate_token(
 }
 
 /// Consumes one slot-list token for this IP. Keyed by IP alone: a listing
-/// request has not yet asserted an email.
+/// request has not yet asserted an email. Anonymous listings only; an
+/// authenticated one is counted by
+/// [`observe_authenticated_booking`](super::observe_authenticated_booking).
 ///
 /// # Errors
 ///

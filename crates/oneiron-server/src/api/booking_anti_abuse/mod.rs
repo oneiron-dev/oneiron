@@ -31,5 +31,6 @@ mod tests_support;
 
 pub(crate) use self::cache::{cached_slot_list_body, remember_slot_list_body};
 pub(crate) use self::guards::{
-    BookingHttpDisposition, enforce_amend, enforce_book, enforce_hold, enforce_slot_list,
+    BookingHttpDisposition, admit_authenticated, enforce_amend, enforce_book, enforce_hold,
+    enforce_slot_list,
 };

@@ -4,15 +4,16 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use axum::extract::State;
-use oneiron::Vault;
 use oneiron::booking::anti_abuse::{
-    BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingQuarantineAdmission, BookingRateDecision,
-    BookingRequestFacts, admit_quarantine_submission, applicable_booking_anti_abuse_rules,
-    book_rate_knobs, evaluate_booking_amend_request, evaluate_booking_book_request,
-    evaluate_booking_hold_request, evaluate_booking_slot_list_request, hold_rate_knobs,
+    BookingAbuseVerdict, BookingAntiAbuseRuleRow, BookingBudgetKind, BookingQuarantineAdmission,
+    BookingRateDecision, BookingRequestFacts, admit_authenticated_quarantine_submission,
+    admit_quarantine_submission, applicable_booking_anti_abuse_rules, book_rate_knobs,
+    evaluate_booking_amend_request, evaluate_booking_book_request, evaluate_booking_hold_request,
+    evaluate_booking_slot_list_request, hold_rate_knobs, observe_authenticated_booking,
     observe_book_request, observe_hold_request, observe_slot_list_request,
     server_submission_fingerprint, slot_list_rate_knobs,
 };
+use oneiron::{EntityId, Vault};
 
 use super::support::{correction_body, engine_error, log_rate_block};
 use crate::error::ApiError;
@@ -114,8 +115,9 @@ fn spend_book_bucket(
     }
 }
 
-/// Slot-list guard: silent bot rejects, then the per-IP minute window, with
-/// the response cache discharging requests before any quota is spent.
+/// Anonymous slot-list guard: silent bot rejects, then the per-IP minute
+/// window, with the response cache discharging requests before any quota is
+/// spent. An authenticated caller takes [`admit_authenticated`].
 ///
 /// # Errors
 ///
@@ -154,6 +156,67 @@ pub(crate) async fn enforce_slot_list(
                 seconds: retry_after_secs,
             })
         }
+    }
+}
+
+/// Admission for an authenticated caller, one guard for every kind. The
+/// owner's rates and caps shed anonymous callers per address; an
+/// authenticated actor is never refused for rate or count (rule 5). The
+/// counts those caps compare are not read, and no bucket is spent: each
+/// request is counted for its actor instead, and the first past the
+/// advisory threshold in a window records one typed check (OF-520). A count
+/// that fails to record never refuses. Every other control (the honeypot,
+/// the submit floor, required intake, email correction and quarantine)
+/// decides as it does for anyone.
+///
+/// # Errors
+///
+/// [`ApiError`] internal-server on engine or storage failure.
+pub(crate) fn admit_authenticated(
+    server: &SyncServer,
+    mut facts: BookingRequestFacts,
+    budget: BookingBudgetKind,
+    actor: Option<EntityId>,
+) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    let vault = &server.vault;
+    let now = server.booking_now_secs()?;
+    if let Some(actor) = actor
+        && observe_authenticated_booking(vault, actor, budget, now).is_err()
+    {
+        tracing::warn!(
+            reason = "booking_budget_count_failed",
+            "authenticated booking request not counted"
+        );
+    }
+    // The trusted boundary derives the fingerprint, as for anyone; the counts
+    // the caps compare are then not read.
+    facts.submission_fingerprint = server_submission_fingerprint(&facts);
+    facts.active_holds_for_session = 0;
+    facts.active_future_bookings_for_email = 0;
+    let rows = load_rows(vault, &facts)?;
+    let (endpoint, verdict) = match budget {
+        BookingBudgetKind::SlotList => (
+            "slot-list",
+            evaluate_booking_slot_list_request(&rows, &facts),
+        ),
+        BookingBudgetKind::Hold => ("hold", evaluate_booking_hold_request(&rows, &facts)),
+        BookingBudgetKind::Book => ("book", evaluate_booking_book_request(&rows, &facts)),
+        BookingBudgetKind::Amend => ("amend", evaluate_booking_amend_request(&rows, &facts)),
+    };
+    match verdict {
+        BookingAbuseVerdict::Quarantine { reason } => {
+            let receipt = admit_authenticated_quarantine_submission(vault, &facts, &reason, now)
+                .map_err(engine_error)?;
+            tracing::info!(
+                endpoint,
+                claim_ref = %receipt.claim_ref,
+                "booking anti-abuse quarantine accepted"
+            );
+            Ok(BookingHttpDisposition::QuarantineAndAccept)
+        }
+        BookingAbuseVerdict::RateLimited { .. } => Ok(BookingHttpDisposition::Continue),
+        verdict => disposition_from_verdict(endpoint, &facts, verdict)
+            .map(|disposition| disposition.unwrap_or(BookingHttpDisposition::Continue)),
     }
 }
 

@@ -35,6 +35,7 @@
 //! out of scope by design — email OTP and tentative-confirm-link are
 //! per-event-type reserve rows that default off.
 
+mod actor_budget;
 mod amendment;
 mod evaluation;
 mod quarantine;
@@ -42,6 +43,10 @@ mod rate;
 mod rules;
 mod storage;
 
+pub use self::actor_budget::{
+    BOOKING_ADVISORY_THRESHOLD, BookingBudgetCheck, BookingBudgetKind, BookingBudgetReceipt,
+    booking_budget_checks, observe_authenticated_booking,
+};
 pub use self::amendment::{
     amendment_direction, applicable_booking_anti_abuse_rules, apply_rule_amendment,
     booking_anti_abuse_notices, booking_anti_abuse_rules, booking_rule_row_version_hash,
@@ -54,7 +59,8 @@ pub use self::evaluation::{
     server_submission_fingerprint, slot_list_rate_knobs,
 };
 pub use self::quarantine::{
-    BookingQuarantineAdmission, BookingQuarantineReceipt, admit_quarantine_submission,
+    BookingQuarantineAdmission, BookingQuarantineReceipt,
+    admit_authenticated_quarantine_submission, admit_quarantine_submission,
     quarantine_borderline_submission,
 };
 pub use self::rate::{

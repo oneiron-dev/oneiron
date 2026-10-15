@@ -28,7 +28,9 @@ pub struct BookingRuleScope {
 }
 
 /// The SHIP/SKIP/RESERVE control set. Reserve rows are stored off-by-default
-/// policy, not active enforcement.
+/// policy, not active enforcement. The rates and caps below shed the anonymous
+/// public route only: an authenticated actor is counted, never refused for
+/// rate or count (rule 5; see [`super::BookingBudgetKind`]).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum BookingAntiAbuseRule {
     /// Required open-text intake with a positive minimum length.
