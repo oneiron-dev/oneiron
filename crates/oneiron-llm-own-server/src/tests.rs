@@ -313,7 +313,7 @@ fn a_raw_tool_or_format_control_is_judged_against_this_sides_catalog() {
             }
         }
     }
-    let mut call = request.clone();
+    let mut call = request;
     call.params.insert("temperature".to_owned(), json!(0.2));
     backend
         .admit(&call, true)
