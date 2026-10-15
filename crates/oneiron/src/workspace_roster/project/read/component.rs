@@ -46,11 +46,15 @@ impl ProjectReader<'_, '_> {
             // every state its re-check reads (each dependency's lineage, and
             // the states its seal and resolution envelopes read).
             if let Some(saved) = PROJECT_FRONTIER.get(self.store, self.txn, &id)? {
+                // A context of its own: a state the count judged (a seal
+                // the saved record never read) names nothing here (Sol and
+                // Astra #1434 r16 F1).
+                let saved_cx = FoldCx::intrinsic(self, id, &held);
                 for hash in saved.dependencies.all() {
-                    cx.verdict(*hash)?;
+                    saved_cx.verdict(*hash)?;
                 }
-                for (hash, verdict) in cx.judged().0 {
-                    if let Some(authority) = cx.authority_of(&hash)
+                for (hash, verdict) in saved_cx.judged().0 {
+                    if let Some(authority) = saved_cx.authority_of(&hash)
                         && verdict == ProjectVerdict::Visible
                     {
                         parents_of(authority, &mut edges);

@@ -269,7 +269,12 @@ pub(super) fn replay_rows(from: &Vault, to: &Vault, ids: &[EntityId]) -> Result<
 /// Replays every authority-log entry `to` lacks.
 #[cfg(feature = "sync")]
 pub(super) fn replay_authority(from: &Vault, to: &Vault) -> Result<()> {
-    let kind = crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+    replay_missing(from, to, crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
+}
+
+/// Replays every row of `kind` that `to` lacks.
+#[cfg(feature = "sync")]
+pub(super) fn replay_missing(from: &Vault, to: &Vault, kind: u8) -> Result<()> {
     let ids: Vec<EntityId> = {
         let txn = from.store.env.read_txn()?;
         from.store

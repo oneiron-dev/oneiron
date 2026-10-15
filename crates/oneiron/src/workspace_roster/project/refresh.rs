@@ -19,9 +19,30 @@ use super::*;
 use crate::store::Store;
 use std::collections::BTreeMap;
 
-/// How often one batch end refreshes a project another project's change
-/// woke; a project-parent cycle stops here.
+/// How often one batch end decides a project: each refresh another
+/// project's change woke, and each decision again after a frozen member's
+/// drain. A project-parent cycle, or a chain of drains, stops here.
 const MAX_REFRESH_ROUNDS: u32 = 4;
+
+#[cfg(test)]
+thread_local! {
+    /// The rounds allowed, scaled down for a test.
+    pub(super) static REFRESH_ROUNDS: std::cell::Cell<Option<u32>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn max_rounds() -> u32 {
+    #[cfg(test)]
+    {
+        REFRESH_ROUNDS
+            .with(std::cell::Cell::get)
+            .unwrap_or(MAX_REFRESH_ROUNDS)
+    }
+    #[cfg(not(test))]
+    {
+        MAX_REFRESH_ROUNDS
+    }
+}
 
 /// Refreshes every touched project once, with every project its parents tie
 /// it to, then each project whose frozen descendants waited on a project
@@ -43,14 +64,14 @@ pub(crate) fn refresh_project_frontiers(
     while let Some(project) = queue.pop_first() {
         if rounds
             .get(&project)
-            .is_some_and(|round| *round >= MAX_REFRESH_ROUNDS)
+            .is_some_and(|round| *round >= max_rounds())
         {
             continue;
         }
         // A component is decided as one, so every member's record is written
         // from that one decision (Astra #1434b, r14 F4).
-        for (member, changed) in refresh_component(store, txn, posture, kind, project)? {
-            *rounds.entry(member).or_default() += 1;
+        for (member, changed) in refresh_component(store, txn, posture, kind, project, &mut rounds)?
+        {
             queue.remove(&member);
             if !changed {
                 continue;
@@ -134,14 +155,17 @@ struct Drained {
 /// component once, and writes each member's record and the owner's question
 /// from that decision. A frozen member whose drain lands a narrowing changes
 /// what the decision read, so its record is written first and the component
-/// is decided again (Sol r15 F4). Returns each member with whether its served
-/// view changed.
+/// is decided again (Sol r15 F4). Each decision is a round of every member;
+/// at the last round a drain is left for the project's next refresh, so no
+/// member's record is written from a decision its drain changed (Sol and
+/// Astra r16 F2). Returns each member with whether its served view changed.
 fn refresh_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
     kind: u8,
     project: EntityId,
+    rounds: &mut BTreeMap<EntityId, u32>,
 ) -> Result<Vec<(EntityId, bool)>> {
     authenticate_pending(store, txn, posture, project, kind)?;
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
@@ -156,16 +180,23 @@ fn refresh_component(
             })
             .map(|(member, _)| *member)
             .collect();
+        let mut last = false;
+        for member in &members {
+            let round = rounds.entry(*member).or_default();
+            *round += 1;
+            last |= *round >= max_rounds();
+        }
         let settled = drained.is_empty() || members.len() == 1;
-        if settled {
+        if settled || last {
             ask_owner(store, txn, &members, dark, now)?;
         }
         for (member, plan) in plans {
-            if settled || drained.contains(&member) {
+            // Before the last round only the drains; at it, all but them.
+            if settled || drained.contains(&member) != last {
                 *changed.entry(member).or_default() |= write(store, txn, member, plan)?;
             }
         }
-        if settled {
+        if settled || last {
             return Ok(changed.into_iter().collect());
         }
     }
