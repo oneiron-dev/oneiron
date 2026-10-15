@@ -15,11 +15,11 @@ pub(in crate::store) use self::keys::{
     PENDING_GATE_CONSENT_KEY_PREFIX, index_key_with_id, pending_gate_consent_claim_id_from_key,
     pending_gate_consent_upper_bound, string_index_prefix,
 };
-pub(crate) use self::obligation::owner_answer_item_hash;
+pub(crate) use self::obligation::{owner_answer_item_hash, owner_answer_obligation_in};
 pub(crate) use self::records::PENDING_GATE_CONSENT_VERSION;
 pub(in crate::store) use self::records::decode_pending_gate_consent;
 pub use self::records::{PendingGateConsentGroup, PendingGateConsentRecord};
-pub(crate) use self::tray::TrayRemoval;
+pub(crate) use self::tray::{TrayRemoval, pending_gate_consent_in};
 // Test-only seam (open_gates/mod.rs precedent): the store test suite names
 // these bare through `use super::*`, but no non-test code outside
 // pending_gate_consent/ reaches them through the seam, so the re-exports

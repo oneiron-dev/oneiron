@@ -96,13 +96,7 @@ impl Store {
         txn: &RoTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<Option<PendingGateConsentRecord>> {
-        let Some(record) = TRAY.get(self, txn, claim_id.as_bytes())? else {
-            return Ok(None);
-        };
-        if record.claim_id != *claim_id.as_bytes() {
-            return Err(Error::CorruptedIndex("pending gate consent"));
-        }
-        Ok(Some(record))
+        pending_gate_consent_in(self, txn, claim_id)
     }
 
     /// Removes `claim_id`'s tray row with no owner answer: its obligation
@@ -324,4 +318,19 @@ impl Store {
         }
         Ok(groups)
     }
+}
+
+/// `claim_id`'s tray row, read through any store view.
+pub(crate) fn pending_gate_consent_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<Option<PendingGateConsentRecord>> {
+    let Some(record) = TRAY.get(dbs, txn, claim_id.as_bytes())? else {
+        return Ok(None);
+    };
+    if record.claim_id != *claim_id.as_bytes() {
+        return Err(Error::CorruptedIndex("pending gate consent"));
+    }
+    Ok(Some(record))
 }

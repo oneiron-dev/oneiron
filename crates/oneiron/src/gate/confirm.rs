@@ -619,19 +619,17 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
 /// removes or replaces it records its obligation. Retrieval
 /// ([`crate::claim::claim_surfaceable`]) never asks this.
 pub(crate) fn claim_critical_confirm_settled_in_txn(
-    store: &Store,
+    store: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<bool> {
-    if store
-        .owner_answer_obligation_in_txn(txn, claim_id)?
-        .is_some()
-    {
+    if crate::store::owner_answer_obligation_in(store, txn, claim_id)?.is_some() {
         return Ok(false);
     }
-    Ok(!store
-        .pending_gate_consent_in_txn(txn, claim_id)?
-        .is_some_and(|row| pending_row_holds_critical_confirm(&row)))
+    Ok(
+        !crate::store::pending_gate_consent_in(store, txn, claim_id)?
+            .is_some_and(|row| pending_row_holds_critical_confirm(&row)),
+    )
 }
 
 pub(crate) fn critical_write_confirm_binding(

@@ -40,19 +40,28 @@ pub(crate) fn owner_answer_item_hash(diff_handle: &[u8]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// `claim_id`'s open owner-answer obligation, read through any store view.
+pub(crate) fn owner_answer_obligation_in(
+    dbs: &impl side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<Option<OwnerAnswerObligationRecord>> {
+    let Some(record) = OBLIGATION.get(dbs, txn, claim_id)? else {
+        return Ok(None);
+    };
+    if record.claim_id != *claim_id.as_bytes() {
+        return Err(Error::CorruptedIndex("owner answer obligation"));
+    }
+    Ok(Some(record))
+}
+
 impl Store {
     pub(crate) fn owner_answer_obligation_in_txn(
         &self,
         txn: &RoTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<Option<OwnerAnswerObligationRecord>> {
-        let Some(record) = OBLIGATION.get(self, txn, claim_id)? else {
-            return Ok(None);
-        };
-        if record.claim_id != *claim_id.as_bytes() {
-            return Err(Error::CorruptedIndex("owner answer obligation"));
-        }
-        Ok(Some(record))
+        owner_answer_obligation_in(self, txn, claim_id)
     }
 
     /// Opens `claim_id`'s obligation on the item `opened_by` parked, unless
