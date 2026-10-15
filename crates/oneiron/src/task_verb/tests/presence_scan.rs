@@ -421,3 +421,69 @@ fn no_run_of_task_rows_hides_a_live_task_from_the_board() {
         1
     );
 }
+
+/// H222 F1 (DEC-0005): off this device, a job whose TASK a device-local world
+/// keeps stays withheld with that TASK. The board's walk always ends
+/// exhausted, and its leftover backlinks rendered as bare rows, so the job of
+/// a withheld TASK reached every caller off this device.
+#[test]
+fn a_device_local_tasks_job_stays_withheld_off_this_device() {
+    use crate::claim::CallerLocality;
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .expect("the world");
+    let task = vault
+        .memory(own, EdgeActorClass::Agent)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(&spec(120))
+        .expect("the agent creates a TASK")
+        .task_ref
+        .expect("the create mints a TASK");
+    let EnqueueOutcome::Enqueued(attempt) = AttemptQueue::new(&vault)
+        .enqueue_with_task_ref(
+            EnqueueAttempt {
+                kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: 120,
+            },
+            Some(task.to_hex()),
+        )
+        .expect("enqueue the TASK's job")
+    else {
+        panic!("attempt must enqueue");
+    };
+    let job = attempt_hex(attempt.id);
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .expect("keep the world on this device");
+
+    let on = task_presence_at(&vault, CallerLocality::OnDevice).expect("on device");
+    assert!(
+        on.intents
+            .iter()
+            .filter(|intent| intent.id == task.to_hex())
+            .flat_map(|intent| intent.realizing_jobs.iter())
+            .any(|realizing| realizing.id == job),
+        "on this device the TASK holds its job"
+    );
+    let off = task_presence_at(&vault, CallerLocality::OffDevice).expect("off device");
+    assert!(!off.intents.iter().any(|intent| intent.id == task.to_hex()));
+    assert!(
+        !off.bare_jobs.iter().any(|bare| bare.id == job),
+        "the job of a TASK kept on this device is no bare row off it"
+    );
+}

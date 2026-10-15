@@ -281,6 +281,21 @@ pub(super) fn task_presence_with_limits(
         }
     }
 
+    if locality != crate::claim::CallerLocality::OnDevice {
+        // Off this device, a job whose TASK a device-local world keeps stays
+        // withheld with that TASK (DEC-0005). Owners the rule lets through,
+        // missing ones included, still render as dangling bare jobs below.
+        let owners = realizing
+            .keys()
+            .filter_map(|task_hex| EntityId::from_hex(task_hex).ok())
+            .collect();
+        let readable: HashSet<EntityId> = vault.off_device_readable(owners)?.into_iter().collect();
+        realizing.retain(|task_hex, _| match EntityId::from_hex(task_hex) {
+            Err(_) => true,
+            Ok(owner) => readable.contains(&owner),
+        });
+    }
+
     if scan.source_exhausted {
         // P2 F7 (dangling backlink): every live realizing job must render
         // exactly once. A backlink naming no surviving intent (deleted /
