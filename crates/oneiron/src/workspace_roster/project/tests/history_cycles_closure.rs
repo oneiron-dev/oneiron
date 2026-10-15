@@ -321,16 +321,17 @@ fn a_component_that_grows_in_a_batch_is_decided_once() -> Result<()> {
 
 /// Bug repro (Sol and Astra r16 F1): C froze at C2, every saved state under
 /// R, and P's board put P under C. On a copy, C's board had signed D1 under
-/// P over C0, the owner had sealed it back to R (N1), and C's board had
-/// signed N2 and N3 over N1. Their companions keep C past its budget and
-/// touch none of its saved checks, so C names no parent but R: past a bound
-/// of one world both stay lit, and the owner is asked nothing.
+/// P over C0, the owner had sealed C at D1's authority (N1, still under P),
+/// and C's board had signed N2 and N3 over N1. Their companions keep C past
+/// its budget and touch none of its saved checks, so C names no parent but
+/// R, though counting its history read N1: past a bound of one world both
+/// stay lit, and the owner is asked nothing.
 #[cfg(feature = "sync")]
 #[test]
 fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let (p, c) = (EntityId::now(), EntityId::now());
-    let (root, holder, p0, c0, c2) = {
+    let (holder, p0, c0, c2) = {
         let vault = open(&dir)?;
         let (root, root_row, holder) = root_leader(&vault)?;
         let lead = EntityId::now();
@@ -340,7 +341,7 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
         vault.put_project(c, &c1, 4)?;
         let c2 = signed_over(&vault, c, &c1, holder, |_| {})?;
         vault.put_project(c, &c2, 5)?;
-        (root, holder, p0, c0, c2)
+        (holder, p0, c0, c2)
     };
     let (_copy_dir, copy) = copy_of(&dir)?;
     let d1 = signed_over(&copy, c, &c0, holder, |row| {
@@ -349,15 +350,15 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
     })?;
     let (_, d1_row) = revisions_of_row(c, &d1)?.pop().ok_or_else(invalid)?;
     put_companion(&copy, &d1_row, 6)?;
-    let mut back = d1.authority_at(ProjectProofVersion::V3);
-    back.parents = vec![root.to_hex()];
-    seal(&copy, c, back, &d1)?;
+    seal(&copy, c, d1.authority_at(ProjectProofVersion::V3), &d1)?;
     let n1 = copy.project(c)?.ok_or(Error::EntityNotFound)?;
     let n2 = signed_over(&copy, c, &n1, holder, |_| {})?;
     copy.put_project(c, &n2, 7)?;
     let n3 = signed_over(&copy, c, &n2, holder, |_| {})?;
     copy.put_project(c, &n3, 8)?;
     let vault = open(&dir)?;
+    // The copy's mints, before this vault writes authority rows of its own.
+    replay_authority(&copy, &vault)?;
     vault.set_project_history_policy(
         &owner(&vault)?,
         ProjectHistoryPolicy {
@@ -373,11 +374,15 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
     })?;
     vault.put_project(p, &p1, 7)?;
     assert!(lit(&vault, c)? && lit(&vault, p)?);
-    replay_authority(&copy, &vault)?;
     let kind = project_revision_type(&copy.store).ok_or_else(invalid)?;
     // In one batch, so no refresh sees the seal before N2 and N3 keep C
     // past its budget (Sol and Astra r17 F1).
     replay_missing_together(&copy, &vault, kind)?;
+    // The seal stands: every revision C holds is judged.
+    let pending: Vec<_> = (vault.project_revisions(c)?.into_iter())
+        .filter(|(_, verdict)| matches!(verdict, ProjectVerdict::Pending(_)))
+        .collect();
+    assert_eq!(pending, Vec::new());
     assert!(matches!(
         vault
             .project_frontier(c)?
