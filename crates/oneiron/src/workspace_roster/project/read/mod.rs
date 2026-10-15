@@ -104,6 +104,9 @@ pub(super) struct Facts {
     pub(super) signers: BTreeMap<ProjectRevisionHash, String>,
     /// Every parent project whose view can decide this one's.
     pub(super) edges: BTreeSet<EntityId>,
+    /// The states the owner's seal keeps (its next's lineage, the next and
+    /// every descendant); `None` without a seal, empty when seals conflict.
+    pub(super) sealed: Option<BTreeSet<ProjectRevisionHash>>,
 }
 
 /// What every door reads of one project, decided once per reader with every

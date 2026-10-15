@@ -249,9 +249,6 @@ pub(super) fn doors(
         }
     }
     for project in 0..graph.projects {
-        if expected.dark[project] {
-            continue;
-        }
         let listed: BTreeMap<ProjectRevisionHash, ProjectVerdict> = vault
             .project_revisions(scaffold.ids[project])?
             .into_iter()
@@ -261,7 +258,9 @@ pub(super) fn doors(
                 continue;
             }
             let verdict = listed.get(&scaffold.revisions[index].0).copied();
+            // Past the bound every held revision is still listed.
             let agrees = match expected.labels[index] {
+                _ if expected.dark[project] => verdict.is_some(),
                 Label::Valid => verdict == Some(ProjectVerdict::Visible),
                 Label::Undefined => verdict == Some(ProjectVerdict::Quarantined(reason::CYCLE)),
                 Label::Invalid => verdict != Some(ProjectVerdict::Visible),

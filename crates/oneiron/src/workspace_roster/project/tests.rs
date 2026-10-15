@@ -10,6 +10,8 @@ mod history_budget;
 #[cfg(feature = "sync")]
 mod history_cycles;
 #[cfg(feature = "sync")]
+mod history_cycles_guards;
+#[cfg(feature = "sync")]
 mod history_cycles_named;
 #[cfg(feature = "sync")]
 mod history_doors;

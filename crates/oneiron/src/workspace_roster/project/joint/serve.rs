@@ -6,7 +6,7 @@ use super::super::fold::{
 use super::super::history_policy::{ProjectDependencies, ProjectEvidenceSet, counted_set};
 use super::super::read::{Decided, ProjectVerdict};
 use super::super::revision::anchor_of;
-use super::super::validity::{FoldCx, parent_view};
+use super::super::validity::{FoldCx, parent_view, read_parents, refusal};
 use super::super::*;
 use super::{Hash, Label, Member, Solver, World};
 use std::collections::BTreeMap;
@@ -26,9 +26,17 @@ impl Solver<'_, '_, '_> {
                 let Some(effective) = served[index].0.effective.clone() else {
                     continue;
                 };
+                if !self.charge(1) {
+                    // `solve` answers dark.
+                    return Ok(BTreeMap::new());
+                }
                 if let Err(verdict) = self.parent_bounds(index, &effective, &served)? {
                     let frontier = &mut served[index].0;
-                    frontier.disposition = ProjectDisposition::of_verdict(verdict);
+                    match &mut frontier.disposition {
+                        // As a frozen record that no longer re-checks.
+                        ProjectDisposition::OverBudget { state, .. } => state.frozen_head = None,
+                        disposition => *disposition = ProjectDisposition::of_verdict(verdict),
+                    }
                     frontier.witness = None;
                     frontier.effective = None;
                     changed = true;
@@ -52,7 +60,7 @@ impl Solver<'_, '_, '_> {
                 Rc::new(Decided {
                     frontier,
                     fold,
-                    labels: self.labels(member),
+                    labels: self.labels(member, reason::CYCLE),
                     rehomed: member.rehomed(&BTreeSet::new()),
                 }),
             );
@@ -75,7 +83,7 @@ impl Solver<'_, '_, '_> {
             });
             return Ok((fixed.clone(), fold));
         }
-        let verdicts = self.verdicts(member)?;
+        let verdicts = self.verdicts(member, reason::CYCLE)?;
         let first = worlds.swap_remove(0);
         let agree = worlds.iter().all(|world| {
             world.fold.frontier.disposition == first.fold.frontier.disposition
@@ -167,16 +175,17 @@ impl Solver<'_, '_, '_> {
     }
 
     /// Main's step 4 over the component's served views: each parent serves
-    /// authority, a view bound by its parents fits under each, and no
-    /// served chain returns to the member.
+    /// authority, a view bound by its parents fits under each, a frozen
+    /// member's saved dependencies are each admitted under their parents
+    /// (section 6), and no served chain returns to the member.
     fn parent_bounds(
         &self,
         index: usize,
         effective: &ProjectEffective,
         served: &[(ProjectFrontier, Option<ProjectFold>)],
     ) -> Result<std::result::Result<(), ProjectVerdict>> {
-        let id = self.members[index].id;
-        if Some(id) == self.reader.root() {
+        let member = &self.members[index];
+        if Some(member.id) == self.reader.root() {
             return Ok(Ok(()));
         }
         if effective.parents.is_empty() {
@@ -185,18 +194,31 @@ impl Solver<'_, '_, '_> {
         for parent in &effective.parents {
             let parent = EntityId::from_hex(parent)
                 .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-            let view = match self.at.get(&parent) {
-                Some(at) => match &served[*at].0.effective {
-                    Some(view) => view.clone(),
-                    None => return Ok(Err(ProjectVerdict::Quarantined(reason::PARENT_HIDDEN))),
-                },
-                None => match parent_view(self.reader, parent)? {
-                    Ok(view) => view,
-                    Err(verdict) => return Ok(Err(verdict)),
-                },
+            let view = match self.view_of(parent, served)? {
+                Ok(view) => view,
+                Err(verdict) => return Ok(Err(verdict)),
             };
             if effective.bound_by_parents && !effective.fits_under(&view) {
                 return Ok(Err(ProjectVerdict::Quarantined(reason::EXCEEDS_PARENT)));
+            }
+        }
+        for (hash, signer) in &member.saved {
+            self.charge(1);
+            let Some(row) = member.facts.held.get(hash) else {
+                continue;
+            };
+            let Some(authority) = row.revision.authority() else {
+                continue;
+            };
+            let (birth, host) = (row.revision.parent().is_none(), signer == "host");
+            for (parent, spawned_under) in read_parents(authority, birth, host)? {
+                let view = match self.view_of(parent, served)? {
+                    Ok(view) => view,
+                    Err(verdict) => return Ok(Err(verdict)),
+                };
+                if let Some(why) = refusal(&view, authority, signer, spawned_under, host) {
+                    return Ok(Err(ProjectVerdict::Quarantined(why)));
+                }
             }
         }
         let mut seen = BTreeSet::from([index]);
@@ -205,17 +227,35 @@ impl Solver<'_, '_, '_> {
             if at == index {
                 return Ok(Err(ProjectVerdict::Quarantined(reason::CYCLE)));
             }
-            if seen.insert(at) {
+            if seen.insert(at) && self.charge(1) {
                 todo.extend(self.inside_parents(&served[at].0.effective));
             }
         }
         Ok(Ok(()))
     }
 
-    /// Every held row's verdict: a state's label (an undefined one is a
-    /// cycle's), and each envelope judged from them.
-    fn verdicts(&self, member: &Member) -> Result<BTreeMap<Hash, ProjectVerdict>> {
-        let labels = self.labels(member).unwrap_or_default();
+    /// A parent's served view: a member's from this decision, any other
+    /// project's from the reader.
+    fn view_of(
+        &self,
+        parent: EntityId,
+        served: &[(ProjectFrontier, Option<ProjectFold>)],
+    ) -> Result<std::result::Result<ProjectEffective, ProjectVerdict>> {
+        Ok(match self.at.get(&parent) {
+            Some(at) => (served[*at].0.effective.clone())
+                .ok_or(ProjectVerdict::Quarantined(reason::PARENT_HIDDEN)),
+            None => parent_view(self.reader, parent)?,
+        })
+    }
+
+    /// Every held row's verdict: a state's label (an undefined one refused
+    /// for `open`), and each envelope judged from them.
+    fn verdicts(
+        &self,
+        member: &Member,
+        open: &'static str,
+    ) -> Result<BTreeMap<Hash, ProjectVerdict>> {
+        let labels = self.labels(member, open).unwrap_or_default();
         let facts = &member.facts;
         let cx = FoldCx::seeded(
             self.reader,
@@ -232,13 +272,18 @@ impl Solver<'_, '_, '_> {
         Ok(verdicts)
     }
 
-    fn labels(&self, member: &Member) -> Option<BTreeMap<Hash, ProjectVerdict>> {
+    /// Each state's label, an undefined one refused for `open`.
+    fn labels(
+        &self,
+        member: &Member,
+        open: &'static str,
+    ) -> Option<BTreeMap<Hash, ProjectVerdict>> {
         member.fixed.is_none().then(|| {
             (member.labels.iter())
                 .map(|(hash, label)| {
                     let verdict = match label {
                         Label::Decided(verdict) => *verdict,
-                        Label::Open => ProjectVerdict::Quarantined(reason::CYCLE),
+                        Label::Open => ProjectVerdict::Quarantined(open),
                     };
                     (*hash, verdict)
                 })
@@ -260,7 +305,10 @@ impl Solver<'_, '_, '_> {
             let fold = (!member.facts.over_budget).then(|| -> Result<ProjectFold> {
                 Ok(ProjectFold {
                     frontier: frontier.clone(),
-                    verdicts: BTreeMap::new(),
+                    verdicts: match member.fixed {
+                        Some(_) => BTreeMap::new(),
+                        None => self.verdicts(member, reason::CYCLE_BOUND)?,
+                    },
                     dependencies: ProjectDependencies::default(),
                     forks: Vec::new(),
                     evidence: ProjectEvidenceSet::of(None, &counted_set(&cx)?),
@@ -271,16 +319,7 @@ impl Solver<'_, '_, '_> {
                 Rc::new(Decided {
                     frontier,
                     fold: fold.transpose()?,
-                    labels: self.labels(member).map(|labels| {
-                        (labels.into_iter())
-                            .map(|(hash, verdict)| match verdict {
-                                ProjectVerdict::Quarantined(reason::CYCLE) => {
-                                    (hash, ProjectVerdict::Quarantined(reason::CYCLE_BOUND))
-                                }
-                                verdict => (hash, verdict),
-                            })
-                            .collect()
-                    }),
+                    labels: self.labels(member, reason::CYCLE_BOUND),
                     rehomed: BTreeMap::new(),
                 }),
             );

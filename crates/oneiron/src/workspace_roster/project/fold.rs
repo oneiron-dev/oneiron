@@ -54,6 +54,7 @@ pub(super) mod reason {
         "project history over budget and its frozen frontier no longer verifies";
     pub(crate) const UNRESOLVED: &str = "project authority unresolved";
     pub(crate) const CYCLE_BOUND: &str = "project parent cycle past its world bound";
+    pub(crate) const SEALED_OFF: &str = "project revision lies outside the owner's seal";
 
     const ALL: &[&str] = &[
         NOT_HELD,
@@ -89,6 +90,7 @@ pub(super) mod reason {
         STALE_RECORD,
         UNRESOLVED,
         CYCLE_BOUND,
+        SEALED_OFF,
     ];
 
     /// The static text of a persisted reason; a reason this build does not

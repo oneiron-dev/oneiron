@@ -63,6 +63,8 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     pub(super) exclusions: RefCell<BTreeMap<ProjectRevisionHash, Rc<Exclusion>>>,
     pub(super) forks: RefCell<BTreeMap<(ProjectRevisionHash, ProjectRevisionHash), Rc<Fork>>>,
     depth: Cell<usize>,
+    /// Calls of `verdict`: a component charges them to its work budget.
+    visits: Cell<u64>,
     /// How often the depth guard refused. A verdict that consumed a refusal
     /// depends on where the walk entered the chain, so it is not memoized.
     refusals: Cell<u64>,
@@ -85,6 +87,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             exclusions: RefCell::new(BTreeMap::new()),
             forks: RefCell::new(BTreeMap::new()),
             depth: Cell::new(0),
+            visits: Cell::new(0),
             refusals: Cell::new(0),
         }
     }
@@ -154,6 +157,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
     pub(super) fn verdict(&self, hash: ProjectRevisionHash) -> Result<ProjectVerdict> {
         #[cfg(test)]
         FOLD_VISITS.with(|count| count.set(count.get() + 1));
+        self.visits.set(self.visits.get() + 1);
         if let Some(known) = self.verdicts.borrow().get(&hash) {
             return Ok(*known);
         }
@@ -173,6 +177,10 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
     }
 
     /// The verified signer of a valid signed revision or resolution.
+    pub(super) fn visits(&self) -> u64 {
+        self.visits.get()
+    }
+
     pub(super) fn signer(&self, hash: &ProjectRevisionHash) -> Option<String> {
         self.signers.borrow().get(hash).cloned()
     }

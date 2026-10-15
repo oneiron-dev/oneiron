@@ -1,7 +1,7 @@
 //! A project's facts on its own and the component of "names as parent" it
 //! belongs to: what `joint.rs` decides together.
 use super::super::history_policy::{PROJECT_FRONTIER, budget_count, policy_in};
-use super::super::revision::{ProjectRevision, RevisionOrigin};
+use super::super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::super::validity::FoldCx;
 use super::super::*;
 use super::{Facts, ProjectReader, ProjectVerdict};
@@ -56,13 +56,32 @@ impl ProjectReader<'_, '_> {
                     );
                 }
             }
-        } else {
+        }
+        let sealed = if over_budget { None } else { sealed_tree(&cx)? };
+        if !over_budget {
+            // Only a state the fold could walk names a parent here: inside the
+            // owner's seal, and a boundary only once a valid signed state
+            // builds on it, as for root selection.
+            let visible = |hash: &ProjectRevisionHash| -> Result<bool> {
+                Ok(cx.verdict(*hash)? == ProjectVerdict::Visible)
+            };
             for (hash, row) in &held.rows {
-                if let Some(authority) = row.revision.authority()
-                    && cx.verdict(*hash)? == ProjectVerdict::Visible
-                {
-                    parents_of(authority, &mut edges);
+                let Some(authority) = row.revision.authority() else {
+                    continue;
+                };
+                if !visible(hash)? || sealed.as_ref().is_some_and(|tree| !tree.contains(hash)) {
+                    continue;
                 }
+                if matches!(row.revision, ProjectRevision::Boundary { .. }) {
+                    let mut built_on = false;
+                    for child in held.children_of(hash) {
+                        built_on |= visible(child)?;
+                    }
+                    if !built_on {
+                        continue;
+                    }
+                }
+                parents_of(authority, &mut edges);
             }
         }
         if !signed {
@@ -84,6 +103,7 @@ impl ProjectReader<'_, '_> {
             intrinsic,
             signers,
             edges,
+            sealed,
         })
     }
 
@@ -166,4 +186,29 @@ impl ProjectReader<'_, '_> {
             .cloned()
             .ok_or_else(invalid)
     }
+}
+
+/// The states the one valid seal keeps: its next, the lineage the next's
+/// admission reads, and every descendant. No states when seals conflict.
+fn sealed_tree(cx: &FoldCx<'_, '_, '_>) -> Result<Option<BTreeSet<ProjectRevisionHash>>> {
+    let tips = cx.seal_tips()?;
+    let mut only = tips.iter();
+    let (Some(tip), None) = (only.next(), only.next()) else {
+        return Ok((!tips.is_empty()).then(BTreeSet::new));
+    };
+    let mut tree = BTreeSet::new();
+    let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
+        return Ok(Some(tree));
+    };
+    let mut at = cx.row(&seal.next).and_then(ProjectRevision::parent);
+    while let Some(prior) = at.filter(|prior| tree.insert(*prior)) {
+        at = cx.row(&prior).and_then(ProjectRevision::parent);
+    }
+    let mut todo = vec![seal.next];
+    while let Some(at) = todo.pop() {
+        if tree.insert(at) {
+            todo.extend(cx.held.children_of(&at).copied());
+        }
+    }
+    Ok(Some(tree))
 }

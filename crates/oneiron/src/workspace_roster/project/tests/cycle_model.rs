@@ -366,13 +366,14 @@ impl Solver<'_> {
         }
     }
 
-    /// The board conduit of an undecided board revision: the first ancestor
-    /// naming no parent in the component (or the root), when every ancestor
-    /// on the way fits some plain view of its parent.
+    /// The board conduit of an undecided board revision naming no parent in
+    /// the component: the first ancestor naming none either (or the root),
+    /// when every ancestor on the way fits some plain view of its parent.
     fn conduit_base(&self, comp: usize, index: usize, plain: &Worlds) -> Option<usize> {
         let node = self.node(index);
         let prior = node.prior?;
-        if node.rank != Rank::Board || !self.undecided[prior] {
+        // Only a successor that leaves the cycle (ruling condition 2).
+        if node.rank != Rank::Board || !self.undecided[prior] || self.inside(comp, node.parent) {
             return None;
         }
         let mut at = prior;

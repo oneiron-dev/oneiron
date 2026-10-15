@@ -19,13 +19,16 @@
 //!   none, otherwise undefined. Each member serves the meet of its worlds'
 //!   views at the deepest state every world's walk passes, and its parents
 //!   are then checked against the served views.
-//! - Past the policy's bound on one member's worlds, every member serves no
-//!   authority, and the refresh raises the owner's question (OF-520).
+//! - Past the policy's bound on one member's worlds, or on the decision's
+//!   work, every member serves no authority, and the refresh raises the
+//!   owner's question (OF-520).
 use super::fold::{
     ProjectEffective, ProjectFold, ProjectFrontier, ProjectRank, fold_project, rank_at, reason,
     unsigned_frontier,
 };
-use super::history_policy::{ProjectDependencies, ProjectEvidenceSet, frozen_frontier, policy_in};
+use super::history_policy::{
+    PROJECT_FRONTIER, ProjectDependencies, ProjectEvidenceSet, frozen_frontier, policy_in,
+};
 use super::read::{Decided, Facts, ProjectReader, ProjectVerdict, stored_verdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash};
 use super::validity::{FoldCx, parent_view, read_parents, refusal};
@@ -36,6 +39,11 @@ use std::rc::Rc;
 mod serve;
 
 type Hash = ProjectRevisionHash;
+
+/// The decision's work allowed per world the bound admits, for each held row
+/// and member of the component: fold visits, reachability scans and
+/// served-chain walks.
+const WORK_PER_WORLD: u64 = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Label {
@@ -65,6 +73,9 @@ struct Member {
     conduits: BTreeMap<Hash, Hash>,
     /// A frozen or unsigned member's one frontier.
     fixed: Option<ProjectFrontier>,
+    /// A frozen member's saved dependencies with their signers, whose
+    /// parent admissions `serve` re-checks under the served views.
+    saved: Vec<(Hash, String)>,
 }
 
 /// One world of a member: the open states that stand, and its fold.
@@ -84,6 +95,10 @@ struct Solver<'s, 'a, 't> {
     members: Vec<Member>,
     at: BTreeMap<EntityId, usize>,
     bound: u64,
+    /// Work spent, and the most the decision may spend before it serves no
+    /// authority.
+    work: std::cell::Cell<u64>,
+    budget: u64,
 }
 
 /// Decides every member of one component.
@@ -100,22 +115,51 @@ pub(super) fn solve(
         members: Vec::new(),
         at,
         bound: policy.cycle_worlds_max,
+        work: std::cell::Cell::new(0),
+        budget: 0,
     };
+    let mut size = ids.len() as u64;
     for id in ids {
         let member = solver.member(*id, policy.max_revisions)?;
+        size += member.facts.held.rows.len() as u64;
         solver.members.push(member);
     }
+    #[cfg(test)]
+    let per_world = WORK_SCALE
+        .with(std::cell::Cell::get)
+        .unwrap_or(WORK_PER_WORLD);
+    #[cfg(not(test))]
+    let per_world = WORK_PER_WORLD;
+    solver.budget = (solver.bound)
+        .saturating_mul(per_world)
+        .saturating_mul(size);
     solver.decide_outside()?;
     let Some(plain) = solver.all_worlds(false)? else {
         return solver.dark();
     };
     solver.find_conduits(&plain);
+    let Some(mut worlds) = solver.all_worlds(true)? else {
+        return solver.dark();
+    };
     loop {
-        let Some(worlds) = solver.all_worlds(true)? else {
+        let changed = solver.step(&worlds);
+        if solver.spent() {
             return solver.dark();
-        };
-        if !solver.step(&worlds) {
-            return solver.serve(worlds);
+        }
+        if changed.is_empty() {
+            let decided = solver.serve(worlds)?;
+            return if solver.spent() {
+                solver.dark()
+            } else {
+                Ok(decided)
+            };
+        }
+        // A member's worlds read only its own labels.
+        for index in changed {
+            match solver.worlds(index, true)? {
+                Some(member) => worlds[index] = member,
+                None => return solver.dark(),
+            }
         }
     }
 }
@@ -130,16 +174,20 @@ impl Solver<'_, '_, '_> {
             labels: BTreeMap::new(),
             conduits: BTreeMap::new(),
             fixed: None,
+            saved: Vec::new(),
         };
         if facts.over_budget {
             let cx = FoldCx::intrinsic(self.reader, id, &facts.held);
-            member.fixed = Some(frozen_frontier(
-                self.reader,
-                &cx,
-                facts.count,
-                max_revisions,
-                false,
-            )?);
+            let fixed = frozen_frontier(self.reader, &cx, facts.count, max_revisions, false)?;
+            if fixed.effective.is_some()
+                && let Some(record) =
+                    PROJECT_FRONTIER.get(self.reader.store(), self.reader.txn(), &id)?
+            {
+                member.saved = (record.dependencies.all())
+                    .filter_map(|hash| Some((*hash, cx.signer(hash)?)))
+                    .collect();
+            }
+            member.fixed = Some(fixed);
             return Ok(member);
         }
         if !facts.signed {
@@ -155,12 +203,25 @@ impl Solver<'_, '_, '_> {
         }
         let mut order: Vec<(usize, Hash)> = Vec::new();
         for (hash, row) in &facts.held.rows {
-            if let Some(verdict) = facts.intrinsic.get(hash)
-                && row.revision.authority().is_some()
-            {
-                member.labels.insert(*hash, Label::Decided(*verdict));
+            let Some(verdict) = facts.intrinsic.get(hash) else {
+                continue;
+            };
+            if row.revision.authority().is_none() {
+                continue;
             }
-            if matches!(row.revision, ProjectRevision::Signed { .. }) {
+            // Outside the owner's seal nothing is judged with its parents, so
+            // a world whose seal fails serves nothing rather than walk it.
+            let sealed = facts.sealed.as_ref();
+            if sealed.is_some_and(|tree| !tree.contains(hash)) {
+                let off = ProjectVerdict::Quarantined(reason::SEALED_OFF);
+                member.labels.insert(*hash, Label::Decided(off));
+                continue;
+            }
+            member.labels.insert(*hash, Label::Decided(*verdict));
+            // Only a state valid on its own lineage reads parents here.
+            if matches!(row.revision, ProjectRevision::Signed { .. })
+                && *verdict == ProjectVerdict::Visible
+            {
                 let mut depth = 0;
                 let mut at = row.revision.parent();
                 while let Some(prior) = at.filter(|_| depth <= 4 * MAX_PROJECT_ANCHORS) {
@@ -257,9 +318,10 @@ impl Solver<'_, '_, '_> {
     }
 
     /// Each open board successor's conduit base, if any (ruling (a), the
-    /// settle leg): its signer sits on the board of its prior and of every
+    /// settle leg): the successor leaves the cycle (it names no parent in the
+    /// component), its signer sits on the board of its prior and of every
     /// state down to the first naming no parent in the component, or the
-    /// root; each state on the way is open and fits some plain view of
+    /// root, and each state on the way is open and fits some plain view of
     /// every parent in the component it reads.
     fn find_conduits(&mut self, plain: &[Vec<World>]) {
         for index in 0..self.members.len() {
@@ -272,7 +334,8 @@ impl Solver<'_, '_, '_> {
                 let Some(prior) = state.prior else {
                     continue;
                 };
-                if member.labels.get(&state.hash) != Some(&Label::Open)
+                if !state.inside.is_empty()
+                    || member.labels.get(&state.hash) != Some(&Label::Open)
                     || member.labels.get(&prior) != Some(&Label::Open)
                 {
                     continue;
@@ -285,6 +348,9 @@ impl Solver<'_, '_, '_> {
                     let Some(ancestor) = states.get(&at) else {
                         break None;
                     };
+                    if !self.charge(1) {
+                        break None;
+                    }
                     if !seated(&ancestor.authority) {
                         break None;
                     }
@@ -324,6 +390,9 @@ impl Solver<'_, '_, '_> {
     fn all_worlds(&self, conduits: bool) -> Result<Option<Vec<Vec<World>>>> {
         let mut all = Vec::new();
         for index in 0..self.members.len() {
+            if self.spent() {
+                return Ok(None);
+            }
             match self.worlds(index, conduits)? {
                 Some(worlds) => all.push(worlds),
                 None => return Ok(None),
@@ -333,7 +402,7 @@ impl Solver<'_, '_, '_> {
     }
 
     /// Every downward-closed assignment of a member's open states, folded;
-    /// `None` past the bound.
+    /// `None` past the bound or the work budget.
     fn worlds(&self, index: usize, conduits: bool) -> Result<Option<Vec<World>>> {
         let member = &self.members[index];
         if let Some(fixed) = &member.fixed {
@@ -356,6 +425,9 @@ impl Solver<'_, '_, '_> {
         let mut assignments: Vec<BTreeSet<Hash>> = vec![BTreeSet::new()];
         for state in &open {
             let mut more = Vec::new();
+            if !self.charge(assignments.len() as u64) {
+                return Ok(None);
+            }
             for assigned in &assignments {
                 let on =
                     |hash: &Option<Hash>| hash.is_none_or(|hash| member.stands(&hash, assigned));
@@ -377,6 +449,9 @@ impl Solver<'_, '_, '_> {
         let mut views: Vec<Option<ProjectEffective>> = Vec::new();
         for stands in assignments {
             let fold = self.fold_world(member, &stands)?;
+            if self.spent() {
+                return Ok(None);
+            }
             if !views.contains(&fold.frontier.effective) {
                 views.push(fold.frontier.effective.clone());
                 if views.len() as u64 > self.bound {
@@ -405,11 +480,24 @@ impl Solver<'_, '_, '_> {
             facts.signers.clone(),
             rehomed,
         );
-        fold_project(&cx, &facts.record)
+        let fold = fold_project(&cx, &facts.record);
+        self.charge(cx.visits() + facts.held.rows.len() as u64);
+        fold
     }
 
-    /// One Kleene step over every open state at once; whether any changed.
-    fn step(&mut self, worlds: &[Vec<World>]) -> bool {
+    /// Adds `units` of work; whether the decision is still within its budget.
+    fn charge(&self, units: u64) -> bool {
+        self.work.set(self.work.get().saturating_add(units));
+        !self.spent()
+    }
+
+    fn spent(&self) -> bool {
+        self.work.get() > self.budget
+    }
+
+    /// One Kleene step over every open state at once; the members whose
+    /// labels changed. It stops early once the work budget is spent.
+    fn step(&mut self, worlds: &[Vec<World>]) -> BTreeSet<usize> {
         let candidates: Vec<Vec<Option<ProjectEffective>>> = worlds
             .iter()
             .map(|worlds| {
@@ -428,15 +516,19 @@ impl Solver<'_, '_, '_> {
                 if member.labels.get(&state.hash) != Some(&Label::Open) {
                     continue;
                 }
+                if self.spent() {
+                    return BTreeSet::new();
+                }
                 let label = self.judge(index, state, &worlds[index], &candidates);
                 if label != Label::Open {
                     next.push((index, state.hash, label));
                 }
             }
         }
-        let changed = !next.is_empty();
+        let mut changed = BTreeSet::new();
         for (index, hash, label) in next {
             self.members[index].labels.insert(hash, label);
+            changed.insert(index);
         }
         changed
     }
@@ -541,6 +633,9 @@ impl Solver<'_, '_, '_> {
             .filter(|member| *member != target)
             .collect();
         loop {
+            if !self.charge(set.len() as u64) {
+                return BTreeSet::new();
+            }
             let keep: BTreeSet<usize> = (set.iter().copied())
                 .filter(|member| {
                     candidates[*member].iter().any(|view| {
@@ -584,7 +679,7 @@ impl Solver<'_, '_, '_> {
             if member == target {
                 return true;
             }
-            if !seen.insert(member) {
+            if !seen.insert(member) || !self.charge(1) {
                 continue;
             }
             for other in &candidates[member] {
@@ -644,4 +739,6 @@ thread_local! {
     /// How many member worlds this thread folded: a component's work is
     /// linear in its held history (Engine ruling, the 200-chain check).
     pub(super) static WORLD_FOLDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The work allowed per world, scaled down for a test.
+    pub(super) static WORK_SCALE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }

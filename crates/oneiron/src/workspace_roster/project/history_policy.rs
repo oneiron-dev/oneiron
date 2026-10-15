@@ -47,7 +47,7 @@ impl Default for ProjectHistoryPolicy {
 /// serves again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCycleQuestion {
-    /// The cycle's projects, in id order; the first keys the row.
+    /// The cycle's projects, in id order; each keys a copy of the row.
     pub members: Vec<EntityId>,
     pub raised_at: u64,
 }
@@ -153,8 +153,8 @@ pub(super) const PROJECT_FROZEN_WAIT_PROJECT: SideTable<
     (),
     Raw,
 > = SideTable::new(&side_table::PROJECT_FROZEN_WAIT_PROJECT);
-/// LOCAL: one open OF-520 question per parent cycle past its bound, by its
-/// first member.
+/// LOCAL: the open OF-520 question of a parent cycle past its bound, under
+/// each of its members (the owner door lists it once).
 pub(super) const PROJECT_CYCLE_QUESTION: SideTable<EntityId, ProjectCycleQuestion, Named> =
     SideTable::new(&side_table::PROJECT_CYCLE_QUESTION);
 /// The vault's history policy, set only through the owner door.
@@ -242,11 +242,15 @@ impl Vault {
     /// The open questions about parent cycles past their world bound.
     pub fn project_cycle_questions(&self) -> Result<Vec<ProjectCycleQuestion>> {
         let txn = self.store.env.read_txn()?;
-        Ok(PROJECT_CYCLE_QUESTION
-            .scan_from(&self.store, &txn, &[])?
-            .into_iter()
-            .map(|(_, question)| question)
-            .collect())
+        let mut questions: std::collections::BTreeMap<Vec<EntityId>, ProjectCycleQuestion> =
+            std::collections::BTreeMap::new();
+        for (_, question) in PROJECT_CYCLE_QUESTION.scan_from(&self.store, &txn, &[])? {
+            let raised = questions
+                .entry(question.members.clone())
+                .or_insert_with(|| question.clone());
+            raised.raised_at = raised.raised_at.min(question.raised_at);
+        }
+        Ok(questions.into_values().collect())
     }
 
     pub fn project_history_policy(&self) -> Result<ProjectHistoryPolicy> {

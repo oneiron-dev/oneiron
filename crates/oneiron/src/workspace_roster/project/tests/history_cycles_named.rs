@@ -1,10 +1,12 @@
 //! The named parent-cycle checks (Astra #1434b and the Engine's rulings on
 //! it): Astra's fixture, the second undefined sibling, both settle legs, the
 //! conduit's narrow edges, a positive control, the two causal-future shapes,
-//! the world bound with its owner question, and a long chain's linear cost.
+//! the world bound with its owner question and seal exit, a chain still in
+//! the cycle, and a long chain's linear cost.
 //! Each shape is a reference graph; the doors must serve the ruled answer
 //! (which the reference also gives) in both orders on two replicas.
 use super::super::history_policy::PROJECT_FRONTIER;
+use super::super::read::ProjectVerdict;
 use super::super::*;
 use super::authority::{child_body, sign_with};
 use super::cycle_model::{self as model, EXTRA, Graph, KEPT, Label, Rank, Rev, View};
@@ -244,11 +246,14 @@ fn a_long_history_under_a_later_child_stays_lit() -> Result<()> {
 }
 
 /// The world bound (Engine ruling, a policy row): a cycle with more views
-/// than the bound serves no authority in either project, and the owner holds
-/// one question naming it until it serves again.
+/// than the bound serves no authority in either project, still lists every
+/// held revision, and the owner holds one question naming it until it
+/// serves again: once the bound is raised, or once the owner seals B over
+/// B0, which leaves B1 outside the seal (Sol r14 F1, Astra r14 F3).
 #[cfg(feature = "sync")]
 #[test]
 fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()> {
+    use super::super::fold::reason::CYCLE_BOUND;
     let mut graph = astra(vec![rev(1, Some(1), None, KEPT, 1)]);
     graph.bound = 1;
     let first = [true, true, true, true, false];
@@ -261,8 +266,24 @@ fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()
         assert_eq!(
             frontier.disposition,
             ProjectDisposition::Unauthorized {
-                reason: super::super::fold::reason::CYCLE_BOUND.into()
+                reason: CYCLE_BOUND.into()
             }
+        );
+    }
+    // A0 and B0 stand; B1 and A1 are past the bound.
+    let listed = [
+        ProjectVerdict::Visible,
+        ProjectVerdict::Visible,
+        ProjectVerdict::Quarantined(CYCLE_BOUND),
+        ProjectVerdict::Quarantined(CYCLE_BOUND),
+    ];
+    for (index, verdict) in listed.into_iter().enumerate() {
+        let project = scaffold.ids[graph.revs[index].project];
+        let revisions = vault.project_revisions(project)?;
+        let hash = scaffold.revisions[index].0;
+        assert!(
+            revisions.contains(&(hash, verdict)),
+            "{index}: {revisions:?}"
         );
     }
     let mut members = scaffold.ids.clone();
@@ -270,6 +291,7 @@ fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()
     let questions = vault.project_cycle_questions()?;
     assert_eq!(questions.len(), 1);
     assert_eq!(questions[0].members, members);
+    seal_exit(&scaffold)?;
     // Raised, the bound lets the settle decide, and the question clears.
     set_bound(&vault, 64)?;
     scaffold.deliver(&vault, &[4])?;
@@ -283,6 +305,66 @@ fn a_cycle_past_its_world_bound_serves_nothing_and_asks_the_owner() -> Result<()
     let wrong = doors(&scaffold, &vault, &graph, &reference, &all)?;
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     assert_eq!(vault.project_cycle_questions()?, Vec::new());
+    Ok(())
+}
+
+/// The owner seals B over B0, keeping B0's bounds, with the bound still at
+/// one: B serves the seal, A1 fits under it, and the question clears.
+fn seal_exit(scaffold: &Scaffold) -> Result<()> {
+    use super::authority::FIXTURE_HOST;
+    use crate::authority::HostSlipIssuer;
+    let (_dir, vault) = scaffold.replica(&[0, 1, 2, 3])?;
+    let b = scaffold.ids[1];
+    let (b0, b0_row) = &scaffold.revisions[1];
+    let authority = b0_row.authority().ok_or_else(invalid)?.clone();
+    let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = "host".into();
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    // The door commits only a seal that installs as B's settled head.
+    vault.seal_project(
+        &super::history_cycles::owner(&vault)?,
+        b,
+        authority,
+        *b0,
+        slip.to_token()?,
+        |challenge| issuer.binding_proof(&slip, challenge),
+    )?;
+    assert_eq!(
+        scaffold.public(&vault)?,
+        [Some(view(KEPT, 0, Some(1))), Some(view(KEPT, 1, None))]
+    );
+    assert_eq!(vault.project_cycle_questions()?, Vec::new());
+    Ok(())
+}
+
+/// Bug repro (Sol r14 F3): B's board signs a chain of ten successors over
+/// B0, each naming A, and A1 names B. No successor leaves the cycle, so none
+/// is a conduit: B's assignments are the chain's eleven prefixes, and the
+/// component serves the cycle's meet rather than passing the bound.
+#[cfg(feature = "sync")]
+#[test]
+fn a_chain_still_in_the_cycle_stays_a_chain() -> Result<()> {
+    let mut revs = vec![
+        rev(0, None, None, KEPT | EXTRA, 3),
+        rev(1, None, None, KEPT, 1),
+    ];
+    for at in 1..=10 {
+        revs.push(rev(1, Some(at), Some(0), KEPT | EXTRA, 2));
+    }
+    revs.push(rev(0, Some(0), Some(1), KEPT, 0));
+    let graph = Graph {
+        projects: 2,
+        born_under: vec![None, None],
+        revs,
+        bound: 64,
+    };
+    let mut labels = vec![Valid, Valid];
+    labels.extend([Undefined; 11]);
+    let served = [Some(view(KEPT, 0, None)), Some(view(KEPT, 1, None))];
+    both_orders(&graph, &served, &labels)?;
     Ok(())
 }
 
@@ -334,6 +416,8 @@ fn a_component_of_long_histories_folds_in_linear_visits() -> Result<()> {
         }
         let after = count();
         assert_eq!(served, reference.served, "n = {n}");
+        // Long histories stay lit: within the decision's work budget.
+        assert!(served.iter().all(Option::is_some), "n = {n}: {served:?}");
         assert_eq!(reader.cycle_hits(), 0);
         runs.push((
             n as u64,
@@ -343,9 +427,8 @@ fn a_component_of_long_histories_folds_in_linear_visits() -> Result<()> {
         ));
     }
     eprintln!("(n, verified, world folds, fold visits): {runs:?}");
-    // Verified: the 2n revisions and a constant (births, A1, B1, the root).
-    let fixed: Vec<u64> = runs.iter().map(|run| run.1 - 2 * run.0).collect();
-    assert!(fixed.iter().all(|f| *f == fixed[0]), "{runs:?}");
+    // Verified once each: the 2n revisions, the births, A1, B1 and the root.
+    assert!(runs.iter().all(|run| run.1 == 2 * run.0 + 5), "{runs:?}");
     // World folds: independent of n.
     assert!(runs.iter().all(|run| run.2 == runs[0].2), "{runs:?}");
     // Visits: the step from 200 to 400 is at most twice the step from 100

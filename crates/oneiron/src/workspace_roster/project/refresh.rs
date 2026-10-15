@@ -23,8 +23,9 @@ use std::collections::BTreeMap;
 /// woke; a project-parent cycle stops here.
 const MAX_REFRESH_ROUNDS: u32 = 4;
 
-/// Refreshes every touched project once, then each project whose frozen
-/// descendants waited on a project whose view changed.
+/// Refreshes every touched project once, with every project its parents tie
+/// it to, then each project whose frozen descendants waited on a project
+/// whose view changed.
 pub(crate) fn refresh_project_frontiers(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -40,26 +41,44 @@ pub(crate) fn refresh_project_frontiers(
     let mut queue = touched.clone();
     let mut rounds: BTreeMap<EntityId, u32> = BTreeMap::new();
     while let Some(project) = queue.pop_first() {
-        let round = rounds.entry(project).or_default();
-        *round += 1;
-        if *round > MAX_REFRESH_ROUNDS {
+        if rounds
+            .get(&project)
+            .is_some_and(|round| *round >= MAX_REFRESH_ROUNDS)
+        {
             continue;
         }
-        let mut component = Vec::new();
-        let changed = refresh_one(store, txn, posture, kind, project, &mut component)?;
-        // A component is decided as one, so every member's record follows a
-        // change to any member (Astra #1434b).
-        component.retain(|member| !rounds.contains_key(member));
-        queue.extend(component);
-        if !changed {
-            continue;
-        }
-        for key in PROJECT_FROZEN_WAIT_PROJECT.scan_keys(store, txn, project.as_bytes())? {
-            PROJECT_FROZEN_WAIT_PROJECT.delete(store, txn, &key)?;
-            queue.insert(key.1.0);
+        // A component is decided as one, so every member's record is written
+        // from that one decision (Astra #1434b, r14 F4).
+        for (member, changed) in refresh_component(store, txn, posture, kind, project)? {
+            *rounds.entry(member).or_default() += 1;
+            queue.remove(&member);
+            if !changed {
+                continue;
+            }
+            for key in PROJECT_FROZEN_WAIT_PROJECT.scan_keys(store, txn, member.as_bytes())? {
+                PROJECT_FROZEN_WAIT_PROJECT.delete(store, txn, &key)?;
+                queue.insert(key.1.0);
+            }
         }
     }
     Ok(())
+}
+
+/// A REVISIONS row: (project, hash) to (companion id, origin).
+type Indexed = ((EntityId, ProjectRevisionHash), (EntityId, RevisionOrigin));
+
+/// The indexed revisions whose chain or mint was missing.
+fn pending(store: &Store, txn: &heed::RoTxn<'_>, project: EntityId) -> Result<Vec<Indexed>> {
+    Ok(REVISIONS
+        .scan_from(store, txn, project.as_bytes())?
+        .into_iter()
+        .filter(|(_, (_, origin))| {
+            matches!(
+                origin,
+                RevisionOrigin::AwaitingParent | RevisionOrigin::AwaitingMint
+            )
+        })
+        .collect())
 }
 
 /// Authenticates each indexed revision whose chain and mint are held. Every
@@ -71,16 +90,7 @@ fn authenticate_pending(
     project: EntityId,
     kind: u8,
 ) -> Result<()> {
-    let indexed: Vec<_> = REVISIONS
-        .scan_from(store, txn, project.as_bytes())?
-        .into_iter()
-        .filter(|(_, (_, origin))| {
-            matches!(
-                origin,
-                RevisionOrigin::AwaitingParent | RevisionOrigin::AwaitingMint
-            )
-        })
-        .collect();
+    let indexed = pending(store, txn, project)?;
     if indexed.is_empty() {
         return Ok(());
     }
@@ -120,82 +130,113 @@ struct Drained {
     waits: Vec<(EntityId, ProjectRevisionHash)>,
 }
 
-/// Returns whether the project's served view changed, and fills
-/// `component` with the members decided with it.
-fn refresh_one(
+/// Authenticates `project` and every member of its component, decides the
+/// component once, and writes each member's record and the owner's question.
+/// Returns each member with whether its served view changed.
+fn refresh_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
     kind: u8,
     project: EntityId,
-    component: &mut Vec<EntityId>,
-) -> Result<bool> {
+) -> Result<Vec<(EntityId, bool)>> {
     authenticate_pending(store, txn, posture, project, kind)?;
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
+    let mut authenticated = BTreeSet::from([project]);
+    let (members, dark, plans) = loop {
+        let mut waiting = Vec::new();
+        {
+            let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
+            let Some(decided) = reader.decide(project)? else {
+                return Ok(Vec::new());
+            };
+            let members = reader.component(project)?.to_vec();
+            for member in &members {
+                if authenticated.insert(*member) && !pending(store, txn, *member)?.is_empty() {
+                    waiting.push(*member);
+                }
+            }
+            if waiting.is_empty() {
+                let dark = matches!(&decided.frontier.disposition,
+                    ProjectDisposition::Unauthorized { reason } if reason.as_str() == super::fold::reason::CYCLE_BOUND);
+                let mut plans = Vec::new();
+                for member in &members {
+                    plans.push((*member, plan(&reader, store, txn, kind, *member, now)?));
+                }
+                break (members, dark, plans);
+            }
+        }
+        // A member's newly authenticated rows can change the component.
+        for member in waiting {
+            authenticate_pending(store, txn, posture, member, kind)?;
+        }
+    };
+    ask_owner(store, txn, &members, dark, now)?;
+    let mut changed = Vec::new();
+    for (member, plan) in plans {
+        changed.push((member, write(store, txn, member, plan)?));
+    }
+    Ok(changed)
+}
+
+/// What one member's refresh writes, read with its old record.
+type Plan = (Option<ProjectFrontierRecord>, Refresh);
+
+fn plan(
+    reader: &ProjectReader<'_, '_>,
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    project: EntityId,
+    now: u64,
+) -> Result<Plan> {
     let old = PROJECT_FRONTIER.get(store, txn, &project)?;
-    let (refresh, question) = {
-        let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
-        let Some(decided) = reader.decide(project)? else {
-            return Ok(false);
-        };
+    let Some(decided) = reader.decide(project)? else {
+        return Ok((old, Refresh::Nothing));
+    };
+    let refresh = if let Some(fold) = &decided.fold {
+        Refresh::Within(Box::new(ProjectFrontierRecord {
+            witness: fold.frontier.witness.clone(),
+            disposition: fold.frontier.disposition.clone(),
+            effective: fold.frontier.effective.clone(),
+            dependencies: fold.dependencies.clone(),
+            evidence: fold.evidence.clone(),
+            verified_at: now,
+            frozen: None,
+        }))
+    } else if let Some(mut record) = old.clone() {
         let held = held_in_txn(store, txn, project, kind)?;
         let cx = reader.door_cx(project, &held)?;
-        let members = reader.component(project)?;
-        component.extend(members.iter().copied());
-        let dark = matches!(&decided.frontier.disposition,
-            ProjectDisposition::Unauthorized { reason } if reason.as_str() == super::fold::reason::CYCLE_BOUND);
-        let question = (members.len() > 1).then(|| (members.to_vec(), dark));
-        let refresh = if let Some(fold) = &decided.fold {
-            Refresh::Within(Box::new(ProjectFrontierRecord {
-                witness: fold.frontier.witness.clone(),
-                disposition: fold.frontier.disposition.clone(),
-                effective: fold.frontier.effective.clone(),
-                dependencies: fold.dependencies.clone(),
-                evidence: fold.evidence.clone(),
-                verified_at: now,
-                frozen: None,
-            }))
-        } else if let Some(mut record) = old.clone() {
-            let count = budget_count(&cx)?;
-            record.frozen.get_or_insert(ProjectFreeze {
-                at_counted: count,
-                narrowed: false,
-            });
-            let applied: BTreeSet<ProjectRevisionHash> = PROJECT_FROZEN_APPLIED
-                .scan_keys(store, txn, project.as_bytes())?
-                .into_iter()
-                .map(|(_, hash)| hash)
-                .collect();
-            let drained = drain(&cx, &mut record, &applied)?;
-            if !drained.applied.is_empty()
-                && let Some(freeze) = record.frozen.as_mut()
-            {
-                freeze.narrowed = true;
-            }
-            Refresh::Frozen(Box::new(record), drained)
-        } else {
-            Refresh::Nothing
-        };
-        (refresh, question)
-    };
-    // The owner's question about a cycle past its world bound (OF-520).
-    if let Some((members, dark)) = question
-        && let Some(first) = members.first().copied()
-    {
-        match (dark, PROJECT_CYCLE_QUESTION.get(store, txn, &first)?) {
-            (true, None) => {
-                let question = ProjectCycleQuestion {
-                    members,
-                    raised_at: now,
-                };
-                PROJECT_CYCLE_QUESTION.put(store, txn, &first, &question)?;
-            }
-            (false, Some(_)) => {
-                PROJECT_CYCLE_QUESTION.delete(store, txn, &first)?;
-            }
-            _ => {}
+        let count = budget_count(&cx)?;
+        record.frozen.get_or_insert(ProjectFreeze {
+            at_counted: count,
+            narrowed: false,
+        });
+        let applied: BTreeSet<ProjectRevisionHash> = PROJECT_FROZEN_APPLIED
+            .scan_keys(store, txn, project.as_bytes())?
+            .into_iter()
+            .map(|(_, hash)| hash)
+            .collect();
+        let drained = drain(&cx, &mut record, &applied)?;
+        if !drained.applied.is_empty()
+            && let Some(freeze) = record.frozen.as_mut()
+        {
+            freeze.narrowed = true;
         }
-    }
+        Refresh::Frozen(Box::new(record), drained)
+    } else {
+        Refresh::Nothing
+    };
+    Ok((old, refresh))
+}
+
+/// Writes one member's planned record; whether its served view changed.
+fn write(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    project: EntityId,
+    (old, refresh): Plan,
+) -> Result<bool> {
     let record = match refresh {
         Refresh::Nothing => return Ok(false),
         Refresh::Within(record) => {
@@ -217,6 +258,49 @@ fn refresh_one(
     let changed = old.as_ref().is_none_or(|old| !old.same_view(&record));
     PROJECT_FRONTIER.put(store, txn, &project, &record)?;
     Ok(changed)
+}
+
+/// The owner's question about a cycle past its bound (OF-520), kept under
+/// each member: raised for a dark component, and removed, with every row of
+/// its former component, once a member's component is lit or changed.
+fn ask_owner(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    members: &[EntityId],
+    dark: bool,
+    now: u64,
+) -> Result<()> {
+    let want = (dark && members.len() > 1).then(|| members.to_vec());
+    for member in members {
+        let old = PROJECT_CYCLE_QUESTION.get(store, txn, member)?;
+        if let Some(old) = &old
+            && Some(&old.members) != want.as_ref()
+        {
+            for other in &old.members {
+                let stale = PROJECT_CYCLE_QUESTION
+                    .get(store, txn, other)?
+                    .is_some_and(|question| question.members == old.members);
+                if stale && !members.contains(other) {
+                    PROJECT_CYCLE_QUESTION.delete(store, txn, other)?;
+                }
+            }
+        }
+        match (&want, old) {
+            (Some(want), Some(old)) if old.members == *want => {}
+            (Some(want), _) => {
+                let question = ProjectCycleQuestion {
+                    members: want.clone(),
+                    raised_at: now,
+                };
+                PROJECT_CYCLE_QUESTION.put(store, txn, member, &question)?;
+            }
+            (None, Some(_)) => {
+                PROJECT_CYCLE_QUESTION.delete(store, txn, member)?;
+            }
+            (None, None) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Whether a verdict waits on a parent project's mutable facts.
