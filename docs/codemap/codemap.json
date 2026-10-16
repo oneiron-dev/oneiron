@@ -13250,34 +13250,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AgentLane",
-      "AgentRow",
-      "AgentsSection",
-      "ChildAgentPresence",
-      "PeerPresence"
-     ],
-     "path": "src/context_board/agents.rs",
-     "purpose": "AGENTS section projections — child agents and peer connections",
-     "surface": {
-      "enum": 1,
-      "fn": 6,
-      "struct": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/context_board/agents_fanout.rs",
-     "purpose": "AGENTS consult metering rows",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -13287,8 +13259,24 @@
      "path": "src/context_board/capabilities.rs",
      "purpose": "Turn-local capability hits and session-long loaded skill bodies",
      "surface": {
-      "fn": 4,
+      "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChildState",
+      "ForkState"
+     ],
+     "path": "src/context_board/children.rs",
+     "purpose": "The agent's own runs on the board (PEOPLE ruling, ARCH-0067): the children it spawned, whose state rides…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -13332,7 +13320,7 @@
       "const": 7,
       "crate-vis": 1,
       "enum": 4,
-      "fn": 17,
+      "fn": 15,
       "struct": 12
      }
     },
@@ -13483,7 +13471,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -13523,6 +13511,26 @@
      "purpose": "Read-time own-proposal outcomes and connector changes for one session",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "People",
+      "PeoplePrefix",
+      "PeopleView",
+      "PersonKind",
+      "PersonRow"
+     ],
+     "path": "src/context_board/people.rs",
+     "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -13782,7 +13790,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BriefPlacement",
@@ -13800,7 +13808,7 @@
      "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
      "surface": {
       "enum": 2,
-      "fn": 8,
+      "fn": 10,
       "struct": 8
      }
     },
@@ -13981,7 +13989,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 7
      }
     },
@@ -42239,14 +42247,16 @@
       "ConsultFanOutPause",
       "ConsultFanOutPolicy",
       "ConsultFanOutRate",
-      "ConsultFanOutScope"
+      "ConsultFanOutScope",
+      "FanoutMeterRow"
      ],
      "path": "src/task_verb/consult_fanout_types.rs",
      "purpose": "Public fan-out governance inputs and observable outcomes",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "re-export": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -58883,7 +58893,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/board.rs",
-     "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM…",
+     "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
       "crate-vis": 11
      }
