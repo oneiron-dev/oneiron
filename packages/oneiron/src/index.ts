@@ -127,6 +127,7 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  report(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.report(input) as unknown) }
   readonly self = {
     memory: {
       diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),

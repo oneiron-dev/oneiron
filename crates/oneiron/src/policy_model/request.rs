@@ -234,7 +234,7 @@ impl HostedOutagePolicy {
 /// Everything about a classify pass that is the HOST's to choose. None of it
 /// carries policy content: the patterns and the policy documents live on their
 /// own planes, where their authority comes from.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct PolicyModelConfig {
     pub safeguard_binding: SafeguardModelBinding,
     /// Affordance the host attaches to owner-plane notices so the owner can
@@ -242,6 +242,20 @@ pub struct PolicyModelConfig {
     /// knows no product routes, so a host that wants the offer supplies both
     /// its label and its target.
     pub owner_setting_change_offer: Option<GateSystemNoticeAction>,
+    /// An overt retry explanation. Required when an owner row uses `reword`;
+    /// the engine ships no wording for a model to obey.
+    pub owner_reword_notice: Option<String>,
+    /// Help text and links supplied by the host. No resources or medical
+    /// categories are bundled with the engine.
+    pub help_message: Option<String>,
+    pub help_resources: Vec<GateSystemNoticeAction>,
+    /// A hosted service's local-model/self-host setup link. It is never
+    /// attached to owner-plane notices.
+    pub hosted_local_model_offer: Option<GateSystemNoticeAction>,
+    /// Optional registered decide() paths. Absent means the existing
+    /// safeguard backend path, not an engine-selected model or policy.
+    pub owner_decisions: Option<std::sync::Arc<super::PolicyDecisions>>,
+    pub hosted_decisions: Option<std::sync::Arc<super::PolicyDecisions>>,
     /// Host-supplied explanation shown identically to the user and model on a human hold.
     /// Empty or oversized text falls back to the engine's generic explanation.
     pub owner_hold_notice: Option<String>,
@@ -268,6 +282,17 @@ pub struct PolicyModelConfig {
 }
 
 impl PolicyModelConfig {
+    pub(super) fn decisions(&self, plane: PolicyPlane) -> Option<&super::PolicyDecisions> {
+        match plane {
+            PolicyPlane::OwnerPolicy => self.owner_decisions.as_deref(),
+            PolicyPlane::HostedLegal => self.hosted_decisions.as_deref(),
+        }
+    }
+
+    pub(super) fn decision_binding(&self, plane: PolicyPlane) -> Option<String> {
+        self.decisions(plane).map(super::PolicyDecisions::binding)
+    }
+
     /// The classifier dial that governs `plane`.
     ///
     /// The ONE place plane maps to dial. Every verdict records the dial of the

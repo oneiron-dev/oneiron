@@ -125,7 +125,10 @@ impl Vault {
     pub(super) fn checkpoint_signing_keys(&self) -> Result<SigningKeys> {
         let keystore = self.device_keystore()?;
         let install = *self.prepare_install_signing()?.as_bytes();
-        let seed = slot_seed(keystore.as_ref(), &slot(*self.vault_id().as_bytes(), install))?;
+        let seed = slot_seed(
+            keystore.as_ref(),
+            &slot(*self.vault_id().as_bytes(), install),
+        )?;
         Ok(SigningKeys::expand(install, &seed))
     }
 

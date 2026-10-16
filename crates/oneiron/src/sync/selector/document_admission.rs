@@ -133,6 +133,19 @@ pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
     )
 }
 
+/// Recheck text-plane read authority inside the exporting writer. A previous
+/// ledger selection is not authority after the grant or its scope changes.
+pub(in crate::sync) fn admit_document_read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<()> {
+    let admission = authorize_in_txn(vault, txn, scope, selector, None)?;
+    admit_selected_in_txn(vault, txn, id, selector, &admission)
+}
+
 pub(in crate::sync) fn admit_document_write_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

@@ -603,16 +603,26 @@ fn active_identity_for_channel(
         .port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
     {
         let id = entry?;
+        // Channel and binding from the identity's claim heads (OF-272); the
+        // row is read for its custody, which decides may_send.
+        let Some(facts) =
+            crate::channel_identity::channel_identity_facts_in_txn(&vault.store, txn, &id)
+                .map_err(CalendarError::from)?
+        else {
+            continue;
+        };
+        if crate::counterparty_contact::normalize_channel_class(&facts.channel) != wanted
+            || facts.binding.actor_ref() != Some(actor)
+        {
+            continue;
+        }
         let Some(identity) = vault
             .get_channel_identity_in_txn(txn, &id)
             .map_err(CalendarError::from)?
         else {
             continue;
         };
-        if !identity.may_send()
-            || crate::counterparty_contact::normalize_channel_class(identity.channel()) != wanted
-            || identity.binding().actor_ref() != Some(actor)
-        {
+        if !identity.may_send() {
             continue;
         }
         if found.is_some() {
