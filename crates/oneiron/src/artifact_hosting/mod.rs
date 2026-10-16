@@ -33,6 +33,8 @@ use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 
 mod pointer_rows;
+/// Lease-bound live process previews, separate from pinned artifact pointers.
+pub mod preview;
 mod publication_sync;
 use self::pointer_rows::{
     decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,

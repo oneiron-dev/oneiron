@@ -60,6 +60,27 @@ pub trait Host {
     }
 }
 
+/// Result of opening an optional session preview on a native host.
+#[cfg(not(target_arch = "wasm32"))]
+pub type PreviewHostFuture<'a, L> = Pin<Box<dyn Future<Output = anyhow::Result<L>> + Send + 'a>>;
+
+/// Embedded WebAssembly adapters may use thread-local forwarding futures.
+#[cfg(target_arch = "wasm32")]
+pub type PreviewHostFuture<'a, L> = Pin<Box<dyn Future<Output = anyhow::Result<L>> + 'a>>;
+
+/// Optional live-port half of the host contract. Opening consumes a manifest
+/// authenticated by the session runtime, never arbitrary HTTP port numbers.
+/// The returned lease owns forwarding: drop, expiry, process exit and host
+/// stop must close both the listener and connections already using it.
+pub trait PreviewPortHost {
+    type Lease;
+
+    fn open_preview(
+        &self,
+        manifest: crate::preview::PreviewSessionManifest,
+    ) -> PreviewHostFuture<'_, Self::Lease>;
+}
+
 /// Pressure cutoffs and reap eligibility remain host policy. Even a refused
 /// shed must complete before the existing reap decision is evaluated. A ctl
 /// failure is returned separately and never skips or overrides that decision.
