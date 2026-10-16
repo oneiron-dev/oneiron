@@ -26,9 +26,8 @@ fn opted_out_effect() -> GateEvaluatorInput {
         .counterparty_opted_out = true;
     effect
 }
-fn owner(vault: &crate::Vault, seed: u8) -> Result<crate::consent::AuthenticatedOwner> {
-    let actor = test_id(seed);
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"human")?;
+fn owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault.authenticate_owner(
         actor,
         &actor.to_hex(),
@@ -84,7 +83,7 @@ fn hidden_world_refusal_does_not_disclose_row_level_or_role() -> Result<()> {
 #[test]
 fn row_at_unadmitted_level_is_refused() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let owner = owner(&vault, 0x90)?;
+    let owner = owner(&vault)?;
     let project = test_id(0x91);
     let thread = test_id(0x92);
     let manifest_id = test_id(0x93);

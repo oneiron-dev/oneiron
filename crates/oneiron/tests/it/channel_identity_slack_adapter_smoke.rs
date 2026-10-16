@@ -266,3 +266,40 @@ fn run_two_agent_smoke(case: SlackSmokeCase) -> Result<()> {
 fn cid8_slack_shared_presence_routes_two_agents_in_one_workspace() -> Result<()> {
     run_two_agent_smoke(SlackSmokeCase::workspace())
 }
+
+/// H114: the shipped manifest asks Slack for exactly the bot scopes its
+/// subscribed events and its persona send need, per Slack's published scope
+/// requirements. One shared app installs into many workspaces, so a surplus
+/// scope (`channels:history` reads every public channel the bot sits in) is a
+/// standing exfiltration grant the engine never uses.
+#[test]
+fn slack_manifest_requests_only_the_scopes_its_events_and_sends_need() -> Result<()> {
+    let manifest = adapter()?.app_manifest();
+    let events: Vec<&str> = manifest["settings"]["event_subscriptions"]["bot_events"]
+        .as_array()
+        .expect("bot events")
+        .iter()
+        .map(|event| event.as_str().expect("event name"))
+        .collect();
+    // Slack's Events API: each event names the one scope that delivers it.
+    let mut needed: Vec<&str> = events
+        .iter()
+        .map(|event| match *event {
+            "app_mention" => "app_mentions:read",
+            "message.im" => "im:history",
+            other => panic!("unexpected subscribed event {other}"),
+        })
+        .collect();
+    // chat.postMessage, its persona username/icon, and opening the DM it answers in.
+    needed.extend(["chat:write", "chat:write.customize", "im:write"]);
+    needed.sort_unstable();
+    let mut scopes: Vec<&str> = manifest["oauth_config"]["scopes"]["bot"]
+        .as_array()
+        .expect("bot scopes")
+        .iter()
+        .map(|scope| scope.as_str().expect("scope name"))
+        .collect();
+    scopes.sort_unstable();
+    assert_eq!(scopes, needed);
+    Ok(())
+}

@@ -97,6 +97,26 @@ pub struct ProposalScope {
 
 pub use oneiron_contracts::identity_topology::IdentityTopologyRejection;
 
+/// The rejection for an op that would retire `owner`, the vault's embedded
+/// owner. A merge source or a split original stops being a live PERSON, and
+/// a personal vault's owner is that PERSON, so the op would lock the owner
+/// out of every owner door. Local apply, replicated admission and the
+/// effective-history fold all refuse it; an undo, which revives, never is.
+pub(crate) fn owner_retirement(
+    op: &IdentityTopologyOp,
+    owner: &EntityId,
+) -> Option<IdentityTopologyRejection> {
+    match op {
+        IdentityTopologyOp::Merge(merge) if merge.sources.contains(owner) => {
+            Some(IdentityTopologyRejection::OwnerMergedAway { owner: *owner })
+        }
+        IdentityTopologyOp::Split(split) if split.entity == *owner => {
+            Some(IdentityTopologyRejection::OwnerSplitAway { owner: *owner })
+        }
+        _ => None,
+    }
+}
+
 /// Full (state, op) transition table over entity lifecycle × op role,
 /// evaluated against the caller's folded states (absent entity = `Active`).
 /// Returns the state assignments the op performs; participants it validates
