@@ -481,11 +481,13 @@ fn append_access_grant_scope_fields(
         }
         AccessGrantScope::CompanionProfile {
             person_ref,
-            persona_ref,
+            facet_ref,
         } => {
             fields.insert("scope".to_owned(), "companion_profile".to_owned());
             fields.insert("person_ref".to_owned(), person_ref.to_hex());
-            fields.insert("persona_ref".to_owned(), persona_ref.to_hex());
+            if let Some(facet_ref) = facet_ref {
+                fields.insert("facet_ref".to_owned(), facet_ref.to_hex());
+            }
         }
         AccessGrantScope::Calendar { calendar_ref, rung } => {
             fields.insert("scope".to_owned(), "calendar".to_owned());

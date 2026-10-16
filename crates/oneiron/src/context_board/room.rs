@@ -162,11 +162,16 @@ pub struct RoomSection {
     /// The caller's read of the room's rules. Rules the caller could read but
     /// a present peer could not are counted as withheld rows.
     pub receipt: crate::claim::ScopedReadReceipt,
+    /// Who holds the room's speaking duty among a named session's present
+    /// participants (ARCH-0067 §8). `None` when no session was read, so the
+    /// section renders no host line rather than guessing who is present.
+    pub host: Option<crate::workspace_roster::RoomHosting>,
 }
 
 impl RoomSection {
-    /// Roster, scope, posture and rules only. Values are escaped again by the
-    /// board frame; flattening here only prevents row/control-character tricks.
+    /// Roster, scope, posture, host and rules only. Values are escaped again by
+    /// the board frame; flattening here only prevents row/control-character
+    /// tricks. An undecided host renders as no host with its candidates.
     pub fn board_section(&self) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut rows = vec![format!("room: {}", self.room.to_hex())];
         rows.extend(self.roster.iter().map(|member| {
@@ -207,6 +212,20 @@ impl RoomSection {
         } else {
             format!("posture: {mode}")
         });
+        if let Some(hosting) = &self.host {
+            rows.push(match hosting.host {
+                Some(host) => format!("host: {}", host.to_hex()),
+                None => format!(
+                    "host: none candidates={}",
+                    hosting
+                        .candidates
+                        .iter()
+                        .map(EntityId::to_hex)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            });
+        }
         rows.extend(self.claims.iter().map(|claim| {
             format!(
                 "{}: {} {}",

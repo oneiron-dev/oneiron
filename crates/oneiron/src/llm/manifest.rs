@@ -36,13 +36,15 @@ pub enum ModelRole {
     Checker,
     DreamerCurrent,
     DreamerTarget,
+    /// Optional until the owner binds a checkpoint from a training pack.
+    DreamerDistilled,
     Asr,
     Captioner,
     DocParsing,
     AudioVad,
     TtsDeferred,
 }
-pub const MODEL_ROLES: [ModelRole; 14] = [
+pub const MODEL_ROLES: [ModelRole; 15] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
@@ -52,6 +54,7 @@ pub const MODEL_ROLES: [ModelRole; 14] = [
     ModelRole::Checker,
     ModelRole::DreamerCurrent,
     ModelRole::DreamerTarget,
+    ModelRole::DreamerDistilled,
     ModelRole::Asr,
     ModelRole::Captioner,
     ModelRole::DocParsing,
@@ -70,6 +73,7 @@ impl ModelRole {
                 | Self::Checker
                 | Self::DreamerCurrent
                 | Self::DreamerTarget
+                | Self::DreamerDistilled
                 | Self::ExtractionTeacher
         )
     }
@@ -201,7 +205,7 @@ impl ModelManifest {
         if self.version != 2
             || MODEL_ROLES
                 .iter()
-                .any(|role| !self.roles.contains_key(role))
+                .any(|role| *role != ModelRole::DreamerDistilled && !self.roles.contains_key(role))
         {
             return Err(invalid("manifest v2 requires every role key"));
         }
@@ -337,22 +341,32 @@ impl Vault {
         manifest: &ModelManifest,
         new_approval: Option<&TeacherProbeApproval>,
     ) -> Result<()> {
-        manifest.validate()?;
         let mut txn = self.store.env.write_txn()?;
-        let saved_approval = TEACHER_APPROVAL.get(&self.store, &txn, &())?;
+        self.write_model_manifest_in_txn(&mut txn, manifest, new_approval)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Training swaps commit their receipt and custody binding with the manifest.
+    pub(crate) fn write_model_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        manifest: &ModelManifest,
+        new_approval: Option<&TeacherProbeApproval>,
+    ) -> Result<()> {
+        manifest.validate()?;
+        let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
         let approval = new_approval
             .or(saved_approval.as_ref())
             .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
-        let policy = self.teacher_probe_policy_in_txn(&txn, approval.holder_ref.as_deref())?;
+        let policy = self.teacher_probe_policy_in_txn(txn, approval.holder_ref.as_deref())?;
         approval.verify(manifest, &policy)?;
         if let Some(approval) = new_approval {
-            TEACHER_APPROVAL.put(&self.store, &mut txn, &(), approval)?;
+            TEACHER_APPROVAL.put(&self.store, txn, &(), approval)?;
         }
         // A tighter owner pin clears stale resident routes atomically.
-        RESIDENT_ROUTES.delete(&self.store, &mut txn, &())?;
-        MANIFEST.put(&self.store, &mut txn, &(), manifest)?;
-        txn.commit()?;
-        Ok(())
+        RESIDENT_ROUTES.delete(&self.store, txn, &())?;
+        MANIFEST.put(&self.store, txn, &(), manifest)
     }
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
