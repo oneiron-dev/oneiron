@@ -110,8 +110,8 @@ fn js_f32(value: f64) -> Result<f32> {
 }
 
 /// `bytes` as text when they are UTF-8 and their JSON string is no longer than
-/// the number array other bytes cross the channel as, up to four times their
-/// raw length. Escaped control characters can make the string the longer one.
+/// the base64 other bytes cross the channel as, four bytes for every three.
+/// Escaped control characters can make the string the longer one.
 fn reply_text(bytes: &[u8]) -> Option<&str> {
     let text = std::str::from_utf8(bytes).ok()?;
     let escaped = text
@@ -122,36 +122,35 @@ fn reply_text(bytes: &[u8]) -> Option<&str> {
             _ => 1,
         })
         .sum::<usize>();
-    let array = bytes
-        .iter()
-        .map(|byte| match byte {
-            0..=9 => 2,
-            10..=99 => 3,
-            _ => 4,
-        })
-        .sum::<usize>();
-    (escaped <= array).then_some(text)
+    (escaped <= bytes.len().div_ceil(3) * 4).then_some(text)
 }
 
-/// A file reply: text crosses the channel as a JSON string, other bytes as a
-/// number array.
+/// Bytes as the channel carries them when they are not text.
+fn base64_bytes(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A file reply: text crosses the channel as a JSON string, other bytes as
+/// base64, never as a number array.
 fn file_reply(path: &str, bytes: &[u8]) -> Value {
     match reply_text(bytes) {
         Some(text) => json!({"path": path, "text": text}),
-        None => json!({"path": path, "bytes": bytes}),
+        None => json!({"path": path, "base64": base64_bytes(bytes)}),
     }
 }
 
 /// Fit a recoverable chunk inside the *encoded* host reply ceiling, cutting
-/// text only at a character boundary. The caller advances by the returned
-/// byte length, never by a guessed cap.
+/// text only at a character boundary; other bytes cross as base64, whose
+/// expansion the measured encoding counts. The caller advances by the
+/// returned byte length, never by a guessed cap.
 fn bounded_recoverable_reply(path: &str, bytes: &[u8], limit: usize) -> Result<String> {
     let text = reply_text(bytes);
     let cut = |count: usize| text.map_or(count, |text| text.floor_char_boundary(count));
     let encode = |count: usize| {
         let reply = match text {
             Some(text) => json!({"path": path, "text": &text[..count]}),
-            None => json!({"path": path, "bytes": &bytes[..count]}),
+            None => json!({"path": path, "base64": base64_bytes(&bytes[..count])}),
         };
         serde_json::to_string(&reply).map_err(|_| failure("recoverable output encoding failed"))
     };

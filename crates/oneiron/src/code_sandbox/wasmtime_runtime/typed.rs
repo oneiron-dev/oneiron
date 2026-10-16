@@ -77,15 +77,24 @@ fn field<T: serde::de::DeserializeOwned>(value: &Value, name: &str) -> Reply<T> 
     .map_err(|_| "invalid_host_response_field".into())
 }
 
-/// A file reply's bytes: text arrives as a JSON string, other bytes as a
-/// number array. The guest receives bytes either way.
+/// A file reply's bytes: text arrives as a JSON string, other bytes as
+/// base64. The guest receives the same bytes either way.
 fn file_bytes(value: &Value) -> Reply<Vec<u8>> {
+    use base64::Engine as _;
     match value.get("text") {
         Some(text) => text
             .as_str()
             .map(|text| text.as_bytes().to_vec())
             .ok_or_else(|| "invalid_host_response_field".into()),
-        None => field(value, "bytes"),
+        None => {
+            let encoded = value
+                .get("base64")
+                .and_then(Value::as_str)
+                .ok_or("missing_host_response_field")?;
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| "invalid_host_response_field".into())
+        }
     }
 }
 
