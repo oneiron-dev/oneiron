@@ -187,9 +187,14 @@ impl HostSelfDispatcher<'_> {
     pub(super) fn observe_parked_hooks(&self, bridge_calls: &[CodeRunBridgeCall]) {
         let mut parked = self.parked_hooks.borrow_mut();
         for row in bridge_calls {
+            let invocation = parked_invocation(&row.outcome);
+            // With nothing parked, a row that parks nothing has nothing to clear.
+            if invocation.is_none() && parked.is_empty() {
+                continue;
+            }
             let key = parked_call(row.effect, row.request.clone());
             parked.retain(|(held, _)| *held != key);
-            if let Some(invocation) = parked_invocation(&row.outcome) {
+            if let Some(invocation) = invocation {
                 parked.push((key, invocation));
             }
         }

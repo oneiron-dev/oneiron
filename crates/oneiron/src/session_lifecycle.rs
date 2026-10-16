@@ -694,7 +694,7 @@ impl Vault {
 
     /// The close, keeping on the record why a close hook would have kept
     /// the sitting open, when one tried.
-    #[allow(
+    #[expect(
         clippy::too_many_arguments,
         reason = "the close protocol's inputs plus the hook's stop"
     )]
