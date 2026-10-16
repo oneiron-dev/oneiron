@@ -2000,7 +2000,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 15 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | m | 189 mod · 74 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 190 mod · 74 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -2955,10 +2955,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings/device_only.rs` | src | m | 8 crate-vis | — | What a world flagged device-only keeps on this device, row by row (DEC-0005) |
 | `src/settings/model_versioning.rs` | src | m | 8 struct · 4 enum · 19 fn · 2 const | ModelStack, ModelStackDeprecation, ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId, ModelStackIdError, ModelStackModel +4 | Versioned default model stack settings |
 | `src/settings/tests.rs` | test | s | — | — | — |
-| `src/share.rs` | src | m | 3 struct · 5 fn · 13 crate-vis | ResolvedShare, Share, ShareViewerScope | Revocable brief read grants |
+| `src/share.rs` | src | m | 3 struct · 6 fn · 13 crate-vis | ResolvedShare, Share, ShareViewerScope | Revocable brief read grants |
 | `src/share/admission_refs.rs` | src | s | 1 crate-vis | — | Gate-decision references held by durable share admissions |
 | `src/share/tests.rs` | test | L | 3 crate-vis | — | — |
 | `src/share/tests/recipient_class.rs` | test | m | — | — | — |
+| `src/share_travel.rs` | src | s | 2 struct · 2 enum · 7 fn · 1 type · 1 const · 4 crate-vis | BornWithField, ExportTravel, TravelChoice, TravelKind | What travels with a body when it leaves the vault (OF-491) |
 | `src/side_table/codec.rs` | src | s | 8 crate-vis | — | The value codecs a side table may declare |
 | `src/side_table/decls/mod.rs` | src | s | 4 crate-vis | — | The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each |
 | `src/side_table/decls/sync_state.rs` | src | m | — | — | — |

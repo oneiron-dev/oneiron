@@ -25027,7 +25027,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 189,
+      "mod": 190,
       "re-export": 74
      }
     },
@@ -36668,7 +36668,7 @@
      "purpose": "Revocable brief read grants",
      "surface": {
       "crate-vis": 13,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -36699,6 +36699,26 @@
      "path": "src/share/tests/recipient_class.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BornWithField",
+      "ExportTravel",
+      "TravelChoice",
+      "TravelKind"
+     ],
+     "path": "src/share_travel.rs",
+     "purpose": "What travels with a body when it leaves the vault (OF-491)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 7,
+      "struct": 2,
+      "type": 1
+     }
     },
     {
      "bucket": "s",
@@ -48102,6 +48122,13 @@
      "layout": "file+dir",
      "purpose": "Revocable brief read grants"
     },
+    "share_travel": {
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What travels with a body when it leaves the vault (OF-491)"
+    },
     "side_table": {
      "files": 10,
      "impl_vault": false,
@@ -48385,7 +48412,7 @@
    },
    "over_bar": 90,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2916,
+   "source_files": 2917,
    "test_files": 903
   },
   "oneiron-android": {
@@ -63171,9 +63198,9 @@
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -63302,7 +63329,7 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 5,
-      "fn": 16,
+      "fn": 17,
       "re-export": 12,
       "struct": 2
      }
@@ -63482,7 +63509,7 @@
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
