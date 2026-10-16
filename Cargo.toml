@@ -1,0 +1,130 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "apps/macos/src-tauri"]
+# ONE-218: the pinned local `heed` vendor lives under `crates/` but is NOT a
+# workspace member. It is upstream heed 0.20.5 plus one audited open seam, and
+# it must not be reformatted, relinted, or test-run as if it were our code.
+# See the `[patch.crates-io]` entry at the bottom of this file and
+# `crates/heed/PROVENANCE.md`.
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff"]
+
+# Limited debug information keeps file/line backtraces while reducing build CPU,
+# peak memory and target size. Tests inherit this profile. For debugger locals:
+# CARGO_PROFILE_DEV_DEBUG=2 cargo ... . Release defaults are unchanged.
+# Measurements and tradeoffs: docs/ops/build-performance.md.
+[profile.dev]
+debug = 1
+
+# Optimize non-workspace dependencies in dev/test builds while leaving workspace
+# members at the dev default. See docs/ops/build-performance.md for timings.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Match build-dependency optimization to normal dependencies. A package used in
+# both roles otherwise gets different profiles; see the cold-build comparison.
+[profile.dev.build-override]
+opt-level = 2
+
+# Warm non-incremental core builds benefit from more LLVM codegen units.
+# This matches the ordinary incremental default count, not a measured edit-loop
+# speedup. Only oneiron dev/test units change; release and other packages do not.
+# Host-specific measurements and tradeoffs: docs/ops/build-performance.md.
+[profile.dev.package.oneiron]
+codegen-units = 256
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "Apache-2.0"
+repository = "https://github.com/oneiron-dev/oneiron"
+homepage = "https://github.com/oneiron-dev/oneiron"
+readme = "README.md"
+keywords = ["retrieval", "vector-search", "lmdb", "crdt"]
+categories = ["database", "command-line-utilities"]
+
+[workspace.dependencies]
+arc-swap = "1.9"
+# Declare the local edge as well as the root patch: maturin collects sdist
+# inputs from path dependencies, not registry dependencies redirected by a patch.
+# Both declarations must select the same audited ONE-218 source tree.
+heed = { version = "0.20", path = "crates/heed/vendor/heed-0.20.5" }
+uuid = { version = "1", features = ["v7"] }
+# ONE-1140 (OD-1): receipt origin attestation, pinned to the 2.2.x line.
+ed25519-dalek = { version = "2.2", features = ["rand_core", "zeroize"] }
+# OsRng for device-key minting (ed25519-dalek's rand_core line is 0.6).
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+thiserror = "2"
+rmp-serde = "1"
+rmpv = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# ONE-1961: RFC 8785 (JCS) canonical JSON for the perf bench run certificate.
+# The candidate's hashes have to be reproducible by a Python verifier using
+# `rfc8785`, and raw-byte hashing cannot do that: serde_json (ryu) and Python
+# disagree on float formatting, and key order is a property of whoever built the
+# document. JCS fixes sorted keys, no whitespace and ES6 number formatting on
+# both sides.
+serde_json_canonicalizer = "0.3"
+postcard = "1.1"
+blake3 = "1"
+futures-core = "0.3"
+p256 = { version = "0.13", features = ["ecdsa"] }
+# Substrate-owner policy pattern rules compile through `regex`, whose engine is
+# linear in the input: a host-authored pattern cannot make the relay path
+# backtrack. Already resolved transitively, so this adds no new tree.
+regex = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "deny"
+single_use_lifetimes = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+redundant_clone = "deny"
+semicolon_if_nothing_returned = "deny"
+unnecessary_wraps = "deny"
+inefficient_to_string = "deny"
+unnecessary_sort_by = "deny"
+manual_contains = "deny"
+field_reassign_with_default = "deny"
+unnecessary_literal_unwrap = "deny"
+redundant_closure_for_method_calls = "deny"
+explicit_iter_loop = "deny"
+uninlined_format_args = "deny"
+map_unwrap_or = "deny"
+needless_collect = "deny"
+items_after_statements = "deny"
+unwrap_used = "deny"
+cognitive_complexity = "deny"
+too_many_lines = "deny"
+
+# ONE-218 (existing-only open door): `heed` 0.20.5, vendored locally and pinned.
+#
+# `Store::open_existing` binds the vault root as a directory descriptor and must
+# hand LMDB `/proc/self/fd/<dirfd>` UNCHANGED, so a rename/swap/ABA of the
+# caller's pathname cannot redirect the environment. Upstream
+# `EnvOpenOptions::open` canonicalizes its argument first and opens the ordinary
+# pathname it resolves to, which discards that capability. The vendored copy is
+# upstream 0.20.5 byte-for-byte apart from ONE added open seam that keeps the
+# exact open path and the environment-cache identity separate.
+#
+# Same package, same version (0.20.5), same dependency requirements: no version
+# moves, `lmdb-master-sys` stays at the already-locked 0.2.6, and no dependency
+# is added. Provenance, seam, SAFETY contract, and the LMDB audit are in
+# `crates/heed/PROVENANCE.md`.
+[patch.crates-io]
+heed = { path = "crates/heed/vendor/heed-0.20.5" }
+paste = { path = "crates/paste/vendor/paste-1.0.15" }
+# Match .cargo/config.toml: trybuild copies manifest patches into its external
+# offline workspace, but does not copy the checkout's Cargo configuration.
+pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
+# formualizer 0.9.3 from the org fork by rev (0.9.3-oneiron.13): the owned error-concatenation
+# patch plus the Excel parity work on `oneiron/parity`. See docs/ops/forked-dependencies.md.
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "f01d8effe81747841f9a0ea9ac595789140cfbf6" }
