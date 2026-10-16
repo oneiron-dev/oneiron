@@ -304,6 +304,12 @@ class Oneiron:
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
         @property
+        def authority(self) -> "Oneiron._VaultAuthorityVerbs":
+            return Oneiron._VaultAuthorityVerbs(self._client)
+        @property
+        def inspection(self) -> "Oneiron._VaultInspectionVerbs":
+            return Oneiron._VaultInspectionVerbs(self._client)
+        @property
         def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
             return Oneiron._VaultArtifactsVerbs(self._client)
         @property
@@ -347,6 +353,16 @@ class Oneiron:
             self._client = client
         def put(self, spec):
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+    class _VaultAuthorityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def audit(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_authority_audit(json.dumps(spec))))
+    class _VaultInspectionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def resolve(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_inspection_resolve(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

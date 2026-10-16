@@ -191,6 +191,12 @@ export class Oneiron {
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
     },
+    authority: {
+      audit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityAudit(input) as unknown),
+    },
+    inspection: {
+      resolve: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultInspectionResolve(input) as unknown),
+    },
     artifacts: {
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
       view: (request: ArtifactRefRequest): ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as ArtifactView | null; return result === null ? null : result }),

@@ -72,6 +72,9 @@ declare const vault: {
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
   };
+  authority: {
+    audit(input: { after?: string | null; kinds?: ("grant" | "revoke" | "confirm" | "other")[]; limit?: number | null }): Promise<unknown>;
+  };
   claims: {
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
@@ -92,6 +95,9 @@ declare const vault: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  inspection: {
+    resolve(input: { handle: string }): Promise<unknown>;
+  };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
     get(input: { key: string; namespace: string[] }): Promise<unknown>;

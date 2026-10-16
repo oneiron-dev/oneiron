@@ -99,6 +99,12 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.authority.audit" => remote_agent_verb_output::<
+                    oneiron::receipt::AuthorityAuditPage,
+                >(client, verb, &input),
+                "vault.inspection.resolve" => remote_agent_verb_output::<
+                    oneiron::lens::InspectionResolved,
+                >(client, verb, &input),
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
@@ -544,6 +550,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.put", value)
+    }
+    pub fn vault_authority_audit(
+        &self,
+        input: &oneiron::receipt::AuthorityAuditQuery,
+    ) -> Result<oneiron::receipt::AuthorityAuditPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.audit", value)
+    }
+    pub fn vault_inspection_resolve(
+        &self,
+        input: &oneiron::lens::InspectionResolveRequest,
+    ) -> Result<oneiron::lens::InspectionResolved, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inspection.resolve", value)
     }
     /// One artifact's kind, head and versions, each with its made_by and born-from.
     pub fn vault_artifacts_view(

@@ -584,6 +584,8 @@ fn mcp_agent_verb_input(
         "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.authority.audit" => a.spec.clone().ok_or_else(invalid),
+        "vault.inspection.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
@@ -810,6 +812,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.authority.audit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.inspection.resolve" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.view" => {
@@ -1339,6 +1347,26 @@ async fn execute_agent_verb_listing(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::vault_packs_put(server, auth, input)
                 .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.authority.audit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.authority.audit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::AuthorityAuditQuery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_authority_audit(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.inspection.resolve" => {
+            let input: oneiron::lens::InspectionResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_inspection_resolve(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

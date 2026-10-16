@@ -3,12 +3,14 @@
 //! RS1 is intentionally a projection over existing event substrates. This
 //! module does not mint a new receipt store and does not change emitter schema.
 
+mod authority_audit;
 mod brief_share;
 mod direct_dispatch;
 mod dispatch_observation;
 mod family;
 mod field_set;
 mod grant;
+mod guest_revoke;
 mod identity_kind;
 mod kernel;
 mod ledgers;
@@ -22,6 +24,11 @@ mod session;
 #[cfg(test)]
 mod tests;
 
+pub use self::authority_audit::{
+    AUTHORITY_AUDIT_DEFAULT_LIMIT, AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW,
+    AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery,
+    AuthorityAuditRow, authority_audit_embedded,
+};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, append_context_receipt_fields, append_pack_attribution_fields,
@@ -30,6 +37,10 @@ pub use self::field_set::{
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
     StandingOutboundGrantsLensQuery,
+};
+pub use self::guest_revoke::{
+    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeDisclosure,
+    GuestRevokeOutcome, GuestRevokeResponse, NotRecallable, project_guest_revoke,
 };
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{

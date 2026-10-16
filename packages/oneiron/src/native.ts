@@ -45,6 +45,8 @@ vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
 vaultPacksPut(input: unknown): unknown
+vaultAuthorityAudit(input: unknown): unknown
+vaultInspectionResolve(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string

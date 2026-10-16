@@ -20,6 +20,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.search", post(vault_kv_search))
         .route("/vault.kv.namespaces", post(vault_kv_namespaces))
         .route("/vault.packs.put", post(vault_packs_put))
+        .route("/vault.authority.audit", post(vault_authority_audit))
+        .route("/vault.inspection.resolve", post(vault_inspection_resolve))
         .route("/vault.artifacts.view", post(vault_artifacts_view))
         .route("/vault.artifacts.export", post(vault_artifacts_export))
         .route(
@@ -502,6 +504,41 @@ async fn vault_packs_put(
     oneiron::task_verb::sdk::validate_input("vault.packs.put", &value)?;
     Ok(Json(facade_output(
         super::host_doors::vault_packs_put(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_authority_audit(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.authority.audit")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.authority.audit", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_authority_audit(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_inspection_resolve(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.inspection.resolve",
+        value,
     )?))
 }
 async fn vault_artifacts_view(

@@ -22,6 +22,8 @@ pub enum AgentVerb {
     VaultKvSearch,
     VaultKvNamespaces,
     VaultPacksPut,
+    VaultAuthorityAudit,
+    VaultInspectionResolve,
     VaultArtifactsView,
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
@@ -99,6 +101,8 @@ impl AgentVerb {
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
         Self::VaultPacksPut,
+        Self::VaultAuthorityAudit,
+        Self::VaultInspectionResolve,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
@@ -179,6 +183,8 @@ impl AgentVerb {
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
@@ -255,6 +261,8 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
@@ -339,6 +347,8 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
@@ -445,6 +455,8 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
@@ -573,6 +585,8 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
@@ -651,6 +665,8 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],

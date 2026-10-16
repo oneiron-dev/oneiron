@@ -1,5 +1,6 @@
 //! The host doors of the verb-table rows only a server's own state answers:
-//! the owner's `vault.packs.put` and the `ai.*` model calls past text. The
+//! the owner's `vault.packs.put` and `vault.authority.audit`, and the `ai.*`
+//! model calls past text. The
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
@@ -47,6 +48,31 @@ pub(crate) async fn vault_packs_put(
     })
     .await
     .map_err(|_| internal("vault.packs.put"))?
+}
+
+/// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
+/// owner's view under the proof `/v1/owner` takes from the request.
+pub(crate) async fn vault_authority_audit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::receipt::AuthorityAuditQuery,
+) -> MemoryResult<oneiron::receipt::AuthorityAuditPage> {
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.authority.audit is the vault owner's",
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        server
+            .vault()
+            .authority_audit(&owner, &input)
+            .map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal("vault.authority.audit"))?
 }
 
 /// `ai.options`: the rows a call could use, where each runs, what it takes,

@@ -94,6 +94,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.authority.audit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::AuthorityAuditQuery>(
+                ),
+            ),
+            (
+                "vault.inspection.resolve",
+                crate::code_run::vault_read::request_schema::<crate::lens::InspectionResolveRequest>(
+                ),
+            ),
+            (
                 "vault.artifacts.view",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
@@ -547,6 +557,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.authority.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inspection.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.view" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -954,6 +978,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.authority.audit" => {
+            let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
+        }
+        "vault.inspection.resolve" => {
+            let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
+        }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
@@ -1144,6 +1174,8 @@ pub fn invoke(
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
@@ -1449,6 +1481,18 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_authority_audit(
+    memory: &Memory<'_>,
+    input: crate::receipt::AuthorityAuditQuery,
+) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
+    crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_inspection_resolve(
+    memory: &Memory<'_>,
+    input: crate::lens::InspectionResolveRequest,
+) -> MemoryResult<crate::lens::InspectionResolved> {
+    memory.inspection_resolve(&input)
 }
 pub fn vault_artifacts_view(
     memory: &Memory<'_>,
