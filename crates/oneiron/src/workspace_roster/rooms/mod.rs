@@ -26,6 +26,7 @@ pub use liveness::{
 };
 pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OffersPage, OffersRequest};
+pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;
@@ -34,7 +35,6 @@ pub(crate) use participation::{
     record_participation_in_txn, require_join_covering_in_txn,
 };
 use participation::{Claimant, require_reader};
-pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
