@@ -323,8 +323,8 @@ pub(crate) fn card(
 /// The run's result a reference names among `outputs`, and the live name
 /// bound to it. `live` is the run's live names, oldest first. Only the
 /// run's own results resolve: a handle names nothing else.
-pub(crate) fn resolve<'o>(
-    mut outputs: impl Iterator<Item = &'o CodeRunRawOutput>,
+pub(crate) fn resolve(
+    mut outputs: impl Iterator<Item = &CodeRunRawOutput>,
     live: &[&CodeRunResultBinding],
     reference: &JsResultRef,
 ) -> Option<(CodeRunRawOutput, Option<String>)> {
