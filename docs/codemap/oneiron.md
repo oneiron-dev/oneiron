@@ -70,18 +70,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/codec.rs` | src | m | 4 fn · 3 crate-vis | — | Pinned-key MessagePack codec plus payload/status decode helpers |
 | `src/agent_dispatch/context.rs` | src | s | 3 crate-vis | — | Spawn-context resolution, sibling-lineage admission, ancestor projection fold |
 | `src/agent_dispatch/dispatch.rs` | src | m | 1 struct · 6 fn · 8 crate-vis | AgentDispatcher | Core dispatch admission: dispatchability, depth bound, enqueue, dedupe |
+| `src/agent_dispatch/fanout_statement.rs` | src | s | 4 struct · 2 enum · 3 fn · 1 crate-vis | ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass | The fan-out statement (OF-393, ARCH-0079 #width): before every fan-out, the total count, the per-peer… |
 | `src/agent_dispatch/healer_context.rs` | src | s | 1 crate-vis | — | Reference-only healer context validation, shared by dispatch and decoding |
 | `src/agent_dispatch/healer_repair.rs` | src | s | 1 fn | — | Lease-fenced, case-bound fix-agent proposals from dispatched healers |
 | `src/agent_dispatch/kill.rs` | src | s | 2 fn | — | Spawner-only killSpawn intervention and healer-slot dispatch arm |
 | `src/agent_dispatch/kill_spawn_tests.rs` | test | m | — | — | Kill-spawn authority and state contract tests |
-| `src/agent_dispatch/launch.rs` | src | m | 5 struct · 1 enum · 1 fn · 4 crate-vis | LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView | The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count… |
+| `src/agent_dispatch/launch.rs` | src | m | 5 struct · 1 enum · 1 fn · 9 crate-vis | LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView | The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count… |
 | `src/agent_dispatch/leader_starter.rs` | src | s | 4 struct · 1 trait · 4 fn · 2 crate-vis | LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner | CEO starter over existing TASK promises, project responsibility and skill loads |
-| `src/agent_dispatch/mod.rs` | src | s | 12 re-export · 3 crate-vis | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
+| `src/agent_dispatch/mod.rs` | src | s | 13 re-export · 3 crate-vis | — | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `src/agent_dispatch/origin.rs` | src | s | 3 crate-vis | — | OF-221: the conversation that started a dispatch |
 | `src/agent_dispatch/planner.rs` | src | m | 9 struct · 1 enum · 13 fn | AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung, PlannerThresholds, ShapeQuote +2 | The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a-launch-ready plan — which… |
 | `src/agent_dispatch/resident.rs` | src | m | 2 struct · 1 enum · 4 fn | ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode | Persistent resident bindings |
 | `src/agent_dispatch/resident_tests.rs` | test | s | — | — | — |
-| `src/agent_dispatch/spend_calibration.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 3 crate-vis | AgentSpendCalibration, ExpectedSpend, SpendBasis | Per-agent spend calibration, learned from settled launches (OF-532) |
+| `src/agent_dispatch/spend_calibration.rs` | src | s | 2 struct · 1 enum · 4 fn · 1 const · 5 crate-vis | AgentSpendCalibration, ExpectedSpend, SpendBasis | Per-agent spend calibration, learned from settled launches (OF-532) |
 | `src/agent_dispatch/spend_lease.rs` | src | m | 12 fn · 7 crate-vis | — | Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks) |
 | `src/agent_dispatch/spend_record.rs` | src | s | 4 struct · 4 enum · 4 fn · 2 crate-vis | ChildSpend, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState | Durable spend scopes and their typed reads (OF-532) |
 | `src/agent_dispatch/team_shape.rs` | src | s | 4 struct · 1 enum · 13 fn · 5 const | CoordinationPattern, PayoffRow, PlannerCard, SeededShape, TeamShape | The team-shape skill's engine half (ARCH-0079 #planner, OF-541): the closed pattern vocabulary, the seeded… |
@@ -1132,7 +1133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/world_partition.rs` | src | s | 1 const · 4 crate-vis | — | Federated multi-world partitioning and staleness annotation (ARCH-0004 / ARCH-0022 / ONE-1411) |
 | `src/context_projection/mod.rs` | src | s | 4 re-export | — | Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead… |
 | `src/context_projection/narrowing.rs` | src | s | 2 fn | — | The narrowing law: declared bounds against declared bounds, and a request against the resolved parent |
-| `src/context_projection/panel_spec.rs` | src | m | 6 struct · 1 enum · 6 fn · 3 const · 2 crate-vis | LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec | The referenced lead-panel spec: typed shape, codec, durable persistence, and task-input planner |
+| `src/context_projection/panel_spec.rs` | src | m | 6 struct · 1 enum · 6 fn · 2 const · 2 crate-vis | LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec | The referenced lead-panel spec: typed shape, codec, durable persistence, and task-input planner |
 | `src/context_projection/resolution.rs` | src | m | 3 struct · 2 fn · 2 const · 1 crate-vis | ContextResolutionRequest, ResolvedContextProjection, WorkflowOutputContextRef | Dispatch-time resolution of a `ContextSpec` against live vault state |
 | `src/context_projection/spec.rs` | src | s | 1 struct · 2 enum · 5 fn · 8 const · 2 crate-vis | ChatProjection, ContextSpec, MemoryProjection | The `ContextSpec` descriptor, its bounds, normalization, and structural validation |
 | `src/contract_oracle/graph.rs` | src | s | 2 struct · 2 fn | AffectedTests, WorkspaceGraph | Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON |
@@ -1587,7 +1588,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_signals/tests.rs` | test | m | — | — | — |
 | `src/failure_signals/verbatim.rs` | src | s | 2 const · 1 crate-vis | — | The FIX6 verbatim-span guard: an invented example shares no run of words with the real chat it was drawn from |
 | `src/failure_signals/witness.rs` | src | s | 1 struct · 1 fn · 8 crate-vis | Tier1Observation | Vault-local, non-serializable producer observations |
-| `src/fanout_auto.rs` | src | m | 6 struct · 5 enum · 6 fn · 1 const · 3 crate-vis | AppliedFanoutEscalationRuling, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutDecisions, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
+| `src/fanout_auto.rs` | src | m | 6 struct · 5 enum · 6 fn · 1 const · 4 crate-vis | AppliedFanoutEscalationRuling, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutDecisions, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `src/fanout_auto/tests.rs` | test | s | — | — | ONE-1720 (ES-07) unit tests: the closed verdict vocabulary, the fixed evaluation order (blank-context floor… |
 | `src/federation/content_write.rs` | src | s | 15 crate-vis | — | Actor-bound content transaction interface |
 | `src/federation/coreference.rs` | src | m | 1 enum · 3 fn · 1 const · 3 crate-vis | CoreferenceStatus | Cross-vault same_as links and per-pact share consent (FED-07) |
@@ -2399,7 +2400,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/window_door.rs` | src | s | 7 crate-vis | — | — |
 | `src/outbound_chokepoint/admission.rs` | src | m | 6 crate-vis | — | New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert |
 | `src/outbound_chokepoint/dedupe.rs` | src | s | 6 crate-vis | — | OF-327 mechanical semantic cooldown under the effect admission writer lock |
-| `src/outbound_chokepoint/fanout.rs` | src | m | 1 enum · 23 crate-vis | FanoutApprovalMode | Pre-execution fan-out admission |
+| `src/outbound_chokepoint/fanout.rs` | src | L | 1 enum · 26 crate-vis | FanoutApprovalMode | Pre-execution fan-out admission |
 | `src/outbound_chokepoint/fanout/history.rs` | src | s | 3 crate-vis | — | Admission against the live consult graph, without charging its old edges again |
 | `src/outbound_chokepoint/fanout/tests.rs` | test | L | — | — | Fan-out admission tests |
 | `src/outbound_chokepoint/mod.rs` | src | s | 1 re-export · 5 crate-vis | — | Replay-first outbound effect execution |
@@ -3380,9 +3381,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/board_task.rs` | src | s | 2 crate-vis | — | One committed TASK as the board STREAM publisher reads it |
 | `src/task_verb/brief.rs` | src | m | 14 struct · 2 enum · 4 fn · 10 crate-vis | BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion, DoneMeans +8 | The queue task brief (OF-220): the typed why-carrier one TASK holds |
 | `src/task_verb/consts.rs` | src | s | 1 const · 17 crate-vis | — | Module-level constants shared across the task-verb files |
-| `src/task_verb/consult_fanout_admission.rs` | src | m | 11 fn · 4 crate-vis | — | Meter and admit consult fan-outs before any TASK exists |
+| `src/task_verb/consult_fanout_admission.rs` | src | m | 12 fn · 4 crate-vis | — | Meter, state and admit consult fan-outs before any TASK exists |
 | `src/task_verb/consult_fanout_facade.rs` | src | s | 1 fn | — | — |
-| `src/task_verb/consult_fanout_resume.rs` | src | s | 3 fn | — | Authenticated exact-digest resume; ruling, policy and TASKs commit together |
+| `src/task_verb/consult_fanout_resume.rs` | src | m | 3 fn | — | Authenticated exact-digest resume; ruling, policy and TASKs commit together |
 | `src/task_verb/consult_fanout_store.rs` | src | s | 14 crate-vis | — | Node-local frozen fan-out plans and transaction-owned surface sink |
 | `src/task_verb/consult_fanout_types.rs` | src | s | 6 struct · 1 enum · 1 re-export | ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope | Public fan-out governance inputs and observable outcomes |
 | `src/task_verb/consult_ladder_facade.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 crate-vis | CrossActorRoute, LadderTransitionReceipt | — |
@@ -3395,6 +3396,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/decision_port.rs` | src | s | 1 struct · 4 crate-vis | TaskDecisions | The task highway's three surface questions, asked through the shared decision ladder (OF-220) |
 | `src/task_verb/dormant_magistrate.rs` | src | m | 8 fn · 1 crate-vis | — | Dormant subsystem — zero production callers as of 2026-08-19 |
 | `src/task_verb/entity_delta_facade.rs` | src | s | 1 fn · 6 crate-vis | — | — |
+| `src/task_verb/fanout_check.rs` | src | s | 1 crate-vis | — | The exceptional-width check of fan-outs the engine never holds: a `tasks.ask` census and a wave plan (OF-393) |
 | `src/task_verb/follow_up.rs` | src | s | 2 fn · 7 crate-vis | — | — |
 | `src/task_verb/highway.rs` | src | s | 6 fn · 15 crate-vis | — | The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and… |
 | `src/task_verb/highway_accept.rs` | src | m | 7 crate-vis | — | The highway's Accept arm (OF-220): take a TASK addressed to you |
@@ -3593,7 +3595,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_identity/types.rs` | src | m | 12 struct · 7 enum · 17 fn · 3 const · 3 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | Public domain types, request/receipt structs, thresholds, key prefixes, and validators |
 | `src/voice_identity/vault.rs` | src | m | 7 fn · 4 crate-vis | — | Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning |
 | `src/voice_segment.rs` | src | s | 1 fn · 7 const · 1 crate-vis | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
-| `src/wave_orchestration.rs` | src | m | 8 struct · 2 trait · 16 fn · 4 const · 1 re-export | BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan, WavePlanReceipt, WavePlanRequest, WavePlanner +2 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
+| `src/wave_orchestration.rs` | src | m | 8 struct · 2 trait · 17 fn · 3 const · 1 re-export | BlockedByEdgeWrite, PlannedTask, ValidatedWavePlan, WaveOrchestrator, WavePlan, WavePlanReceipt, WavePlanRequest, WavePlanner +2 | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `src/wave_orchestration/tests.rs` | test | s | — | — | Wave-orchestration tests (ONE-1905) |
 | `src/web_fetch.rs` | src | m | 13 struct · 6 enum · 2 trait · 22 fn · 2 type · 2 const | CrawlCompletion, CrawlPageBudget, CrawlPageFailure, CrawlRequest, CrawlResult, CrawlScope, FetchResult, FirecrawlRenderer +13 | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
 | `src/web_fetch/ladder.rs` | src | m | 6 fn · 13 crate-vis | — | Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page… |
