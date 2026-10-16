@@ -153,10 +153,7 @@ fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
 }
 fn manifest_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8>, Value)> {
     let id = default_policy_manifest_id()?;
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("policy manifest header"))?;

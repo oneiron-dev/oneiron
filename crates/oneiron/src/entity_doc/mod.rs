@@ -8,6 +8,7 @@ mod citation_floor;
 mod document;
 mod forks;
 mod message_stream;
+pub mod office;
 mod pins;
 mod recovery;
 mod registry;
@@ -26,6 +27,7 @@ pub(crate) use recovery::{
 mod verbs;
 
 pub use document::{Birth, EntityDoc, TextChange};
+pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
 };
