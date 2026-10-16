@@ -362,8 +362,15 @@ async fn export(
 ) -> Result<Response<Body>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
+    // Keys in a file reach the owner only; every other reader gets them
+    // masked (OF-560).
+    let sight = if auth.is_owner_grade() && auth.actor_class() != Some("agent") {
+        oneiron::secret_custody::SecretSight::Owner
+    } else {
+        oneiron::secret_custody::SecretSight::Masked
+    };
     let file = blocking("artifact export failed", move || {
-        server.vault().export_blob_artifact(&id, version)
+        server.vault().export_blob_artifact_as(&id, version, sight)
     })
     .await?
     .ok_or_else(|| ApiError::not_found("artifact version", Some(artifact.as_str())))?;

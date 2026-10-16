@@ -295,6 +295,13 @@ impl Vault {
         if *blake3::hash(&bytes).as_bytes() != hash {
             return Err(Error::CorruptedIndex("artifact served content hash"));
         }
+        // A hosted reader is never the owner verified at a door (OF-560).
+        let bytes = crate::secret_custody::sighted_bytes_in_txn(
+            &self.store,
+            txn,
+            bytes,
+            crate::secret_custody::SecretSight::Masked,
+        )?;
         let size_bytes = u64::try_from(bytes.len())
             .map_err(|_| Error::ArithmeticOverflow("artifact served length"))?;
         Ok(Some(ArtifactServedFile {

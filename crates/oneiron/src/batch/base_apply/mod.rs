@@ -172,8 +172,9 @@ pub(super) fn apply_ops_with_origin(
 
     // The owner's `secrets` switch is read in this transaction, so a batch
     // and the mode it was admitted under are one snapshot. A secret the door
-    // places goes to custody and leaves its handle (OF-560).
-    secret_scan::mask_batch_ops(
+    // places goes to custody and leaves its handle (OF-560); a file keeps
+    // its bytes and is marked.
+    let masked_files = secret_scan::mask_batch_ops(
         store,
         config,
         analyzer,
@@ -816,6 +817,8 @@ pub(super) fn apply_ops_with_origin(
             crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
         }
     }
+
+    masked_files.restrict(store, wtxn)?;
 
     finalize_batch_indexes(
         store,

@@ -35,6 +35,12 @@ impl Vault {
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                || crate::secret_custody::holds_masked_keys_in_txn(
+                    &self.store,
+                    &txn,
+                    h.entity_type,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
                 || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                     &self.store,
                     &txn,
