@@ -94,10 +94,13 @@ impl oneiron::code_run::AgentVerbDoor for NoVerbs {
         &self,
         _: &oneiron::code_run::SelfAgentVerbCall,
         _: &oneiron::memory::HostWriteOrigin,
-    ) -> Result<oneiron::code_run::AgentVerbAnswer, oneiron::code_run::AgentVerbRefusal> {
-        Err(oneiron::code_run::AgentVerbRefusal {
+        _: oneiron::runtime_hooks::InvocationId,
+    ) -> oneiron::Result<
+        Result<oneiron::code_run::AgentVerbAnswer, oneiron::code_run::AgentVerbRefusal>,
+    > {
+        Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
-        })
+        }))
     }
 
     fn admit_run_call(

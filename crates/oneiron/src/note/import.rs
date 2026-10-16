@@ -347,14 +347,7 @@ impl Vault {
                     .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0)
                     .made_by(
                         id,
-                        RowBirth::written(
-                            actor,
-                            MadeByClass::Stated,
-                            "note.import",
-                            &[],
-                            &[],
-                            at,
-                        ),
+                        RowBirth::written(actor, MadeByClass::Stated, "note.import", &[], &[], at),
                     ),
             )?;
             content.update_note(*id, |txn| {

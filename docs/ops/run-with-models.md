@@ -105,8 +105,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
-`local-openai-compat`, `oneironer`, and the speech-only `cartesia` and
-`elevenlabs`), `base_url`, `key_env` or `key_secret`, `headers`
+`local-openai-compat`, `oneironer`, and the speech-only `cartesia`,
+`elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
@@ -815,6 +815,28 @@ tiers = { "tts-live" = "cartesia:sonic-3.6" }
 The shipped `tts_live` voice row is `own_server`, so a vault that speaks live
 on Cartesia sets that row's locality to `third_party`.
 
+A `voxcpm2` provider is the own-server VoxCPM2 worker (`deploy/voxcpm2`). It
+keeps no clones. A banked voice renders on it from the identity's own source
+clip and transcript: the named register's clip in the cascade, or the
+identity's first source clip for an `ai.speech` call. Generated refs are
+never used. The bank fences the clip at its revision of the identity's refs,
+and checks it again before the clip is sent and before the audio comes back.
+The worker speaks in no stock voice. Its `base_url` must be
+`http://127.0.0.1:<port>`, it is never reached through an environment proxy,
+and `key_env` names the worker's `VOXCPM_TOKEN`. A reference never goes to a
+`third_party` route.
+
+```toml
+[models.providers.voxcpm2]
+kind = "voxcpm2"
+base_url = "http://127.0.0.1:8769"
+key_env = "VOXCPM_TOKEN"
+
+[models.media.speech]
+rungs = ["voxcpm2:voxcpm2", "cartesia:sonic-3.6"]
+tiers = { "tts-live" = "voxcpm2:voxcpm2" }
+```
+
 The two-way voice cascade speaks and hears on these seats too. Bind voice
 tiers to rungs on the speech and transcribe seats:
 
@@ -1077,6 +1099,34 @@ The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
 escalation read is metered on `models.raw_budget_units`. A model rung blocks
 on the server's runtime, so a caller runs a ladder call on a blocking thread.
+
+### Standing questions over graph units
+
+A standing question (a typed question saved over a set of graph units, with
+`refresh.every_seconds` or `refresh.on_arrival`) is answered on this ladder
+without a caller. Each minute the server checks for questions that are due.
+It answers each unit as the question's own principal, reading under that
+principal's grants, and climbs the question's own dial. A ceiling of `human`
+is held at Big, so the pump never queues an owner ask. Each unit has its own
+10-second clock.
+
+- **What the ladder reads.** The unit's body goes into the call's state as
+  the JSON a reader is served.
+- **Images.** When `[models.roles.local_vision]` is bound and the dial spans
+  the Local rung, an image asset is also read as an image at the Local-vision
+  rung. The pull is recorded as an `ask_image` served form. Without that seat,
+  the asset is read as its text alone.
+- **What lands.** Each answer lands as a proposed `judgment.answer` claim,
+  readable only by the principal. It keeps the ladder's full receipt: the
+  providers, band, paired and person readings, clock and any owner-ask reason,
+  plus the version of every source and image it read.
+- **Failures.** A question that fails is retried at its next due pass, and
+  the server logs the error's kind only.
+
+The engine's one-off graph ask and saved graph recipes take the same
+answerer and keep the same receipts. There, a unit's outgoing neighbours join
+its state, and an image asset among them is read as an image. No door serves
+a one-off ask yet.
 
 ## 14. Tagger tiers and the teacher's handoff
 

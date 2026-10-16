@@ -105,6 +105,7 @@ fn refused_block() -> MemoryError {
         read_receipt: None,
         policy_denial: None,
         wrong_root: None,
+        hook: None,
     }
 }
 
