@@ -10,7 +10,7 @@ use super::body::validate_text_field;
 use super::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 use super::versions::{
     CalcEngineStamp, KEY_CALC_ENGINE, KEY_CALC_ENGINE_VERSION, KEY_CONTENT_HASH,
-    KEY_FORK_OF_VERSION, KEY_PARENT_VERSION, KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION,
+    KEY_FORK_OF_VERSION, KEY_MADE_BY, KEY_PARENT_VERSION, KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION,
 };
 use crate::error::ArtifactError;
 
@@ -105,6 +105,7 @@ pub(super) fn blob_version_claim_value(
     parent_version: Option<u64>,
     fork_of_version: Option<u64>,
     calc_engine: Option<&CalcEngineStamp>,
+    made_by: &str,
 ) -> Value {
     let mut entries = vec![
         (Value::from(KEY_VERSION), Value::Integer(version.into())),
@@ -128,6 +129,7 @@ pub(super) fn blob_version_claim_value(
     if let Some(run_ref) = provenance.run_ref() {
         entries.push((Value::from(KEY_RUN_REF), Value::from(run_ref)));
     }
+    entries.push((Value::from(KEY_MADE_BY), Value::from(made_by)));
     if let Some(parent) = parent_version {
         entries.push((
             Value::from(KEY_PARENT_VERSION),

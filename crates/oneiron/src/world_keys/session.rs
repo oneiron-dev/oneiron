@@ -46,6 +46,8 @@ pub(crate) struct WorldKeySession {
     pub(crate) signer: Mutex<Option<Arc<crate::identity::InstallSigner>>>,
     /// The world keys this machine opened.
     pub(crate) ring: Mutex<HashMap<WorldKeyId, Arc<WorldKey>>>,
+    /// The vault data key, once unlocked on this handle (OF-570 E1).
+    pub(crate) vault_key: Mutex<Option<Arc<super::vault_key::VaultDataKey>>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,
     /// Held while a sealed window's mirror is read, extended and written back.
