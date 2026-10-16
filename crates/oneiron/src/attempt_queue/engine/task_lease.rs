@@ -22,8 +22,10 @@ impl AttemptQueue<'_> {
     /// transaction, when it is that TASK's ready row of `kind`.
     ///
     /// `Empty` when the row is not ready yet (a retry still backing off, or
-    /// a TASK whose symbols are held). A row of another TASK or kind, or one
-    /// past readiness, is refused rather than leased.
+    /// a TASK whose symbols are held), and when its TASK waits on an
+    /// unattached comment, which the claim pauses for that hold (OF-368). A
+    /// row of another TASK or kind, or one past readiness, is refused rather
+    /// than leased.
     pub(crate) fn claim_for_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -51,6 +53,10 @@ impl AttemptQueue<'_> {
         if record_ready_at > now
             || !crate::task_verb::task_dispatch_ready(self.store, &*wtxn, Some(task_ref), now)?
         {
+            return Ok(ClaimOutcome::Empty);
+        }
+        if let Some(hold) = self.annotation_hold_for_row_in_txn(&*wtxn, &record)? {
+            self.hold_for_annotation_in_txn(wtxn, id, hold, now)?;
             return Ok(ClaimOutcome::Empty);
         }
         let key = ready_key(record_ready_at, id);

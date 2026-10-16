@@ -1,7 +1,8 @@
 //! Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types.
 
 use crate::code_run::{
-    CodeRunDeterminism, CodeRunReplayRecord, SelfCall, SelfDispatchOutcome, SelfDurableWait,
+    CodeRunDeterminism, CodeRunReplayRecord, ResultFacet, SelfCall, SelfDispatchOutcome,
+    SelfDurableWait,
 };
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
@@ -227,7 +228,14 @@ pub enum JsResultCall {
     /// stored and bound under `name`, or under the next free `r<n>`.
     Store { name: Option<String> },
     /// `describe(r)`: the card of one of the run's results.
-    Describe(JsResultRef),
+    Describe(JsResultTarget),
+    /// `slice`, `search`, `query` or `chunks` of one of the run's results:
+    /// the facet, and its input less the reference.
+    Read {
+        target: JsResultTarget,
+        facet: ResultFacet,
+        input: serde_json::Value,
+    },
 }
 
 /// How a program names one of its run's results.
@@ -237,6 +245,44 @@ pub enum JsResultRef {
     Name(String),
     /// A result's handle, as its card gives it or as model context cites it.
     Handle(String),
+}
+
+/// A result reference, and the byte range of its body it is narrowed to:
+/// `<name-or-handle>#<start>-<end>`, as a chunk names one. A range persists
+/// nothing; every read of it is a read of its parent, checked as one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsResultTarget {
+    pub reference: JsResultRef,
+    /// `[start, end)` in the parent's bytes.
+    pub range: Option<(u64, u64)>,
+}
+
+impl JsResultTarget {
+    /// Reads a reference as a program writes it: a range suffix first, then
+    /// a handle (any text with a colon, which no name has) or a name.
+    #[must_use]
+    pub fn parse(text: &str) -> Self {
+        let range = text.rsplit_once('#').and_then(|(parent, suffix)| {
+            let (start, end) = suffix.split_once('-')?;
+            let canonical = |digits: &str| {
+                digits
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| value.to_string() == digits)
+            };
+            Some((parent, (canonical(start)?, canonical(end)?)))
+        });
+        let (parent, range) = match range {
+            Some((parent, range)) => (parent, Some(range)),
+            None => (text, None),
+        };
+        let reference = if parent.contains(':') {
+            JsResultRef::Handle(parent.to_owned())
+        } else {
+            JsResultRef::Name(parent.to_owned())
+        };
+        Self { reference, range }
+    }
 }
 
 /// Host import bridge exposed to a JS runtime component.
@@ -255,9 +301,17 @@ pub trait JsCodeModeHost {
         Ok(None)
     }
 
+    /// Stores a reply too large for one message (its JSON past
+    /// `RESULT_REPLY_INLINE_BYTES`) as a result of the run, bound to the next
+    /// free name, and answers the card the guest gets in its place. A host
+    /// with no result store answers `None`.
+    fn store_reply(&mut self, _reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
     /// Answers one call a program makes of its run's own results with the
-    /// reply the guest gets: `{"output": card}`, or a `denied` refusal. A
-    /// host with no result store refuses it.
+    /// reply the guest gets: `{"output": card}` (or a facet's reply), or a
+    /// `denied` refusal. A host with no result store refuses it.
     fn result_call(&mut self, _call: JsResultCall) -> Result<serde_json::Value> {
         Err(Error::InvalidConfig(
             "results need a result store".to_owned(),
