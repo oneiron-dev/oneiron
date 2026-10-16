@@ -155,9 +155,9 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "this run is still active; no second worker was started",
             "retry later with the SAME run_ref and task",
         ],
-        "code_run_saturated" => &[
-            "this server is already running as many code runs as it admits; no run was started",
-            "retry later, once a run of yours or another caller's has finished",
+        "code_run_waited_out" => &[
+            "this run waited its whole deadline for a turn among the runs ahead of it; no run was started",
+            "retry with the same run_ref; the server's code_mode.max_runs row has asked whether everything is okay",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
             "retry with the SAME run_ref to re-enter the durable run",
