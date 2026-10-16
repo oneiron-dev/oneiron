@@ -162,6 +162,10 @@ pub use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub use rooms::{
+    OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferSettlement, OfferState,
+    OffersPage, OffersRequest,
+};
 
 pub(crate) use rooms::project_room_audience_in;
 

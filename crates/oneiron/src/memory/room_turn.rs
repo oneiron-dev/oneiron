@@ -25,6 +25,7 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.trunk",
     "vault.rooms.claim",
     "vault.rooms.speak",
+    "vault.rooms.offer",
 ];
 
 impl<'v> RoomTurnHandle<'v> {

@@ -216,6 +216,10 @@ export class Oneiron {
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
       join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
       consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
+      offer: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOffer(input) as unknown), {
+        answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as unknown),
+      }),
+      offers: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOffers(input) as unknown),
     },
   }
   /** Read-only ask routing or attributed partial answers. */

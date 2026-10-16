@@ -95,6 +95,10 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; what: string }) => Promise<unknown>) & {
+      answer(input: { action: "join" | "not_now"; intent_key: string; offer_id: string }): Promise<unknown>;
+    };
+    offers(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
     trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;

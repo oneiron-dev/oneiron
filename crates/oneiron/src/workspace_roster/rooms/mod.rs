@@ -2,6 +2,8 @@
 mod history;
 mod hosting;
 mod liveness;
+mod offer_settle;
+mod offers;
 #[cfg(test)]
 mod tests;
 mod witness;
@@ -18,6 +20,8 @@ pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
+pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
+pub use offers::{OfferCard, OfferDraft, OfferState, OffersPage, OffersRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;

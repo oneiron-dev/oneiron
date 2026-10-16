@@ -2,7 +2,7 @@
 use super::*;
 use crate::store::Store;
 
-const PAGE_LIMIT: usize = 256;
+pub(super) const PAGE_LIMIT: usize = 256;
 
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
