@@ -3730,6 +3730,36 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_read.rs",
+     "purpose": "Reads the whole-vault archive (OF-222) back into its typed document",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArchiveFile",
+      "ArchiveRecordFile",
+      "ArchiveRecordKind",
+      "ExportDiaryHold",
+      "ExportDiaryHoldReason",
+      "ExportDiaryRead"
+     ],
+     "path": "src/batch/export/archive_types.rs",
+     "purpose": "The whole-vault archive (OF-222): one ZIP holding `manifest.json`, one JSONL file per record kind under…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -3783,11 +3813,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/document_import.rs",
-     "purpose": "Validating JSON import through ordinary admission doors, never sync replay",
+     "purpose": "Validating archive import through ordinary admission doors, never sync replay",
      "surface": {
       "crate-vis": 3,
       "fn": 3
@@ -3800,7 +3830,7 @@
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -3834,12 +3864,12 @@
       "WholeVaultImportReceipt"
      ],
      "path": "src/batch/export/document_types.rs",
-     "purpose": "Versioned seven-part whole-vault interchange document",
+     "purpose": "The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 15
      }
     },
@@ -3870,6 +3900,17 @@
       "enum": 2,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/export_diary.rs",
+     "purpose": "OF-490: a vault export is a read of agent diaries",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5
      }
     },
     {
@@ -3983,8 +4024,8 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 9
+      "crate-vis": 5,
+      "re-export": 11
      }
     },
     {
@@ -16931,6 +16972,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/retrieval_policy.rs",
+     "purpose": "The Coach's retrieval-policy update on the shared nightly maintenance lane",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26775,8 +26826,10 @@
       "MemoryExport"
      ],
      "path": "src/memory/export.rs",
-     "purpose": "Full-vault memory export through the existing five-format pack writers",
+     "purpose": "Full-vault memory export: the whole-vault archive (OF-222)",
      "surface": {
+      "const": 1,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 3
      }
@@ -30602,7 +30655,7 @@
      "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
      "surface": {
       "crate-vis": 8,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -30794,6 +30847,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/pipeline/execution/retrieval_policy.rs",
+     "purpose": "Policy-guided attempts; every attempt keeps the pipeline's existing gates",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/pipeline/execution/types.rs",
      "purpose": "Attempt plumbing for the retrieval transaction: attempt overrides, the transaction output, and the…",
      "surface": {
@@ -30848,7 +30911,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 6,
-      "mod": 1,
+      "mod": 2,
       "re-export": 3
      }
     },
@@ -30883,6 +30946,43 @@
       "crate-vis": 1,
       "enum": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetrievalIntent",
+      "RetrievalPolicyAction",
+      "RetrievalPolicyChoices",
+      "RetrievalPolicyDecision",
+      "RetrievalPolicyEnvelope",
+      "RetrievalPolicyIdentity",
+      "RetrievalPolicyOptions",
+      "RetrievalPolicyTier",
+      "RetrievalPolicyTrace"
+     ],
+     "path": "src/pipeline/retrieval_policy.rs",
+     "purpose": "OF-092: a bounded retrieval FSM and contextual Thompson selection",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetrievalPolicyPosterior"
+     ],
+     "path": "src/pipeline/retrieval_policy/posterior.rs",
+     "purpose": "A continuous-context Beta kernel posterior",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
      }
     },
     {
@@ -35063,7 +35163,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -35956,6 +36056,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/serialize/vault_archive.rs",
+     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row and every…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/serialize/vault_bundles.rs",
      "purpose": "Build portable facets after every native body has passed credential nulling",
      "surface": {
@@ -35967,7 +36077,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_document.rs",
-     "purpose": "Whole-vault export uses the ContextPack format writers without retrieval projection, timestamp…",
+     "purpose": "Whole-vault export: the snapshot becomes the typed document, the document passes the credential-nulling…",
      "surface": {
       "crate-vis": 1
      }
@@ -38984,6 +39094,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/retrieval_telemetry/policy.rs",
+     "purpose": "Account-local learned retrieval state, rebuilt only by the Coach at sleep",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/retrieval_telemetry/retention.rs",
      "purpose": "Bounded, expirable base-ledger retrieval runs and crash-orphan reconciliation",
      "surface": {
@@ -38997,7 +39117,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 3
      }
     },
@@ -39013,6 +39133,7 @@
      "purpose": "Query-free retrieval context, preserved verbatim for offline replay",
      "surface": {
       "crate-vis": 2,
+      "fn": 1,
       "struct": 3
      }
     },
@@ -39031,7 +39152,7 @@
      "path": "src/store/retrieval_telemetry/turn_index.rs",
      "purpose": "Ordered by-turn projection of independent retrieval runs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -39058,7 +39179,7 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 5,
       "re-export": 1,
@@ -46459,7 +46580,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 102,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46872,7 +46993,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47306,7 +47427,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 59,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47530,7 +47651,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47635,7 +47756,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47845,9 +47966,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 85,
+   "over_bar": 86,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2883,
+   "source_files": 2892,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60124,6 +60245,7 @@
       "ExportArgs",
       "HandoffAlarmAckArgs",
       "HandoffAlarmsCommand",
+      "ImportArchiveArgs",
       "ImportBatchArgs",
       "ImportCommand",
       "ImportDecisionArgs",
@@ -60149,7 +60271,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 6,
-      "struct": 19
+      "struct": 20
      }
     },
     {
