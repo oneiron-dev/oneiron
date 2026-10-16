@@ -8,6 +8,7 @@
 mod call;
 mod codec;
 mod doors;
+pub mod helper;
 mod identity;
 mod lifecycle;
 mod pack_load;
