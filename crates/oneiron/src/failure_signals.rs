@@ -2,7 +2,8 @@
 //! the failure ladder's retry-routing class or a detector's repair tier.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -156,11 +157,16 @@ struct VerifiedIdentity {
     model: Option<ModelId>,
 }
 
+/// The witness map is first re-checked at this size, and afterwards whenever
+/// it doubles past what the previous collection kept.
+const WITNESS_COLLECTION_FLOOR: usize = 128;
+
 /// One open vault's in-memory counts. Neither the key nor raw input is exported.
 pub(crate) struct FailureSignalCounts {
     key: [u8; 32],
     counts: Mutex<BTreeMap<FailureSignalDimensions, u64>>,
     witnesses: Mutex<BTreeMap<EntityId, WitnessEntry>>,
+    collect_at: AtomicUsize,
 }
 
 impl Default for FailureSignalCounts {
@@ -171,26 +177,51 @@ impl Default for FailureSignalCounts {
             key,
             counts: Mutex::default(),
             witnesses: Mutex::default(),
+            collect_at: AtomicUsize::new(WITNESS_COLLECTION_FLOOR),
         }
     }
 }
 
 impl FailureSignalCounts {
-    fn register(&self, id: EntityId, kind: WitnessKind) -> Result<()> {
-        let mut witnesses = self
-            .witnesses
+    fn lock_witnesses(&self) -> Result<MutexGuard<'_, BTreeMap<EntityId, WitnessEntry>>> {
+        self.witnesses
             .lock()
-            .map_err(|_| Error::InvariantViolation("tier-1 witness mutex poisoned"))?;
+            .map_err(|_| Error::InvariantViolation("tier-1 witness mutex poisoned"))
+    }
+
+    /// Returns whether the map has grown enough to collect obsolete witnesses.
+    fn register(&self, id: EntityId, kind: WitnessKind) -> Result<bool> {
+        let mut witnesses = self.lock_witnesses()?;
         witnesses.insert(id, WitnessEntry::new(kind));
-        Ok(())
+        Ok(witnesses.len() >= self.collect_at.load(Ordering::Relaxed))
     }
 
     fn witness(&self, id: EntityId) -> Result<Option<WitnessEntry>> {
-        let witnesses = self
-            .witnesses
-            .lock()
-            .map_err(|_| Error::InvariantViolation("tier-1 witness mutex poisoned"))?;
-        Ok(witnesses.get(&id).cloned())
+        Ok(self.lock_witnesses()?.get(&id).cloned())
+    }
+
+    fn witnesses(&self) -> Result<Vec<(EntityId, WitnessEntry)>> {
+        Ok(self
+            .lock_witnesses()?
+            .iter()
+            .map(|(id, entry)| (*id, entry.clone()))
+            .collect())
+    }
+
+    /// Drops each obsolete witness unless a producer re-captured it after it
+    /// was checked, then sets the next collection to twice what remains.
+    fn retire(&self, obsolete: &[(EntityId, [u8; 16])]) -> Result<()> {
+        let mut witnesses = self.lock_witnesses()?;
+        for (id, nonce) in obsolete {
+            if witnesses.get(id).is_some_and(|entry| entry.nonce == *nonce) {
+                witnesses.remove(id);
+            }
+        }
+        self.collect_at.store(
+            WITNESS_COLLECTION_FLOOR.max(witnesses.len().saturating_mul(2)),
+            Ordering::Relaxed,
+        );
+        Ok(())
     }
 
     fn token(&self, domain: &[u8], raw: &str) -> String {
@@ -378,94 +409,20 @@ impl crate::Vault {
             .store
             .diagnostics
             .failure_signals
-            .witness(observation.id)?
-            .ok_or(Error::InvalidConfig(
-                "unregistered failure observation".into(),
-            ))?;
-        if entry.nonce != observation.nonce {
-            return Err(Error::InvalidConfig("stale failure observation".into()));
-        }
+            .witness(observation.id)?;
         let rtxn = self.store.env.read_txn()?;
-        let (verified_model, observed_at, detector_id) = match entry.kind {
-            WitnessKind::Diagnostic {
-                body_hash,
-                sources,
-                detector_id,
-                observed_at,
-            } => {
-                let body = match crate::vault::live_entity_row_in_txn(
-                    &self.store,
-                    &rtxn,
-                    &observation.id,
-                )? {
-                    LiveEntityRow::Live {
-                        entity_type: crate::registry::ENTITY_TYPE_DIAGNOSTIC,
-                        body,
-                    } => body,
-                    _ => {
-                        return Err(Error::InvalidConfig(
-                            "failure diagnostic is no longer live".into(),
-                        ));
-                    }
-                };
-                if *blake3::hash(&body).as_bytes() != body_hash
-                    || !sources.still_live(&self.store, &rtxn)?
-                {
-                    return Err(Error::InvalidConfig(
-                        "failure observation source changed".into(),
-                    ));
-                }
-                (None, observed_at, detector_id)
+        let (verified_model, observed_at, detector_id) = match entry {
+            Some(entry) if entry.nonce == observation.nonce => {
+                self.verify_tier1_witness_in_txn(&rtxn, observation.id, &entry.kind)?
             }
-            WitnessKind::Execution {
-                body_hash,
-                attempt_id,
-                run_ref,
-                request_hash,
-                model,
-                observed_at,
-            } => {
-                let attempt = crate::attempt_queue::AttemptQueue::new(self)
-                    .get_in_txn(&rtxn, attempt_id)?
-                    .ok_or(Error::InvalidConfig(
-                        "executed model attempt is no longer live".into(),
-                    ))?;
-                if attempt.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
-                    || attempt.run_id != run_ref
-                {
-                    return Err(Error::InvalidConfig(
-                        "executed model attempt changed".into(),
-                    ));
-                }
-                let body = match crate::vault::live_entity_row_in_txn(
-                    &self.store,
-                    &rtxn,
-                    &observation.id,
-                )? {
-                    LiveEntityRow::Live {
-                        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-                        body,
-                    } => body,
-                    _ => {
-                        return Err(Error::InvalidConfig(
-                            "executed model source is no longer live".into(),
-                        ));
-                    }
-                };
-                if *blake3::hash(&body).as_bytes() != body_hash {
-                    return Err(Error::InvalidConfig("executed model source changed".into()));
-                }
-                let claim = self
-                    .get_claim_in_txn(&rtxn, &observation.id)?
-                    .ok_or(Error::InvalidConfig("executed model claim missing".into()))?;
-                if crate::llm::terminal_step_identity(&claim)
-                    != Some((attempt_id, request_hash, model.clone()))
-                {
-                    return Err(Error::InvalidConfig(
-                        "executed model identity changed".into(),
-                    ));
-                }
-                (Some(model), observed_at, "llm.step.v1".to_owned())
+            Some(_) => return Err(Error::InvalidConfig("stale failure observation".into())),
+            None => {
+                // Collection drops only a witness that no longer verifies, so
+                // the handle's own copy still names the evidence that is gone.
+                self.verify_tier1_witness_in_txn(&rtxn, observation.id, &observation.kind)?;
+                return Err(Error::InvalidConfig(
+                    "unregistered failure observation".into(),
+                ));
             }
         };
         // heed permits only one read slot per thread on this handle. The
@@ -543,6 +500,112 @@ impl crate::Vault {
             .diagnostics
             .failure_signals
             .export(self.config.failure_signals)
+    }
+
+    /// Registers a producer's witness. Once the map has doubled since the
+    /// last collection, every witness that no longer verifies is dropped: a
+    /// record through it is refused anyway, and only its producer can capture
+    /// it again. A witness that still verifies is always kept.
+    fn register_tier1_witness(&self, id: EntityId, kind: WitnessKind) -> Result<()> {
+        let counts = &self.store.diagnostics.failure_signals;
+        if !counts.register(id, kind)? {
+            return Ok(());
+        }
+        let mut obsolete = Vec::new();
+        let rtxn = self.store.env.read_txn()?;
+        for (id, entry) in counts.witnesses()? {
+            match self.verify_tier1_witness_in_txn(&rtxn, id, &entry.kind) {
+                Ok(_) => {}
+                Err(Error::InvalidConfig(_)) => obsolete.push((id, entry.nonce)),
+                Err(error) => return Err(error),
+            }
+        }
+        drop(rtxn);
+        counts.retire(&obsolete)
+    }
+
+    /// Re-reads a witness's evidence from base. Each refusal is an
+    /// `InvalidConfig` naming the evidence that is gone or changed.
+    fn verify_tier1_witness_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: EntityId,
+        kind: &WitnessKind,
+    ) -> Result<(Option<ModelId>, i64, String)> {
+        match kind {
+            WitnessKind::Diagnostic {
+                body_hash,
+                sources,
+                detector_id,
+                observed_at,
+            } => {
+                let body = match crate::vault::live_entity_row_in_txn(&self.store, rtxn, &id)? {
+                    LiveEntityRow::Live {
+                        entity_type: crate::registry::ENTITY_TYPE_DIAGNOSTIC,
+                        body,
+                    } => body,
+                    _ => {
+                        return Err(Error::InvalidConfig(
+                            "failure diagnostic is no longer live".into(),
+                        ));
+                    }
+                };
+                if blake3::hash(&body).as_bytes() != body_hash
+                    || !sources.still_live(&self.store, rtxn)?
+                {
+                    return Err(Error::InvalidConfig(
+                        "failure observation source changed".into(),
+                    ));
+                }
+                Ok((None, *observed_at, detector_id.clone()))
+            }
+            WitnessKind::Execution {
+                body_hash,
+                attempt_id,
+                run_ref,
+                request_hash,
+                model,
+                observed_at,
+            } => {
+                let attempt = crate::attempt_queue::AttemptQueue::new(self)
+                    .get_in_txn(rtxn, *attempt_id)?
+                    .ok_or(Error::InvalidConfig(
+                        "executed model attempt is no longer live".into(),
+                    ))?;
+                if attempt.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+                    || attempt.run_id != *run_ref
+                {
+                    return Err(Error::InvalidConfig(
+                        "executed model attempt changed".into(),
+                    ));
+                }
+                let body = match crate::vault::live_entity_row_in_txn(&self.store, rtxn, &id)? {
+                    LiveEntityRow::Live {
+                        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                        body,
+                    } => body,
+                    _ => {
+                        return Err(Error::InvalidConfig(
+                            "executed model source is no longer live".into(),
+                        ));
+                    }
+                };
+                if blake3::hash(&body).as_bytes() != body_hash {
+                    return Err(Error::InvalidConfig("executed model source changed".into()));
+                }
+                let claim = self
+                    .get_claim_in_txn(rtxn, &id)?
+                    .ok_or(Error::InvalidConfig("executed model claim missing".into()))?;
+                if crate::llm::terminal_step_identity(&claim)
+                    != Some((*attempt_id, *request_hash, model.clone()))
+                {
+                    return Err(Error::InvalidConfig(
+                        "executed model identity changed".into(),
+                    ));
+                }
+                Ok((Some(model.clone()), *observed_at, "llm.step.v1".to_owned()))
+            }
+        }
     }
 }
 
