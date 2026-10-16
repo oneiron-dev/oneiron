@@ -128,7 +128,10 @@ impl Vault {
         let asked_at = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             let mut last = None;
-            for row in ASKS.iter_rev_from(&self.store, txn, &[])?.take(SAME_ASK_SCAN) {
+            for row in ASKS
+                .iter_rev_from(&self.store, txn, &[])?
+                .take(SAME_ASK_SCAN)
+            {
                 let (seq, ask) = row?;
                 last.get_or_insert(seq);
                 if ask.is_open_for(request) {

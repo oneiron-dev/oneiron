@@ -42,6 +42,10 @@ use super::exhaust::{
     encode_exhaust_envelope, ensure_byoa_runtime_actor, normalize_capture_reason, union_taint_refs,
     validate_canonical_capture,
 };
+use super::official_seats::{
+    DispatchOfficialSeat, DrySeatDecision, OfficialSeatDispatchOutcome, OfficialSeatStamp,
+    check_seat_placement, decide_dry_seat, validate_official_seat,
+};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{
     LoginPlacement, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
@@ -122,6 +126,9 @@ struct ByoaEnqueue {
     run_id: Option<String>,
     dedupe_key: Option<String>,
     now: u64,
+    /// The official seat stamp a seat dispatch carries (OF-375); the
+    /// generic and runner-seat doors leave it empty.
+    official_seat: Option<OfficialSeatStamp>,
 }
 
 /// The foreign-agent dispatch organ.
@@ -164,7 +171,7 @@ where
             .get(attempt_id)?
             .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
         let payload = decode_byoa_record(&record)?;
-        self.check_login_placement(payload.user_login, &payload.connector)?;
+        self.check_payload_placement(&payload)?;
         let ByoaConnectorSpec::CliSandbox(spec) = payload.connector else {
             return Err(invalid(ERR_EXECUTION_SHAPE));
         };
@@ -213,6 +220,7 @@ where
             run_id: request.run_id,
             dedupe_key: request.dedupe_key,
             now: request.now,
+            official_seat: None,
         };
         self.vault
             .try_with_write_txn_grouped(|txn| self.enqueue_in_txn(txn, enqueue))
@@ -223,13 +231,26 @@ where
         txn: &mut heed::RwTxn<'_>,
         request: ByoaEnqueue,
     ) -> ByoaResult<ByoaDispatchOutcome> {
-        self.check_login_placement(request.user_login, &request.connector)?;
+        // A stamped official seat is judged by its vendor's terms (the
+        // seat table admits what the generic login door would refuse, e.g.
+        // an approved hosted plan login); every other row keeps the
+        // generic placement rule.
+        match request.official_seat {
+            Some(stamp) => check_seat_placement(
+                stamp.route,
+                self.vault.config.privacy.posture,
+                stamp.approvals,
+                stamp.unmodified_binary,
+            )?,
+            None => self.check_login_placement(request.user_login, &request.connector)?,
+        }
         validate_connector(&request.connector)?;
         let payload = encode_byoa_attempt_payload(&ByoaAttemptPayload {
             user_login: request.user_login,
             schema_version: BYOA_CONNECTOR_SCHEMA_VERSION,
             connector: request.connector,
             parent_attempt: request.parent_attempt,
+            official_seat: request.official_seat,
         })?;
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
             self.vault,
@@ -258,6 +279,64 @@ where
             EnqueueOutcome::Enqueued(attempt) => ByoaDispatchOutcome::Dispatched(status(attempt)?),
             EnqueueOutcome::Existing(attempt) => ByoaDispatchOutcome::Existing(status(attempt)?),
         })
+    }
+
+    /// Dispatches one official subscription seat (OF-375).
+    ///
+    /// Placement follows the vendor's terms, not only the generic
+    /// login-placement rule: the unmodified Claude Code binary may run in a
+    /// hosted vault VM, a Claude.ai SDK login needs Anthropic's approval,
+    /// and a ChatGPT-plan login stays on the person's own runtime until
+    /// OpenAI approves hosted use. A dry seat is an outcome, never an error
+    /// and never a silent spend: it parks, or it hands back the owner's
+    /// pre-chosen fallback for the host to route. The seat rides the
+    /// attempt payload as a stamp, so execution re-judges the same table.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed seat refusal (unsupported route, missing vendor
+    /// approval, modified binary, cloud login) or [`ByoaError::Store`] when
+    /// the connector fails the door or the queue refuses the row.
+    pub fn dispatch_official_seat(
+        &mut self,
+        request: DispatchOfficialSeat,
+    ) -> ByoaResult<OfficialSeatDispatchOutcome> {
+        validate_official_seat(&request.seat)?;
+        check_seat_placement(
+            request.seat.route,
+            self.vault.config.privacy.posture,
+            request.seat.approvals,
+            request.seat.unmodified_binary,
+        )?;
+        let decision = decide_dry_seat(
+            request.seat.plan_window.as_ref(),
+            request.seat.dry_fallback,
+            request.now,
+        );
+        match decision {
+            DrySeatDecision::Park { until } => {
+                Ok(OfficialSeatDispatchOutcome::Parked { resets_at: until })
+            }
+            DrySeatDecision::ContinueOnLocal | DrySeatDecision::Spend { .. } => {
+                Ok(OfficialSeatDispatchOutcome::DryFallback(decision))
+            }
+            DrySeatDecision::Run => {
+                let enqueue = ByoaEnqueue {
+                    user_login: request.seat.route.is_user_login(),
+                    connector: request.connector,
+                    task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
+                    parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
+                    run_id: request.run_id,
+                    dedupe_key: request.dedupe_key,
+                    now: request.now,
+                    official_seat: Some(request.seat.stamp()),
+                };
+                let outcome = self
+                    .vault
+                    .try_with_write_txn_grouped(|txn| self.enqueue_in_txn(txn, enqueue))?;
+                Ok(OfficialSeatDispatchOutcome::Dispatched(outcome))
+            }
+        }
     }
 
     /// Dispatches `work` to the policy's `seat` through the runner adapter
@@ -365,6 +444,7 @@ where
                                     bytes_to_hex_lower(&parent)
                                 )),
                                 now,
+                                official_seat: None,
                             },
                         )?;
                         return Ok(SeatRoute::NextSeat {
@@ -411,12 +491,28 @@ where
         Ok(())
     }
 
+    /// Execution-time placement, re-checked from the durable row. A stamped
+    /// official seat is judged by its vendor's terms (the same table its
+    /// dispatch passed); an unstamped row keeps the generic
+    /// [`login_placement`] rule.
+    fn check_payload_placement(&self, payload: &ByoaAttemptPayload) -> ByoaResult<()> {
+        match payload.official_seat {
+            Some(stamp) => check_seat_placement(
+                stamp.route,
+                self.vault.config.privacy.posture,
+                stamp.approvals,
+                stamp.unmodified_binary,
+            ),
+            None => self.check_login_placement(payload.user_login, &payload.connector),
+        }
+    }
+
     fn execution_record(&self, fence: &ByoaExecutionFence) -> ByoaResult<AttemptRecord> {
         let record = AttemptQueue::new(self.vault)
             .get(fence.attempt_id)?
             .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
         let payload = decode_byoa_record(&record)?;
-        self.check_login_placement(payload.user_login, &payload.connector)?;
+        self.check_payload_placement(&payload)?;
         AttemptQueue::check_result_lease(
             &record,
             &fence.lease_owner,

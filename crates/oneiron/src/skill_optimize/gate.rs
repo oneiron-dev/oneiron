@@ -177,14 +177,14 @@ pub use measurement::{
     WorldAxisScore,
 };
 pub use project_goal::{
-    ProjectGoalRevisionProposal, TradeoffRole, project_goal_revision_proposals,
-    set_skill_goal_project, skill_goal_project,
+    ProjectGoalRevisionProposal, TradeoffRole, dismiss_project_goal_revision_proposal,
+    project_goal_revision_proposals, set_skill_goal_project, skill_goal_project,
 };
 pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
     TradeoffRule, escalate_skill_tradeoff_ask, pending_skill_tradeoff_asks,
-    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, skill_tradeoff_ask,
-    skill_tradeoff_asks_for, skill_tradeoff_preferences,
+    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as_agent,
+    skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
 };
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,
@@ -200,6 +200,7 @@ pub(crate) use ledger::{
     displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_receipts,
     validate_judge_revision,
 };
+pub(crate) use project_goal::project_goal_revision_proposals_in_txn;
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;

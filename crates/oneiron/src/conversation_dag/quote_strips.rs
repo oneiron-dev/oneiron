@@ -6,7 +6,9 @@
 //! the historical quotation, and an erased message shows none.
 
 use super::graph::{conversation_of, edge_ids, invalid, require_type};
-use super::quote::{QuoteAnchor, field, message_fields, owning_turn_in, read_pointer, scalar_slice};
+use super::quote::{
+    QuoteAnchor, field, message_fields, owning_turn_in, read_pointer, scalar_slice,
+};
 use super::thread_projection::selected_thread_in_txn;
 use crate::edge::EdgeKind;
 use crate::entity_doc::CursorResolution;
@@ -206,7 +208,10 @@ fn hydrate(vault: &Vault, anchor: &QuoteAnchor) -> Result<(QuoteStripStatus, Opt
             );
             let excerpt = scalar_slice(text, span.0, span.1)
                 .filter(|quoted| blake3::hash(quoted.as_bytes()).as_bytes() == &quote_hash);
-            let status = match (blake3::hash(text.as_bytes()).as_bytes() == &body_hash, &excerpt) {
+            let status = match (
+                blake3::hash(text.as_bytes()).as_bytes() == &body_hash,
+                &excerpt,
+            ) {
                 (true, Some(_)) => QuoteStripStatus::Live,
                 (false, Some(_)) => QuoteStripStatus::Edited,
                 (_, None) => QuoteStripStatus::Drifted,
@@ -222,7 +227,10 @@ impl Memory<'_> {
     /// passes the reader's own read lane (inside a room turn, the room's):
     /// the trunk, each reply, and each quoted message and its TURN while they
     /// are live. A withheld reply never fills a slot or becomes the cursor.
-    pub fn rooms_reply_strips(&self, request: &ReplyStripsRequest) -> MemoryResult<ReplyStripsPage> {
+    pub fn rooms_reply_strips(
+        &self,
+        request: &ReplyStripsRequest,
+    ) -> MemoryResult<ReplyStripsPage> {
         let room = EntityId::from_hex(&request.room_ref)?;
         let trunk = EntityId::from_hex(&request.thread_ref)?;
         let after = request

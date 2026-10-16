@@ -20,6 +20,7 @@ pub use self::types::{
 };
 
 use self::codec::invalid_autonomy;
+pub(crate) use self::envelopes::AutonomyReader;
 
 #[cfg(test)]
 mod tests;
