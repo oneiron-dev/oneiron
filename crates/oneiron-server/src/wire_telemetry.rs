@@ -108,7 +108,7 @@ impl LimitRow {
         Self::EmbedderBodyBytes,
         Self::EmbedderAnswerBytes,
         Self::WindowsPerConnection,
-        Self::Engine(EngineLimit::KeyedValueJsonBytes),
+        Self::Engine(EngineLimit::KeyedFilterJsonBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

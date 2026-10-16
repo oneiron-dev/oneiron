@@ -740,16 +740,16 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     assert_eq!(bodies[11], Value::Null);
 }
 
-/// Rule five at the keyed value row: `callers` puts on one credential, each a
-/// value past the old 64 KiB ceiling and past a row set to 16 bytes, all land
-/// and read back whole, and the row asks.
-pub(crate) async fn cross_the_keyed_values(callers: usize) -> crate::admission::Crossing {
+/// Rule five at the keyed filter row: `callers` searches on one credential,
+/// each with a filter past the old 64 KiB ceiling and past a row set to 16
+/// bytes, are all answered, and the row asks.
+pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission::Crossing {
     use crate::wire_telemetry::LimitRow;
     use oneiron::limit_ask::EngineLimit;
     const SECRET: &str = "keyed-row-test-secret";
     let dir = tempfile::tempdir().unwrap();
     let mut config = oneiron::VaultConfig::default();
-    config.limits.set(EngineLimit::KeyedValueJsonBytes, 16);
+    config.limits.set(EngineLimit::KeyedFilterJsonBytes, 16);
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let server = Arc::new(
@@ -780,28 +780,37 @@ pub(crate) async fn cross_the_keyed_values(callers: usize) -> crate::admission::
                 .unwrap(),
         ))
     };
-    let text = "x".repeat(MAX_ENTITY_PAYLOAD_BYTES + 1);
+    let put = json!({"namespace":["notes"],"key":"theme","value":{"name":"dark"},"request_id":"filter-row","source":"user_stated"});
+    assert_eq!(
+        post("key_value_put", put).await.unwrap().status(),
+        StatusCode::OK
+    );
     let mut refused = 0;
     for n in 0..callers {
-        let key = format!("long-{n}");
-        let put = json!({"namespace":["notes"],"key":key,"value":{"text":text},"request_id":key,"source":"user_stated"});
-        if post("key_value_put", put).await.unwrap().status() != StatusCode::OK {
+        let filter =
+            json!({"name": "dark", "note": format!("{n}{}", "x".repeat(MAX_ENTITY_PAYLOAD_BYTES))});
+        let search = json!({"namespace_prefix":["notes"],"filter":filter,"limit":10});
+        let response = post("key_value_search", search).await.unwrap();
+        if response.status() != StatusCode::OK {
             refused += 1;
             continue;
         }
-        let got = post("key_value_get", json!({"namespace":["notes"],"key":key}))
-            .await
-            .unwrap();
         let body: Value =
-            serde_json::from_slice(&to_bytes(got.into_body(), usize::MAX).await.unwrap()).unwrap();
-        assert_eq!(body["value"]["text"], json!(text), "{key} reads back whole");
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        // The stored value has no `note`, so the whole filter matches nothing.
+        assert_eq!(
+            body,
+            json!([]),
+            "search {n} is answered over its whole filter"
+        );
     }
     crate::admission::Crossing {
         refused,
         asked: server
             .wire_telemetry
             .limit_questions()
-            .latest(LimitRow::Engine(EngineLimit::KeyedValueJsonBytes))
+            .latest(LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes))
             .is_some(),
     }
 }

@@ -179,7 +179,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
             disk_reserve_bytes,
-            keyed_value_json_bytes,
+            keyed_filter_json_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -204,8 +204,8 @@ impl LimitsConfig {
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
-        if let Some(bound) = keyed_value_json_bytes {
-            self.engine.set(EngineLimit::KeyedValueJsonBytes, bound);
+        if let Some(bound) = keyed_filter_json_bytes {
+            self.engine.set(EngineLimit::KeyedFilterJsonBytes, bound);
         }
     }
 
@@ -295,5 +295,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) git_scan_disk_floor_bytes: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,
     pub(super) disk_reserve_bytes: Option<u64>,
-    pub(super) keyed_value_json_bytes: Option<u64>,
+    pub(super) keyed_filter_json_bytes: Option<u64>,
 }

@@ -14,26 +14,26 @@ use std::sync::{Arc, PoisonError, RwLock};
 /// One engine `[limits]` row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EngineLimit {
-    /// Serialized bytes of one keyed-memory value with its stored wrapper
-    /// (`key_value_put`).
-    KeyedValueJsonBytes,
+    /// Serialized bytes of one keyed-memory search filter
+    /// (`key_value_search`).
+    KeyedFilterJsonBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 1] = [Self::KeyedValueJsonBytes];
+    pub const ALL: [Self; 1] = [Self::KeyedFilterJsonBytes];
 
     /// The config key that sets the row.
     pub const fn key(self) -> &'static str {
         match self {
-            Self::KeyedValueJsonBytes => "limits.keyed_value_json_bytes",
+            Self::KeyedFilterJsonBytes => "limits.keyed_filter_json_bytes",
         }
     }
 
     /// What the row is set to when nothing sets it.
     pub const fn default_bound(self) -> u64 {
         match self {
-            Self::KeyedValueJsonBytes => 64 << 20,
+            Self::KeyedFilterJsonBytes => 64 << 20,
         }
     }
 }
