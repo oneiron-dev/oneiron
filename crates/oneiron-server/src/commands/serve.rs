@@ -156,14 +156,14 @@ pub(super) async fn serve_with_config(
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
-    let vault_id = crate::local_servers::vault_id(sync_server.vault());
+    let vault_id = super::local_servers::vault_id(sync_server.vault());
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     // Ready and bound: a client on this host can find it now. The file goes
     // when this returns, a clean stop or a late startup error alike.
     #[cfg(unix)]
     let _registered =
-        crate::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
+        super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
     #[cfg(not(unix))]
     let _ = config_file;
     // Open sockets may never close by themselves, so the drain is bounded.

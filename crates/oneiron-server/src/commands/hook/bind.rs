@@ -26,13 +26,15 @@ use std::time::{Duration, Instant};
 use oneiron::authority::PairingDescriptor;
 use serde::Deserialize;
 
-use crate::config::ServeArgs;
-use crate::local_servers::{self, LocalServer};
+use crate::commands::local_servers::{self, LocalServer};
+use crate::config::{ServeArgs, resolve_serve_config};
 
 /// The pin, in the per-user oneiron folder.
 const PIN_FILE: &str = "hook.toml";
 /// What a started server logs to, in the run folder.
 const SERVE_LOG: &str = "serve.log";
+/// The store file every initialized vault folder holds.
+const STORE_FILE: &str = "data.mdb";
 /// The longest one probe waits.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A pin or a descriptor is a few hundred bytes; a larger one is not read.
@@ -106,9 +108,10 @@ pub(super) fn quietly(flag: Option<&str>, deadline: Instant) -> Option<String> {
         .map(|server| server.url)
 }
 
-/// The config of the running local vault a hand-over queues to: the one at
-/// the pin when a runtime file names it, else the newest. A hand-over only
-/// writes a file, so it asks no server.
+/// The config of the running local vault a hand-over queues to: with a pin,
+/// the one a runtime file names at the pin, and none when no runtime file
+/// does (a pin is never swapped for another vault); with no pin, the newest.
+/// A hand-over only writes a file, so it asks no server.
 pub(super) fn running_config() -> Option<PathBuf> {
     let pinned = pin(None).map(|pin| pin.url);
     let mut alive: Vec<LocalServer> = local_servers::listed()
@@ -123,6 +126,11 @@ pub(super) fn running_config() -> Option<PathBuf> {
         None => alive.next(),
     };
     chosen?.config
+}
+
+#[derive(Deserialize)]
+struct PinFile {
+    url: Option<String>,
 }
 
 struct Pin {
@@ -147,14 +155,11 @@ fn pin(flag: Option<&str>) -> Option<Pin> {
             by: "ONEIRON_URL".to_owned(),
         });
     }
-    #[derive(Deserialize)]
-    struct PinFile {
-        url: Option<String>,
-    }
+    // Only a pin no one else can write: the session sends its credential
+    // where the pin says.
     let path = pin_file()?;
     let mut body = String::new();
-    std::fs::File::open(&path)
-        .ok()?
+    local_servers::open_own(&path)?
         .take(MAX_READ_BYTES)
         .read_to_string(&mut body)
         .ok()?;
@@ -172,34 +177,36 @@ fn pin_file() -> Option<PathBuf> {
     local_servers::user_dir().map(|dir| dir.join(PIN_FILE))
 }
 
-/// The running local vaults, newest first. A runtime file whose pid is gone
-/// is removed; one whose server does not answer is passed over, and stays:
-/// its server may still be starting.
+/// The running local vaults, newest first, asked in that order so a slow
+/// older one cannot spend the newest one's time. A runtime file whose pid is
+/// gone is removed; one whose server does not answer is passed over, and
+/// stays: its server may still be starting.
 fn running(deadline: Instant) -> Vec<LocalServer> {
-    let mut running: Vec<LocalServer> = local_servers::listed()
+    let mut alive: Vec<LocalServer> = local_servers::listed()
         .into_iter()
         .filter_map(|(path, server)| {
-            if !local_servers::alive(server.pid) {
-                let _ = std::fs::remove_file(&path);
-                return None;
+            if local_servers::alive(server.pid) {
+                return Some(server);
             }
-            answers(&server.url, deadline).then_some(server)
+            let _ = std::fs::remove_file(&path);
+            None
         })
         .collect();
-    newest_first(&mut running);
-    running
+    newest_first(&mut alive);
+    alive
+        .into_iter()
+        .filter(|server| answers(&server.url, deadline))
+        .collect()
 }
 
 fn newest_first(servers: &mut [LocalServer]) {
-    servers.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    servers.sort_by_key(|server| std::cmp::Reverse(server.started_at_ms));
 }
 
 fn uses(server: &LocalServer, running: usize) -> String {
-    let id = server
-        .vault_id
-        .as_deref()
-        .map(|id| format!(" {}", id.chars().take(12).collect::<String>()))
-        .unwrap_or_default();
+    let id = server.vault_id.as_deref().map_or_else(String::new, |id| {
+        format!(" {}", id.chars().take(12).collect::<String>())
+    });
     let newest = if running > 1 {
         format!(", the newest of {running} running")
     } else {
@@ -220,6 +227,22 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
     let Some(config) = local_servers::config_file(&ServeArgs::default()) else {
         return Bound::none(NO_VAULT.to_owned());
     };
+    // `serve` creates a vault that is not there; the hook only starts one
+    // that is (no vault is made without `oneiron init`).
+    let vault = resolve_serve_config(&ServeArgs {
+        config: Some(config.clone()),
+        ..ServeArgs::default()
+    })
+    .map(|serve| serve.vault_path);
+    if !vault.is_ok_and(|vault| vault.join(STORE_FILE).is_file()) {
+        return Bound::none(NO_VAULT.to_owned());
+    }
+    if Instant::now() >= deadline {
+        return Bound::none(format!(
+            "Oneiron: no vault answered in time; the local vault in {} was not started.",
+            config.display()
+        ));
+    }
     let log = local_servers::run_dir().map(|dir| dir.join(SERVE_LOG));
     let output = log.as_deref().and_then(|log| {
         local_servers::ensure_run_dir().ok()?;

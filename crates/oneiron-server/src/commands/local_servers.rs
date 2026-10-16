@@ -24,27 +24,27 @@ const MAX_FILE_BYTES: u64 = 64 * 1024;
 
 /// One running server, as its runtime file names it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct LocalServer {
+pub(super) struct LocalServer {
     /// The authority vault id its slips carry, in hex; `null` until the
     /// vault is rooted.
-    pub(crate) vault_id: Option<String>,
+    pub(super) vault_id: Option<String>,
     /// The origin a client on this host reaches it at.
-    pub(crate) url: String,
-    pub(crate) pid: u32,
+    pub(super) url: String,
+    pub(super) pid: u32,
     /// The vault's folder.
-    pub(crate) state_dir: PathBuf,
+    pub(super) state_dir: PathBuf,
     /// The config file `serve` read, if it read one.
-    pub(crate) config: Option<PathBuf>,
-    pub(crate) started_at_ms: u64,
+    pub(super) config: Option<PathBuf>,
+    pub(super) started_at_ms: u64,
 }
 
 /// The per-user oneiron folder: the default config, the hook's pin and,
 /// where there is no runtime folder, `run/`.
-pub(crate) fn user_dir() -> Option<PathBuf> {
+pub(super) fn user_dir() -> Option<PathBuf> {
     default_config_path().and_then(|path| path.parent().map(Path::to_path_buf))
 }
 
-pub(crate) fn run_dir() -> Option<PathBuf> {
+pub(super) fn run_dir() -> Option<PathBuf> {
     match dirs::runtime_dir() {
         Some(dir) => Some(dir.join("oneiron")),
         None => user_dir().map(|dir| dir.join("run")),
@@ -53,7 +53,7 @@ pub(crate) fn run_dir() -> Option<PathBuf> {
 
 /// The config file `serve` reads for `args`, when one exists: the same
 /// choice the config layers make (`--config`, `ONEIRON_CONFIG`, the default).
-pub(crate) fn config_file(args: &ServeArgs) -> Option<PathBuf> {
+pub(super) fn config_file(args: &ServeArgs) -> Option<PathBuf> {
     args.config
         .clone()
         .or_else(|| EnvConfig::from_process().ok()?.config_path)
@@ -62,7 +62,7 @@ pub(crate) fn config_file(args: &ServeArgs) -> Option<PathBuf> {
 }
 
 /// This server's runtime file. Dropping it removes the file.
-pub(crate) struct Registration {
+pub(super) struct Registration {
     path: PathBuf,
 }
 
@@ -74,7 +74,7 @@ impl Drop for Registration {
 
 /// The authority vault id a runtime file names, in hex; `None` until the
 /// vault is rooted.
-pub(crate) fn vault_id(vault: &oneiron::Vault) -> Option<String> {
+pub(super) fn vault_id(vault: &oneiron::Vault) -> Option<String> {
     vault
         .authority_fold()
         .ok()
@@ -85,7 +85,7 @@ pub(crate) fn vault_id(vault: &oneiron::Vault) -> Option<String> {
 /// Registers a ready `serve` whose API listener is bound at `bound`. A
 /// server that cannot write its file still serves; a client just does not
 /// find it.
-pub(crate) fn register(
+pub(super) fn register(
     vault_id: Option<String>,
     bound: SocketAddr,
     state_dir: &Path,
@@ -121,7 +121,7 @@ pub(crate) fn register(
 
 /// The run folder, created 0700 if it is missing; refused unless it is
 /// this user's alone to write.
-pub(crate) fn ensure_run_dir() -> anyhow::Result<PathBuf> {
+pub(super) fn ensure_run_dir() -> anyhow::Result<PathBuf> {
     let dir = run_dir().ok_or_else(|| anyhow::anyhow!("no HOME and no runtime folder"))?;
     fs::DirBuilder::new()
         .recursive(true)
@@ -132,20 +132,18 @@ pub(crate) fn ensure_run_dir() -> anyhow::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Writes `server`'s file whole, under its final name in one rename.
+/// Writes `server`'s file whole, under its final name in one rename. It is
+/// made as a credential file is: 0600 and, on macOS, with no ACL entry
+/// inherited from the folder.
 fn write(server: &LocalServer) -> anyhow::Result<Registration> {
     let dir = ensure_run_dir()?;
     let path = dir.join(format!("{}.json", server.pid));
     let staged = dir.join(format!(".{}.json.tmp", server.pid));
     let _ = fs::remove_file(&staged);
     let body = serde_json::to_vec(server)?;
-    let written = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&staged)
-        .and_then(|mut file| file.write_all(&body))
-        .and_then(|()| fs::rename(&staged, &path));
+    let written = super::credential_file::create(&staged)
+        .and_then(|mut file| Ok(file.write_all(&body)?))
+        .and_then(|()| Ok(fs::rename(&staged, &path)?));
     if let Err(error) = written {
         let _ = fs::remove_file(&staged);
         anyhow::bail!("write {}: {error}", path.display());
@@ -154,9 +152,8 @@ fn write(server: &LocalServer) -> anyhow::Result<Registration> {
 }
 
 /// Every runtime file in the run folder, with its path. A folder another
-/// user owns or can write is not read, nor is a file that is a link or
-/// another user's.
-pub(crate) fn listed() -> Vec<(PathBuf, LocalServer)> {
+/// user owns or can write is not read, nor is a file [`open_own`] refuses.
+pub(super) fn listed() -> Vec<(PathBuf, LocalServer)> {
     let Some(dir) = run_dir() else {
         return Vec::new();
     };
@@ -172,15 +169,7 @@ pub(crate) fn listed() -> Vec<(PathBuf, LocalServer)> {
 }
 
 fn read(path: &Path) -> Option<LocalServer> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .ok()?;
-    let metadata = file.metadata().ok()?;
-    if !metadata.is_file() || metadata.uid() != rustix::process::geteuid().as_raw() {
-        return None;
-    }
+    let file = open_own(path)?;
     let mut body = Vec::new();
     file.take(MAX_FILE_BYTES + 1).read_to_end(&mut body).ok()?;
     if body.len() as u64 > MAX_FILE_BYTES {
@@ -189,18 +178,35 @@ fn read(path: &Path) -> Option<LocalServer> {
     serde_json::from_slice(&body).ok()
 }
 
-/// Whether a process with this pid exists (another user's counts).
-pub(crate) fn alive(pid: u32) -> bool {
+/// Opens `path` to read when no one but this user can write it: a regular
+/// file, not a link, theirs, with no write bit for anyone else and, on
+/// macOS, no ACL entry that could grant one. What a runtime file or a pin
+/// names is where a hook sends a credential.
+pub(super) fn open_own(path: &Path) -> Option<fs::File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    let own = metadata.is_file()
+        && metadata.uid() == rustix::process::geteuid().as_raw()
+        && metadata.mode() & 0o022 == 0
+        && !super::credential_file::has_extended_acl(&file);
+    own.then_some(file)
+}
+
+/// Whether this user has a process with this pid. A server whose file is
+/// in this user's run folder runs as this user, so another user's process
+/// at that pid is a reused pid, not the server.
+pub(super) fn alive(pid: u32) -> bool {
     let Some(pid) = i32::try_from(pid)
         .ok()
         .and_then(rustix::process::Pid::from_raw)
     else {
         return false;
     };
-    match rustix::process::test_kill_process(pid) {
-        Ok(()) => true,
-        Err(error) => error == rustix::io::Errno::PERM,
-    }
+    rustix::process::test_kill_process(pid).is_ok()
 }
 
 /// The run folder is this user's: owned by them, not a link, and nobody

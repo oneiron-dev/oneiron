@@ -44,6 +44,9 @@ pub use self::mcp_bridge::mcp;
 // Runtime files and the import queue are Unix-only.
 #[cfg(unix)]
 mod hook;
+// The runtime files `serve` registers in and `oneiron hook` reads.
+#[cfg(unix)]
+mod local_servers;
 #[cfg(unix)]
 pub use self::hook::hook;
 
@@ -76,7 +79,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args)?;
     init_tracing(&config.log_level);
     #[cfg(unix)]
-    let config_file = crate::local_servers::config_file(&args);
+    let config_file = local_servers::config_file(&args);
     #[cfg(not(unix))]
     let config_file = None;
     serve_with_config(config, config_file).await

@@ -87,9 +87,18 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    is no vault to start: the line says to set one up with `oneiron init`.
 
 `prompt` binds the same way but never starts a server and prints no line of
-its own. `hand-over` queues into the queue of `--config` if you give it,
-else of the running local vault the pin names (or the newest one), else of
-the default config.
+its own. `hand-over` queues into the queue of `--config` if you give it;
+else, with a pin, of the running local vault at the pin; with no pin, of the
+newest running local vault; else of the default config. A pin is never
+swapped for another vault.
+
+A pin in `hook.toml` counts only when no one but you can write it: your own
+regular file, not a link, with no write bit for others and, on macOS, no ACL
+entry. A runtime file counts only on the same terms. The session sends its
+credential where they point.
+
+Starting a server never creates a vault: the hook starts one only when the
+config's `vault_path` holds an initialized vault.
 
 ### Runtime files
 
@@ -108,7 +117,8 @@ Never the repository, never a vault folder. The folder is created readable
 and writable by you alone (0700) and each file by you alone (0600). A hook
 reads neither a folder another user owns or can write, nor a file that is a
 link or another user's. A file whose process is gone (a `serve` that was
-killed) is stale: the next hook removes it. A file whose process lives but
+killed), or whose pid is now another user's process, is stale: the next hook
+removes it. A file whose process lives but
 whose server does not answer is passed over and kept, since that server may
 still be starting.
 

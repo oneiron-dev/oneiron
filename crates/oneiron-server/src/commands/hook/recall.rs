@@ -31,6 +31,9 @@ impl Recall<'_> {
     /// `header` and a line per hit, or nothing when recall fails or finds
     /// nothing.
     pub(super) fn block(&self, header: &str) -> Vec<String> {
+        if Instant::now() >= self.deadline {
+            return Vec::new();
+        }
         let Ok(result) = self.call() else {
             return Vec::new();
         };

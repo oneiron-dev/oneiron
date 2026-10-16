@@ -51,6 +51,9 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
     let oneiron = oneiron(args.common.oneiron.as_deref());
     let bound = bind::session(args.url.as_deref(), &oneiron, deadline);
     let mut said = bound.lines;
+    let (Some(url), Some(credential)) = (bound.url, &args.credential_file) else {
+        return said;
+    };
     let query = args.query.clone().unwrap_or_else(|| {
         let cwd = event
             .get("cwd")
@@ -58,13 +61,10 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
             .filter(|cwd| !cwd.is_empty())
             .map(PathBuf::from)
             .or_else(|| std::env::current_dir().ok());
-        cwd.map(|cwd| project_name(&cwd))
-            .unwrap_or_default()
+        cwd.map_or_else(String::new, |cwd| project_name(&cwd, deadline))
             .replace(['-', '_'], " ")
     });
-    if let (Some(url), Some(credential)) = (bound.url, &args.credential_file)
-        && !query.trim().is_empty()
-    {
+    if !query.trim().is_empty() {
         let recall = recall::Recall {
             oneiron: &oneiron,
             url: &url,
@@ -167,14 +167,17 @@ fn read_event() -> Option<Map<String, Value>> {
 }
 
 /// The git repository's folder name, else the working directory's.
-fn project_name(cwd: &Path) -> String {
-    let top = git_top(cwd).unwrap_or_else(|| cwd.to_path_buf());
+fn project_name(cwd: &Path, deadline: Instant) -> String {
+    let top = git_top(cwd, deadline).unwrap_or_else(|| cwd.to_path_buf());
     top.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
 }
 
-fn git_top(cwd: &Path) -> Option<PathBuf> {
+fn git_top(cwd: &Path, deadline: Instant) -> Option<PathBuf> {
+    let deadline = deadline.min(Instant::now() + GIT_TIMEOUT);
+    if Instant::now() >= deadline {
+        return None;
+    }
     let mut child = oneiron_spawn::command("git")
         .arg("-C")
         .arg(cwd)
@@ -184,7 +187,7 @@ fn git_top(cwd: &Path) -> Option<PathBuf> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let Some(status) = wait_until(&mut child, Instant::now() + GIT_TIMEOUT) else {
+    let Some(status) = wait_until(&mut child, deadline) else {
         let _ = child.kill();
         let _ = child.wait();
         return None;

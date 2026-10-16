@@ -40,9 +40,6 @@ mod http_listener;
 mod idempotency;
 mod linear_host;
 mod livequery;
-// The runtime files `serve` registers in and `oneiron hook` reads.
-#[cfg(unix)]
-mod local_servers;
 pub mod logging;
 mod machine;
 pub mod managed;
