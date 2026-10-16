@@ -227,8 +227,13 @@ impl Memory<'_> {
             if existing == landed {
                 if let Some(super::ConsultResultKind::Answer { option, .. }) = consult_kind
                     && !super::ask_record::replay_answer_option_matches(
-                        self.vault(), &*wtxn, task_ref, &body, self.actor(),
-                        existing, option.as_ref(),
+                        self.vault(),
+                        &*wtxn,
+                        task_ref,
+                        &body,
+                        self.actor(),
+                        existing,
+                        option.as_ref(),
                     )?
                 {
                     return Err(consult_refusal(
@@ -263,9 +268,9 @@ impl Memory<'_> {
         // before the sweep has run: the engine's clock decides, never the
         // reported completion time. An identical replay was answered above.
         if consult_kind.is_some()
-            && body.ttl.is_some_and(|ttl| {
-                ttl.deadline_at < self.vault().store.clock.now_recorded_at()
-            })
+            && body
+                .ttl
+                .is_some_and(|ttl| ttl.deadline_at < self.vault().store.clock.now_recorded_at())
         {
             return Err(consult_refusal(
                 MEMORY_CODE_INVALID_STATE,
@@ -277,12 +282,25 @@ impl Memory<'_> {
             Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
             _ => None,
         };
-        let ask_group = super::ask_record::record_answer(self.vault(), wtxn, task_ref, &body, crate::WriteActor::new(self.actor(), self.actor_class()), (landed, option), at)?;
+        let ask_group = super::ask_record::record_answer(
+            self.vault(),
+            wtxn,
+            task_ref,
+            &body,
+            crate::WriteActor::new(self.actor(), self.actor_class()),
+            (landed, option),
+            at,
+        )?;
         body.state = Some(TaskExecutionState::Terminal(landed.clone()));
         let encoded = encode_task_verb_body(body);
         self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
         if let Some(group) = ask_group {
-            super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
+            super::ask_settlement::settle_in(
+                self.vault(),
+                wtxn,
+                group,
+                self.vault().store.clock.now_recorded_at(),
+            )?;
         }
 
         // The TASK put above is announced after commit; the board

@@ -26,11 +26,16 @@ pub struct GuestImage {
 /// OCI variant of a guest. A microVM host maps this digest to its pinned
 /// bootable rootfs; the container backend runs the exact OCI image directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OciGuestImage { pub image: String }
+pub struct OciGuestImage {
+    pub image: String,
+}
 impl GuestImage {
     pub fn with_oci(mut self, image: &str) -> Result<Self> {
-        oneiron_container::ImageRef::pinned(image).map_err(|e| backend_error("oci", e.to_string()))?;
-        self.oci = Some(OciGuestImage { image: image.to_owned() });
+        oneiron_container::ImageRef::pinned(image)
+            .map_err(|e| backend_error("oci", e.to_string()))?;
+        self.oci = Some(OciGuestImage {
+            image: image.to_owned(),
+        });
         Ok(self)
     }
 

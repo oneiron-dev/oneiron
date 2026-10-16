@@ -41,17 +41,25 @@ impl Pipe {
         relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
     ) -> Self {
         let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
-        let pipe = Self { writer: Arc::new(Mutex::new(Box::new(writer))), pending,
-            next: Arc::new(AtomicU64::new(1)), egress: relay.is_some() };
+        let pipe = Self {
+            writer: Arc::new(Mutex::new(Box::new(writer))),
+            pending,
+            next: Arc::new(AtomicU64::new(1)),
+            egress: relay.is_some(),
+        };
         let handle = pipe.clone();
         std::thread::spawn(move || {
             read_replies(BufReader::new(reader), &handle, relay);
-            if let Ok(mut routes) = handle.pending.lock() { routes.take(); }
+            if let Ok(mut routes) = handle.pending.lock() {
+                routes.take();
+            }
         });
         pipe
     }
 
-    pub(crate) fn mediated(&self) -> bool { self.egress }
+    pub(crate) fn mediated(&self) -> bool {
+        self.egress
+    }
 
     /// Sends one command and waits for its reply until `deadline`.
     pub(crate) fn call(
@@ -101,7 +109,11 @@ impl Pipe {
     }
 }
 
-fn read_replies(mut reader: impl BufRead, pipe: &Pipe, relay: Option<Arc<dyn oneiron_container::EgressRelay>>) {
+fn read_replies(
+    mut reader: impl BufRead,
+    pipe: &Pipe,
+    relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
+) {
     let routes = &pipe.pending;
     let mut buf = Vec::new();
     loop {
@@ -138,24 +150,49 @@ fn read_replies(mut reader: impl BufRead, pipe: &Pipe, relay: Option<Arc<dyn one
     }
 }
 
-
 /// Called on the pipe reader, which must never wait for its own CDP reply.
 fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, event: Value) {
     let method = event["method"].as_str().unwrap_or("");
     if method == "Target.attachedToTarget" {
-        let Some(session) = event.pointer("/params/sessionId").and_then(Value::as_str).map(str::to_owned) else { return; };
+        let Some(session) = event
+            .pointer("/params/sessionId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            return;
+        };
         std::thread::spawn(move || {
             let deadline = Instant::now() + std::time::Duration::from_secs(30);
             if enable_network(&pipe, &session, deadline).is_ok() {
-                let _ = pipe.call(Some(&session), "Runtime.runIfWaitingForDebugger", json!({}), deadline);
+                let _ = pipe.call(
+                    Some(&session),
+                    "Runtime.runIfWaitingForDebugger",
+                    json!({}),
+                    deadline,
+                );
             }
         });
     } else if method == "Fetch.requestPaused" {
-        let Some(session) = event["sessionId"].as_str().map(str::to_owned) else { return; };
-        let Some(id) = event.pointer("/params/requestId").and_then(Value::as_str).map(str::to_owned) else { return; };
+        let Some(session) = event["sessionId"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let Some(id) = event
+            .pointer("/params/requestId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            return;
+        };
         std::thread::spawn(move || {
             let request = &event["params"]["request"];
-            let headers = request["headers"].as_object().map(|h| h.iter().filter_map(|(k,v)| v.as_str().map(|v| (k.clone(),v.to_owned()))).collect()).unwrap_or_default();
+            let headers = request["headers"]
+                .as_object()
+                .map(|h| {
+                    h.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+                        .collect()
+                })
+                .unwrap_or_default();
             use base64::Engine as _;
             let body = if let Some(entries) = request["postDataEntries"].as_array() {
                 let mut body = Vec::new();
@@ -163,10 +200,23 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
                     if let Some(bytes) = entry["bytes"].as_str() {
                         match base64::engine::general_purpose::STANDARD.decode(bytes) {
                             Ok(bytes) => body.extend(bytes),
-                            Err(_) => { let _ = pipe.call(Some(&session), "Fetch.failRequest", json!({"requestId": id, "errorReason": "Failed"}), Instant::now() + std::time::Duration::from_secs(30)); return; }
+                            Err(_) => {
+                                let _ = pipe.call(
+                                    Some(&session),
+                                    "Fetch.failRequest",
+                                    json!({"requestId": id, "errorReason": "Failed"}),
+                                    Instant::now() + std::time::Duration::from_secs(30),
+                                );
+                                return;
+                            }
                         }
                     } else {
-                        let _ = pipe.call(Some(&session), "Fetch.failRequest", json!({"requestId": id, "errorReason": "Failed"}), Instant::now() + std::time::Duration::from_secs(30));
+                        let _ = pipe.call(
+                            Some(&session),
+                            "Fetch.failRequest",
+                            json!({"requestId": id, "errorReason": "Failed"}),
+                            Instant::now() + std::time::Duration::from_secs(30),
+                        );
                         return;
                     }
                 }
@@ -175,40 +225,97 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
                 data.as_bytes().to_vec()
             } else if request["hasPostData"].as_bool() == Some(true) {
                 let network_id = event.pointer("/params/networkId").and_then(Value::as_str);
-                match network_id.and_then(|network_id| pipe.call(Some(&session), "Network.getRequestPostData",
-                    json!({"requestId": network_id}), Instant::now() + std::time::Duration::from_secs(30)).ok())
-                    .and_then(|data| data["postData"].as_str().map(|s| s.as_bytes().to_vec())) {
+                match network_id
+                    .and_then(|network_id| {
+                        pipe.call(
+                            Some(&session),
+                            "Network.getRequestPostData",
+                            json!({"requestId": network_id}),
+                            Instant::now() + std::time::Duration::from_secs(30),
+                        )
+                        .ok()
+                    })
+                    .and_then(|data| data["postData"].as_str().map(|s| s.as_bytes().to_vec()))
+                {
                     Some(bytes) => bytes,
-                    None => { let _ = pipe.call(Some(&session), "Fetch.failRequest", json!({"requestId": id, "errorReason": "Failed"}), Instant::now() + std::time::Duration::from_secs(30)); return; }
+                    None => {
+                        let _ = pipe.call(
+                            Some(&session),
+                            "Fetch.failRequest",
+                            json!({"requestId": id, "errorReason": "Failed"}),
+                            Instant::now() + std::time::Duration::from_secs(30),
+                        );
+                        return;
+                    }
                 }
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             let response = relay.fetch(oneiron_container::HttpRequest {
-                url: request["url"].as_str().unwrap_or("").to_owned(), method: request["method"].as_str().unwrap_or("GET").to_owned(),
-                headers, body, follow_redirects: false,
+                url: request["url"].as_str().unwrap_or("").to_owned(),
+                method: request["method"].as_str().unwrap_or("GET").to_owned(),
+                headers,
+                body,
+                follow_redirects: false,
             });
             let deadline = Instant::now() + std::time::Duration::from_secs(30);
             match response {
                 Ok(response) => {
                     use base64::Engine as _;
-                    let headers: Vec<_> = response.headers.into_iter().map(|(name,value)| json!({"name": name, "value": value})).collect();
-                    let _ = pipe.call(Some(&session), "Fetch.fulfillRequest", json!({"requestId": id,
+                    let headers: Vec<_> = response
+                        .headers
+                        .into_iter()
+                        .map(|(name, value)| json!({"name": name, "value": value}))
+                        .collect();
+                    let _ = pipe.call(
+                        Some(&session),
+                        "Fetch.fulfillRequest",
+                        json!({"requestId": id,
                         "responseCode": response.status, "responseHeaders": headers,
-                        "body": base64::engine::general_purpose::STANDARD.encode(response.body)}), deadline);
+                        "body": base64::engine::general_purpose::STANDARD.encode(response.body)}),
+                        deadline,
+                    );
                 }
-                Err(_) => { let _ = pipe.call(Some(&session), "Fetch.failRequest", json!({"requestId": id, "errorReason": "BlockedByClient"}), deadline); }
+                Err(_) => {
+                    let _ = pipe.call(
+                        Some(&session),
+                        "Fetch.failRequest",
+                        json!({"requestId": id, "errorReason": "BlockedByClient"}),
+                        deadline,
+                    );
+                }
             }
         });
     }
 }
 
-pub(crate) fn enable_network(pipe: &Pipe, session: &str, deadline: Instant) -> Result<(), BrowserError> {
+pub(crate) fn enable_network(
+    pipe: &Pipe,
+    session: &str,
+    deadline: Instant,
+) -> Result<(), BrowserError> {
     pipe.call(Some(session), "Network.enable", json!({}), deadline)?;
-    pipe.call(Some(session), "Network.setBypassServiceWorker", json!({"bypass": true}), deadline)?;
-    pipe.call(Some(session), "Fetch.enable", json!({"patterns": [
-        {"urlPattern": "http://*", "requestStage": "Request"},
-        {"urlPattern": "https://*", "requestStage": "Request"}
-    ]}), deadline)?;
-    pipe.call(Some(session), "Target.setAutoAttach", json!({"autoAttach": true,
-        "waitForDebuggerOnStart": true, "flatten": true}), deadline)?;
+    pipe.call(
+        Some(session),
+        "Network.setBypassServiceWorker",
+        json!({"bypass": true}),
+        deadline,
+    )?;
+    pipe.call(
+        Some(session),
+        "Fetch.enable",
+        json!({"patterns": [
+            {"urlPattern": "http://*", "requestStage": "Request"},
+            {"urlPattern": "https://*", "requestStage": "Request"}
+        ]}),
+        deadline,
+    )?;
+    pipe.call(
+        Some(session),
+        "Target.setAutoAttach",
+        json!({"autoAttach": true,
+        "waitForDebuggerOnStart": true, "flatten": true}),
+        deadline,
+    )?;
     Ok(())
 }

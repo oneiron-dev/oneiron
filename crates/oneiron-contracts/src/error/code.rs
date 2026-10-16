@@ -235,7 +235,9 @@ impl CodeError {
             Self::RepoMutationFailed(_) => ErrorKind::RepoMutationFailed,
             Self::RepoMutationRecoveryDiverged { .. } => ErrorKind::RepoMutationRecoveryDiverged,
             Self::MicroVmBackendUnavailable { .. } => ErrorKind::MicroVmBackendUnavailable,
-            Self::MicroVmBackendError { .. } | Self::SandboxAbandoned { .. } => ErrorKind::MicroVmBackendError,
+            Self::MicroVmBackendError { .. } | Self::SandboxAbandoned { .. } => {
+                ErrorKind::MicroVmBackendError
+            }
             Self::MicroVmOverlayError { .. } => ErrorKind::MicroVmOverlayError,
             Self::MicroVmCredentialDestinationDenied { .. } => {
                 ErrorKind::MicroVmCredentialDestinationDenied
