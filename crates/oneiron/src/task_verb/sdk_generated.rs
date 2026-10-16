@@ -38,6 +38,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
             ),
             (
+                "self.identity.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+                >(),
+            ),
+            (
+                "self.identity.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::identity::IdentityActNowRequest,
+                >(),
+            ),
+            (
                 "vault.people.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
             ),
@@ -494,6 +506,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<CompanionSharingRequest>(),
             ),
             (
+                "vault.companions.sharing.set",
+                crate::code_run::vault_read::request_schema::<CompanionSharingSetRequest>(),
+            ),
+            (
                 "vault.workspace.work_companion.get",
                 crate::code_run::vault_read::request_schema::<WorkspaceRefRequest>(),
             ),
@@ -813,6 +829,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.memory.diary.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.identity.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.identity.settle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1515,6 +1545,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.companions.sharing.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workspace.work_companion.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1819,6 +1856,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary.review" => {
             let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
         }
+        "self.identity.answer" => {
+            let _input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest =
+                decode(value.clone())?;
+        }
+        "self.identity.settle" => {
+            let _input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest =
+                decode(value.clone())?;
+        }
         "vault.people.list" => {
             let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
         }
@@ -2121,6 +2166,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.companions.sharing.get" => {
             let _input: CompanionSharingRequest = decode(value.clone())?;
         }
+        "vault.companions.sharing.set" => {
+            let _input: CompanionSharingSetRequest = decode(value.clone())?;
+        }
         "vault.workspace.work_companion.get" => {
             let _input: WorkspaceRefRequest = decode(value.clone())?;
         }
@@ -2328,6 +2376,8 @@ pub fn invoke(
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
+        "self.identity.answer" => encode(self_identity_answer(memory, decode(value)?)?),
+        "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
@@ -2454,6 +2504,9 @@ pub fn invoke(
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
             encode(vault_companions_sharing_get(memory, decode(value)?)?)
+        }
+        "vault.companions.sharing.set" => {
+            encode(vault_companions_sharing_set(memory, decode(value)?)?)
         }
         "vault.workspace.work_companion.get" => {
             encode(vault_workspace_work_companion_get(memory, decode(value)?)?)
@@ -2639,6 +2692,18 @@ pub fn self_memory_diary_review(
     input: crate::memory::DiaryReviewAnswer,
 ) -> MemoryResult<crate::memory::DiaryReadRequest> {
     memory.answer_diary_read(&input)
+}
+pub fn self_identity_answer(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentitySettled> {
+    memory.identity_answer(&input)
+}
+pub fn self_identity_settle(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentityActNow> {
+    memory.identity_act_now(&input)
 }
 pub fn vault_people_list(
     memory: &Memory<'_>,
@@ -3431,6 +3496,12 @@ pub fn vault_companions_sharing_get(
         companion: crate::EntityId::from_hex(&input.companion_ref)?,
         contact: crate::EntityId::from_hex(&input.contact_ref)?,
     })
+}
+pub fn vault_companions_sharing_set(
+    memory: &Memory<'_>,
+    input: CompanionSharingSetRequest,
+) -> MemoryResult<crate::workspace_roster::CompanionSharingView> {
+    memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)
 }
 pub fn vault_workspace_work_companion_get(
     memory: &Memory<'_>,

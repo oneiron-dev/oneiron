@@ -51,6 +51,10 @@ declare namespace self {
   const grants: {
     ask(input: { pr: string; scope: { kind: 'messages' | 'summaries' | 'relationship_claims'; space_ref: string } | { kind: 'companion_profile'; facet_ref?: string | null } }): Promise<unknown>;
   };
+  const identity: {
+    answer(input: { ask: string; choice: string }): Promise<unknown>;
+    settle(input: { conversation?: string | null; effect: "send" | "pay" | "invite" | "share"; name: string; prompt: string; someone_new: string }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;
@@ -112,6 +116,7 @@ declare const vault: {
   companions: {
     sharing: {
       get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+      set(input: { companion_ref: string; contact_ref: string; expected_delta: string; proposal_ref: string }): Promise<unknown>;
     };
   };
   conversations: {

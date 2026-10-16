@@ -188,7 +188,7 @@ pub(super) async fn serve_with_config(
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
     let sync_server = Arc::new(sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
-    crate::replay_judge::register(&sync_server);
+    crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
     // The vault's first oversight receipts, before the host's own workers
     // start: a vault that cannot sign them never reports ready.
     let oversight = sync_server
@@ -214,6 +214,10 @@ pub(super) async fn serve_with_config(
     workers.push(sync_server.spawn_board_publisher());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
+    // Due standing questions are answered through the ladder (OF-506).
+    workers.push(crate::decision_graph::spawn(&sync_server));
+    // Uncertain identities are decided, or asked of the person (OF-123).
+    workers.push(crate::ai_host::identity::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
