@@ -211,6 +211,8 @@ pub(crate) fn erase_row_provenance_in_txn(
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
 ) -> Result<()> {
+    // A held row keeps its bodies whichever door erases it (OF-470).
+    crate::store::legal_hold::refuse_held_in_txn(store, txn, row.as_bytes())?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
     body::release_owner_bodies_in_txn(store, txn, row)?;
     Ok(())

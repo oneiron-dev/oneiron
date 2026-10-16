@@ -266,21 +266,36 @@ impl Memory<'_> {
     /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
     /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
-        self.purge_note_history_with(None, note, Some(through))
+        self.purge_note_history_with(None, note, Some(through), None)
             .map(|_| ())
     }
 
     /// [`Self::purge_note_history`] as `owner`, whose proof is rechecked in the
     /// transaction that commits. Without `through` it erases up to the oldest
     /// pin, or up to the head when nothing pins the note. The receipt lands
-    /// beside the entity-text purge receipts.
+    /// beside the entity-text purge receipts. A legal hold on the note refuses
+    /// it (OF-470); with two or more live Owners it runs only through the
+    /// vault's `erase` veto window ([`Vault::start_text_history_erase`],
+    /// Docs Q05).
     pub fn purge_note_history_as(
         &self,
         owner: &AuthenticatedOwner,
         note: EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through)
+        self.purge_note_history_with(Some(owner), note, through, None)
+    }
+
+    /// [`Self::purge_note_history_as`], claiming the completed `erase` act
+    /// `act` in its writer.
+    pub(crate) fn purge_note_history_for_act(
+        &self,
+        owner: &AuthenticatedOwner,
+        note: EntityId,
+        through: Option<&[u8]>,
+        act: &str,
+    ) -> MemoryResult<PurgeReceipt> {
+        self.purge_note_history_with(Some(owner), note, through, Some(act))
     }
 
     fn purge_note_history_with(
@@ -288,6 +303,7 @@ impl Memory<'_> {
         owner: Option<&AuthenticatedOwner>,
         note: EntityId,
         requested: Option<&[u8]>,
+        act: Option<&str>,
     ) -> MemoryResult<PurgeReceipt> {
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn| {
@@ -306,6 +322,19 @@ impl Memory<'_> {
                     txn,
                     self.actor(),
                     self.actor_class(),
+                )?;
+                // A held note keeps its history (OF-470).
+                self.vault()
+                    .store
+                    .reject_legal_hold_in_txn(txn, note.as_bytes())?;
+                let receipt_id = self.vault().new_entity_id()?;
+                crate::entity_doc::admit_history_erase_in_txn(
+                    self.vault(),
+                    txn,
+                    &note,
+                    requested,
+                    act,
+                    &receipt_id,
                 )?;
                 let doc = load(self.vault(), txn, note)?;
                 let key_prefix = format!("{}:", note.to_hex()).into_bytes();
@@ -348,7 +377,6 @@ impl Memory<'_> {
                     &shallow.doc.shallow_since_vv().to_vv().encode(),
                 )?;
                 let applied = through.encode();
-                let receipt_id = self.vault().new_entity_id()?;
                 let receipt = PurgeReceipt {
                     receipt: receipt_id.to_hex(),
                     entity: note.to_hex(),

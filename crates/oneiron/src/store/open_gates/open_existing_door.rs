@@ -186,6 +186,7 @@ impl Store {
                 ),
             )),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
+            legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             clock,
             group_commit: crate::store::GroupCommit::default(),
             diagnostics: Diagnostics::default(),
