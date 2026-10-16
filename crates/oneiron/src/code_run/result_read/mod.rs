@@ -489,10 +489,6 @@ impl Scan {
         self.left -= bytes.len() as u64;
         Ok(bytes)
     }
-
-    fn spent(&self) -> bool {
-        self.left == 0
-    }
 }
 
 /// A place in a body and the newlines before it: the line it is on.
@@ -618,7 +614,7 @@ impl Vault {
             else {
                 continue;
             };
-            let mut card = card(&storage, output, Some(&binding.name))?;
+            let mut card = card(&storage, output, Some(binding.name.as_str()))?;
             if let Some(fields) = card.as_object_mut() {
                 fields.remove("read");
             }
