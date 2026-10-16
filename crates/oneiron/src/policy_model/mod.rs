@@ -92,6 +92,7 @@ pub use hold_queue::{HeldPolicyItem, PolicyHoldResolution};
 mod owner_rows;
 pub use crate::batch::secret_scan::SecretScanMode;
 pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource};
+pub(crate) use notice::trusted_contact_notices;
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
