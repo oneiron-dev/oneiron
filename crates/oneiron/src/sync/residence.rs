@@ -8,6 +8,7 @@ mod admission;
 mod discover;
 mod policy;
 mod prune;
+mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use discover::discover_local_window_keys;
 pub use policy::{
@@ -16,6 +17,10 @@ pub use policy::{
 };
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{prune_thin_items, record_item_touch};
+pub use sealed::{
+    SEALED_SHELF_PAGE_MAX, SealedShelfEntry, sealed_shelf_after, sealed_shelf_packet,
+    shelve_sealed_window,
+};
 
 #[cfg(test)]
 use loro::ExportMode;

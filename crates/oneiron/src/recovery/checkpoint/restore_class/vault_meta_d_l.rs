@@ -201,6 +201,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LLM_EXTRACTION_TEACHER_PROBE, LIVE),
     (&t::LLM_MANIFEST, LIVE),
     (&t::LLM_MODEL_DESCRIPTION, LIVE),
+    (&t::LLM_MODEL_TRIAL, LIVE),
     (&t::LLM_PURPOSE_DEFAULTS, LIVE),
     (&t::LLM_REGISTRY_ROW, LIVE),
     (&t::LLM_RESIDENT_ROUTES, LIVE),
