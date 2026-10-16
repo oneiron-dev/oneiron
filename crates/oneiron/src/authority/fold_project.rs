@@ -171,7 +171,6 @@ pub(super) fn project_once(
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
         retired_keys,
         closed_handoffs,
-        tier_floor: merged.as_ref().map(|state| state.tier_floor),
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
         }),

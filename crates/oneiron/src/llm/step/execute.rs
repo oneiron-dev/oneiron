@@ -226,15 +226,22 @@ async fn durable_step(
 
     // The deadline only gates admission. Once admitted, the provider (and any
     // retries) runs to a terminal response so its lease can settle real usage.
-    let generated = super::schema::generate(
-        backend,
-        &request,
-        &admission.lease,
-        guard,
-        ctx.deadline,
-        check,
-    )
-    .await;
+    let generated = ctx
+        .vault
+        .during_journaled_model_wait(
+            ctx.attempt_id,
+            step_hash,
+            ctx.now_ms,
+            super::schema::generate(
+                backend,
+                &request,
+                &admission.lease,
+                guard,
+                ctx.deadline,
+                check,
+            ),
+        )
+        .await;
     // A corrective call failed: an earlier response was already answered and
     // paid, whatever usage it reported.
     let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
@@ -302,7 +309,6 @@ async fn durable_step(
     // is idempotent on an already-settled lease, so the happy-path settle stays
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
-    ctx.vault.resume_from_slim_on_inbound()?;
 
     let payload = serde_json::to_vec(&response)?;
     step_state_write(
