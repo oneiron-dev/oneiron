@@ -390,6 +390,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_weave_report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.report")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.report", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_digest(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.digest")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.digest", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_packs_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.packs.put")?;
         let output = py
@@ -893,6 +907,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_refs_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.refs.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.refs.resolve", input))
             .map_err(raise)?;
         encode(&output)
     }

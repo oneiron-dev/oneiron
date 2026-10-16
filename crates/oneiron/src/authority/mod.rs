@@ -48,6 +48,7 @@ mod fold_resume;
 mod fold_schedule;
 mod fold_state;
 mod handoff_equivocation;
+mod history_coverage;
 mod history_transfer;
 mod host_actor;
 mod host_re_root;
@@ -137,6 +138,7 @@ pub use fold_state::*;
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
+pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;

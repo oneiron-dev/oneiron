@@ -401,7 +401,7 @@ impl Vault {
                         me,
                         key,
                         reached.owner,
-                        &root,
+                        Some(&root),
                         &my_public,
                         &mut seq,
                     )?]
@@ -471,7 +471,7 @@ impl Vault {
                             me,
                             key,
                             reached.owner,
-                            &root,
+                            Some(&root),
                             &my_public,
                             &mut seq,
                         )?;

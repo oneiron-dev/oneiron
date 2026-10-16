@@ -2,7 +2,7 @@
 
 use super::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, execute_mcp_execute_code,
-    execute_mcp_generated_verb, execute_mcp_setup, mcp_actor_class_wire,
+    execute_mcp_generated_verb, execute_mcp_read_result, execute_mcp_setup, mcp_actor_class_wire,
 };
 use crate::mcp::McpActorMetadata;
 use crate::mcp::McpConnectorActorResolutionError;
@@ -387,6 +387,7 @@ pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetad
     match args {
         McpValidatedToolArgs::Setup(args) => &args.actor,
         McpValidatedToolArgs::ExecuteCode(args) => &args.actor,
+        McpValidatedToolArgs::ReadResult(args) => &args.actor,
         McpValidatedToolArgs::Verb(args) => &args.payload.actor,
     }
 }
@@ -412,12 +413,18 @@ pub(crate) async fn execute_mcp_tool(
                 McpCallEffect::Reads,
             )?;
         }
-        McpValidatedToolArgs::ExecuteCode(_) => mcp_execute_code_gate(server, actor)?,
+        // A result read takes the credential its run was admitted on.
+        McpValidatedToolArgs::ExecuteCode(_) | McpValidatedToolArgs::ReadResult(_) => {
+            mcp_execute_code_gate(server, actor)?;
+        }
     }
     match args {
         McpValidatedToolArgs::Setup(args) => execute_mcp_setup(server, *args, actor).await,
         McpValidatedToolArgs::ExecuteCode(args) => {
             execute_mcp_execute_code(server, *args, actor).await
+        }
+        McpValidatedToolArgs::ReadResult(args) => {
+            execute_mcp_read_result(server, *args, actor).await
         }
         McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
     }

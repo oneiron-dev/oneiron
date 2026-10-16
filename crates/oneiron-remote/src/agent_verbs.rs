@@ -108,6 +108,14 @@ impl OneironClient {
                 "vault.kv.namespaces" => {
                     remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                 }
+                "vault.weave.report" => {
+                    remote_agent_verb_output::<oneiron::claim::WeaveReportView>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.weave.digest" => remote_agent_verb_output::<
+                    Option<oneiron::claim::WeaveDigestView>,
+                >(client, verb, &input),
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
@@ -310,6 +318,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.get" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::memory::EntityView>>,
+                >(client, verb, &input),
+                "vault.refs.resolve" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::lens::RecordRefPreview>,
                 >(client, verb, &input),
                 "vault.search.bm25" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
@@ -702,6 +713,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.kv.namespaces", value)
+    }
+    pub fn vault_weave_report(
+        &self,
+        input: &oneiron::claim::WeaveReportRequest,
+    ) -> Result<oneiron::claim::WeaveReportView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.report", value)
+    }
+    pub fn vault_weave_digest(
+        &self,
+        input: &oneiron::claim::WeaveDigestRequest,
+    ) -> Result<Option<oneiron::claim::WeaveDigestView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.digest", value)
     }
     pub fn vault_packs_put(
         &self,
@@ -1538,6 +1573,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.get", value)
+    }
+    pub fn vault_refs_resolve(
+        &self,
+        input: &oneiron::lens::ResolveRecordRefRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::lens::RecordRefPreview>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.refs.resolve", value)
     }
     pub fn vault_search_bm25(
         &self,

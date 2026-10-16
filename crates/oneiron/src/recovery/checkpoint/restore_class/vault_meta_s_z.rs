@@ -23,6 +23,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_LEASE, LIVE),
     (&t::SECRET_MATERIALIZATION_RECEIPT, LIVE),
     (&t::SECRET_LOCAL_REGISTRATION, LIVE),
+    (&t::SECRET_MASK_ORIGIN, CONTENT),
     (&t::SECRET_ROTATION_RECEIPT, LIVE),
     (&t::SELF_HEAL_CENTROID_EVIDENCE, CONTENT),
     (&t::SELF_HEAL_DISTILL, CONTENT),
@@ -242,4 +243,5 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
     (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
     (&t::WORLD_KEY_SEALED, LIVE),
+    (&t::WORLD_KEY_SEALED_WINDOW, LIVE),
 ];

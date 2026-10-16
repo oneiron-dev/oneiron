@@ -335,6 +335,10 @@ oneiron secret-scan on
 ```
 
 Routes: `GET /v1/owner/secret-scan` and `POST /v1/owner/secret-scan` with `{"mode": "off"}`.
+With the scan `on`, a secret the write door can place in text or in a field goes to secret
+custody, and the record keeps its handle in its place: `[secret sc12]` inside text, or `sc12` as a
+field's whole value. The rest of the write lands. A recovery phrase, a key inside a binary file
+and anything else the door finds but cannot place still refuse the whole write.
 `off` skips the write-door scan on ingest. Serve and export still redact credentials either
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.
