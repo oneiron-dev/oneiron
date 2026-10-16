@@ -72,6 +72,7 @@
 
 mod address;
 mod deck;
+pub mod deck_create;
 mod docx;
 mod formula;
 mod inspect;
@@ -110,6 +111,12 @@ pub use oneiron_xlsx_formula::DocumentLocation;
 /// The clock and seed a session gives the in-process recalc
 /// ([`EditSession::recalc_clock`]).
 pub use oneiron_xlsx_formula::RecalcClock;
+
+/// Whether `bytes` open as an Office package: the floor an office export
+/// clears before it waits beside its artifact as a proposal.
+pub(crate) fn read_office_package(bytes: &[u8]) -> crate::error::Result<()> {
+    opc::read(bytes).map(|_| ())
+}
 
 #[cfg(test)]
 mod docx_tests;

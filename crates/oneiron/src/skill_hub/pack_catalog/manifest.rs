@@ -42,6 +42,9 @@ pub struct PackManifest {
     pub kinds: BTreeSet<String>,
     pub requested_grants: BTreeSet<String>,
     pub wake_subscriptions: BTreeSet<String>,
+    /// Hook folders under `hooks/`, by name (ARCH-0053 §7, PACK-HOOKS = A).
+    /// Install binds each one; the runner is L11's.
+    pub hooks: BTreeSet<String>,
     /// Predicate migration maps this source ships for moves from earlier
     /// sources of the pack (ARCH-0059 §4, rung 1).
     pub migrations: Vec<PackMigration>,
@@ -164,9 +167,16 @@ impl PackManifest {
                 .ok_or_else(|| invalid("agent pack requires a facet map"))?
                 .validate_paths()?;
             if adapter.is_some()
-                || ["predicates", "kinds", "grants", "wakes", "migrations"]
-                    .iter()
-                    .any(|key| fields.contains_key(key))
+                || [
+                    "predicates",
+                    "kinds",
+                    "grants",
+                    "wakes",
+                    "hooks",
+                    "migrations",
+                ]
+                .iter()
+                .any(|key| fields.contains_key(key))
             {
                 return Err(invalid("agent pack cannot declare runtime powers"));
             }
@@ -176,7 +186,8 @@ impl PackManifest {
         let name = required("name", kind == PackKind::Agent)?;
         if kind == PackKind::Agent {
             validate_agent_text(&name, 256)?;
-        } else {
+        } else if !(name == super::LOCAL_PACK_NAME && kind == PackKind::Capability) {
+            // The vault's own `local` pack is the one unscoped name.
             validate_name(&name)?;
         }
         let description = required("description", kind == PackKind::Agent)?;
@@ -195,6 +206,10 @@ impl PackManifest {
         }
         if predicates.iter().any(|name| kinds.contains(name)) {
             return Err(invalid("predicate and structural names must be disjoint"));
+        }
+        let hooks = list("hooks")?;
+        for hook in &hooks {
+            super::hooks::validate_hook_name(hook)?;
         }
         let migrations = fields
             .get("migrations")
@@ -217,6 +232,7 @@ impl PackManifest {
             kinds,
             requested_grants: list("grants")?,
             wake_subscriptions: list("wakes")?,
+            hooks,
             migrations,
         })
     }
@@ -249,6 +265,7 @@ fn frontmatter_fields(text: &str) -> Result<BTreeMap<&str, &str>> {
                 | "kinds"
                 | "grants"
                 | "wakes"
+                | "hooks"
                 | "facets"
                 | "migrations"
         ) {
@@ -343,7 +360,7 @@ impl<'de> Deserialize<'de> for Strings {
         deserializer.deserialize_any(Walk).map(Strings)
     }
 }
-fn scalar(value: &str, allow_controls: bool) -> Result<String> {
+pub(super) fn scalar(value: &str, allow_controls: bool) -> Result<String> {
     let text: String = if value.starts_with('"') {
         serde_json::from_str(value).map_err(|_| invalid("invalid quoted scalar"))?
     } else {

@@ -5,7 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::codec::{AUDIT, next_evidence_sequence_in_txn};
-use super::judge::{AttributionJudge, RuleAttributionJudge};
+use super::judge::AttributionDecisions;
 use super::split::{classify_split, unclear_floor};
 use super::types::{
     AttemptOutcome, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
@@ -68,16 +68,17 @@ impl AttributionAuditReport {
 /// visible in an aggregate metric instead of hiding inside individual verdicts.
 pub fn run_attribution_audit(vault: &Vault) -> Result<f32> {
     let fixtures = held_out_audit_fixtures();
-    let report = run_attribution_audit_with_judge(
+    let report = run_attribution_audit_with_decisions(
         vault,
         &fixtures,
-        &RuleAttributionJudge,
+        None,
         vault.store.clock.now_recorded_at(),
     )?;
     Ok(report.pass_rate())
 }
 
-/// The generic audit harness: any fixture set, any judge.
+/// The generic audit harness: any fixture set, the host's decisions or (with
+/// `None`) the rule tier.
 ///
 /// `receipted` here = persisted audit rows at the audited prefix, NOT RS1
 /// receipt rows (which are reified projections over the send ledger).
@@ -85,10 +86,10 @@ pub fn run_attribution_audit(vault: &Vault) -> Result<f32> {
 /// Deliberately not specialized to skill attribution — ED-03 reuses this shape
 /// for amendment evidence, so the harness stays generic over the evidence class
 /// by taking its fixtures as an argument.
-pub fn run_attribution_audit_with_judge(
+pub fn run_attribution_audit_with_decisions(
     vault: &Vault,
     fixtures: &[AuditFixture],
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
     at: u64,
 ) -> Result<AttributionAuditReport> {
     let floor = unclear_floor(vault)?;
@@ -103,7 +104,7 @@ pub fn run_attribution_audit_with_judge(
             hunks: &[],
             floor,
         };
-        let answer = classify_split(judge, &request, &[])?.and_then(|split| split.sole());
+        let answer = classify_split(decisions, &request, &[])?.and_then(|(split, _)| split.sole());
         if answer.is_none() {
             abstained += 1;
         }

@@ -119,12 +119,16 @@ pub enum BlockContent {
 pub enum Carrier {
     Chart,
     Table,
+    /// Parts of one whole: a pie of one series.
+    Share,
 }
 
 /// An evidence pin as the brief keeps it: document, version, cursor span and
 /// the quote with its BLAKE3 hash. Cursors and versions are opaque here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
+    /// The cited CLAIM, when the engine maps the pin's cursors itself.
+    pub claim: Option<String>,
     pub document: String,
     pub version: String,
     pub start: String,
@@ -144,6 +148,9 @@ pub struct Dataset {
     /// What a missing cell means; required when any cell is missing.
     pub missing: Option<String>,
     pub sources: Vec<String>,
+    /// Merge rectangles over the table grid, header row 0 included. A
+    /// merge covers data rows only; its continuation cells are `null`.
+    pub merges: Vec<crate::native_patch::Merge>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +159,79 @@ pub struct Column {
     pub kind: ColumnKind,
     /// Required on number columns, refused on the others.
     pub unit: Option<String>,
+    /// How a number column shows its values; refused on the others.
+    pub format: Option<NumberFormat>,
+}
+
+impl Column {
+    /// A number as this column shows it.
+    #[must_use]
+    pub fn display(&self, value: f64) -> String {
+        self.format.map_or_else(
+            || crate::native_patch::number(value),
+            |format| format.render(value),
+        )
+    }
+}
+
+/// A number column's display: fixed decimals, optional thousands grouping,
+/// and percent, where the value is a fraction shown times one hundred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NumberFormat {
+    pub decimals: u8,
+    pub grouping: bool,
+    pub percent: bool,
+}
+
+impl NumberFormat {
+    pub const MAX_DECIMALS: u8 = 10;
+
+    /// The SpreadsheetML format code, such as `#,##0.00` or `0.0%`.
+    #[must_use]
+    pub fn code(&self) -> String {
+        let whole = if self.grouping { "#,##0" } else { "0" };
+        let fraction = if self.decimals > 0 {
+            format!(".{}", "0".repeat(usize::from(self.decimals)))
+        } else {
+            String::new()
+        };
+        let percent = if self.percent { "%" } else { "" };
+        format!("{whole}{fraction}{percent}")
+    }
+
+    /// The value as the code shows it.
+    #[must_use]
+    pub fn render(&self, value: f64) -> String {
+        let shown = if self.percent { value * 100.0 } else { value };
+        let text = format!("{shown:.*}", usize::from(self.decimals));
+        let text = if self.grouping { group(&text) } else { text };
+        if self.percent {
+            format!("{text}%")
+        } else {
+            text
+        }
+    }
+}
+
+/// Thousands separators in the whole part of a formatted number.
+fn group(text: &str) -> String {
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let (whole, fraction) = rest
+        .split_once('.')
+        .map_or((rest, None), |(w, f)| (w, Some(f)));
+    let mut grouped = String::new();
+    for (index, digit) in whole.chars().enumerate() {
+        if index > 0 && (whole.len() - index) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    match fraction {
+        Some(fraction) => format!("{sign}{grouped}.{fraction}"),
+        None => format!("{sign}{grouped}"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,6 +540,7 @@ fn block(
                 let carrier = match value.as_str() {
                     Some("chart") => Carrier::Chart,
                     Some("table") => Carrier::Table,
+                    Some("share") => Carrier::Share,
                     _ => return Err(invalid(&path)),
                 };
                 if carriers.contains(&carrier) {
@@ -493,13 +574,32 @@ fn block(
 }
 
 /// A table expresses any dataset with rows; a classic chart needs a text or
-/// date category column followed only by number series.
+/// date category column followed only by number series; a share needs a
+/// text category and one number series of present, non-negative parts with
+/// a positive whole.
 fn expresses(carrier: Carrier, dataset: &Dataset) -> bool {
     if dataset.rows.is_empty() {
         return false;
     }
     match carrier {
         Carrier::Table => true,
+        Carrier::Share => match dataset.columns.as_slice() {
+            [category, part] => category.kind == ColumnKind::Text
+                && part.kind == ColumnKind::Number
+                && dataset.rows.iter().all(
+                    |row| matches!(row.get(1), Some(Cell::Number(n)) if n.is_finite() && *n >= 0.0),
+                )
+                && dataset
+                    .rows
+                    .iter()
+                    .filter_map(|row| match row.get(1) {
+                        Some(Cell::Number(n)) => Some(*n),
+                        _ => None,
+                    })
+                    .sum::<f64>()
+                    > 0.0,
+            _ => false,
+        },
         Carrier::Chart => match dataset.columns.split_first() {
             Some((category, series)) => {
                 category.kind != ColumnKind::Number
@@ -518,6 +618,7 @@ fn pin(value: &Value, path: &str) -> Result<Pin, BriefError> {
         value,
         path,
         &[
+            "claim",
             "document",
             "version",
             "start",
@@ -546,6 +647,11 @@ fn pin(value: &Value, path: &str) -> Result<Pin, BriefError> {
             .ok_or_else(|| invalid(&fields.at("drift")))?,
     };
     Ok(Pin {
+        claim: fields
+            .map
+            .get("claim")
+            .map(|claim| text(claim, &fields.at("claim")))
+            .transpose()?,
         document: fields.text("document")?,
         version: fields.text("version")?,
         start: fields.text("start")?,
@@ -595,11 +701,11 @@ fn dataset(value: &Value, path: &str) -> Result<Dataset, BriefError> {
     let fields = Fields::new(
         value,
         path,
-        &["id", "columns", "rows", "missing", "sources"],
+        &["id", "columns", "rows", "missing", "sources", "merges"],
     )?;
     let mut columns = Vec::new();
     for (path, value) in fields.list("columns")? {
-        let column = Fields::new(value, &path, &["name", "type", "unit"])?;
+        let column = Fields::new(value, &path, &["name", "type", "unit", "format"])?;
         let kind = match column.word("type")? {
             Some("number") => ColumnKind::Number,
             Some("text") => ColumnKind::Text,
@@ -625,10 +731,37 @@ fn dataset(value: &Value, path: &str) -> Result<Dataset, BriefError> {
             }
             _ => {}
         }
+        let format = match column.map.get("format") {
+            None => None,
+            Some(_) if kind != ColumnKind::Number => return Err(invalid(&column.at("format"))),
+            Some(value) => {
+                let path = column.at("format");
+                let format = Fields::new(value, &path, &["decimals", "grouping", "percent"])?;
+                let flag = |key: &str| -> Result<bool, BriefError> {
+                    format.map.get(key).map_or(Ok(false), |value| {
+                        value.as_bool().ok_or_else(|| invalid(&format.at(key)))
+                    })
+                };
+                let decimals = match format.map.get("decimals") {
+                    None => 0,
+                    Some(value) => value
+                        .as_u64()
+                        .and_then(|n| u8::try_from(n).ok())
+                        .filter(|n| *n <= NumberFormat::MAX_DECIMALS)
+                        .ok_or_else(|| invalid(&format.at("decimals")))?,
+                };
+                Some(NumberFormat {
+                    decimals,
+                    grouping: flag("grouping")?,
+                    percent: flag("percent")?,
+                })
+            }
+        };
         columns.push(Column {
             name: column.text("name")?,
             kind,
             unit,
+            format,
         });
     }
     let missing = fields
@@ -636,8 +769,17 @@ fn dataset(value: &Value, path: &str) -> Result<Dataset, BriefError> {
         .get("missing")
         .map(|meaning| text(meaning, &fields.at("missing")))
         .transpose()?;
+    let height = fields.optional_list("rows")?.len();
+    let merges = merges(&fields, height, columns.len())?;
+    let continuation = |row: usize, col: usize| {
+        merges.iter().any(|merge| {
+            (merge.row..merge.row + merge.rows).contains(&(row + 1))
+                && (merge.col..merge.col + merge.cols).contains(&col)
+                && (merge.row, merge.col) != (row + 1, col)
+        })
+    };
     let mut rows = Vec::new();
-    for (path, value) in fields.optional_list("rows")? {
+    for (index, (path, value)) in fields.optional_list("rows")?.into_iter().enumerate() {
         let cells = items(value, &path)?;
         if cells.len() != columns.len() {
             return Err(BriefError::Cell { path });
@@ -645,7 +787,16 @@ fn dataset(value: &Value, path: &str) -> Result<Dataset, BriefError> {
         let row = cells
             .into_iter()
             .zip(&columns)
-            .map(|((path, value), column)| cell(value, column.kind, path, missing.is_some()))
+            .enumerate()
+            .map(|(col, ((path, value), column))| {
+                if continuation(index, col) {
+                    return match value {
+                        Value::Null => Ok(Cell::Missing),
+                        _ => Err(BriefError::Cell { path }),
+                    };
+                }
+                cell(value, column.kind, path, missing.is_some())
+            })
             .collect::<Result<_, _>>()?;
         rows.push(row);
     }
@@ -659,7 +810,57 @@ fn dataset(value: &Value, path: &str) -> Result<Dataset, BriefError> {
             .into_iter()
             .map(|(path, value)| text(value, &path))
             .collect::<Result<_, _>>()?,
+        merges,
     })
+}
+
+/// Merge rectangles over data rows (`row` indexes `rows`), each at least two
+/// cells, inside the grid and disjoint; returned on the table grid, where
+/// the header is row 0.
+fn merges(
+    fields: &Fields<'_>,
+    height: usize,
+    width: usize,
+) -> Result<Vec<crate::native_patch::Merge>, BriefError> {
+    let mut out: Vec<crate::native_patch::Merge> = Vec::new();
+    for (path, value) in fields.optional_list("merges")? {
+        let merge = Fields::new(value, &path, &["row", "col", "rows", "cols"])?;
+        let number = |key: &str| {
+            merge
+                .get(key)?
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| invalid(&merge.at(key)))
+        };
+        let (row, col, rows, cols) = (
+            number("row")?,
+            number("col")?,
+            number("rows")?,
+            number("cols")?,
+        );
+        let inside = rows >= 1
+            && cols >= 1
+            && rows.saturating_mul(cols) >= 2
+            && row.checked_add(rows).is_some_and(|end| end <= height)
+            && col.checked_add(cols).is_some_and(|end| end <= width);
+        let next = crate::native_patch::Merge {
+            row: row + 1,
+            col,
+            rows,
+            cols,
+        };
+        let overlaps = out.iter().any(|held| {
+            next.row < held.row + held.rows
+                && held.row < next.row + next.rows
+                && next.col < held.col + held.cols
+                && held.col < next.col + next.cols
+        });
+        if !inside || overlaps {
+            return Err(invalid(&path));
+        }
+        out.push(next);
+    }
+    Ok(out)
 }
 
 fn cell(value: &Value, kind: ColumnKind, path: String, meaning: bool) -> Result<Cell, BriefError> {

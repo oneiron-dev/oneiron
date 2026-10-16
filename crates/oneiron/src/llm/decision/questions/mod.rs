@@ -19,7 +19,7 @@ pub use graph_ask::{
     GraphTypeSelection, GraphUnitContext, run_graph_ask, run_graph_ask_by_type,
     select_graph_units_by_type,
 };
-pub use outcomes::{calibration_pairs, project_bound_outcomes};
+pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcomes};
 pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;

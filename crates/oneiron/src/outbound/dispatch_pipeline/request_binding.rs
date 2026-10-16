@@ -74,6 +74,7 @@ impl PreparedOutboundDispatch {
         }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+        vault.require_builtin_channel_pack(&request.intent.channel)?;
         // Scheduled tasks cannot supply a seat snapshot today. Never let that
         // optional request field turn a LinkedIn connect into an ungated send.
         if request.intent.channel == LINKEDIN_CHANNEL
