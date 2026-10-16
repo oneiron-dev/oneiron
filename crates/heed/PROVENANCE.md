@@ -16,8 +16,9 @@ already-locked `0.2.6` — so no version moves and no dependency is added.
 
 ## Why this fork exists
 
-`Store::open_existing` (`crates/oneiron/src/store/open_gates.rs`) binds a vault
-root as a directory descriptor (`open(O_DIRECTORY|O_RDONLY|O_NOFOLLOW|
+`Store::open_existing` (`crates/oneiron/src/store/open_gates/open_existing_door.rs`,
+with the binding in `open_gates/vault_root_bind.rs`) binds a vault root as a
+directory descriptor (`open(O_DIRECTORY|O_RDONLY|O_NOFOLLOW|
 O_CLOEXEC)`), validates both LMDB entries `openat`-relative to it, and then must
 open the LMDB environment **through that descriptor**, as
 `/proc/self/fd/<dirfd>`, so that a rename, swap, or ABA of the caller's
@@ -176,8 +177,9 @@ in the crate — `open_locked` — not parallel implementations.
 
 The package sits under a `vendor/` directory and is **excluded** from the
 Oneiron workspace: `members = ["crates/*"]` would otherwise glob `crates/heed`,
-which holds no manifest of its own, so the root manifest carries
-`exclude = ["crates/heed"]`. Consequences, all intentional:
+which holds no manifest of its own, so the root manifest lists `crates/heed`
+and `crates/heed/vendor/heed-0.20.5` in `exclude`. Consequences, all
+intentional:
 
 - `cargo fmt`, workspace-wide clippy, and `cargo test` do not reach upstream
   bytes, so the vendored tree cannot be silently reformatted or relinted away

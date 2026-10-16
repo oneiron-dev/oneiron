@@ -186,7 +186,7 @@ def build(stage):
     out.append("```bash")
     out.append(f"CARGO_TARGET_DIR=$PWD/target scripts/refactor/conformance.sh {stage} <BASE-SHA>")
     out.append("```")
-    out.append("All checks (1–8 + E/C/F/X) then the WORKFLOW.md gate must print OK.\n")
+    out.append("All checks (1–8 + E/C/F/X) then the full cargo gate (fmt/clippy/nextest/doctest/doc/nextest-sync) must print OK.\n")
 
     out.append("## Done-means")
     out.append(f"- `conformance.sh {stage}` OK for all checks, exit 0.")

@@ -53,11 +53,20 @@ then that many UTF-8 bytes (maximum 8 MiB). Unknown fields are refused.
      errors, headers, reflected bodies, or arbitrary network response bytes.
      Unknown operations must be refused by the host transport. The host
      transport must validate destination/TLS, disallow redirects and bound I/O.
-   - `write` (path, bytes). Workspace-only regular whole-file proposals;
-     duplicates, traversal, other mounts, excess bytes/count fail closed.
-     Deletions, symlinks, and special files are unsupported and must refuse.
+   - `write` (path, bytes). A whole-file proposal for a workspace regular file.
+   - `delete` (path). Deletes a file that exists in the seeded base tree.
+   - `rename` (from, to). Moves a seeded base file to a distinct workspace path.
    - `finish` (status). Nonzero discards every proposal. Success seals deltas
      and kills/reaps the VM before exposing them to the adapter.
+
+   For `write`, `delete` and `rename`, every path must be in the workspace
+   mount and carries at most one effect (a rename occupies both its paths).
+   The host applies each accepted effect to its copy of the base tree's shape
+   and refuses a file/directory conflict or a result over the size or count
+   limits. Duplicates, traversal, other mounts and excess bytes/count fail
+   closed. Symlinks and special files are not representable and must refuse.
+   Each accepted proposal gets `receipt` (accepted true); any refused proposal
+   fails the whole run.
 
 Per-file limit: 1 MiB; total source/proposals: 16 MiB each; files: 8192;
 requests: 16384. Source bytes are copied through the socket. Host source trees
@@ -88,10 +97,10 @@ the credential call does not satisfy the boot acceptance test.
 
 ## First-party ABI convergence
 
-The shared WIT and generated SDK are byte-identical to C13 boundary commit
-`681957d045b59b4a3d5ae1c09875025f48fcba98`. The former string `run` ABI is removed.
-The in-process engine adapter keeps its pin, resource ceilings, replay clock/RNG,
-and per-operation gate bridge. It links only the tier's selected typed imports.
+The shared WIT is `crates/oneiron/wit/code-run.wit`, with generated bindings in
+`crates/oneiron/wit/generated/`. Both the foreign agent and the in-process engine
+adapter use it. The in-process adapter has its own pin, resource ceilings,
+replay clock/RNG, and per-operation gate bridge. It links only the tier's selected typed imports.
 First-party returned proposals are refused; writes must use their typed host traps.
 
 `step-result.result-json` in the first-party adapter is the strict JSON object
@@ -99,7 +108,7 @@ First-party returned proposals are refused; writes must use their typed host tra
 byte-array `bytes`. This envelope is an engine result, not arbitrary JavaScript
 return-value coercion. A QuickJS guest must produce this envelope. In contrast,
 the foreign agent only checks that result-json is valid bounded JSON; its mutations
-are explicitly carried by file-write proposals, not that result text.
+are carried by file write, delete and rename proposals, not that result text.
 `claim-input.subject` is a JSON-encoded entity hex string; `value` and credential
 `args` are JSON documents, and search results are individually JSON-encoded.
 Unknown/invalid authority fields do not exist in the typed claim record. Denied
@@ -108,6 +117,9 @@ result records: the engine still enforces and records budget decisions, but this
 ABI cannot expose the existing JSON budget extension to a guest. That is an
 explicit shared-boundary limitation, not a locally invented alternate WIT.
 
-The agent currently refuses claim-candidate proposals and deletions. Neither is
-silently discarded or applied. All file proposals are validated before scratch
-application. Host intake lowers changed whole files into exact-base file edits.
+The agent refuses claim-candidate proposals; the whole step fails, and nothing
+is silently discarded or applied. All file proposals are validated before
+scratch application. Host intake turns each accepted `write`, `delete` and
+`rename` into a typed `SandboxProposalWrite` (`FileWrite`, `FileDelete`,
+`FileRename`), which the adapter wraps as a `SandboxProposalDelta` at
+`Proposed` approval.

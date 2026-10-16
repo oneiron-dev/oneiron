@@ -44,7 +44,7 @@ BASH = r'''#!/usr/bin/env bash
 #   4 frozen anchors
 #   5 name-uniqueness across api/*.rs (api stages)
 #   6 error-literal inventory (codec stages)
-#   7 WORKFLOW.md gate (cargo fmt/clippy/nextest/doctest/doc/nextest-sync)
+#   7 full cargo gate (cargo fmt/clippy/nextest/doctest/doc/nextest-sync)
 #
 # Checks 1-6 are a self-contained embedded python program (no deps beyond
 # python3 + rustfmt + rg/git/awk). Check 7 shells out to cargo.
@@ -73,8 +73,8 @@ sed -n '/^#PYEOF_BEGIN$/,/^#PYEOF_END$/p' "$0" | sed '1d;$d' | sed 's/^#>//' > "
 echo "== conformance $STAGE (base $BASE) =="
 python3 "$PAYLOAD" checks "$ROOT" "$STAGE" "$BASE" "$MOVES"
 
-# ---- check 7: the WORKFLOW.md gate (WORKFLOW.md:44-49, de-rtk'd) ----
-echo "== check 7: WORKFLOW.md gate =="
+# ---- check 7: the full cargo gate (fmt/clippy/nextest/doctest/doc/nextest-sync) ----
+echo "== check 7: full cargo gate =="
 cd "$ROOT"
 export CARGO_TARGET_DIR="$ROOT/target"
 run() { echo "+ $*"; "$@"; }
@@ -85,7 +85,7 @@ run cargo nextest run --workspace --all-features --profile full
 run cargo test --doc --workspace --exclude oneiron-bench --all-features
 run env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 run cargo nextest run -p oneiron --features sync,test-hooks --profile full
-echo "OK check 7 (WORKFLOW gate)"
+echo "OK check 7 (full cargo gate)"
 
 echo "== CONFORMANCE GREEN for $STAGE =="
 exit 0

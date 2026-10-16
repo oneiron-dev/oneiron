@@ -30,7 +30,9 @@ oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
   revokes its earlier ones in the same act; the output lists them under
   `revoked_slip_ids`. Give each seat that must stay connected its own name
   (`claude-code-laptop`, `claude-code-desktop`). A slip lasts 30 days by
-  default (`--lifetime-secs` to change, capped by the vault's policy).
+  default (`--lifetime-secs` to change, capped by the vault's policy). The
+  lifetime runs on the vault's authority clock, so time while the vault is
+  closed does not use it up.
 - `--tier` sets what the agent may do (ARCH-0028's tiers). The latest mint
   for a name sets that agent's tier.
   - `full-access` (the default): what it writes lands at once, through the

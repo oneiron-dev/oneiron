@@ -88,11 +88,14 @@ both fail the CLI exit status.
 
 ## Recorded Mac mini result
 
-The post-review passing live fixture run and hashed outputs are committed
-under [`results/mac-mini-009/`](results/mac-mini-009/). Its summary and host pin are
-in [`results/README.md`](results/README.md). Use a **new** result directory for
-each later run; the command above shows the invocation shape, not a reusable
-output path.
+The latest live fixture run is committed under
+[`results/mac-mini-009/`](results/mac-mini-009/). Its
+[`matrix.json`](results/mac-mini-009/matrix.json) holds the five case verdicts.
+Each case directory holds a `receipt.json` with the hashed input, the hashed
+outputs and the observed environment, which matches
+[`environment.json`](environment.json). Use a **new** result directory for each
+later run; the command above shows the invocation shape, not a reusable output
+path.
 
 ## PPTArena preservation matrix
 
@@ -127,6 +130,5 @@ python3 scripts/office/review_seed_check.py scripts/office/review_example.json
 ```
 
 The checker rejects stale glossary versions, unknown/duplicate questions,
-missing evidence, and out-of-range probabilities. SLD-03's chat activation,
-model execution and comment-writing proposal remain a separate follow-on;
-this packet checker does not pretend to be that agent runtime.
+missing evidence, and out-of-range probabilities. It only validates a supplied
+answer packet: it does not run a model or write comments.

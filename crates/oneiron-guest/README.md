@@ -46,10 +46,11 @@ source and files; 16 MiB aggregate files; 8192 files/directories; 64 path levels
 Host calls have a 16383-call ceiling and cumulative read/random output is
 limited to 16 MiB. The merged workspace is also bounded to 16 MiB / 8192 files.
 The runtime caps each store to one 64 MiB memory, eight tables, 10000 table
-elements, 32 instances, and 10000000 fuel. The host wall-clock watchdog bounds
+elements, 32 instances, and 100000000 fuel. The host wall-clock watchdog bounds
 compilation, credential I/O, and VM execution.
 
-The ABI comes from `../oneiron/wit/code-run.wit`, via Wasmtime 38 bindgen.
+The ABI comes from `../oneiron/wit/code-run.wit` (world `guest`), via Wasmtime 48
+bindgen.
 The export is `run-step(source: string) -> result<step-result, string>`.
 Only these imports link: `read-file`, `credential-call`, `clock-now-unix-ms`,
 `random-bytes`. There is no WASI, network, environment, or first-party write
@@ -63,11 +64,17 @@ No credential material, host error text, headers, or reflected response body
 enters component memory.
 
 The agent validates every proposal before applying it to its scratch overlay.
-Only canonical workspace regular files are allowed. Descriptor-relative paths
-refuse symlinks, hard links, special files, traversal, duplicates, conflicting
-file/directory paths, and excess data. It enumerates the resulting tree and
-reports changed whole files only. Deletions are unsupported. Claim-candidate
-proposals fail the entire step with `Error::UnsupportedClaimCandidate`.
+It accepts three kinds: `file-write` (a whole file), `file-delete` (an existing
+seeded file) and `file-rename` (an existing seeded file to a new path). Each
+path carries at most one effect. Only canonical workspace regular files are
+allowed. Descriptor-relative paths refuse symlinks, hard links, special files,
+traversal, duplicates, conflicting file/directory paths, and excess data. The
+agent applies only the writes to the overlay, enumerates the resulting tree,
+and fails the step if any seeded file is missing from it (a deletion travels
+only as a proposal). It then
+sends each delete and rename to the host as its own frame, followed by every
+changed whole file as a write frame. Claim-candidate proposals fail the entire
+step with `Error::UnsupportedClaimCandidate`.
 
 ## Local conformance tools (not VM or JavaScript evidence)
 
@@ -106,5 +113,4 @@ All errors attempt a nonzero finish; callers must discard scratch state on error
 The protocol and CLI tests run unprivileged on Linux or macOS. On macOS they
 verify that production startup refuses; they do not compile or exercise Linux
 PID-1 mount and privilege setup. Native image/boot acceptance requires Linux
-and the provisioned Firecracker/KVM stack. The root coordinator owns that
-separate evidence.
+and the provisioned Firecracker/KVM stack.

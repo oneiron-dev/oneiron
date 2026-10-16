@@ -27,9 +27,9 @@ We read every pull request as a proposal. For each one, we do one of these:
 
 A small pull request with one clear change has the best chance. Say what changed and why. For a larger change, open an issue first, so that you do not spend time on work we cannot take.
 
-## CI on pull requests from forks
+## Checks on pull requests
 
-Our CI runs on our own machines, so we do not run it for pull requests from forks. When we take a change, we land it from our own branch, and CI runs there. A fork pull request with no checks is normal.
+GitHub CI is paused, and we check changes on our own machines. A pull request with no checks is normal.
 
 ## Licence
 

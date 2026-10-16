@@ -20,7 +20,7 @@ All non-class nodes use `style.shadow: true` for a consistent "cards on a surfac
 This applies to architecture, deployment, and any future flow diagrams.
 
 **Storage diagrams** also get shadows, but require manual SVG post-processing because D2
-silently ignores `style.shadow` on `shape: class`. See the post-processing section for
+silently ignores `style.shadow` on `shape: class` (recheck this after a D2 upgrade). See the post-processing section for
 the injection steps (filter definition + filter attributes on shape groups).
 
 ## Node Styles
@@ -164,6 +164,9 @@ We post-process to replace them with Oneiron brand colors.
 
 ## Post-Processing
 
+The `sed -i ''` commands below use BSD/macOS `sed`. With GNU `sed`, write `sed -i` with no
+empty argument.
+
 ### All SVGs — transparent N7 background
 
 D2 renders N7 as a solid fill (white for light, `#1E1E2E` for dark). Replace with
@@ -227,10 +230,11 @@ for fname in ['storage-light', 'storage-dark']:
 
 ### GitHub cache busting
 
-The README uses `?v=N` query params on SVG references. Bump after every re-render:
+The README uses `?v=N` query params on SVG references. After every re-render, raise `N` by
+one from its current value in `README.md`:
 
 ```markdown
-<source srcset="./docs/storage-dark.svg?v=10">
+<source srcset="./docs/storage-dark.svg?v=N">
 ```
 
 ## Files

@@ -1,56 +1,13 @@
-# scripts/refactor/tools — conformance + manifest generators
+# scripts/refactor/tools — move-only refactor checks
 
-The machinery that produced `../conformance.sh` and everything under `../moves/`.
-Committed so the manifests are reproducible and reviewable (not tmp-only). All
-scripts default to `ROOT` = this repository (derived from the script's own
-location) and `BASE_REV = b2437d700` (the wave's cut base; gen_t.py defaults to
-`da0458dda`, the base its committed manifests were recut against) — override
-with the `REFACTOR_ROOT` (older name `GEN_ROOT`, still honoured) and `BASE_REV`
-env vars (empty values fall back to the defaults) to point at a cut worktree.
-Generated output that is not a manifest goes under the gitignored `target/`:
-`REFACTOR_REPORT_DIR` (line reports, default `target/refactor-linereports/`) and
-`REFACTOR_HANDOFF_OUT` (handoff packages, default `target/refactor-handoffs/`).
-Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt on PATH).
+Two checkers prove that a Rust refactor moved code without changing it.
+`split_check.py` covers the common one-file split and needs no manifest.
+`../conformance.sh` checks moves declared in a stage manifest under `../moves/`.
+Both are specialised tools, not the merge bar: that is
+`cargo check --workspace --all-features` on the head (see `AGENTS.md`).
+Run either with `RUSTFMT_BIN=$(rustup which rustfmt)` or any `rustfmt` on PATH.
 
-| file | purpose | invocation |
-|---|---|---|
-| `rustlex.py` | Rust structural extractor (mask strings/comments/chars, enumerate top-level items + impl methods + `mod tests` items, canon-tokenize heads, cfg filter, rustfmt byte-compare, edit-delta validator, flat-name parser). The engine embedded into `conformance.sh`. | library; CLI: `rustlex.py enumerate <file>` / `find <file> <kind> <container> <name> <cfg>` / `inventory` / `impls` |
-| `driver.py` | Conformance checks 1–8 + E/C/F/X. Embedded into `conformance.sh`. | `driver.py checks <root> <stage> <base> <movesdir>` |
-| `build_conformance.py` | Assembles `../conformance.sh` by embedding rustlex + driver as a `#>`-prefixed payload. **Re-run after any rustlex/driver edit.** | `build_conformance.py` |
-| `gen.py` | PR-0 generator: VAULT_A/VAULT_B method lists, api partition, `gen_tests`. Imported by the others. | (library) |
-| `gen_s1.py` | S1 test-split recut + S2 deferred. | `gen_s1.py` |
-| `gen_t.py` | Stage-T (types.rs dissolution): partition + census + sweep + decl simulation → T1-T12. | `gen_t.py` |
-| `gen_v.py` | Stage-V (vault-CRUD insertion): V-0 + 7 clean + 4 intricate entities. | `gen_v.py` |
-| `gen_u.py` | Stage U (types.rs `#[path]` un-mount) decl + consumer sweep. | `gen_u.py` |
-| `handoff_v2.py` | Emits the 34 Codex handoff packages to `$REFACTOR_HANDOFF_OUT` (default `target/refactor-handoffs/`). | `handoff_v2.py` |
-| `v2_selftest.py` | Synthetic self-test of the v2 checks (move-to-new-file + insertion + edit + comment + flat-name + HEAD-src removal). | `v2_selftest.py` |
-
-**Regenerate everything from base:** `gen_s1.py && gen_t.py && gen_v.py && gen_u.py`
-then B1/tests-s2-export (inline snippets in the wave's continuation-state doc, which
-is kept outside this repo), then `build_conformance.py`, then `handoff_v2.py`.
-
-## Freshness (D-2 guard)
-
-`conformance.sh` embeds `rustlex.py` + `driver.py` as a payload. **After ANY edit to
-either, re-run `build_conformance.py`** or the shipped gate silently runs the old code.
-`build_conformance.py --check` asserts freshness (exit 1 if stale) and is wired into
-`v2_selftest.py`.
-
-## check-X precondition (review round 2)
-
-`check_exhaustion` (T12) auto-excises `use` items + the `mod tests` shell + declaration-
-only `#[path]` mounts. A **non-`tests` mod WITH a body is NOT auto-excised** — its items
-must be moved individually (manifest rows) or they surface as residue and fail the check.
-For a future file whose dissolution moves a bodied non-tests submodule, add that
-submodule's items as manifest rows; do not rely on shell excision.
-
-## Consumer-completeness (H3)
-
-`consumer_complete.py` asserts every moved pub/pub(crate) item's cross-module consumers —
-inline paths, brace-nested + multi-line use-trees, AND nested-module paths (non-flat
-names) — appear in the stage's `## allowed`. Run at every package-cut (T/V/U).
-
-## `split_check.py` — manifest-free move-only split gate
+## `split_check.py` — manifest-free move-only split check
 
 `split_check.py <base-rev> <old-file>[,<old-file>…] <new-dir | new-file>` (paths
 relative to the cwd; deps: `python3` + `git` + `rustfmt`/`RUSTFMT_BIN`). The little
@@ -161,3 +118,46 @@ directory modules followed):
 Cost: whole-file rustfmt once per side plus a byte-equality fast path; an 18k-line
 file checks in ~0.5 s, so no per-fragment batching is needed. Tests:
 `python3 -m pytest scripts/tests/test_split_check.py -q` (throwaway git repo + fixture).
+
+## `../conformance.sh <stage-id> <base-rev>` — manifest-based conformance
+
+`<base-rev>` is the commit the stage branch was cut from. The script refuses a
+stage with no `../moves/<stage-id>.tsv`. It runs the manifest checks in
+`driver.py` (1–8 plus E/F/X) from an embedded Python payload (deps: `python3`,
+`rustfmt`, `git`), then the full cargo gate: `cargo fmt --check`, workspace
+clippy, the full nextest profile, doctests, strict `cargo doc` and the sync
+nextest lane. The first failure exits non-zero; there is no override flag. The
+cargo step builds and tests the whole workspace, so this is not a cheap
+manifest inspection. Run it only where `AGENTS.md` allows Cargo builds.
+
+`conformance.sh` embeds `rustlex.py` and `driver.py` as a payload. After any
+edit to either, re-run `build_conformance.py`, or the script runs the old code.
+`build_conformance.py --check` exits 1 when the script is stale.
+
+### Manifests: `../moves/<stage-id>.{tsv,decls}`
+
+`<stage>.tsv` — one row per moved item:
+`kind<TAB>container<TAB>item_name<TAB>cfg<TAB>src_file<TAB>dst_file<TAB>header_change`.
+`container` is the impl header for `method` rows or `mod tests` for
+test-distribution rows; `item_name` is the full normalised header for `kind=impl`
+rows; `cfg` disambiguates cfg-gated duplicates.
+
+`<stage>.decls` — labelled sections: `## crate`, `## allowed`, `## forbid`, `## anchors`
+(`kind<TAB>container<TAB>item<TAB>cfg<TAB>file`), `## uniqueness`,
+`## error-literal`, `## decl` (`±` declaration heads, check 2a), `## impl-delta`
+(`±` `file<TAB>header`, check 2b), `## edit` (`file<TAB>old<TAB>new`),
+`## frag-edit` (`src<TAB>old<TAB>new`, moved-item internal edits), `## comment`
+(`src:start-end<TAB>dst`), `## add` (`file<TAB>exact-line`, non-item additions for
+check 8), `## filemove` (`src<TAB>dst`), `## exhaust` + `## exhaust-stages`.
+
+Manifests carry no line numbers: items are located by identity.
+
+### Files
+
+| file | purpose |
+|---|---|
+| `rustlex.py` | Rust structural extractor shared by both checkers (masks strings and comments, enumerates items, canon-tokenises heads, rustfmt byte-compare). CLI: `rustlex.py enumerate <file>` / `find <file> <kind> <container> <name> <cfg>` / `inventory` / `impls`. |
+| `driver.py` | Manifest checks 1–8 plus E/F/X: `driver.py checks <root> <stage> <base> <movesdir>`. |
+| `build_conformance.py` | Assembles `../conformance.sh` from `rustlex.py` and `driver.py`; `--check` reports a stale script. |
+| `consumer_complete.py` | Asserts that the file of every cross-module consumer of a moved `pub`/`pub(crate)` item appears in the stage's `## allowed`. |
+| `v2_selftest.py` | Synthetic self-test of the manifest checks, including the freshness check. |

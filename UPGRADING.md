@@ -1,7 +1,7 @@
 # Upgrading
 
 Oneiron is pre-release. These notes cover API and index changes for development
-builds. See [MIGRATIONS.md](./MIGRATIONS.md) for storage-format decision history.
+builds.
 
 ## Server authentication
 

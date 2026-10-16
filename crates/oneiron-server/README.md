@@ -120,12 +120,23 @@ before the pin adopts the transform it is first opened with. The descriptor is
 read at open only from model files that are complete and verified; a model
 whose files arrive after open is checked once they load.
 
-An `endpoint` provider pins and checks no transform, and `none` pins nothing. A
+`none` pins nothing. An `endpoint` provider declares no transform at open, so a
 vault moves between `local` and an endpoint serving the same `model_id`
-without a reembed, and keeps the local descriptor for its return. The
-endpoint's `model_id` is therefore a promise about its whole document
-embedding function — attention, pooling, quantisation, document prompt and
-input cap as well as the weights — that nothing on the wire checks.
+without a reembed, and keeps the local descriptor for its return. What is
+checked after that depends on the endpoint:
+
+- An `oneiron-server embedder serve` endpoint marks its `/v1/models` rows and
+  lists the model it loaded and its transform. Before the worker fills or
+  answers anything, the vault admits that listing: the listed model must be
+  the vault's `model_id` (else `EmbeddingModelChanged`), and the listed
+  transform must equal the vault's pin (else `EmbeddingTransformChanged`; a
+  vault with no pin adopts it). A refused endpoint fills and answers nothing
+  until it is restored or the vault is reembedded, and every later answer must
+  name the admitted model and transform.
+- Any other OpenAI-compatible endpoint lists no transform. Its `model_id` is a
+  promise about its whole document embedding function — attention, pooling,
+  quantisation, document prompt and input cap as well as the weights — that
+  nothing on its wire checks.
 
 Harrier's `config_sentence_transformers.json` names its prompts by task
 (`web_search_query`, `sts_query`, `bitext_query`) and sets no default, so
@@ -214,10 +225,14 @@ oneiron-server reembed --config <same config serve reads>
 # {"from":"microsoft/harrier-oss-v1-0.6b@f9b9dc8…","to":"perplexity-ai/pplx-embed-v1-0.6b@2c4d510…","transform":"attn=bidirectional;…","migrated":true}
 ```
 
-`reembed` first resolves the transform the configured local model makes from
-its metadata files, fetching and verifying those small files (never the
-weights) when they are not on the host; when they cannot be resolved it stops
-and changes nothing. It then repins the vault to the configured `model_id` and
+`reembed` first resolves the transform the configured embedder makes. For
+`local`, it reads the model's metadata files, fetching and verifying those
+small files (never the weights) when they are not on the host. For an
+`embedder serve` endpoint, it reads the transform from the `/v1/models` listing
+and runs the startup probe against it. Any other endpoint, and `none`, declares
+no transform. When the transform cannot be resolved (missing metadata, or an
+endpoint that does not answer or fails the probe), `reembed` stops and changes
+nothing. It then repins the vault to the configured `model_id` and
 transform in one transaction, drops the vector graph and every staged vector,
 and schedules everything that held a vector: claims and epoch summaries are
 queued, and other text records are re-embedded at idle from their published

@@ -20,11 +20,12 @@ EmbeddedVault(context.filesDir.resolve("memory").absolutePath).use { vault ->
 }
 ```
 
-The Android CI leg builds `aarch64-linux-android` with NDK 27.2.12479018 and
-API 26, packages the `.so`, then runs the Kotlin open/put/get/reopen test on an
-API35 arm64 emulator. Aarch64 provides NEON. The Rust crate also has a native
-core round-trip test (`cargo test -p oneiron-android`); this is not a substitute
-for the Android instrumentation result.
+The Android workflow (`.github/workflows/android-embedded.yml`) builds
+`aarch64-linux-android` with NDK 27.2.12479018 and API 26, packages the `.so`,
+then runs the Kotlin open/put/get/reopen instrumentation test
+(`kotlin/src/androidTest/kotlin/org/oneiron/EmbeddedVaultTest.kt`) on an API 35
+arm64 emulator. Aarch64 provides NEON. The Rust crate has no Rust tests of its
+own; that instrumentation test is the only on-device check.
 
 Canon: `oneiron/core/oneiron-arch-0019-oneiron-db-v1.md` (embedded
 same-core deployment); the generated docs mirror remains read-only.

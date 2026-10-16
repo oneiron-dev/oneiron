@@ -69,7 +69,8 @@ comes 5 seconds later; a waiting log is not read again until it lands.
 ## Re-importing
 
 An import ledger records every imported message by its source id and a hash of
-its text, in the same transaction as the message. Running the same import again
+its text, its role, and whether the source left the speaker unknown, in the same
+transaction as the message. Running the same import again
 writes nothing. A session that grew, or a later export, adds only the new
 messages. A message whose text changed is landed as a revision beside the
 original, never as a duplicate. Copies of earlier messages land once: Claude
@@ -78,11 +79,7 @@ copies a parent thread's items into a forked or spawned thread's rollout.
 
 A Claude Code or Codex conversation keeps the folder its session ran in (the
 `import_cwd` field) and occurs when the session started (`occurred` in
-`GET /v1/core/conversations?view=full`). A vault imported before the import
-kept them gets both from the next import of the same logs: run
-`oneiron import claude-code` or `oneiron import codex` on them again. That
-import writes the folder and start time on each conversation that lacks them,
-changes nothing else and adds no row; the import after it writes nothing.
+`GET /v1/core/conversations?view=full`).
 
 ## Size limits
 
@@ -106,8 +103,11 @@ is left out with a `log_too_large` warning in `serve`'s log (its `path`,
 stdout is one JSON document of counts: per conversation (its source id, kind,
 `new`, `skipped`, `changed`, `refused`, `not_kept`), totals, `files` (`read`;
 `passed`: other `.jsonl` files under the path, such as a workflow journal;
-`too_large`: session logs left out), and `warnings`, one per log left out
-(`"warning": "log_too_large"`, its `path`, `bytes` and the `limit`), and
+`too_large`: session logs left out; `hard_linked`: session logs with another
+name, a hard link that may point outside the folder, never read), and
+`warnings`: one per log left out (`"warning": "log_too_large"`, its `path`,
+`bytes` and the `limit`), plus one `"warning": "hard_linked"` with the count of
+hard-linked logs, which it does not name, and
 `review`, where the claims drawn from this import wait (below; `null` for a
 dry run and for an import that landed nothing). It never holds message text
 or titles. `--dry-run` prints the same counts and

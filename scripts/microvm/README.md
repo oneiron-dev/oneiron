@@ -9,7 +9,7 @@ uses a loop device. Run from the engine checkout. Outputs must be new directorie
 - Native Linux x86-64 Rust toolchain from `rust-toolchain.toml`, C linker and the
   normal Cargo environment. The native guest executable is **not** a macOS binary.
   A cross build needs a separately provisioned Linux target and linker. The recipe
-  does not install either. Use the factory Cargo wrapper in a factory worktree.
+  does not install either.
 - Kernel build: trusted Linux release archive and independently verified SHA256,
   GNU make, C compiler/binutils, flex, bison, bc, Perl, Python and the development
   libraries required by the selected release/config (normally OpenSSL and libelf).
@@ -36,9 +36,10 @@ cargo run -p oneiron-guest -- --write-conformance target/conformance.wasm
 
 The generated component calls `metadata` using `conformance-handle` at
 `https://api.example.com`, then proposes `/mnt/workspace/result.txt`. It copies
-source text rather than interpreting it. WAT/native Wasmtime execution is not
-QuickJS proof. C13 ONE-2464 owns the real QuickJS guest and must target the shared
-`crates/oneiron/wit/code-run.wit` ABI; C04 does not edit that ticket.
+source text rather than interpreting it. It is a typed WAT conformance fixture,
+not QuickJS. The real QuickJS guest is the checked-in component in
+`components/code-run-quickjs/`, built against the same shared
+`crates/oneiron/wit/code-run.wit` ABI.
 
 ## Build a pinned kernel
 

@@ -59,5 +59,4 @@ never authorizes a federation request or widens its scope.
    relay forwards encrypted packets only; locker and mobile push remain separate.
 3. Fork upkeep/fleet job: pin tested fork commits, automate each upstream-tag
    refresh on a staging branch, run the conformance lab across tag/version pairs
-   and LAN/hotspot/relay-only hosts, then review and send narrowly scoped patches
-   upstream. Keep the final bump human-reviewed before changing Cargo.lock.
+   and LAN/hotspot/relay-only hosts, then send narrowly scoped patches upstream.
