@@ -18,10 +18,10 @@ const EVENT_PREFIX: &[u8] = b"shared-act:event:v1:";
 /// The row an act without its own row resolves to.
 const DEFAULT_ROW: &str = "_default";
 
-fn invalid() -> Error {
+pub(super) fn invalid() -> Error {
     Error::InvalidConfig("invalid shared-vault act".into())
 }
-fn key(prefix: &[u8], suffix: &str) -> Vec<u8> {
+pub(super) fn key(prefix: &[u8], suffix: &str) -> Vec<u8> {
     let mut key = prefix.to_vec();
     key.extend_from_slice(suffix.as_bytes());
     key
@@ -32,11 +32,16 @@ fn valid_name(name: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
-fn check_vault(vault: &Vault, txn: &heed::RoTxn<'_>, vault_id: u64) -> Result<SharedVaultCreation> {
+/// The vault's shared creation row, while that vault has not been deleted.
+pub(super) fn check_vault(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
+) -> Result<SharedVaultCreation> {
     let creation = vault
         .shared_vault_creation_in_txn(txn)?
         .ok_or_else(invalid)?;
-    if creation.vault_id != vault_id {
+    if creation.vault_id != vault_id || vault.shared_vault_deletion_in_txn(txn)?.is_some() {
         return Err(invalid());
     }
     Ok(creation)
@@ -112,10 +117,10 @@ pub(super) fn with_preset_act_policies(
     }
     with_act_table(&body, &rows)
 }
-fn encode<T: serde::Serialize>(row: &T) -> Result<Vec<u8>> {
+pub(super) fn encode<T: serde::Serialize>(row: &T) -> Result<Vec<u8>> {
     serde_json::to_vec(row).map_err(|_| invalid())
 }
-fn decode<T: serde::de::DeserializeOwned>(row: &[u8]) -> Result<T> {
+pub(super) fn decode<T: serde::de::DeserializeOwned>(row: &[u8]) -> Result<T> {
     serde_json::from_slice(row).map_err(|_| invalid())
 }
 
@@ -283,18 +288,18 @@ enum SettingChoice {
     Host(Option<SharedActPolicy>),
     Holder(SharedActPolicy),
 }
-struct LiveActHolder {
-    member: EntityId,
-    role: Role,
+pub(super) struct LiveActHolder {
+    pub(super) member: EntityId,
+    pub(super) role: Role,
     scope: super::Scope,
 }
 impl LiveActHolder {
-    fn can(&self, roles: &[Role], verb: &str) -> bool {
+    pub(super) fn can(&self, roles: &[Role], verb: &str) -> bool {
         roles.contains(&self.role) && super::grant_scope::admits_preset(&self.scope, verb)
     }
 }
 impl Vault {
-    fn live_act_holders(
+    pub(super) fn live_act_holders(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
