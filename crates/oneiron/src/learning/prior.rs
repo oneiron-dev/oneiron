@@ -17,7 +17,8 @@ use super::evidence::{CellRow, ensure_cell_in_txn};
 use super::project::project_cell_in_txn;
 
 /// A cell's stored prior. Key: the cell digest.
-const PRIOR: SideTable<[u8; 32], Prior, Named> = SideTable::new(&side_table::LEARNING_PRIOR);
+pub(crate) const PRIOR: SideTable<[u8; 32], Prior, Named> =
+    SideTable::new(&side_table::LEARNING_PRIOR);
 
 /// Stores the prior `cell` starts from and re-projects it.
 ///
@@ -63,7 +64,8 @@ pub(crate) fn cell_prior_in_txn(
             .setting_key
             .as_deref()
             .and_then(learning_setting::setting_spec)
-        && let Some((value, weight_runs)) = learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
+        && let Some((value, weight_runs)) =
+            learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
     {
         return Ok(Prior {
             origin: PriorOrigin::Seed,

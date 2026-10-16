@@ -190,7 +190,7 @@ pub fn attribution_judgments(vault: &Vault) -> Result<Vec<AttributionJudgment>> 
     attribution_judgments_in_txn(vault, &rtxn)
 }
 
-pub(super) fn attribution_judgments_in_txn(
+pub(crate) fn attribution_judgments_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<AttributionJudgment>> {

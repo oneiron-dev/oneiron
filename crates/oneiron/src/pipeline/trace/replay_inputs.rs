@@ -159,6 +159,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         corpus_snapshot_ref: builder.corpus_snapshot_ref.clone(),
     };
     // `json!` above is at its recursion limit, so these join after it.
+    inputs.config["skill_reliability"] = json!(&builder.skill_reliability_query);
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
     inputs.config["context_pack_world_share"] = json!(builder.context_pack_world_share);
     inputs.config["fusion"] = json!({
