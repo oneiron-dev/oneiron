@@ -462,6 +462,21 @@ impl Vault {
                         .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
                         .apply(txn)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
+                    // A house mind the roster seats joins the new home room
+                    // through the three consents, filed by the owner (OF-417).
+                    let caller = crate::WriteActor::new(
+                        birth.owner.revalidate_in_txn(self, txn)?,
+                        crate::EdgeActorClass::Human,
+                    );
+                    let filed_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                    crate::workspace_roster::workplace_join::file_house_joins_in_txn(
+                        self,
+                        txn,
+                        EntityId::from_hex(&project.home_room)?,
+                        &project.roster,
+                        caller,
+                        filed_at,
+                    )?;
                     let receipt = self.grant_project_tap_in_txn(
                         txn,
                         birth.owner,

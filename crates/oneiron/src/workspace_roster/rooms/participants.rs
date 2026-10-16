@@ -213,8 +213,8 @@ impl Memory<'_> {
         for row in &mut folded {
             match row.subject {
                 JoinSubject::Person(person) => {
-                    row.currently_eligible =
-                        person_standing_in_txn(vault, &txn, room, person, None)? == Some(true);
+                    let held = person_standing_in_txn(vault, &txn, room, branch, person, None)?;
+                    row.currently_eligible = held == Some(true);
                 }
                 JoinSubject::Agent(agent) => {
                     let standing = agent_standing_in_txn(vault, &txn, room, branch, agent, None)?;

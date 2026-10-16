@@ -4,12 +4,14 @@
 //! # People join by writing, agents by address or task
 //!
 //! A person joins a thread by writing in it: a write that passes today's room
-//! gates records `Wrote`, and a person with no standing in an ordinary room
-//! files an OF-531 join in the same transaction as the write. An agent never
-//! takes a room seat and never joins by writing: it stands on an OF-531 Ready
-//! receipt, and takes part when it is named on a turn or holds the thread's
-//! open TASK. Naming enrolls no one, a TASK is never minted to let an agent
-//! in, and nothing here counts or caps participants.
+//! gates records `Wrote`, and a person with no standing in a room files an
+//! OF-531 join in the same transaction as the write. A person stands on its
+//! seat or on a live Ready join, so a home room's join, which seats no one,
+//! and a companion's, which stands on her principal, both count. An agent
+//! never takes a room seat and never joins by writing: it stands on an
+//! OF-531 Ready receipt, and takes part when it is named on a turn or holds
+//! the thread's open TASK. Naming enrolls no one, a TASK is never minted to
+//! let an agent in, and nothing here counts or caps participants.
 //!
 //! # One stream, folded on read
 //!
@@ -344,29 +346,61 @@ pub(crate) fn agent_standing_in_txn(
     .map(AgentStanding::Receipt))
 }
 
-/// A person's standing in `room` today: a project home room's seat, or an
-/// ordinary room's ledger seat or host role. `actor` is the pen it acts
-/// through, when that is not the PERSON itself. `None` for a home room whose
-/// roster does not seat it: only the project's board seats one there.
+/// A person's standing in `room`, or its thread `branch`, now: a project
+/// home room's seat, an ordinary room's ledger seat or host role, or a live
+/// Ready join for the PERSON that covers the place (OF-417: a home room's
+/// join seats no one, and a companion's stands on her principal's standing,
+/// both re-proved here). `actor` is the pen it acts through, when that is
+/// not the PERSON itself. `None` for a home room whose roster does not seat
+/// it and where it holds no Ready join.
 pub(crate) fn person_standing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
+    branch: Option<EntityId>,
     person: EntityId,
     actor: Option<EntityId>,
 ) -> Result<Option<bool>> {
     let ids = || std::iter::once(person).chain(actor);
-    if let Some((_, seats)) = home_room_seats_in_txn(vault, txn, room)? {
-        return Ok(ids().any(|id| seats.contains(&id.to_hex())).then_some(true));
-    }
-    let members = vault.members_in_txn(txn, room)?;
-    if ids().any(|id| members.contains(&id)) {
+    let unseated = if let Some((_, seats)) = home_room_seats_in_txn(vault, txn, room)? {
+        if ids().any(|id| seats.contains(&id.to_hex())) {
+            return Ok(Some(true));
+        }
+        None
+    } else {
+        let members = vault.members_in_txn(txn, room)?;
+        let own = WriteActor::new(person, EdgeActorClass::Human);
+        if ids().any(|id| members.contains(&id))
+            || crate::conversation::room_host_in_txn(vault, txn, room, own)?.is_some()
+        {
+            return Ok(Some(true));
+        }
+        Some(false)
+    };
+    let subject = JoinSubject::Person(person);
+    let receipt = require_join_covering_in_txn(vault, txn, room, branch, &subject, None);
+    if joined(receipt)?.is_some() {
         return Ok(Some(true));
     }
-    let own = WriteActor::new(person, EdgeActorClass::Human);
-    Ok(Some(
-        crate::conversation::room_host_in_txn(vault, txn, room, own)?.is_some(),
-    ))
+    Ok(unseated)
+}
+
+/// Whether `actor`, taking part as `subject`, stands as a person in `room`,
+/// or its thread `branch`: [`person_standing_in_txn`] for its PERSON through
+/// this pen. `false` for an agent, or an actor that takes part in no room.
+pub(super) fn person_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    actor: EntityId,
+    subject: Option<JoinSubject>,
+) -> Result<bool> {
+    let Some(JoinSubject::Person(person)) = subject else {
+        return Ok(false);
+    };
+    let pen = (person != actor).then_some(actor);
+    Ok(person_standing_in_txn(vault, txn, room, branch, person, pen)? == Some(true))
 }
 
 /// What [`admit_participation_in_txn`] let through: the place, the subject
@@ -411,16 +445,16 @@ impl Admitted {
 /// before they write; the caller records the fact after its write, in the
 /// same transaction, with [`Admitted::record_in_txn`].
 ///
-/// A person with standing (today's room gates) writes on, and its write is
-/// its thread join. A person with no standing in an ordinary room files an
-/// OF-531 join for the room in this transaction, for nothing paid: Ready
-/// seats it and the write goes on; a held join refuses the write with the
-/// parties it waits on, and a refused one refuses it. A project home room
-/// keeps its rule: only its board seats anyone, so a write there from off
-/// its roster stays refused and files no join. An agent never joins by
-/// writing: its write records nothing here, and its speech, claims and reads
-/// stand on [`agent_standing_in_txn`]. For any other cause an agent must
-/// stand there now.
+/// A person with standing (its seat, or a live Ready join) writes on, and
+/// its write is its thread join. A person with no standing files an OF-531
+/// join for the room in this transaction, for nothing paid: Ready seats it
+/// in an ordinary room, or in a project home room commits a receipt and
+/// never a roster seat (only its board seats anyone), and the write goes
+/// on; a held join refuses the write with the parties it waits on, and a
+/// refused one refuses it. An agent never joins by writing: its write
+/// records nothing here, and its speech, claims and reads stand on
+/// [`agent_standing_in_txn`]. For any other cause an agent must stand there
+/// now.
 #[expect(
     clippy::too_many_arguments,
     reason = "the place, the writer, its cause and paid scope, and the decision time"
@@ -455,16 +489,16 @@ pub(crate) fn admit_participation_in_txn(
         }
         JoinSubject::Person(person) => {
             let pen = (person != actor.entity_ref()).then_some(actor.entity_ref());
-            match person_standing_in_txn(vault, txn, room, person, pen)? {
+            match person_standing_in_txn(vault, txn, room, branch, person, pen)? {
                 Some(true) => {}
-                Some(false) if writes => {
+                Some(false) | None if writes => {
                     admitted.join_ref =
                         Some(write_join_in_txn(vault, txn, room, person, actor, now)?);
                 }
                 Some(false) => return Err(lacks("the person has no standing in this room")),
                 None => {
                     return Err(lacks(
-                        "only the project's board seats a member of its home room",
+                        "the person has no seat or Ready join in this home room",
                     ));
                 }
             }
@@ -474,8 +508,8 @@ pub(crate) fn admit_participation_in_txn(
     Ok(admitted)
 }
 
-/// Files the room join a person's first write in an ordinary room needs, in
-/// the write's transaction, for nothing paid. Its intent key is the room and
+/// Files the room join a person's first write in a room needs, in the
+/// write's transaction, for nothing paid. Its intent key is the room and
 /// the person, so `vault.rooms.join` with the same key files the same join
 /// and holds it for the parties it waits on.
 fn write_join_in_txn(
@@ -658,8 +692,9 @@ pub(super) fn record_addressed_in_txn(
 }
 
 /// Whether `actor`, taking part as `subject`, reads the project room
-/// `record`: from its seat, as before, or, for an agent, on a Ready receipt
-/// for the room. A thread's receipt opens no room-wide read.
+/// `record`: from its seat, as before, or on a Ready receipt for the room,
+/// an agent's or, through its pen, a person's (OF-417). A thread's receipt
+/// opens no room-wide read.
 pub(super) fn reads_room_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -671,18 +706,21 @@ pub(super) fn reads_room_in_txn(
     if record.member_ids.contains(&actor.to_hex()) {
         return Ok(true);
     }
-    let Some(subject @ JoinSubject::Agent(_)) = subject else {
+    let Some(subject) = subject else {
         return Ok(false);
     };
+    if let JoinSubject::Person(_) = subject {
+        return person_stands_in_txn(vault, txn, room, None, actor, Some(subject));
+    }
     Ok(joined(require_join_covering_in_txn(
         vault, txn, room, None, &subject, None,
     ))?
     .is_some())
 }
 
-/// The room read entry (OF-529): `require_member` for a person, and for an
-/// agent its seat or a Ready receipt for the room. Returns the room as its
-/// project vouches for it.
+/// The room read entry (OF-529): for a person its seat or a Ready receipt
+/// for the room (OF-417), and for an agent its seat or a Ready receipt for
+/// the room. Returns the room as its project vouches for it.
 pub(in crate::workspace_roster) fn require_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -697,9 +735,10 @@ pub(in crate::workspace_roster) fn require_reader(
     Ok(record)
 }
 
-/// The speech precheck before a witness (OF-529): `require_member` for a
-/// person; for an agent, its seat or a Ready receipt for the thread its reply
-/// lands in, or for the room. The witness transaction decides again.
+/// The speech precheck before a witness (OF-529): for a person, its seat or
+/// a Ready receipt for the thread its reply lands in, or for the room
+/// (OF-417); for an agent, the same on its own receipt. The witness
+/// transaction decides again.
 pub(super) fn require_speaker_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -708,10 +747,11 @@ pub(super) fn require_speaker_in_txn(
     actor: EntityId,
 ) -> Result<()> {
     let now = vault.store.clock.now_recorded_at();
-    let Some(JoinSubject::Agent(agent)) = participant_in_txn(vault, txn, actor, now)? else {
+    let subject = participant_in_txn(vault, txn, actor, now)?;
+    if subject.is_none() {
         require_member(vault, txn, room, actor)?;
         return Ok(());
-    };
+    }
     room_in(vault, txn, room)?;
     let parent = input
         .messages
@@ -722,6 +762,12 @@ pub(super) fn require_speaker_in_txn(
         Some(parent) => turn_root_in_txn(vault, txn, &turn_in(vault, txn, parent)?)?,
         None => None,
     };
+    let Some(JoinSubject::Agent(agent)) = subject else {
+        if !person_stands_in_txn(vault, txn, room, branch, actor, subject)? {
+            require_member(vault, txn, room, actor)?;
+        }
+        return Ok(());
+    };
     agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(invalid)?;
     Ok(())
 }
@@ -731,14 +777,15 @@ pub(super) struct Claimant {
     room: EntityId,
     actor: EntityId,
     branch: Option<EntityId>,
-    /// `None` for a person, who claims from its seat as before.
+    /// `None` for a person, who claims from its seat or its own Ready join.
     agent: Option<AgentStanding>,
 }
 
 impl Claimant {
-    /// A person claims from its seat, as before. An agent claims on a Ready
-    /// receipt for the turn's thread or the room, or the seat its project
-    /// gives it; it never takes a seat to claim.
+    /// A person claims from its seat, or on its own live Ready join for the
+    /// turn's thread or the room (OF-417). An agent claims on a Ready receipt
+    /// for the turn's thread or the room, or the seat its project gives it;
+    /// it never takes a seat to claim.
     pub(super) fn admit_in_txn(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
@@ -753,8 +800,10 @@ impl Claimant {
                 agent_standing_in_txn(vault, txn, room, branch, agent, None)?
                     .ok_or_else(invalid)?,
             ),
-            _ => {
-                require_member(vault, txn, room, actor)?;
+            subject => {
+                if !person_stands_in_txn(vault, txn, room, branch, actor, subject)? {
+                    require_member(vault, txn, room, actor)?;
+                }
                 None
             }
         };

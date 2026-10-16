@@ -7,13 +7,17 @@
 //! signs the root's next state with that house as leader: a host-signed v3
 //! state over the root's current head, landed as history, the board and every
 //! earlier revision kept. Nothing writes a projection around the door, and a
-//! root that already follows its house is left as it is.
+//! root that already follows its house is left as it is. Either way the
+//! house then joins the root's home room through the three consents
+//! (OF-531), as an agent on its institutional standing and its roster seat,
+//! with the owner as filer.
 use super::fold::ProjectDisposition;
 use super::owner_signer::{OwnerProjectSigner, owner_signed_at};
 use super::read::stored;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::workspace_roster::WorkspaceRosterPreset;
+use crate::{EdgeActorClass, WriteActor};
 
 impl Vault {
     /// Makes `preset`'s house mind the root project's leader.
@@ -23,7 +27,10 @@ impl Vault {
     /// owner is revalidated and the host signs in the writing transaction,
     /// over the root's current head; the act commits only once the fold
     /// installs the new state. The seat the old leader held as leader goes
-    /// with the lead (a board seat stays), and the house takes one.
+    /// with the lead (a board seat stays), and the house takes one. In the
+    /// same transaction the house files its join of the root's home room,
+    /// with the revalidated owner as filer; a join that holds or is refused
+    /// is no participation, and the lead stands either way.
     pub fn bind_house_leader(
         &self,
         preset: &WorkspaceRosterPreset,
@@ -67,7 +74,7 @@ impl Vault {
             };
             let authority = witness.anchor.authority.clone();
             if authority.leader == house {
-                return Ok(());
+                return self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref);
             }
             let mut next = stored(&self.store, txn, root, kind)?.ok_or(Error::EntityNotFound)?;
             // The head's seats: its signed roster, else the leader and board
@@ -129,7 +136,29 @@ impl Vault {
                 )
                 .apply(txn)?;
             self.require_owner_head_in_txn(txn, root, &next)?;
-            Ok(())
+            self.house_joins_root_in_txn(txn, owner, root, preset.house_actor_ref)
         })
+    }
+
+    /// The house's join of the root's home room, once the root's head and
+    /// room are installed, filed by the revalidated owner (OF-417).
+    fn house_joins_root_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        root: EntityId,
+        house: EntityId,
+    ) -> Result<()> {
+        let caller = WriteActor::new(owner.revalidate_in_txn(self, txn)?, EdgeActorClass::Human);
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        crate::workspace_roster::workplace_join::file_house_join_in_txn(
+            self,
+            txn,
+            super::home_room_id(root)?,
+            house,
+            caller,
+            now,
+        )?;
+        Ok(())
     }
 }
