@@ -7,7 +7,8 @@ use super::claims::{
 use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_cache_in_txn};
 use super::parties::{reconcile_comm_party_twins, resolve_or_create_party_in_txn};
 use super::projection_writes::{
-    latest_claim_transition_boundary, matching_claims_in_txn, put_projected_comm_claim_in_txn,
+    latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
+    put_projected_comm_claim_in_txn,
 };
 use super::records::{
     CommEventKind, CommRecord, comm_records_in_txn, decode_comm_record, next_event_sequence_in_txn,
@@ -468,36 +469,44 @@ pub(super) fn project_event(
 }
 
 /// What a peer's projection of a STOP left on this replica: `Some(true)`
-/// when an opt-out stands on its slot, so the rule only consumes gates and
-/// refreshes contacts; `Some(false)` when a ruling after the STOP closed the
-/// slot; `None` while neither has arrived by sync.
+/// when the STOP's own opt-out stands here, so the rule only consumes gates
+/// and refreshes contacts; `Some(false)` when that opt-out arrived closed, or
+/// a head after the STOP moved the slot; `None` until one of them arrives.
 ///
-/// The rule never mints for a peer's STOP. Its own opt-out, or the head the
-/// peer found standing, arrives with the peer's state, and a copy minted here
-/// first could stand against a clear the peer's human already made.
+/// The rule never mints for a peer's STOP. Its own opt-out, or the later head
+/// that answers it, arrives with the peer's state, and a copy minted here
+/// first could stand against a clear the peer's human already made. An older
+/// head standing here is no answer: its clear may be in flight (R1-F1).
 fn peer_stop_projection_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     event: &ProjectedCommEvent<'_>,
 ) -> CommResult<Option<bool>> {
     let channel = event.channel_class.ok_or(CommError::InvalidRecord)?;
-    let opt_outs = |active_only| {
-        matching_claims_in_txn(
-            vault,
-            rtxn,
-            event.party_ref,
-            PREDICATE_COMM_OPT_OUT,
-            Some(channel),
-            None,
-            active_only,
-        )
-    };
-    if !opt_outs(true)?.is_empty() {
-        return Ok(Some(true));
+    let own = projected_comm_claim_id(
+        event.source_event_id,
+        &CommClaimValue::OptOut {
+            party_ref: event.party_ref,
+            channel_class: Some(channel.to_owned()),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: event.occurred_at,
+        },
+    )?;
+    let history = matching_claims_in_txn(
+        vault,
+        rtxn,
+        event.party_ref,
+        PREDICATE_COMM_OPT_OUT,
+        Some(channel),
+        None,
+        false,
+    )?;
+    if let Some((_, claim)) = history.iter().find(|(id, _)| *id == own) {
+        return Ok(Some(claim.is_standing()));
     }
-    let closed_later = latest_claim_transition_boundary(&opt_outs(false)?)
+    let answered_later = latest_claim_transition_boundary(&history)
         .is_some_and(|boundary| event.occurred_at < boundary);
-    Ok(closed_later.then_some(false))
+    Ok(answered_later.then_some(false))
 }
 
 fn apply_projector_rule_in_txn(

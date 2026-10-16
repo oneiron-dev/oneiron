@@ -5,13 +5,13 @@
 //! A STOP row first observed here writes one marker keyed by its event id:
 //! the local record, or a peer's copy arriving by sync, whatever its
 //! `projected` flag says, since a peer's projection installed nothing here.
-//! An overwrite never creates one. The gate holds a send to the marker's
-//! party and channel exactly as a projected STOP's opt-out does. This
-//! replica's projector releases the marker in the transaction that installs
-//! the standing opt-out; deleting the event clears it. A STOP a peer
-//! projected settles here once that projection's opt-out, or a later ruling
-//! that closed it, arrives. A STOP the projector keeps refusing keeps
-//! holding.
+//! An overwrite of a STOP never re-arms one that settled. The gate holds a
+//! send to the marker's party and channel exactly as a projected STOP's
+//! opt-out does. This replica's projector releases the marker in the
+//! transaction that installs the standing opt-out; deleting the event clears
+//! it. A STOP a peer projected settles here once that projection's own
+//! opt-out, or a later head on its slot, arrives. A STOP the projector keeps
+//! refusing keeps holding.
 //!
 //! A STOP whose PERSON has not reached this replica names a party no send
 //! can be matched to yet; the hold starts once that PERSON arrives.
@@ -48,21 +48,33 @@ struct PendingStop {
     channel_class: String,
 }
 
-/// The put door's half, staged before the body: an insert of a STOP row
-/// writes its marker.
+/// The put door's half, staged before the body: an insert of a STOP row, or
+/// an overwrite that makes a row a STOP, writes its marker.
 pub(crate) fn maintain_pending_stop_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     body: &[u8],
 ) -> Result<()> {
-    // An erased shell holds no body, so a row put over it is new here.
-    if store
+    let Some(stop) = pending_stop(body) else {
+        return Ok(());
+    };
+    // An erased shell holds no body, so a row put over it is new here. An
+    // overwrite never re-arms a STOP that settled; it moves a pending one
+    // with its fields, and a row it turns into a STOP holds from now (R1-F2).
+    if let Some(old) = store
         .port_entity_raw_wiped(wtxn, id)?
-        .is_some_and(|old| old.len() > ENTITY_METADATA_HEADER_LEN)
+        .filter(|old| old.len() > ENTITY_METADATA_HEADER_LEN)
+        && pending_stop(&old[ENTITY_METADATA_HEADER_LEN..]).is_some()
+        && !PENDING.contains(store, wtxn, id)?
     {
         return Ok(());
     }
+    PENDING.put(store, wtxn, id, &stop)
+}
+
+/// The hold a COMM_RECORD body places, if it is a STOP.
+fn pending_stop(body: &[u8]) -> Option<PendingStop> {
     let Ok(CommRecord::Event {
         kind: CommEventKind::InboundStop,
         party_ref,
@@ -70,13 +82,12 @@ pub(crate) fn maintain_pending_stop_put(
         ..
     }) = decode_comm_record(body)
     else {
-        return Ok(());
+        return None;
     };
-    let stop = PendingStop {
+    Some(PendingStop {
         party_ref,
         channel_class: crate::counterparty_contact::normalize_channel_class(&channel_class),
-    };
-    PENDING.put(store, wtxn, id, &stop)
+    })
 }
 
 /// Both delete doors' half, before the door's missing-row return: a deleted
