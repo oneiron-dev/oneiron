@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 44 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 421 | 182 | 20 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 422 | 182 | 20 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 0 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 18 | 1 | 0 |
@@ -656,7 +656,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `test_credentials` | file | 1 | m | Request fixtures mint real logged slips before crossing the production router |
 | `usage` | dir | 7 | s | Provider-list metering and host-pushed vault budget limits |
 | `voice_host` | dir | 8 | m | Private voice request adapter, not an audio/provider scheduler |
-| `wake_adapters` | dir | 3 | s | Host-side, per-config-directory wake delivery (OF-385) |
+| `wake_adapters` | dir | 4 | s | Host-side, per-config-directory wake delivery (OF-385) |
 | `wire_telemetry` | file+dir | 2 | m | RC42 observation-only wire counters |
 
 ## oneiron-spawn
