@@ -57,12 +57,8 @@ impl Vault {
         let (live, _) = ensure_document(self, &mut txn, id)?;
         let revision = selected_revision(self, &txn, id, mode, live)?;
         let doc = fork_revision(&self.store, &txn, id, revision)?;
-        if doc.get_map("text_fields").get(field).is_none() {
-            return Err(Error::InvalidConfig(
-                "citation field is not editable text".into(),
-            ));
-        }
-        let text = doc.get_text(format!("field:{field}"));
+        let text = citation_text(&self.store, &txn, id, &doc, field)?
+            .ok_or_else(|| Error::InvalidConfig("citation field is not editable text".into()))?;
         let value = text.to_string();
         if start > end || end > value.chars().count() {
             return Err(Error::InvalidConfig("citation span is outside text".into()));
@@ -78,7 +74,9 @@ impl Vault {
             crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)?;
         let short_ref = match current {
             Some((short, _)) => {
-                let pinned_raw = super::storage::doc_raw(&doc)?;
+                let pinned_raw =
+                    read_entity_revision_in_txn(self, &txn, id, ReadMode::Pinned(revision))?
+                        .ok_or(Error::EntityNotFound)?;
                 let hash = (xxhash_rust::xxh32::xxh32(&pinned_raw[ENTITY_METADATA_HEADER_LEN..], 0)
                     % 256) as u8;
                 format!("{short}:{hash:02x}")
@@ -130,14 +128,31 @@ impl Vault {
             .map_err(|_| Error::InvalidConfig("invalid citation cursor".into()))?;
         let end = Cursor::decode(&citation.end_cursor)
             .map_err(|_| Error::InvalidConfig("invalid citation cursor".into()))?;
-        let pinned_text = cursor_quote(&pinned, &citation.field, &start, &end);
+        let pinned_text = cursor_quote(
+            &pinned,
+            citation_text(
+                &self.store,
+                &txn,
+                &citation.entity,
+                &pinned,
+                &citation.field,
+            )?,
+            &start,
+            &end,
+        );
         if pinned_text.as_deref() != Some(citation.quote.as_str()) {
             return Err(Error::InvalidConfig(
                 "citation span does not match its pinned quote".into(),
             ));
         }
         let live = load_doc(&self.store, &txn, &citation.entity)?;
-        let drifted = cursor_quote(&live, &citation.field, &start, &end).as_deref()
+        let drifted = cursor_quote(
+            &live,
+            citation_text(&self.store, &txn, &citation.entity, &live, &citation.field)?,
+            &start,
+            &end,
+        )
+        .as_deref()
             != Some(citation.quote.as_str());
         Ok(ResolvedCitation {
             quote: citation.quote.clone(),
@@ -262,9 +277,35 @@ fn turn_of_text_revision(
     Ok(Some(id))
 }
 
-fn cursor_quote(doc: &loro::LoroDoc, field: &str, start: &Cursor, end: &Cursor) -> Option<String> {
-    doc.get_map("text_fields").get(field)?;
-    let text = doc.get_text(format!("field:{field}"));
+fn citation_text(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    doc: &loro::LoroDoc,
+    field: &str,
+) -> Result<Option<loro::LoroText>> {
+    #[cfg(feature = "sync")]
+    if let Some(body_field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
+        let matches = match body_field {
+            crate::entity_doc::TextField::Utf8Body => field == "body",
+            crate::entity_doc::TextField::MapField(name) => name == field,
+        };
+        return Ok(matches.then(|| doc.get_text("body")));
+    }
+    let _ = (store, txn, id);
+    Ok(doc
+        .get_map("text_fields")
+        .get(field)
+        .map(|_| doc.get_text(format!("field:{field}"))))
+}
+
+fn cursor_quote(
+    doc: &loro::LoroDoc,
+    text: Option<loro::LoroText>,
+    start: &Cursor,
+    end: &Cursor,
+) -> Option<String> {
+    let text = text?;
     // A hostile citation may carry a cursor for another field. The container
     // check binds the cursor span to the named text, not merely its offsets.
     if start.container != text.id() || end.container != text.id() {

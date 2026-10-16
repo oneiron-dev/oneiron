@@ -38,8 +38,7 @@ pub(super) fn dependency(
         // A soft-erased parent is terminal, not an out-of-order arrival.
         return Err(invalid());
     }
-    rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map_err(|_| Error::CorruptedIndex("project dependency body"))
+    record(store, txn, id, kind)?.ok_or(Error::CorruptedIndex("project dependency body"))
 }
 
 /// The project a home-room body names. A derived room id carries no order
@@ -257,8 +256,8 @@ pub(crate) fn reconcile_project_rooms(
         if header.entity_type != project_kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
-        let body: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
-            .map_err(|_| Error::CorruptedIndex("project projection body"))?;
+        let body: ProjectRecord = record(store, txn, *id, project_kind)?
+            .ok_or(Error::CorruptedIndex("project projection body"))?;
         // The card's provenance is a MESSAGE, not just a parseable entity ID.
         // Missing replicated dependencies are retryable by the sync entity pass;
         // a wrong kind or erased source is terminal at every write door.

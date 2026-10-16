@@ -64,13 +64,7 @@ pub(crate) fn birth_message_stream_in_txn(
         pending: 0,
     };
     storage::persist(vault, txn, entity, &mut head, &doc, None)?;
-    crate::bm25::index_text(
-        &vault.store,
-        txn,
-        &vault.analyzer,
-        entity,
-        &[("content".to_owned(), doc.text())],
-    )
+    Ok(())
 }
 
 /// Continuation appends to the live head, preserving concurrent head edits.
@@ -111,13 +105,7 @@ pub(crate) fn append_message_stream_in_txn(
             .map_err(|_| invalid("message continuation insert"))
     })?;
     storage::persist(vault, txn, entity, &mut head, &doc, Some(&before))?;
-    crate::bm25::index_text(
-        &vault.store,
-        txn,
-        &vault.analyzer,
-        entity,
-        &[("content".to_owned(), doc.text())],
-    )
+    Ok(())
 }
 
 /// Read-only authorization check shared by begin, presence and terminal commit.

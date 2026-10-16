@@ -61,9 +61,13 @@ pub struct CanonicalTombstone {
 pub struct CanonicalEntityDocument {
     pub entity_id: [u8; 16],
     pub document_id: [u8; 16],
-    /// None is the legacy UTF-8 body; Some is the moved MessagePack text field.
+    /// None is a UTF-8 body; Some is the document's MessagePack body field.
     pub field: Option<String>,
     pub text: String,
+    /// Editable fields, each encoded as one MessagePack value.
+    pub metadata: BTreeMap<String, Vec<u8>>,
+    /// Native record fields projected by the immutable adapter at birth.
+    pub record_fields: Vec<String>,
     pub birth_actor: [u8; 16],
     pub birth_at: u64,
     /// The document's causal state, by value. Absent for a document with no
@@ -79,22 +83,32 @@ impl CanonicalEntityDocument {
             + self.document_id.len()
             + self.field.as_ref().map_or(0, String::len)
             + self.text.len()
+            + metadata_size(&self.metadata)
+            + self.record_fields.iter().map(String::len).sum::<usize>()
             + self.history.as_ref().map_or(0, |history| {
-                let versions = history
-                    .versions
-                    .iter()
-                    .map(|version| 16 + 4 * version.parents.len() + version.middle.len());
+                let versions = history.versions.iter().map(|version| {
+                    16 + 4 * version.parents.len()
+                        + version.middle.len()
+                        + metadata_size(&version.metadata)
+                });
                 let pins = history.pins.iter().map(|pin| 96 + pin.quote.len());
-                let forks = history
-                    .forks
-                    .iter()
-                    .map(|fork| 96 + fork.output.as_ref().map_or(0, String::len));
+                let forks = history.forks.iter().map(|fork| {
+                    96 + fork.output.as_ref().map_or(0, String::len)
+                        + fork.output_metadata.as_ref().map_or(0, metadata_size)
+                });
                 versions.sum::<usize>()
                     + pins.sum::<usize>()
                     + forks.sum::<usize>()
                     + 96 * (history.receipts.len() + history.purges.len())
             })
     }
+}
+
+fn metadata_size(fields: &BTreeMap<String, Vec<u8>>) -> usize {
+    fields
+        .iter()
+        .map(|(field, value)| field.len() + value.len())
+        .sum()
 }
 
 /// The causal state of a generic EntityDoc, CRDT-independent: the retained
@@ -128,6 +142,7 @@ pub struct CanonicalDocumentVersion {
     /// Characters kept from its end.
     pub suffix: u32,
     pub middle: String,
+    pub metadata: BTreeMap<String, Vec<u8>>,
 }
 
 /// An immutable citation pin: the quoted span of one version, in characters.
@@ -189,6 +204,7 @@ pub struct CanonicalDocumentFork {
     pub base: Option<u32>,
     /// The retained output text of a pending fork.
     pub output: Option<String>,
+    pub output_metadata: Option<BTreeMap<String, Vec<u8>>>,
     pub proposal_index: u16,
     pub proposal_len: u16,
     pub proposal_settled: bool,
@@ -255,6 +271,7 @@ impl CanonicalEntityDocumentHistory {
             prefix: u32::try_from(prefix).map_err(|_| invalid("entity document version size"))?,
             suffix: u32::try_from(suffix).map_err(|_| invalid("entity document version size"))?,
             middle: new[prefix..new.len() - suffix].iter().collect(),
+            metadata: BTreeMap::new(),
         })
     }
 }
@@ -383,15 +400,17 @@ impl CanonicalSnapshot {
             });
         }
         for doc in &self.entity_documents {
-            rows.push(CanonicalContainerManifest {
-                container_id: format!(
-                    "entity_doc/{}/body",
-                    crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
-                ),
-                container_kind: "text".to_owned(),
-                schema_version: 1,
-                source_entity_id: Some(doc.entity_id),
-            });
+            for (name, kind) in [("body", "text"), ("meta", "map")] {
+                rows.push(CanonicalContainerManifest {
+                    container_id: format!(
+                        "entity_doc/{}/{name}",
+                        crate::entity_id::bytes_to_hex_lower(&doc.entity_id)
+                    ),
+                    container_kind: kind.to_owned(),
+                    schema_version: 1,
+                    source_entity_id: Some(doc.entity_id),
+                });
+            }
         }
         for doc in &self.doc_snapshots {
             for (name, kind) in [("body", "text"), ("note", "map"), ("authorship", "map")] {

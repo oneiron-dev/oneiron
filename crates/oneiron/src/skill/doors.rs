@@ -522,7 +522,10 @@ impl Vault {
                 "entity is not a type-7 SKILL",
             )));
         }
-        decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        #[cfg(feature = "sync")]
+        let body = crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?;
+        decode_skill_record(&body).map(Some)
     }
 
     pub(crate) fn read_skill_record_in_txn(
@@ -542,7 +545,10 @@ impl Vault {
                 "entity is not a type-7 SKILL",
             )));
         }
-        decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        #[cfg(feature = "sync")]
+        let body = crate::entity_doc::resolve_record_body(&self.store, txn, id, body)?;
+        decode_skill_record(&body)
     }
 
     /// Crate-private, and the ONE way an engine-authored state flip reaches a
