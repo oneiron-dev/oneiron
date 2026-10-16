@@ -24,11 +24,23 @@ pub(super) fn late_join_presence(
     server: &SyncServer,
     conn_id: u32,
 ) -> impl Iterator<Item = Vec<u8>> + '_ {
+    // `keys()` leaves out deletes; a late joiner needs their tombstones too.
     let mut keys = {
         let mut presence = server.presence.lock();
         presence.expire(&server.ephemeral_store);
-        server.ephemeral_store.keys()
+        decode_ephemeral_states(&server.ephemeral_store.encode_all())
     }
+    .map_or_else(
+        |e| {
+            tracing::warn!(
+                conn_id,
+                error = protocol::transport_err_msg(e),
+                "failed to decode ephemeral snapshot"
+            );
+            Vec::new()
+        },
+        |states| states.into_iter().map(|state| state.key).collect(),
+    )
     .into_iter();
     let max = server.config.max_ephemeral_snapshot_bytes;
     let mut carry: Vec<EphemeralWireState> = Vec::new();
