@@ -8035,7 +8035,8 @@ pub fn map_edit_error(e: crate::edit::EditError) -> RuntimeError {
         EditError::BlockRangeInvalid { .. } => ErrorCode::AnchorNotFound,
         EditError::CommentTargetNotFound { .. }
         | EditError::CommentAnchorNotFound { .. }
-        | EditError::CommentAnchorOverlapsDeleted { .. } => ErrorCode::AnchorNotFound,
+        | EditError::CommentAnchorOverlapsDeleted { .. }
+        | EditError::CommentAnchorOccurrenceOutOfRange { .. } => ErrorCode::AnchorNotFound,
         EditError::CommentRangeOrphaned { .. }
         | EditError::CommentParentUnanchored { .. }
         | EditError::CommentEmptyBody { .. }
@@ -8896,6 +8897,15 @@ impl EditSnapshot {
     /// Pure twin of [`SimpleRuntime::apply_edit`]: precondition-checked and
     /// atomic. Returns a new snapshot; mutates nothing.
     pub fn apply(&self, txn: &crate::edit::EditTransaction) -> Result<EditSnapshot, RuntimeError> {
+        self.apply_with_notes(txn).map(|(snapshot, _)| snapshot)
+    }
+
+    /// [`Self::apply`], also returning the [`crate::edit::EditNote`]s the
+    /// transaction's steps report.
+    pub fn apply_with_notes(
+        &self,
+        txn: &crate::edit::EditTransaction,
+    ) -> Result<(EditSnapshot, Vec<crate::edit::EditNote>), RuntimeError> {
         // Package-aware style-existence check (verbs/styles.rs §"style existence"
         // + EditError::StyleNotFound). `apply_transaction` operates on a
         // `&CanonDoc`, which carries no style table, so it CANNOT verify a
@@ -8958,7 +8968,7 @@ impl EditSnapshot {
             )
         });
 
-        let (mut edited, pending) = crate::edit::apply_transaction_with_id_floor(
+        let (mut edited, pending, notes) = crate::edit::apply_transaction_with_notes(
             &self.canonical,
             txn,
             // Block-opaque interiors keep their bytes in the serialize
@@ -9031,10 +9041,11 @@ impl EditSnapshot {
                 Some(true),
             )
             .map_err(map_update_fields_error)?;
-            return rebuild_metadata_snapshot(self, with_settings);
+            return rebuild_metadata_snapshot(self, with_settings)
+                .map(|snapshot| (snapshot, notes));
         }
 
-        Ok(next)
+        Ok((next, notes))
     }
 
     /// Refuse an authored write whose Word author label matches one of this

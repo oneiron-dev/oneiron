@@ -55,10 +55,11 @@ pub trait EntityStoreRead: Transactions {
         txn: &'a Self::Read<'_>,
         kind: u8,
     ) -> Result<PortRows<'a, EntityId>>;
-    fn port_entity_long_spanning<'a>(
+    /// Every long interval ending after `ended_after`, in end order; the
+    /// caller keeps those that span its window, so it counts every row read.
+    fn port_entity_long_ending_after<'a>(
         &self,
         txn: &'a Self::Read<'_>,
-        started_before: u64,
         ended_after: u64,
     ) -> Result<PortRows<'a, (EntityId, crate::TimeRange)>>;
 }
