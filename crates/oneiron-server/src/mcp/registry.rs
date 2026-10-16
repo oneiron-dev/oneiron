@@ -52,6 +52,8 @@ pub struct McpConnectorActorRegistry {
     /// A connection with none hears no such event. Dropped with the
     /// connection.
     stream_readers: BTreeMap<StreamConnectionId, McpResolvedActor>,
+    /// Host wake instances belong to a credential connection and die with it.
+    wake_owners: BTreeMap<StreamConnectionId, StreamConnectionId>,
 }
 
 impl fmt::Debug for McpConnectorActorRegistry {
@@ -74,6 +76,7 @@ impl McpConnectorActorRegistry {
             page_continuations: BTreeMap::new(),
             page_continuation_seq: 0,
             stream_readers: BTreeMap::new(),
+            wake_owners: BTreeMap::new(),
         }
     }
 
@@ -424,6 +427,7 @@ impl McpConnectorActorRegistry {
         self.board_epochs.remove(&fingerprint.stream_connection());
         self.drop_page_continuations(&fingerprint.stream_connection());
         self.stream_readers.remove(&fingerprint.stream_connection());
+        self.drop_wake_instances(&fingerprint.stream_connection());
         Ok(McpConnectorActorRevokeStatus::Revoked)
     }
 
@@ -477,6 +481,7 @@ impl McpConnectorActorRegistry {
             self.board_epochs.remove(&fingerprint.stream_connection());
             self.drop_page_continuations(&fingerprint.stream_connection());
             self.stream_readers.remove(&fingerprint.stream_connection());
+            self.drop_wake_instances(&fingerprint.stream_connection());
         }
         removed
     }
@@ -501,6 +506,7 @@ impl McpConnectorActorRegistry {
             self.board_epochs.remove(&fingerprint.stream_connection());
             self.drop_page_continuations(&fingerprint.stream_connection());
             self.stream_readers.remove(&fingerprint.stream_connection());
+            self.drop_wake_instances(&fingerprint.stream_connection());
         }
         stale.len()
     }
@@ -561,6 +567,50 @@ impl McpConnectorActorRegistry {
         {
             self.stream_readers
                 .insert(reader.stream_connection.clone(), reader.clone());
+        }
+    }
+
+    /// Attaches one host config-directory instance under this credential's
+    /// ceiling. Neither its opaque key nor another credential can select a
+    /// sibling's queue. Repeated polls keep the existing queue intact.
+    pub(crate) fn bind_wake_instance(
+        &mut self,
+        reader: &McpResolvedActor,
+        instance_key: &str,
+    ) -> StreamConnectionId {
+        let mut hash = blake3::Hasher::new_keyed(&self.credential_hash_key.0);
+        hash.update(b"oneiron.mcp.wake-instance.v1");
+        hash.update(reader.stream_connection.0.as_bytes());
+        hash.update(instance_key.as_bytes());
+        let connection = StreamConnectionId(format!("mcp-wake:{}", hash.finalize().to_hex()));
+        if self.streams.connection_state(&connection).is_none() {
+            self.streams.attach_connection(
+                connection.clone(),
+                BoardRenderMode::Stream,
+                reader.actor_ref.to_hex(),
+                reader.subscription_ceiling.clone(),
+                0,
+            );
+            self.wake_owners
+                .insert(connection.clone(), reader.stream_connection.clone());
+        }
+        let mut instance_reader = reader.clone();
+        instance_reader.stream_connection = connection.clone();
+        self.bind_stream_reader(&instance_reader);
+        connection
+    }
+
+    fn drop_wake_instances(&mut self, owner: &StreamConnectionId) {
+        let instances: Vec<_> = self
+            .wake_owners
+            .iter()
+            .filter(|(_, credential)| *credential == owner)
+            .map(|(instance, _)| instance.clone())
+            .collect();
+        for instance in instances {
+            self.streams.detach(&instance);
+            self.stream_readers.remove(&instance);
+            self.wake_owners.remove(&instance);
         }
     }
 
