@@ -390,6 +390,13 @@ impl ModelRuntime {
         &self.media
     }
 
+    /// Hears each stable recovery of an offer whose provider was down
+    /// (OF-305), for the memory work its outage stopped.
+    #[must_use]
+    pub fn recoveries(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.rests.recoveries()
+    }
+
     /// The owner's open quota questions (OF-305): each offer parked on a
     /// spent usage window or spent credit, and the choices it offers.
     #[must_use]

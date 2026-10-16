@@ -29,7 +29,7 @@ use super::forward::{Ended, forward};
 use super::media::{HeldJob, MediaAnswer, MediaRung};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
-use super::walk::{Passed, Walk, ends_call, failure_kind};
+use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
 
 /// One rung: a provider's offer for one model, and the instruction prepended
 /// to every call it serves.
@@ -407,9 +407,10 @@ impl OfferLadder {
     }
 
     /// Records the failure of the rung at `index`, `sent` or refused before
-    /// it went out. A limit refusal rests its offer and hands the call on, as
-    /// does an offer that is down; a request error or a run's refusal ends
-    /// the call with that error, unchanged.
+    /// it went out. A limit refusal rests its offer and hands the call on; an
+    /// offer whose provider is down rests for its health and hands it on
+    /// (OF-305), as does any other failure; a request error or a run's
+    /// refusal ends the call with that error, unchanged.
     fn failed(
         &self,
         index: usize,
@@ -423,6 +424,12 @@ impl OfferLadder {
         let kind = failure_kind(&error);
         let passed = match self.rest_if_limited(index, &error) {
             Some(rest) => Passed::Refused { kind, rest, sent },
+            None if provider_down(&error) => {
+                let rung = &self.rungs[index];
+                let rest = self.rests.failed_down(&rung.offer.binding, &rung.wire_model);
+                tracing::warn!(rung = rung.position, kind, "rung's provider is down; trying the next");
+                Passed::Down { kind, rest, sent }
+            }
             None => {
                 let rung = &self.rungs[index];
                 tracing::warn!(rung = rung.position, kind, "rung failed; trying the next");
@@ -463,10 +470,17 @@ impl OfferLadder {
     /// resting offer it may use is back, if one rests. Otherwise a last
     /// failure that was a limit refusal, or a call that reached no rung
     /// because each one it could use rests, refuses with that time, so a
-    /// caller can say when. Any other last failure is returned as it came.
+    /// caller can say when. Any other last failure is returned as it came,
+    /// as is an outage: every rung resting rests for its health, so the call
+    /// ends with its provider's own failure, never a rate refusal.
     /// Every rung parked, the owner is asked about the spent ones.
     fn unanswered(&self, walk: Walk) -> LlmError {
         self.ask_parked(&walk);
+        if walk.outage() && !walk.kept() {
+            return walk
+                .last
+                .unwrap_or_else(|| RetryableLlmError::ServerError.into());
+        }
         let back = walk
             .back()
             .zip(self.rests.now())
@@ -672,6 +686,8 @@ impl OfferLadder {
             .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
+                self.rests
+                    .succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
                 response.usage = self.answered(index, walk, response.usage);
                 Ok(Sent::Answer(response))
@@ -781,6 +797,8 @@ impl OfferLadder {
         let answered = gate.run(bound, permit.lease()).await;
         match answered {
             Ok(mut response) => {
+                self.rests
+                    .succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle_media(response.usage.token_units(operation, &media.caps))?;
                 if self.receipt {
                     let raw = std::mem::take(&mut response.usage.raw_provider);
@@ -1020,6 +1038,8 @@ impl OfferLadder {
                 usage,
                 finish_reason,
             } => {
+                self.rests
+                    .succeeded(&rung.offer.binding, &rung.wire_model);
                 let done = match permit.settle(CallOutcome::Answered(&usage)) {
                     Ok(_) => Ok(LlmStreamEvent::Done {
                         message,
@@ -1036,8 +1056,12 @@ impl OfferLadder {
                 spoken: true,
             } => {
                 settle_failed(permit);
-                // Its stream was the answer; a limit it met still rests it.
-                self.rest_if_limited(index, &error);
+                // Its stream was the answer, never sent again; a limit it
+                // met still rests it, as does an outage.
+                if self.rest_if_limited(index, &error).is_none() && provider_down(&error) {
+                    self.rests
+                        .failed_down(&rung.offer.binding, &rung.wire_model);
+                }
                 let _ = events.send(Err(error)).await;
                 Flow::Ended
             }

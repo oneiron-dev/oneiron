@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use oneiron::{FatalLlmError, LlmError};
 use serde_json::{Value as JsonValue, json};
 
-use super::cooldown::Rest;
+use super::cooldown::{ResetSource, Rest};
 use super::ladder::LadderRung;
 
 /// Why a call did not answer from a rung it passed: the receipt's
@@ -16,6 +16,14 @@ pub(super) enum Passed {
     /// It refused for a quota or a limit, and rests until its reset (none
     /// when nothing keeps rests).
     Refused {
+        kind: &'static str,
+        rest: Option<Rest>,
+        sent: bool,
+    },
+    /// Its provider was down (a server error, a timeout, a cut stream, an
+    /// empty answer), and it rests for its health until then (none when
+    /// nothing keeps rests).
+    Down {
         kind: &'static str,
         rest: Option<Rest>,
         sent: bool,
@@ -65,7 +73,9 @@ impl Walk {
             .filter(|(_, passed)| {
                 matches!(
                     passed,
-                    Passed::Refused { sent: true, .. } | Passed::Failed { sent: true, .. }
+                    Passed::Refused { sent: true, .. }
+                        | Passed::Down { sent: true, .. }
+                        | Passed::Failed { sent: true, .. }
                 )
             })
             .count()
@@ -98,6 +108,14 @@ impl Walk {
                 match passed {
                     Passed::Refused { kind, rest, .. } => {
                         row["passed"] = json!("refused");
+                        row["class"] = json!(kind);
+                        if let Some(rest) = rest {
+                            row["cooldown_until"] = json!(rest.until);
+                            row["reset"] = json!(rest.source.as_str());
+                        }
+                    }
+                    Passed::Down { kind, rest, .. } => {
+                        row["passed"] = json!("failed");
                         row["class"] = json!(kind);
                         if let Some(rest) = rest {
                             row["cooldown_until"] = json!(rest.until);
@@ -147,21 +165,48 @@ impl Walk {
                 Passed::Refused {
                     rest: Some(rest), ..
                 }
+                | Passed::Down {
+                    rest: Some(rest), ..
+                }
                 | Passed::Resting { rest } => parked.push((index, *rest)),
                 Passed::KeptOnDevice => {}
-                Passed::Refused { rest: None, .. } | Passed::Failed { .. } => return None,
+                Passed::Refused { rest: None, .. }
+                | Passed::Down { rest: None, .. }
+                | Passed::Failed { .. } => return None,
             }
         }
         (!parked.is_empty()).then_some(parked)
     }
 
+    /// Whether every rung the call last found resting rests for its health
+    /// alone: an outage, not a limit, so the call ends with the provider's
+    /// own failure rather than a rate refusal. False when none rests.
+    pub(super) fn outage(&self) -> bool {
+        let rests: Vec<Rest> = self
+            .latest()
+            .into_values()
+            .filter_map(|passed| match passed {
+                Passed::Down { rest: Some(rest), .. }
+                | Passed::Refused { rest: Some(rest), .. }
+                | Passed::Resting { rest } => Some(*rest),
+                _ => None,
+            })
+            .collect();
+        !rests.is_empty() && rests.iter().all(|rest| rest.source == ResetSource::Unhealthy)
+    }
+
     /// Whether every rung the call could use rests: none it passed failed
-    /// but by a limit refusal.
+    /// but by a limit refusal or an outage it rests for.
     pub(super) fn limited(&self) -> bool {
         !self
             .passed
             .iter()
-            .any(|(_, passed)| matches!(passed, Passed::Failed { .. }))
+            .any(|(_, passed)| {
+                matches!(
+                    passed,
+                    Passed::Failed { .. } | Passed::Down { rest: None, .. }
+                )
+            })
     }
 }
 
@@ -171,6 +216,9 @@ impl Passed {
         match self {
             Self::Resting { rest } => Some(rest.until),
             Self::Refused {
+                rest: Some(rest), ..
+            }
+            | Self::Down {
                 rest: Some(rest), ..
             } => Some(rest.until),
             _ => None,
@@ -184,7 +232,7 @@ impl Passed {
         match found {
             Self::KeptOnDevice => matches!(self, Self::KeptOnDevice),
             Self::Resting { rest } => self.back() == Some(rest.until),
-            Self::Refused { .. } | Self::Failed { .. } => false,
+            Self::Refused { .. } | Self::Down { .. } | Self::Failed { .. } => false,
         }
     }
 }
@@ -211,6 +259,21 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
     }
+}
+
+/// Whether a rung failure says its provider is down, not that the request
+/// or its credentials are wrong: a server error, a timeout, a cut stream or
+/// an empty answer. Its offer rests for its health (OF-305).
+pub(super) fn provider_down(error: &LlmError) -> bool {
+    use oneiron::RetryableLlmError;
+    matches!(
+        error,
+        LlmError::Retryable(
+            RetryableLlmError::ServerError
+                | RetryableLlmError::Timeout
+                | RetryableLlmError::StreamCut
+        ) | LlmError::Fatal(FatalLlmError::EmptyResponse)
+    )
 }
 
 /// A failure that ends the call as it came: the request itself failed (a
