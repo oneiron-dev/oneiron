@@ -188,6 +188,7 @@ impl SyncConnection {
         String,
     > {
         client.note_session_bound = false;
+        client.artifact_publication_resend.clear();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key
         // lease or an issuer secret never grants this read. Each reconnect has

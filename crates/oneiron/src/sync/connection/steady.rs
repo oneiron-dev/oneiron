@@ -319,6 +319,15 @@ impl SyncConnection {
                     if let Err(error) = client.replay_deferred_federation_update() {
                         return LoopExit::Disconnected(format!("federation replay: {error}"));
                     }
+                    // Pinned artifact pointers this device still owes the server.
+                    match client.due_artifact_publication_frames() {
+                        Ok(frames) => for frame in frames {
+                            if let Err(error) = write.send(Message::Binary(frame.into())).await {
+                                return LoopExit::Disconnected(error.to_string());
+                            }
+                        },
+                        Err(error) => { let _ = event_tx.send(SyncEvent::Error(format!("Artifact publication sync failed: {error}"))); }
+                    }
                     match self.manager.vault().pump_message_streams() {
                         Ok(report) => for (_, error) in report.refused {
                             let _ = event_tx.send(SyncEvent::Error(format!("Stream idle finalize refused: {error}")));

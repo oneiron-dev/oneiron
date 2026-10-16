@@ -47,6 +47,8 @@ pub(super) struct ArtifactRoute {
     pub(super) file: BundlePath,
     form: AddressForm,
     raw_artifact: String,
+    /// Reached at `<vault>.<domain>/<artifact>/…`: redirects drop the `/a`.
+    vault_host: bool,
 }
 
 impl ArtifactRoute {
@@ -109,7 +111,12 @@ impl ArtifactRoute {
             file: BundlePath::parse(encoded_file)?,
             form,
             raw_artifact: raw_artifact.to_owned(),
+            vault_host: false,
         })
+    }
+
+    pub(super) fn on_vault_host(&mut self) {
+        self.vault_host = true;
     }
 
     pub(super) fn path(&self) -> &str {
@@ -133,8 +140,9 @@ impl ArtifactRoute {
             .token
             .as_deref()
             .map_or(String::new(), |v| format!("/_t/{v}"));
+        let base = if self.vault_host { "" } else { "/a" };
         Some(format!(
-            "/a/{}{token}/_s/{selector}/{}",
+            "{base}/{}{token}/_s/{selector}/{}",
             self.raw_artifact, self.file.encoded
         ))
     }

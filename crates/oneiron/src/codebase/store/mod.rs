@@ -539,7 +539,7 @@ impl Vault {
         Ok(())
     }
 
-    fn put_filtered_codebase_snapshot_in_txn(
+    pub(crate) fn put_filtered_codebase_snapshot_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         code_artifact_id: &EntityId,

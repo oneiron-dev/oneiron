@@ -7,6 +7,19 @@ impl SyncClient {
         &self,
         frame: DocumentFrame<'_>,
     ) -> Result<Vec<Vec<u8>>, TransportError> {
+        match frame.kind {
+            document_sub_tags::ARTIFACT_RECEIPT => {
+                self.accept_artifact_receipt(frame.entity, frame.payload)
+                    .map_err(storage)?;
+                return Ok(Vec::new());
+            }
+            document_sub_tags::ARTIFACT_PUBLICATION => {
+                return Err(TransportError::InvalidPayload(
+                    "server sent an artifact publication",
+                ));
+            }
+            _ => {}
+        }
         let doc = self
             .manager
             .documents()

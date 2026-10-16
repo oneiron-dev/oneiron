@@ -108,6 +108,19 @@ connection floor and each address's unauthenticated share. Managed serve
 (`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
 `/a/` is unchanged until the supervisor routes an artifact origin.
 
+`artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
+comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
+`ONEIRON_ARTIFACT_VAULT_NAME`, a DNS label) put this vault on a subdomain of
+its own on the artifact listener: `<vault>.<domain>/<artifact>/...` serves what
+`/a/<artifact>/...` serves, with the same tiers, pointers and cache headers, on
+an origin per vault. The edge, DNS and certificates stay static config: route
+each domain's subdomains to the artifact port. A subdomain that names no vault
+here answers exactly as a forbidden artifact does (the artifact 404), and so
+does every refusal from this vault there. Other hosts keep plain `/a/`. A
+device publishes to this server by syncing: a pinned pointer reaches it once
+window sync has delivered the bytes and rows it names. Managed serve refuses
+both flags for now.
+
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
 floor at the disk's last byte. The count rows sit far above fleet scale (each

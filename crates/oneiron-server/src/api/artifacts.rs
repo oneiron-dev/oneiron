@@ -120,6 +120,10 @@ pub(crate) struct ArtifactServeQuery {
 mod route;
 use self::route::ArtifactRoute;
 
+#[path = "artifacts/host.rs"]
+mod host;
+pub(crate) use self::host::{ArtifactHosts, VaultHostRoute};
+
 pub(crate) async fn serve_artifact_root(
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
@@ -127,8 +131,12 @@ pub(crate) async fn serve_artifact_root(
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
     listener: Option<Extension<ArtifactOnlyListener>>,
+    vault_host: Option<Extension<VaultHostRoute>>,
 ) -> Result<Response, EnvelopedApiError> {
-    let route = ArtifactRoute::parse(&uri, &artifact, &query)?;
+    let mut route = ArtifactRoute::parse(&uri, &artifact, &query)?;
+    if vault_host.is_some() {
+        route.on_vault_host();
+    }
     let code_policy = code_artifact_policy(&server, listener);
     let response = serve_artifact_file(server, &route, &headers, code_policy)?;
     if let Some(target) = route.redirect() {
@@ -144,8 +152,12 @@ pub(crate) async fn serve_artifact_path(
     Path((artifact, _path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
     listener: Option<Extension<ArtifactOnlyListener>>,
+    vault_host: Option<Extension<VaultHostRoute>>,
 ) -> Result<Response, EnvelopedApiError> {
-    let route = ArtifactRoute::parse(&uri, &artifact, &query)?;
+    let mut route = ArtifactRoute::parse(&uri, &artifact, &query)?;
+    if vault_host.is_some() {
+        route.on_vault_host();
+    }
     let code_policy = code_artifact_policy(&server, listener);
     let response = serve_artifact_file(server, &route, &headers, code_policy)?;
     if let Some(target) = route.redirect() {

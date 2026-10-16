@@ -22,6 +22,11 @@ pub mod document_sub_tags {
     pub const NOTE_OPS: u8 = 4;
     /// Idempotent NOTE command result, sent only to the requesting connection.
     pub const NOTE_RECEIPT: u8 = 5;
+    /// An own device's pinned artifact pointer change, with the rows that
+    /// serve it. Owner lane only; the entity names the channel and artifact.
+    pub const ARTIFACT_PUBLICATION: u8 = 6;
+    /// The sync server's answer to one publication: its digest and outcome.
+    pub const ARTIFACT_RECEIPT: u8 = 7;
 }
 
 /// Borrowed, validated entity-document frame.
@@ -68,7 +73,9 @@ fn validate_kind(kind: u8) -> Result<(), TransportError> {
         | document_sub_tags::REQUEST
         | document_sub_tags::ACK
         | document_sub_tags::NOTE_OPS
-        | document_sub_tags::NOTE_RECEIPT => Ok(()),
+        | document_sub_tags::NOTE_RECEIPT
+        | document_sub_tags::ARTIFACT_PUBLICATION
+        | document_sub_tags::ARTIFACT_RECEIPT => Ok(()),
         _ => Err(TransportError::InvalidPayload("unknown document kind")),
     }
 }

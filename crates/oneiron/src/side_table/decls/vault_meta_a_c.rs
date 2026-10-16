@@ -54,6 +54,9 @@ side_tables! {
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
     /// Immutable publish admission receipt keyed by publish entity id16.
     ARTIFACT_PUBLISH_ADMISSION: VaultMeta b"artifact:publish:admission:v1:" LegacyJson;
+    /// Empty marker: this channel pointer changed and its publication has not reached the sync
+    /// server yet. Key: channel byte + u16be length + string (artifact id).
+    ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;

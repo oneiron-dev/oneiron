@@ -33,6 +33,9 @@ pub(super) fn handle_document(
             max: server.config.max_update_payload,
         });
     }
+    if kind == document_sub_tags::ARTIFACT_PUBLICATION {
+        return artifact_publication(server, state, entity, payload, direct);
+    }
     let principal = document_principal(server, state)?;
     if kind == document_sub_tags::REQUEST && payload.get(..4) == Some(&[0; 4]) {
         return owner_request(server, state, entity, &payload[4..], direct);
@@ -203,6 +206,27 @@ fn owner_request(
         .map_err(storage_error)?;
         let _ = direct.send(frame);
     }
+    Ok(())
+}
+
+/// An own device's pinned artifact pointer change, with the rows that serve
+/// it. Only the vault owner's bound session on an owner lane may carry one:
+/// a publication is the owner's, already gated where it was made. The vault
+/// applies it once window sync has delivered every row it names, and the
+/// receipt goes back on this socket alone.
+fn artifact_publication(
+    server: &SyncServer,
+    state: &mut ConnState,
+    entity: EntityId,
+    payload: &[u8],
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    owner_auth(server, state, true)?;
+    let receipt = server
+        .vault
+        .import_artifact_publication(entity, payload)
+        .map_err(storage_error)?;
+    let _ = direct.send(receipt);
     Ok(())
 }
 
