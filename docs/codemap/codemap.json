@@ -12846,22 +12846,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ContactClearanceAct",
       "ContactDisclosureOffer",
       "ContactDisclosureOutcome",
       "ContactDisclosureProposal",
-      "DisclosureConfirmationReceipt"
+      "DisclosureConfirmationReceipt",
+      "DisclosureOfferMode"
      ],
      "path": "src/consent/contact_clearance.rs",
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 2,
-      "enum": 2,
-      "fn": 8,
+      "enum": 3,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -38466,7 +38467,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 10
      }
     },
@@ -38579,9 +38580,9 @@
      "path": "src/skill_optimize/gate/project_goal.rs",
      "purpose": "The join between a skill's goal and a project's goal record (ARCH-0053 \"The goal record\")",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -42734,7 +42735,18 @@
      "path": "src/task_verb/project_ask.rs",
      "purpose": "Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/project_tradeoff.rs",
+     "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -42878,6 +42890,10 @@
       "EmptyRequest",
       "InboxListRequest",
       "InboxMarkRequest",
+      "ProjectGoalDismissReceipt",
+      "ProjectGoalDismissRequest",
+      "ProjectRefRequest",
+      "ProjectTradeoffRouteRequest",
       "RecallRequest",
       "ReceiptsRequest",
       "RoomClaimRequest",
@@ -42903,7 +42919,7 @@
       "enum": 1,
       "fn": 6,
       "re-export": 5,
-      "struct": 24
+      "struct": 28
      }
     },
     {
@@ -42931,7 +42947,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 115
+      "fn": 118
      }
     },
     {
@@ -48352,7 +48368,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 97,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -48506,9 +48522,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 91,
+   "over_bar": 92,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2923,
+   "source_files": 2924,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56016,7 +56032,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 97
+      "fn": 100
      }
     },
     {
@@ -57015,7 +57031,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 98
+      "fn": 101
      }
     },
     {
@@ -60800,13 +60816,37 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 36
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AccountKeyConfig",
+      "AccountKeyError",
+      "AccountKeys",
+      "CentralKeyCheck",
+      "CentralKeyVerdict",
+      "PunchAck",
+      "VerifiedAccountKey"
+     ],
+     "path": "src/auth/account_key.rs",
+     "purpose": "Node-side account API key verification (OF-448, the M4 node path of CROSS-ARCH-0008 section 4, owner pick B…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -62732,6 +62772,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KeyInvalidation",
+      "KeyInvalidationKind"
+     ],
+     "path": "src/managed/key_sync.rs",
+     "purpose": "Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 1,
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -62780,8 +62838,8 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
       "crate-vis": 3,
-      "mod": 2,
-      "re-export": 7
+      "mod": 3,
+      "re-export": 8
      }
     },
     {
@@ -64172,7 +64230,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 16,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -65006,9 +65064,9 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "HTTP authentication for log-backed version-two capability slips"
     },
@@ -65153,7 +65211,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65286,9 +65344,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 22,
+   "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 449,
+   "source_files": 451,
    "test_files": 182
   },
   "oneiron-spawn": {
