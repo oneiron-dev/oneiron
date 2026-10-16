@@ -2083,7 +2083,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 18,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -2109,6 +2109,16 @@
      "purpose": "Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`]",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_project_slip.rs",
+     "purpose": "The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -2144,6 +2154,23 @@
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultRecovered",
+      "VaultRecoveryOutcome",
+      "VaultRecoveryProof",
+      "VaultRecoveryStep"
+     ],
+     "path": "src/authority/recover_many.rs",
+     "purpose": "M-vault recovery (OF-169): each vault recovers on its own chain",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -43792,7 +43819,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 123,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45159,7 +45186,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2707,
+   "source_files": 2709,
    "test_files": 903
   },
   "oneiron-android": {
