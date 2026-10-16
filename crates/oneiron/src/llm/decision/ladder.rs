@@ -167,7 +167,8 @@ pub trait DecisionProvider: Send + Sync {
     }
 }
 
-/// Deterministic offline answer table, scoped by exact question version.
+/// Deterministic offline answer table, scoped by exact question version. A question with
+/// no row has no rule here: the table abstains, and the ladder takes it to the next rung.
 pub struct RuleDecisionProvider {
     pin: ProviderPin,
     rows: BTreeMap<(EntityId, u32), ProviderDecision>,
@@ -205,10 +206,11 @@ impl DecisionProvider for RuleDecisionProvider {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
-        self.rows
+        Ok(self
+            .rows
             .get(&(call.question.id, call.question.version))
             .cloned()
-            .ok_or_else(|| invalid("no matching offline rule"))
+            .unwrap_or_else(abstained))
     }
 }
 
@@ -365,9 +367,10 @@ impl DecisionLadder<'_> {
     /// questions-per-call row), with the person question ("ask a person?")
     /// beside them as its own typed question when the dial reaches the person. Then each
     /// answer routes on its own to its own receipt: a stronger rung starts only while work
-    /// time is left, and only for a cause: a small margin under an enforced band, or a
-    /// paired reading at its row. A step skips a rung with no provider, or one that cannot
-    /// take the question, up to the ceiling; with none left the call abstains. At a cut a
+    /// time is left, and only for a cause: a rung that abstained, or once, for the first
+    /// answer, a small margin under an enforced band or a paired reading at its row. A step
+    /// skips a rung with no provider, or one that cannot take the question, up to the
+    /// ceiling; with none left the call abstains. At a cut a
     /// reversible step takes the answer it holds and an irreversible one abstains and asks;
     /// with no answer, or an answer inside its band, the call abstains. The last quarter of
     /// the time stays the answer's.
@@ -500,64 +503,82 @@ impl DecisionLadder<'_> {
         let mut unavailable = false;
         let mut stop = StopCause::Done;
         let mut reasoning = Reasoning::NotNeeded;
-        match first {
-            None => {}
-            Some(Read::NotStarted | Read::Cut) => stop = StopCause::Deadline,
-            Some(Read::Answer(answer)) => {
-                in_band = answer.probability.is_some_and(|p| row.band.contains(p));
-                needs_person = asks_person(&answer, person_row);
-                let cause = step_cause(&answer, in_band, row.mode, policy.think_threshold())
-                    .filter(|_| rung < dial.ceiling);
-                prior = Some(answer);
-                answered = Some(rung);
-                if needs_person {
-                    rung = DecisionRung::Human;
-                } else if let Some(cause) = cause {
-                    // A stronger rung, the person's included, starts only while work
-                    // time is left.
-                    match self.next_available(rung, dial.ceiling, question) {
-                        None => {
-                            unavailable = true;
-                            reasoning = Reasoning::Skipped(cause);
-                        }
-                        Some(_) if !deadline.decision_may_start() => {
-                            stop = StopCause::Deadline;
-                            reasoning = Reasoning::Skipped(cause);
-                        }
-                        Some(DecisionRung::Human) => rung = DecisionRung::Human,
-                        Some(next) => {
-                            let questions = [question];
-                            let pack = DecisionPack {
-                                questions: &questions,
-                                evidence,
-                                state,
-                                deadline,
-                            };
-                            let read = self
-                                .read(next, &pack, person, std::slice::from_mut(&mut readings))?
-                                .remove(0);
-                            match read {
-                                Read::NotStarted => {
-                                    stop = StopCause::Deadline;
-                                    reasoning = Reasoning::Skipped(cause);
-                                }
-                                Read::Cut => {
-                                    stop = StopCause::Deadline;
-                                    reasoning = Reasoning::Cut(cause);
-                                }
-                                Read::Answer(answer) => {
-                                    reasoning = Reasoning::Ran(cause);
-                                    rung = next;
-                                    answered = Some(next);
-                                    if asks_person(&answer, person_row) {
-                                        needs_person = true;
-                                        rung = DecisionRung::Human;
-                                    }
-                                    prior = Some(answer);
-                                }
-                            }
-                        }
+        // Whether the first answer has been weighed for the one step up, and the cause of
+        // the read in hand when it is that step.
+        let mut weighed = false;
+        let mut stepping = None;
+        let mut next_read = first;
+        while let Some(read) = next_read.take() {
+            let answer = match read {
+                Read::Answer(answer) => answer,
+                Read::NotStarted => {
+                    stop = StopCause::Deadline;
+                    if let Some(cause) = stepping {
+                        reasoning = Reasoning::Skipped(cause);
                     }
+                    break;
+                }
+                Read::Cut => {
+                    stop = StopCause::Deadline;
+                    if let Some(cause) = stepping {
+                        reasoning = Reasoning::Cut(cause);
+                    }
+                    break;
+                }
+            };
+            if let Some(cause) = stepping.take() {
+                reasoning = Reasoning::Ran(cause);
+            }
+            answered = Some(rung);
+            needs_person = asks_person(&answer, person_row);
+            // A rung that abstains answered nothing, so the question goes on to the next
+            // rung that can take it (ARCH-0076 #fit-ask: rules first, then the local head,
+            // ending at the next authorised role). The first answer may step up once more.
+            let passes = answer.answer == DecisionAnswer::Abstain;
+            let cause = if passes || weighed {
+                None
+            } else {
+                weighed = true;
+                in_band = answer.probability.is_some_and(|p| row.band.contains(p));
+                step_cause(&answer, in_band, row.mode, policy.think_threshold())
+            };
+            prior = Some(answer);
+            if needs_person {
+                rung = DecisionRung::Human;
+                break;
+            }
+            if (!passes && cause.is_none()) || rung >= dial.ceiling {
+                break;
+            }
+            // A stronger rung, the person's included, starts only while work time is left.
+            match self.next_available(rung, dial.ceiling, question) {
+                None => {
+                    unavailable = true;
+                    if let Some(cause) = cause {
+                        reasoning = Reasoning::Skipped(cause);
+                    }
+                }
+                Some(_) if !deadline.decision_may_start() => {
+                    stop = StopCause::Deadline;
+                    if let Some(cause) = cause {
+                        reasoning = Reasoning::Skipped(cause);
+                    }
+                }
+                Some(DecisionRung::Human) => rung = DecisionRung::Human,
+                Some(next) => {
+                    let questions = [question];
+                    let pack = DecisionPack {
+                        questions: &questions,
+                        evidence,
+                        state,
+                        deadline,
+                    };
+                    next_read = Some(
+                        self.read(next, &pack, person, std::slice::from_mut(&mut readings))?
+                            .remove(0),
+                    );
+                    rung = next;
+                    stepping = cause;
                 }
             }
         }
@@ -565,7 +586,11 @@ impl DecisionLadder<'_> {
         // takes an answer the call does not have, or one inside its band, enforced or
         // in shadow (packet rule 5: an in-band answer is not eligible).
         let abstains_at_cut = stop == StopCause::Deadline
-            && (prior.is_none() || reversibility == Reversibility::OutboundEffect || in_band);
+            && (prior
+                .as_ref()
+                .is_none_or(|prior| prior.answer == DecisionAnswer::Abstain)
+                || reversibility == Reversibility::OutboundEffect
+                || in_band);
         if abstains_at_cut && dial.ceiling == DecisionRung::Human {
             rung = DecisionRung::Human;
         }
