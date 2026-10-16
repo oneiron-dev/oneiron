@@ -102,6 +102,10 @@ impl Vault {
             consult: None,
             ttl: None,
             spec,
+            type_ref: crate::task_type::TaskTypeRef::seed(
+                crate::task_type::SeedTaskType::Solve,
+                crate::task_type::SEEDED_TREE_VERSION,
+            ),
         };
         let provenance = Value::Map(vec![
             (Value::from("source"), Value::from("repo.conflict")),

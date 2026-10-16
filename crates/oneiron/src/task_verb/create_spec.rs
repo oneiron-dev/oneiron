@@ -2,6 +2,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
+use crate::task_type::TaskTypeRef;
 
 use super::consult_payload::ConsultPayload;
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
@@ -21,6 +22,10 @@ pub struct TaskCreateSpec {
     pub consult: Option<ConsultPayload>,
     pub assignee: Option<TaskAssignee>,
     pub ttl: Option<TaskTtl>,
+    /// OF-543: the one task-type stamp, placed once. Absent means the
+    /// create path places it (unsure uses the root) — a landed TASK and
+    /// its receipts always carry one; see [`Self::resolved_type_ref`].
+    pub type_ref: Option<TaskTypeRef>,
     /// OF-220: a typed brief. A create that carries one, with its intent
     /// key, is a post and runs through the task highway.
     pub brief: Option<super::brief::QueueTaskBrief>,
@@ -46,6 +51,7 @@ impl TaskCreateSpec {
             consult: None,
             assignee: None,
             ttl: None,
+            type_ref: None,
             brief: None,
             intent_key: None,
         }
@@ -85,6 +91,21 @@ impl TaskCreateSpec {
     pub const fn with_ttl(mut self, ttl: TaskTtl) -> Self {
         self.ttl = Some(ttl);
         self
+    }
+
+    #[must_use]
+    pub fn with_type_ref(mut self, type_ref: TaskTypeRef) -> Self {
+        self.type_ref = Some(type_ref);
+        self
+    }
+
+    /// The stamp this task lands with: the caller's placed ref, else the
+    /// root of the tree at `tree_version` (the unsure placement).
+    #[must_use]
+    pub fn resolved_type_ref(&self, tree_version: u64) -> TaskTypeRef {
+        self.type_ref
+            .clone()
+            .unwrap_or_else(|| TaskTypeRef::root(tree_version))
     }
 }
 

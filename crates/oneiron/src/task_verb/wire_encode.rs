@@ -353,6 +353,11 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
         ),
         (Value::from("provenance"), body.provenance),
         (Value::from("created_at"), Value::from(body.created_at)),
+        (
+            Value::from("type_ref"),
+            body.type_ref
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
+        ),
     ];
     // Elided when absent, so a task nobody refused keeps its bytes.
     if let Some(refusal) = &body.refusal {
