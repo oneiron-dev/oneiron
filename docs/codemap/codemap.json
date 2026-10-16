@@ -16446,7 +16446,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 13,
-      "mod": 10,
+      "mod": 11,
       "struct": 4
      }
     },
@@ -16542,6 +16542,25 @@
      "path": "src/edit_distance/attribution/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActingRevision",
+      "ActingTarget",
+      "CompiledLine",
+      "CompiledLineKind",
+      "RevisionDecision",
+      "RevisionStatus"
+     ],
+     "path": "src/edit_distance/compile.rs",
+     "purpose": "Compiling approved preferences into acting revisions (OF-379): every manual edit is a critique of the…",
+     "surface": {
+      "enum": 4,
+      "fn": 4,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -34171,7 +34190,22 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 6,
-      "re-export": 7
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PositiveFinding",
+      "PositiveSkillProposal"
+     ],
+     "path": "src/skill_attribution/positive.rs",
+     "purpose": "The positive lane (OF-379): a win that taught the skill something",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -43271,7 +43305,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -43929,7 +43963,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44169,7 +44203,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2648,
+   "source_files": 2650,
    "test_files": 903
   },
   "oneiron-android": {
