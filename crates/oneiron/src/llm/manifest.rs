@@ -47,8 +47,12 @@ pub enum ModelRole {
     DocParsing,
     AudioVad,
     TtsDeferred,
+    /// The Local-vision slot's small vision model: reads an image's full
+    /// pixels and answers a question about them in text (`ask_image`,
+    /// OF-329), through the LLM slot. No model is chosen for it.
+    LocalVision,
 }
-pub const MODEL_ROLES: [ModelRole; 15] = [
+pub const MODEL_ROLES: [ModelRole; 16] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
@@ -64,6 +68,7 @@ pub const MODEL_ROLES: [ModelRole; 15] = [
     ModelRole::DocParsing,
     ModelRole::AudioVad,
     ModelRole::TtsDeferred,
+    ModelRole::LocalVision,
 ];
 impl ModelRole {
     /// A role of the generative family: it generates or rules through the

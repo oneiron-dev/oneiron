@@ -387,7 +387,9 @@ async fn put_organ_build(
             .map_err(|error| OwnerError::Host(error.into()))?
             .len();
         if length > MAX_ORGAN_BUILD_BYTES {
-            return Err(OwnerError::Invalid("the organ build is too large".to_owned()));
+            return Err(OwnerError::Invalid(
+                "the organ build is too large".to_owned(),
+            ));
         }
         let bytes = std::fs::read(&request.path).map_err(|error| OwnerError::Host(error.into()))?;
         Ok(server.vault().put_pack_organ_build(

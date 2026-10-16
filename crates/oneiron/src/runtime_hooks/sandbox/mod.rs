@@ -162,7 +162,8 @@ impl HookSandbox {
             return row.seen === 7 && Date.now() === input.now && typeof process === 'undefined' \
             && typeof fetch === 'undefined' && typeof require === 'undefined' \
             ? {kind: 'nothing'} : {kind: 'skip', reason: 'probe'};";
-        let input = r#"{"hook":{"binding":"00000000000000000000000000000001"},"now":1700000000000}"#;
+        let input =
+            r#"{"hook":{"binding":"00000000000000000000000000000001"},"now":1700000000000}"#;
         let run = self.run_hook(body, input, 5_000, &mut |request: &str| {
             if request == r#"{"claim":"00000000000000000000000000000001"}"# {
                 Ok(r#"{"seen":7}"#.to_owned())

@@ -136,6 +136,10 @@ pub struct SyncServer {
     /// on every server, with the rungs `[models]` binds once the AI host
     /// attaches.
     pub(crate) decisions: crate::decision_host::DecisionHost,
+    /// The hook sandbox the fact-hook runner runs bodies on, set by `serve`
+    /// once it loads; `vault.hooks.replay` replays on the same one. Empty
+    /// under `--no-hooks`, or when the sandbox did not load.
+    pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -364,6 +368,7 @@ impl SyncServer {
             decision_read: None,
             decision_reads,
             decisions,
+            hook_runtime: std::sync::OnceLock::new(),
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
