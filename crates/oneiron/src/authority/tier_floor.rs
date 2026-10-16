@@ -116,7 +116,7 @@ pub(super) fn below_concurrent_tier_floors(
 
 /// Judges `entry`'s participants again over its parents' merged state, with
 /// `floor` in force. A row whose parents did not all fold stands as it folded.
-fn participants_under_floor(
+pub(super) fn participants_under_floor(
     entry: &AuthorityLogEntry,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     floor: AuthorityTier,

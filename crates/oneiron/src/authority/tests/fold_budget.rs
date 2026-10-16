@@ -3,7 +3,10 @@
 use super::machine_identity::{host, request_for};
 use super::support::*;
 use super::*;
-use crate::authority::log_budget::{authority_signer_label, with_rows_per_signer_for_test};
+use crate::authority::log_budget::{
+    authority_signer_label, fold_memory_floor, fold_projected_bytes,
+    with_fold_memory_floor_for_test, with_physical_memory_for_test, with_rows_per_signer_for_test,
+};
 
 fn confirm_op(n: usize) -> AuthorityOp {
     let mut confirm_id = [0xC0; 32];
@@ -60,25 +63,29 @@ fn assert_folds_closed(fold: &AuthorityFold) {
     assert!(fold.vault_id.is_none() && fold.roster.is_empty() && fold.valid_entries.is_empty());
 }
 
-/// Bug repro: a key the vault never enrolled signs a chain naming the vault
-/// id. Past the row bound the fold refuses the whole log before any work and
-/// fails closed. Past the handoff bound it does the same.
+/// Bug repro (H72, rule 5): a key the vault never enrolled signs a chain
+/// naming the vault id, or more handoffs than one fold used to probe. The
+/// fold reads all of it and keeps the vault's root, with none of the
+/// stranger's rows valid. Under a memory floor the chain's fold would pass,
+/// it refuses the whole log, fails closed and names the floor.
 #[test]
-fn a_self_signed_chain_past_the_row_bound_folds_closed() {
+fn a_self_signed_chain_folds_until_its_memory_floor() {
+    const LEN: usize = 64;
     let genesis = genesis_entry(60, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let mut entries = vec![genesis.clone()];
-    entries.extend(confirm_chain(
-        &genesis,
-        201,
-        MAX_AUTHORITY_FOLD_ENTRIES,
-        |_| vec![],
-    ));
-    assert_folds_closed(&fold_authority_log(&entries));
+    entries.extend(confirm_chain(&genesis, 201, LEN, |_| vec![]));
+    let fold = fold_authority_log(&entries);
+    assert!(!fold.authority_log_past_bound() && fold.vault_id.is_some());
+    assert_eq!(fold.valid_entries.len(), 1);
+    let floor = fold_projected_bytes(LEN + 1, (LEN * (LEN + 1) / 2) as u64) - 1;
+    let fold = with_fold_memory_floor_for_test(floor, || fold_authority_log(&entries));
+    assert_folds_closed(&fold);
+    assert_eq!(fold.authority_log_memory_floor(), Some(floor));
 
     let stranger = ed_key(203);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let mut entries = vec![genesis.clone()];
-    for n in 0..=MAX_AUTHORITY_FOLD_HANDOFFS {
+    for n in 0..=2 * DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS as usize {
         entries.push(sign_ed(
             unsigned_entry(
                 Some(vault_id),
@@ -97,14 +104,18 @@ fn a_self_signed_chain_past_the_row_bound_folds_closed() {
             &stranger,
         ));
     }
-    assert_folds_closed(&fold_authority_log(&entries));
+    let fold = fold_authority_log(&entries);
+    assert!(!fold.authority_log_past_bound() && fold.vault_id.is_some());
+    assert_eq!(fold.valid_entries.len(), 1);
 }
 
-/// Bug repro: under the row bound, a chain whose rows each name missing
-/// parents inflates every row's ancestry. The index stops at its edge bound
+/// Bug repro: a chain whose rows each name missing parents inflates every
+/// row's ancestry. Each missing parent costs the fold as a row's does, so
+/// under a floor the plain chain's fold fits, the index stops at the floor
 /// and the fold fails closed instead of building the rest.
 #[test]
-fn a_chain_naming_missing_parents_past_the_edge_bound_folds_closed() {
+fn a_chain_naming_missing_parents_folds_closed_at_the_memory_floor() {
+    const LEN: usize = 64;
     let genesis = genesis_entry(63, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let missing = |n: usize| {
         (0..MAX_PARENTS - 1)
@@ -116,10 +127,15 @@ fn a_chain_naming_missing_parents_past_the_edge_bound_folds_closed() {
             })
             .collect()
     };
-    let mut entries = vec![genesis.clone()];
-    entries.extend(confirm_chain(&genesis, 204, 1024, missing));
-    assert!(entries.len() < MAX_AUTHORITY_FOLD_ENTRIES);
-    assert_folds_closed(&fold_authority_log(&entries));
+    let floor = fold_projected_bytes(LEN + 1, (LEN * (LEN + 1) / 2) as u64);
+    with_fold_memory_floor_for_test(floor, || {
+        let mut entries = vec![genesis.clone()];
+        entries.extend(confirm_chain(&genesis, 204, LEN, |_| vec![]));
+        assert!(!fold_authority_log(&entries).authority_log_past_bound());
+        let mut entries = vec![genesis.clone()];
+        entries.extend(confirm_chain(&genesis, 204, LEN, missing));
+        assert_folds_closed(&fold_authority_log(&entries));
+    });
 }
 
 /// Positive control: one signer's full bound of rows in a single chain, the
@@ -137,6 +153,138 @@ fn a_signers_full_bound_still_folds() {
     let fold = fold_authority_log(&entries);
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
     assert_eq!(fold.valid_entries.len(), MAX_AUTHORITY_ROWS_PER_SIGNER);
+}
+
+/// Bug repro (rule 5): the owner's own rows in one chain, under the row
+/// bound but past the ancestor-pair bound, made the fold refuse the log, so
+/// the owner could neither sign a next row nor use an owner verb. The fold
+/// holds every row, the owner's verbs work, and the log raises its headroom
+/// check once for each row it crossed: counted rows and ancestor pairs.
+#[test]
+fn the_owners_one_chain_past_the_ancestor_bound_folds_and_owner_verbs_work() {
+    const BOUND: usize = 16;
+    let host = host();
+    let person = crate::vault::embedded_owner_actor_id().unwrap();
+    let subject = EntityId::from_bytes([0x5A; 16]).unwrap();
+    host.vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        // 3 * BOUND rows in one chain: under main's 4 * BOUND row bound,
+        // past its 2 * BOUND^2 ancestor pairs.
+        for n in 0..3 * BOUND {
+            let entry = crate::authority::slip_vault::next_entry(
+                &host.issuer,
+                &host.vault.authority_fold().unwrap(),
+                confirm_op(n),
+                host.vault.now_recorded_at(),
+            )
+            .unwrap_or_else(|err| panic!("the owner's row {n} signs on the fold: {err}"));
+            host.vault
+                .put_authority_log_entry(&entry, TimeRange { start: 1, end: 1 }, 1)
+                .unwrap();
+        }
+        let fold = host.vault.authority_fold().unwrap();
+        assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+        host.vault
+            .memory(person, crate::EdgeActorClass::Human)
+            .safe_delete(&subject.to_hex(), crate::SafeDeleteReason::UserDelete)
+            .expect("owner verbs work past the ancestor bound");
+        let checks = host.vault.authority_log_checks().unwrap();
+        assert_eq!(
+            checks
+                .iter()
+                .map(|check| (check.kind, check.scope))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    AuthorityLogCheck::FOLD_HEADROOM,
+                    Some(AuthorityLogCheck::ROWS)
+                ),
+                (
+                    AuthorityLogCheck::FOLD_HEADROOM,
+                    Some(AuthorityLogCheck::ANCESTOR_PAIRS)
+                ),
+            ],
+            "{checks:?}"
+        );
+    });
+}
+
+/// Done-means (Engine on #1508): with no row, the memory floor is the
+/// machine's, a quarter of its physical memory from 1 GiB up to the 8 GiB
+/// cap, so a small machine's fold refuses at its own floor; the policy row
+/// overrides it.
+#[test]
+fn a_small_machine_folds_under_its_own_floor_and_the_row_overrides_it() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let row = |bytes| AuthorityObservationPolicy {
+        log_fold_memory_floor_bytes: bytes,
+        ..AuthorityObservationPolicy::default()
+    };
+    for (physical, floor) in [
+        (2 * GIB, GIB),
+        (4 * GIB, GIB),
+        (12 * GIB, 3 * GIB),
+        (64 * GIB, 8 * GIB),
+    ] {
+        with_physical_memory_for_test(physical, || {
+            assert_eq!(fold_memory_floor(None), floor, "{physical}");
+            assert_eq!(fold_memory_floor(Some(&row(None))), floor, "{physical}");
+            assert_eq!(fold_memory_floor(Some(&row(Some(5 * GIB)))), 5 * GIB);
+        });
+    }
+}
+
+/// Done-means (rule 5, H72): the one count the fold refuses is its memory
+/// floor, a policy row. A vault whose log's fold would pass it holds no
+/// root, its typed issue names the floor, and owner verbs are refused with
+/// it; raising the row restores them.
+#[test]
+fn a_log_past_its_memory_floor_names_the_floor_and_raising_the_row_restores_it() {
+    let host = host();
+    let person = crate::vault::embedded_owner_actor_id().unwrap();
+    let subject = EntityId::from_bytes([0x5B; 16]).unwrap();
+    host.vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .unwrap();
+    let delete = || {
+        host.vault
+            .memory(person, crate::EdgeActorClass::Human)
+            .safe_delete(&subject.to_hex(), crate::SafeDeleteReason::UserDelete)
+    };
+    let floor = fold_projected_bytes(1, 0);
+    host.vault
+        .set_authority_observation_policy(AuthorityObservationPolicy {
+            log_fold_memory_floor_bytes: Some(floor),
+            ..AuthorityObservationPolicy::default()
+        })
+        .unwrap();
+    let fold = host.vault.authority_fold().unwrap();
+    assert_eq!(fold.authority_log_memory_floor(), Some(floor));
+    assert!(fold.vault_root_is_conflicted());
+    let err = delete().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains(&format!("memory floor of {floor} bytes")),
+        "{err}"
+    );
+    host.vault
+        .set_authority_observation_policy(AuthorityObservationPolicy::default())
+        .unwrap();
+    delete().expect("owner verbs work under the default floor");
 }
 
 /// Substrate invariant (rule 5): a key no slip issuer vouches for, here an
@@ -227,6 +375,7 @@ fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
     assert!(
         checks.contains(&AuthorityLogCheck {
             kind: AuthorityLogCheck::SIGNER_BOUND,
+            scope: None,
             signer: Some(label),
             count: BOUND as u64,
             threshold: BOUND as u64,
@@ -379,10 +528,10 @@ fn issuer_slip_chain(
         .collect()
 }
 
-/// Structural: the slip issuer's slip rows count toward neither the fold's
-/// row bound nor its ancestor-pair bound, however many there are, even under
-/// rows that do count. The same rows signed by a key no owner admitted count
-/// in full and fold closed.
+/// Structural: the slip issuer's slip rows count toward none of the fold's
+/// ancestor pairs, however many there are, even under rows that do count.
+/// The same rows signed by a key no owner admitted count in full, and the
+/// fold still reads them.
 #[test]
 fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
     const BOUND: usize = 4;
@@ -430,16 +579,24 @@ fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
             .collect();
         let uncounted = crate::authority::log_budget::uncounted_rows(&by_hash);
         assert_eq!(uncounted.len(), slips.len() + 1, "the root mint too");
+        let counted_rows = (entries.len() - uncounted.len()) as u64;
+        assert!(
+            fold.counted_ancestor_pairs <= counted_rows * (counted_rows - 1) / 2,
+            "{}",
+            fold.counted_ancestor_pairs
+        );
 
         let stranger = HostSlipIssuer::from_secret(b"stranger placeholder words").unwrap();
         let mut foreign = base.clone();
         foreign.extend(issuer_slip_chain(&stranger, &root, head, 1, 64 * BOUND));
         let fold = fold_authority_log(&foreign);
-        assert_eq!(
-            fold.authority_log_bound_signer(),
-            Some(&stranger.public_key())
+        assert!(!fold.authority_log_past_bound() && fold.vault_id.is_some());
+        let stranger_rows = (64 * BOUND) as u64;
+        assert!(
+            fold.counted_ancestor_pairs >= stranger_rows * (stranger_rows - 1) / 2,
+            "{}",
+            fold.counted_ancestor_pairs
         );
-        assert_folds_closed(&fold);
     });
 }
 
@@ -582,7 +739,7 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
             assert!(
                 !fold.authority_log_past_bound(),
                 "machine {machine}: {:?}",
-                fold.authority_log_bound_signer()
+                fold.issues
             );
             assert!(fold.machine(witness.machine).is_some_and(RosterHead::mine));
             assert_eq!(stored() - before, BOUND + 2, "machine {machine}");
@@ -1795,13 +1952,12 @@ fn a_world_edit_lands_only_from_its_own_machines_install_key() {
         .unwrap();
 }
 
-/// Rule 5 (Engine check): the owner's work never waits, so past every bound
-/// it would close the fold. The log warns at half of what one fold holds:
-/// its counted rows at half of what one chain holds before the pair bound,
-/// and its slip issuers' handoffs at half the handoff bound. Both are policy
-/// rows.
+/// Rule 5 (Engine check): the owner's work never waits and the fold reads
+/// all of it, so the log raises one typed headroom check per policy row it
+/// reaches: its counted rows, and its slip issuers' handoffs. Each is a row
+/// the owner may move.
 #[test]
-fn the_log_warns_at_half_of_one_folds_bounds() {
+fn the_log_raises_one_headroom_check_per_policy_row() {
     const BOUND: usize = 4;
     let headroom = |vault: &crate::Vault| {
         vault
@@ -1809,7 +1965,7 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
             .unwrap()
             .into_iter()
             .filter(|check| check.kind == AuthorityLogCheck::FOLD_HEADROOM)
-            .map(|check| (check.count, check.threshold))
+            .map(|check| (check.scope.unwrap(), check.count, check.threshold))
             .collect::<Vec<_>>()
     };
     let at = TimeRange { start: 1, end: 1 };
@@ -1827,7 +1983,10 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
         vault.put_authority_log_entries(&rows).unwrap();
         assert!(headroom(&vault).is_empty());
         vault.put_authority_log_entries(&[half]).unwrap();
-        assert_eq!(headroom(&vault), vec![(BOUND as u64, BOUND as u64)]);
+        assert_eq!(
+            headroom(&vault),
+            vec![(AuthorityLogCheck::ROWS, BOUND as u64, BOUND as u64)]
+        );
     });
 
     let dir = tempfile::tempdir().unwrap();
@@ -1836,7 +1995,8 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
     let vault_id = genesis_vault_id(&genesis).unwrap();
     vault.put_authority_log_entry(&genesis, at, 1).unwrap();
     let (mut signer, mut parent) = (ed_key(69), authority_entry_hash(&genesis).unwrap());
-    for n in 1..=MAX_AUTHORITY_FOLD_HANDOFFS / 2 {
+    let at_row = DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS;
+    for n in 1..=at_row {
         assert!(headroom(&vault).is_empty(), "{n} handoffs");
         let next = ed_key(170 + n as u8);
         let handoff = sign_ed(
@@ -1859,12 +2019,14 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
         vault.put_authority_log_entry(&handoff, at, 1).unwrap();
         (signer, parent) = (next, authority_entry_hash(&handoff).unwrap());
     }
-    let half = MAX_AUTHORITY_FOLD_HANDOFFS as u64 / 2;
-    assert_eq!(headroom(&vault), vec![(half, half)]);
+    assert_eq!(
+        headroom(&vault),
+        vec![(AuthorityLogCheck::HANDOFFS, at_row, at_row)]
+    );
     // Each threshold is a policy row the owner may move.
     vault
         .set_authority_observation_policy(AuthorityObservationPolicy {
-            log_headroom_handoffs: half + 1,
+            log_headroom_handoffs: at_row + 1,
             ..AuthorityObservationPolicy::default()
         })
         .unwrap();
@@ -1872,31 +2034,55 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
 }
 
 /// Substrate invariant: an observation policy row written before the log's
-/// bounds existed, three u64be, still reads, with their defaults.
+/// bounds existed (three u64be), or before its fold's pair and memory rows
+/// (six), still reads, with the missing rows' defaults.
 #[test]
 fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
     use crate::side_table::RawValue;
-    let old: Vec<u8> = [10_u64, 20, 30]
-        .iter()
-        .flat_map(|value| value.to_be_bytes())
-        .collect();
-    let policy = AuthorityObservationPolicy::from_raw(&old).unwrap();
-    assert_eq!(
-        (
+    let raw = |values: &[u64]| -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_be_bytes())
+            .collect()
+    };
+    let read = |values: &[u64]| {
+        let policy = AuthorityObservationPolicy::from_raw(&raw(values)).unwrap();
+        [
             policy.stale_roster_window_secs,
             policy.ingest_window_secs,
             policy.ingest_check_threshold,
             policy.log_signer_bound,
             policy.log_headroom_rows,
             policy.log_headroom_handoffs,
-        ),
-        (
+            policy.log_headroom_ancestor_pairs,
+            // No row: the machine's floor.
+            policy.log_fold_memory_floor_bytes.unwrap_or(0),
+        ]
+    };
+    assert_eq!(
+        read(&[10, 20, 30]),
+        [
             10,
             20,
             30,
             DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
             DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
             DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
-        )
+            DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
+            0,
+        ]
+    );
+    assert_eq!(
+        read(&[10, 20, 30, 40, 50, 60]),
+        [
+            10,
+            20,
+            30,
+            40,
+            50,
+            60,
+            DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
+            0,
+        ]
     );
 }

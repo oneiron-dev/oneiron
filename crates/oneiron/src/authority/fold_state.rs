@@ -65,11 +65,12 @@ pub enum AuthorityFoldIssue {
         /// Deterministic rejection reason.
         reason: ActorBindingRejection,
     },
-    /// The log holds more rows, handoffs or ancestor pairs than one fold may
-    /// read (H72). The fold refused all of it and holds no root.
-    FoldBudgetExceeded {
-        /// The signer whose rows took the log past the bound.
-        signer: AuthorityKey,
+    /// The fold's projected peak passes the
+    /// `authority_log_fold_memory_floor` policy row (H72). The fold refused
+    /// all of it and holds no root.
+    FoldMemoryFloor {
+        /// The floor, in bytes.
+        floor_bytes: u64,
     },
 }
 
@@ -164,6 +165,9 @@ pub struct AuthorityFold {
     pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
     /// What this install holds back beside the roster rule (Astra #1430).
     pub(super) install: InstallBound,
+    /// The counted ancestor pairs the fold indexed: those of rows other than
+    /// the slip issuer's slip ops.
+    pub(super) counted_ancestor_pairs: u64,
     /// Every world key with a counted record, keyed by id (world first).
     pub(super) world_keys: BTreeMap<WorldKeyId, FoldedWorldKey>,
     /// Well-signed key records that count for nothing under this install's
@@ -241,8 +245,8 @@ impl AuthorityFold {
     /// keeps only the [`AuthorityFoldIssue::ConflictingVaultRoot`] rows. Every
     /// authority gate MUST fail closed on the second, so the distinction is
     /// exposed here rather than re-derived (and inevitably mis-derived) at each
-    /// call site. A log refused for exceeding the fold bounds
-    /// ([`AuthorityFoldIssue::FoldBudgetExceeded`]) collapses the same way.
+    /// call site. A log refused at its fold's memory floor
+    /// ([`AuthorityFoldIssue::FoldMemoryFloor`]) collapses the same way.
     #[must_use]
     pub fn vault_root_is_conflicted(&self) -> bool {
         self.vault_id.is_none()
@@ -250,7 +254,7 @@ impl AuthorityFold {
                 matches!(
                     issue,
                     AuthorityFoldIssue::ConflictingVaultRoot { .. }
-                        | AuthorityFoldIssue::FoldBudgetExceeded { .. }
+                        | AuthorityFoldIssue::FoldMemoryFloor { .. }
                 )
             })
     }

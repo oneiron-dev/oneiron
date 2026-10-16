@@ -14,15 +14,24 @@ pub const DEFAULT_AUTHORITY_INGEST_WINDOW_SECS: u64 = 60 * 60;
 /// Rows one signer no slip issuer vouches for stores before its next rows
 /// wait, far above fleet scale (H72).
 pub const DEFAULT_AUTHORITY_LOG_SIGNER_BOUND: u64 = super::MAX_AUTHORITY_ROWS_PER_SIGNER as u64;
-/// Counted rows at which the log warns that its fold nears its bounds: half
-/// of what one chain of counted rows holds before the fold's ancestor-pair
-/// bound (2·2048² pairs, about 4,096 rows). Each local writer's log is one
-/// chain, so it closes there, short of the 8,192-row bound (H72, rule 5).
+/// Counted rows one fold reads before the log raises its
+/// `authority_log_fold_headroom` check for rows. The fold still reads every
+/// row: only its memory floor refuses (rule 5).
 pub const DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS: u64 = super::MAX_AUTHORITY_ROWS_PER_SIGNER as u64;
-/// Slip issuers' handoffs at which the log warns: half of what one fold
-/// reads (H72, rule 5).
-pub const DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS: u64 =
-    super::MAX_AUTHORITY_FOLD_HANDOFFS as u64 / 2;
+/// Slip issuers' handoffs one fold probes before the log raises the check
+/// for handoffs. Each one costs a fold of its line.
+pub const DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS: u64 = 16;
+/// Counted ancestor pairs one fold indexes before the log raises the check
+/// for pairs. A one-chain log of n counted rows holds n·(n−1)/2 of them.
+pub const DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS: u64 = 8 * 1024 * 1024;
+/// The most the `authority_log_fold_memory_floor` row's default reaches: the
+/// bytes one fold may project to hold at its peak. A log whose fold would
+/// pass the floor is the one count the fold refuses, with a typed issue
+/// naming it. With no row, the floor is a quarter of this machine's physical
+/// memory, at least 1 GiB and at most this: a one-chain log of about 5,000
+/// counted rows reaches it, and one agent enrolled per row measured 4.4 GB
+/// at 4,000 rows.
+pub const DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// Device-local authority observation policy durations. Key: ().
 const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
@@ -48,6 +57,12 @@ pub struct AuthorityObservationPolicy {
     pub log_headroom_rows: u64,
     /// The `authority_log_fold_headroom` row for slip issuers' handoffs.
     pub log_headroom_handoffs: u64,
+    /// The `authority_log_fold_headroom` row for counted ancestor pairs.
+    pub log_headroom_ancestor_pairs: u64,
+    /// The `authority_log_fold_memory_floor` row, in bytes. None reads a
+    /// quarter of this machine's physical memory, from 1 GiB up to
+    /// [`DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES`].
+    pub log_fold_memory_floor_bytes: Option<u64>,
 }
 
 impl Default for AuthorityObservationPolicy {
@@ -59,6 +74,8 @@ impl Default for AuthorityObservationPolicy {
             log_signer_bound: DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
             log_headroom_rows: DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
             log_headroom_handoffs: DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
+            log_headroom_ancestor_pairs: DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
+            log_fold_memory_floor_bytes: None,
         }
     }
 }
@@ -73,6 +90,8 @@ impl AuthorityObservationPolicy {
         if self.log_signer_bound == 0
             || self.log_headroom_rows == 0
             || self.log_headroom_handoffs == 0
+            || self.log_headroom_ancestor_pairs == 0
+            || self.log_fold_memory_floor_bytes == Some(0)
         {
             return Err(Error::InvalidConfig(
                 "authority log bounds must be positive".to_owned(),
@@ -84,7 +103,7 @@ impl AuthorityObservationPolicy {
 
 impl RawValue for AuthorityObservationPolicy {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = Vec::with_capacity(48);
+        let mut raw = Vec::with_capacity(64);
         for value in [
             self.stale_roster_window_secs,
             self.ingest_window_secs,
@@ -92,6 +111,9 @@ impl RawValue for AuthorityObservationPolicy {
             self.log_signer_bound,
             self.log_headroom_rows,
             self.log_headroom_handoffs,
+            self.log_headroom_ancestor_pairs,
+            // Zero: no row, the machine's floor.
+            self.log_fold_memory_floor_bytes.unwrap_or(0),
         ] {
             raw.extend_from_slice(&value.to_be_bytes());
         }
@@ -99,7 +121,9 @@ impl RawValue for AuthorityObservationPolicy {
     }
 
     fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        if raw.len() != 24 && raw.len() != 48 {
+        // Rows written before the log's bounds (24 bytes) or before its
+        // fold's pair and memory rows (48) read with their defaults.
+        if ![24, 48, 64].contains(&raw.len()) {
             return Err(Error::CorruptedIndex("authority observation policy").into());
         }
         let mut values = [
@@ -109,6 +133,8 @@ impl RawValue for AuthorityObservationPolicy {
             DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
             DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
             DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
+            DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
+            0,
         ];
         for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
             *slot = u64::from_be_bytes(
@@ -124,6 +150,8 @@ impl RawValue for AuthorityObservationPolicy {
             log_signer_bound: values[3],
             log_headroom_rows: values[4],
             log_headroom_handoffs: values[5],
+            log_headroom_ancestor_pairs: values[6],
+            log_fold_memory_floor_bytes: (values[7] != 0).then_some(values[7]),
         };
         policy.validate()?;
         Ok(policy)

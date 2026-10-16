@@ -39,6 +39,9 @@ pub(super) fn fold_as_install(
         hosted: local.hosted,
         machine_standing: standing,
         pre_handoff_entries: local.pre_handoff_entries,
+        memory_floor_bytes: super::log_budget::fold_memory_floor(
+            local.observations.map(|observations| &observations.policy),
+        ),
         pin: local.pin,
     };
     let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);
@@ -62,7 +65,9 @@ pub(super) fn fold_as_install(
     // and a stale one vetoes nothing (Sol code-R3 S3-F3).
     let mut stale = BTreeSet::<(crate::EntityId, MachineAdmitter)>::new();
     let mut held = BTreeSet::<(crate::EntityId, MachineAdmitter)>::new();
+    let mut rounds = 0_usize;
     let mut fold = loop {
+        rounds += 1;
         let counted = |machine: crate::EntityId, admitter: MachineAdmitter| {
             let outer = standing(machine, admitter);
             InstallHold {
@@ -70,7 +75,7 @@ pub(super) fn fold_as_install(
                 stale: outer.stale || stale.contains(&(machine, admitter)),
             }
         };
-        let fold = apply_stale_roster_window(
+        let fold = install_view(
             entries,
             fold_authority_log_once(
                 entries,
@@ -79,30 +84,16 @@ pub(super) fn fold_as_install(
                     ..context
                 },
                 local.handoff_candidates,
+                local.capture,
             ),
             first_seen_at_secs,
             now_secs,
             stale_roster_window_secs,
+            local.pin,
         );
-        // The pin counts only while the fold holds its root: the pinned anchor
-        // signed that id here.
-        let mut fold = fold;
-        fold.pinned_root = local.pin.copied().filter(|pin| {
-            fold.root_anchors
-                .get(&pin.anchor_key)
-                .is_some_and(|ids| ids.contains(&pin.id))
-        });
-        let mut now_stale = BTreeSet::new();
+        let now_stale = stale_chains(&fold);
         let mut now_held = BTreeSet::new();
         for (id, machine) in &fold.machines {
-            if machine
-                .roster
-                .iter()
-                .chain(&machine.roster_trusted)
-                .any(|chain| chain.stale || chain.admitter_unsettled)
-            {
-                now_stale.insert((*id, MachineAdmitter::Roster));
-            }
             if let Some(no_vouch) = &no_vouch {
                 now_held.extend(
                     no_vouch
@@ -124,6 +115,59 @@ pub(super) fn fold_as_install(
     if let Some(no_vouch) = &no_vouch {
         no_vouch.cap(&mut fold);
     }
+    // A resumed fold reproduces only one round with no vouch to bound it.
+    if let Some(capture) = local.capture
+        && (rounds > 1 || no_vouch.is_some())
+    {
+        capture.spoil();
+    }
+    finish_install_fold(entries, &mut fold);
+    fold
+}
+
+/// A once fold as this install reads it: its stale-roster window, and the
+/// pin while the fold holds its root (the pinned anchor signed that id here).
+pub(super) fn install_view(
+    entries: &[AuthorityLogEntry],
+    once: AuthorityFold,
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: Option<u64>,
+    stale_roster_window_secs: u64,
+    pin: Option<&PinnedRoot>,
+) -> AuthorityFold {
+    let mut fold = apply_stale_roster_window(
+        entries,
+        once,
+        first_seen_at_secs,
+        now_secs,
+        stale_roster_window_secs,
+    );
+    fold.pinned_root = pin.copied().filter(|pin| {
+        fold.root_anchors
+            .get(&pin.anchor_key)
+            .is_some_and(|ids| ids.contains(&pin.id))
+    });
+    fold
+}
+
+/// The machines whose roster chain is stale here, or left with no settled
+/// root: chains this install does not count.
+pub(super) fn stale_chains(fold: &AuthorityFold) -> BTreeSet<(crate::EntityId, MachineAdmitter)> {
+    fold.machines
+        .iter()
+        .filter(|(_, machine)| {
+            machine
+                .roster
+                .iter()
+                .chain(&machine.roster_trusted)
+                .any(|chain| chain.stale || chain.admitter_unsettled)
+        })
+        .map(|(id, _)| (*id, MachineAdmitter::Roster))
+        .collect()
+}
+
+/// The heads, scope heads and next sequences of an install's fold.
+pub(super) fn finish_install_fold(entries: &[AuthorityLogEntry], fold: &mut AuthorityFold) {
     (fold.append_heads, fold.anchor_heads) = super::world_privacy::main_log_heads(
         entries,
         &fold.valid_entries,
@@ -150,7 +194,6 @@ pub(super) fn fold_as_install(
             }
         }
     }
-    fold
 }
 
 /// [`fold_authority_log`] as an install that counts only some of the
@@ -270,6 +313,7 @@ impl NoVouch {
                 retire_device_ops: true,
                 pre_handoff_entries: None,
                 handoff_candidates: None,
+                capture: None,
                 ..local
             },
         );
