@@ -168,8 +168,9 @@ pub(crate) fn serialize_vault_snapshot(
     })
 }
 
-/// The run results section: each body through the release door's scan, or
-/// why it is withheld. A text body rides in the document; a body that is no
+/// The run results section: each occurrence's manifest, a withheld one with
+/// its reason and no body, and each body a clean occurrence names through
+/// the release door's scan, or why it is withheld. A text body rides in the document; a body that is no
 /// UTF-8 text (Docs Q20) is returned beside it, by BLAKE3, for the archive's
 /// `files/`: it is never base64-encoded into the text around that scan.
 fn export_run_results(
@@ -189,8 +190,8 @@ fn export_run_results(
                 outputs: run
                     .outputs
                     .into_iter()
-                    .map(|output| ExportRunOutput {
-                        blake3: hex(&output.raw_blake3),
+                    .map(|(output, withheld)| ExportRunOutput {
+                        blake3: withheld.is_none().then(|| hex(&output.raw_blake3)),
                         bytes: output.raw_len,
                         kind: match output.kind {
                             crate::code_run::CodeRunOutputKind::Text => "text",
@@ -200,6 +201,7 @@ fn export_run_results(
                         lines: output.lines,
                         complete: output.complete,
                         path: output.path,
+                        withheld: withheld.map(str::to_owned),
                     })
                     .collect(),
             })
