@@ -2079,6 +2079,16 @@
       "section": false
     },
     {
+      "name": "self.browser.click_at",
+      "input": "oneiron_browser::PointInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click_at(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "self.browser.type",
       "input": "oneiron_browser::TypeInput",
       "output": "oneiron_browser::Observation",
