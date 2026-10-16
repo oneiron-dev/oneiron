@@ -162,6 +162,7 @@ pub(super) fn execution_scope_in(
     let mut seen = std::collections::BTreeSet::new();
     let mut chain = Vec::new();
     let mut cursor = parent;
+    let mut recipe_root = false;
     while let Some(id) = cursor {
         if !seen.insert(*id.as_bytes()) {
             return Err(invalid_consolidation("cyclic branch scope lineage"));
@@ -170,6 +171,24 @@ pub(super) fn execution_scope_in(
             .get_in_txn(txn, id)?
             .ok_or_else(|| invalid_consolidation("branch parent is missing"))?;
         let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&row.payload)?;
+        if row.kind == crate::dreamer_runner::DreamerConsolidationScope::Macro.attempt_kind()
+            && payload.attempt_type == crate::dreamer_wake::nightly::CONTINUE_ATTEMPT
+            && payload.parent_attempt.is_some()
+            && vault.dreamer_attempt_authority_in_txn(txn, id)?.is_some()
+        {
+            cursor = payload.parent_attempt;
+            continue;
+        }
+        if row.kind == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
+            && payload.attempt_type == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
+            && payload.parent_attempt.is_none()
+            && vault.dreamer_attempt_authority_in_txn(txn, id)?.is_some()
+        {
+            // This engine-owned root only groups independently admitted work.
+            // It is not an agent branch supplying inherited resource rights.
+            recipe_root = true;
+            break;
+        }
         let bound = if payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
             crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)?.scope
         } else if [
@@ -188,7 +207,13 @@ pub(super) fn execution_scope_in(
         chain.push(bound);
         cursor = payload.parent_attempt;
     }
-    let inherited = if parent.is_some() {
+    let inherited = if recipe_root {
+        let mut bound = None;
+        for child in chain.into_iter().rev() {
+            bound = effective_scope(bound, child.as_ref())?;
+        }
+        effective_scope(bound, queued.as_ref())?
+    } else if parent.is_some() {
         let mut bound = chain.pop().flatten().unwrap_or_default();
         for child in chain.into_iter().rev().flatten() {
             bound = bound.attenuate(child)?;

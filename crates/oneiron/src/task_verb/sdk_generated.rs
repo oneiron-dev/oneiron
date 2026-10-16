@@ -22,8 +22,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<BoardSubscriptionRequest>(),
             ),
             (
+                "self.memory.diary",
+                crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
+            ),
+            (
                 "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
+            ),
+            (
+                "steer",
+                crate::code_run::vault_read::request_schema::<SteerRequest>(),
             ),
             (
                 "describe",
@@ -76,6 +84,63 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.kv.namespaces",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
+            ),
+            (
+                "vault.packs.put",
+                crate::code_run::vault_read::request_schema::<PackPutRequest>(),
+            ),
+            (
+                "vault.artifacts.view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactExportRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.born_from",
+                crate::code_run::vault_read::request_schema::<crate::blob_artifact::BornFromRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.proposals",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.propose_deck",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::DeckProposeRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.propose_output",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::NativeOutputRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.keep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.undo",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ProposalSettleRequest,
+                >(),
             ),
             (
                 "can",
@@ -140,6 +205,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "self.skills.save",
+                crate::code_run::vault_read::request_schema::<crate::skill::helper::SkillSaveRequest>(
+                ),
+            ),
+            (
+                "self.skills.fork",
+                crate::code_run::vault_read::request_schema::<crate::skill::helper::SkillForkRequest>(
+                ),
+            ),
+            (
+                "self.skills.callables",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "ai.options",
+                crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
+            ),
+            (
+                "ai.image",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.speech",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.transcribe",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.embed",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.video",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.video.poll",
+                crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
+            ),
+            (
+                "ai.video.cancel",
+                crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
+            ),
+            (
+                "connector.list",
+                crate::code_run::vault_read::request_schema::<ConnectorListRequest>(),
+            ),
+            (
+                "connector.status",
+                crate::code_run::vault_read::request_schema::<ConnectorNameRequest>(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
             ),
@@ -176,6 +295,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ScreenshotInput>(),
             ),
             (
+                "connector.outbound.schedule",
+                crate::code_run::vault_read::request_schema::<OutboundScheduleRequest>(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -208,6 +331,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.folds",
                 crate::code_run::vault_read::request_schema::<crate::compaction::FoldsInput>(),
+            ),
+            (
+                "tasks.refuse",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
         ])
     });
@@ -243,12 +370,26 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["scopes"]
         }
+        "self.memory.diary" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "cancel" => {
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["task_ref"]
+        }
+        "steer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "describe" => {
             properties.insert(
@@ -352,6 +493,76 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.born_from" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.propose_deck" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.propose_output" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.keep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.undo" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -474,6 +685,98 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "self.skills.save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.skills.fork" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.skills.callables" => &[],
+        "ai.options" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.image" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.speech" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.transcribe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.embed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.video" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.video.poll" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.video.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "connector.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "connector.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "connector.outbound.schedule" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -491,8 +794,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.focus.unsubscribe" => {
             let _input: BoardSubscriptionRequest = decode(value.clone())?;
         }
+        "self.memory.diary" => {
+            let _input: DiaryEntryRequest = decode(value.clone())?;
+        }
         "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
+        }
+        "steer" => {
+            let _input: SteerRequest = decode(value.clone())?;
         }
         "describe" => {
             let _input: DescribeRequest = decode(value.clone())?;
@@ -548,6 +857,36 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.packs.put" => {
+            let _input: PackPutRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.view" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.export" => {
+            let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.born_from" => {
+            let _input: crate::blob_artifact::BornFromRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.proposals" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.propose_deck" => {
+            let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.propose_output" => {
+            let _input: crate::blob_artifact::NativeOutputRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.keep" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.discard" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.undo" => {
+            let _input: crate::blob_artifact::ProposalSettleRequest = decode(value.clone())?;
+        }
         "can" => {
             let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
         }
@@ -590,6 +929,45 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "self.skills.save" => {
+            let _input: crate::skill::helper::SkillSaveRequest = decode(value.clone())?;
+        }
+        "self.skills.fork" => {
+            let _input: crate::skill::helper::SkillForkRequest = decode(value.clone())?;
+        }
+        "self.skills.callables" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "ai.options" => {
+            let _input: AiOptionsRequest = decode(value.clone())?;
+        }
+        "ai.image" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.speech" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.transcribe" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.embed" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.video" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.video.poll" => {
+            let _input: AiVideoJobRequest = decode(value.clone())?;
+        }
+        "ai.video.cancel" => {
+            let _input: AiVideoJobRequest = decode(value.clone())?;
+        }
+        "connector.list" => {
+            let _input: ConnectorListRequest = decode(value.clone())?;
+        }
+        "connector.status" => {
+            let _input: ConnectorNameRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -617,6 +995,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.screenshot" => {
             let _input: oneiron_browser::ScreenshotInput = decode(value.clone())?;
         }
+        "connector.outbound.schedule" => {
+            let _input: OutboundScheduleRequest = decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -630,7 +1011,9 @@ pub fn invoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     match verb {
+        "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
+        "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
@@ -644,6 +1027,20 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
+        "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
+        "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
+        "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
+        "vault.artifacts.propose_deck" => {
+            encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
+        }
+        "vault.artifacts.propose_output" => {
+            encode(vault_artifacts_propose_output(memory, decode(value)?)?)
+        }
+        "vault.artifacts.keep" => encode(vault_artifacts_keep(memory, decode(value)?)?),
+        "vault.artifacts.discard" => encode(vault_artifacts_discard(memory, decode(value)?)?),
+        "vault.artifacts.undo" => encode(vault_artifacts_undo(memory, decode(value)?)?),
         "can" => encode(can(memory, decode(value)?)?),
         "peek" => encode(peek(memory, decode(value)?)?),
         "ask" => encode(ask(memory, decode(value)?)?),
@@ -658,6 +1055,22 @@ pub fn invoke(
         "vault.rooms.trunk" => encode(vault_rooms_trunk(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
+        "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
+        "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "ai.options" => encode(ai_options(memory, decode(value)?)?),
+        "ai.image" => encode(ai_image(memory, decode(value)?)?),
+        "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
+        "ai.transcribe" => encode(ai_transcribe(memory, decode(value)?)?),
+        "ai.embed" => encode(ai_embed(memory, decode(value)?)?),
+        "ai.video" => encode(ai_video(memory, decode(value)?)?),
+        "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
+        "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
+        "connector.list" => encode(connector_list(memory, decode(value)?)?),
+        "connector.status" => encode(connector_status(memory, decode(value)?)?),
+        "connector.outbound.schedule" => {
+            encode(connector_outbound_schedule(memory, decode(value)?)?)
+        }
         _ => {
             Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
@@ -749,6 +1162,12 @@ pub fn self_focus_unsubscribe<S: crate::board_verb::LiveBoardSource>(
         },
     )
 }
+pub fn self_memory_diary(
+    memory: &Memory<'_>,
+    input: DiaryEntryRequest,
+) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
+    crate::task_verb::sdk::self_memory_diary_write(memory, input)
+}
 pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
@@ -756,6 +1175,12 @@ pub fn cancel(
     memory.cancel(crate::task_verb::TaskCancelTarget::Task(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
+}
+pub fn steer(
+    memory: &Memory<'_>,
+    input: SteerRequest,
+) -> MemoryResult<crate::task_verb::sdk::SteerReceipt> {
+    crate::task_verb::sdk::steer_child(memory, input)
 }
 pub fn describe(
     memory: &Memory<'_>,
@@ -879,6 +1304,66 @@ pub fn vault_kv_namespaces(
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
 }
+pub fn vault_packs_put(
+    memory: &Memory<'_>,
+    input: PackPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_artifacts_view(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
+    memory.artifacts_view(&input)
+}
+pub fn vault_artifacts_export(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactExportRequest,
+) -> MemoryResult<Option<crate::blob_artifact::ArtifactExportFile>> {
+    memory.artifacts_export(&input)
+}
+pub fn vault_artifacts_born_from(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::BornFromRequest,
+) -> MemoryResult<crate::blob_artifact::BornFromView> {
+    memory.artifacts_born_from(&input)
+}
+pub fn vault_artifacts_proposals(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Vec<crate::edit_settle::PendingProposalView>> {
+    memory.artifacts_proposals(&input)
+}
+pub fn vault_artifacts_propose_deck(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::DeckProposeRequest,
+) -> MemoryResult<crate::blob_artifact::DeckProposeOutcome> {
+    memory.artifacts_propose_deck(&input)
+}
+pub fn vault_artifacts_propose_output(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::NativeOutputRequest,
+) -> MemoryResult<crate::edit_settle::PendingProposalView> {
+    memory.artifacts_propose_output(&input)
+}
+pub fn vault_artifacts_keep(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::KeptProposal> {
+    memory.artifacts_keep(&input)
+}
+pub fn vault_artifacts_discard(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::DiscardedProposal> {
+    memory.artifacts_discard(&input)
+}
+pub fn vault_artifacts_undo(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ProposalSettleRequest,
+) -> MemoryResult<crate::blob_artifact::UndoneKeep> {
+    memory.artifacts_undo(&input)
+}
 pub fn can(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskCanAskRequest,
@@ -996,6 +1481,96 @@ pub fn vault_rooms_speak(
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
 }
+pub fn self_skills_save(
+    memory: &Memory<'_>,
+    input: crate::skill::helper::SkillSaveRequest,
+) -> MemoryResult<crate::memory::SkillAuthoringReceipt> {
+    Ok({
+        let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?;
+        memory.skill_save_with_source(
+            id,
+            &record,
+            files,
+            input.expected_version.as_deref(),
+            crate::unix_seconds_now(),
+        )?
+    })
+}
+pub fn self_skills_fork(
+    memory: &Memory<'_>,
+    input: crate::skill::helper::SkillForkRequest,
+) -> MemoryResult<crate::memory::SkillAuthoringReceipt> {
+    Ok({
+        let (parent, id) = crate::skill::helper::fork_target(&input)?;
+        memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())?
+    })
+}
+pub fn self_skills_callables(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
+    memory.skill_callables()
+}
+pub fn ai_options(
+    memory: &Memory<'_>,
+    input: AiOptionsRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiOptions> {
+    crate::task_verb::sdk::host_only(memory, "ai.options", &input)
+}
+pub fn ai_image(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.image", &input)
+}
+pub fn ai_speech(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.speech", &input)
+}
+pub fn ai_transcribe(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.transcribe", &input)
+}
+pub fn ai_embed(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.embed", &input)
+}
+pub fn ai_video(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVideoTicket> {
+    crate::task_verb::sdk::host_only(memory, "ai.video", &input)
+}
+pub fn ai_video_poll(
+    memory: &Memory<'_>,
+    input: AiVideoJobRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVideoJob> {
+    crate::task_verb::sdk::host_only(memory, "ai.video.poll", &input)
+}
+pub fn ai_video_cancel(
+    memory: &Memory<'_>,
+    input: AiVideoJobRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVideoCancelled> {
+    crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
+}
+pub fn connector_list(
+    memory: &Memory<'_>,
+    input: ConnectorListRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::ConnectorEntry>> {
+    crate::task_verb::sdk::connector_catalog(memory, input)
+}
+pub fn connector_status(
+    memory: &Memory<'_>,
+    input: ConnectorNameRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::ConnectorView>> {
+    crate::task_verb::sdk::connector_description(memory, input)
+}
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
@@ -1049,4 +1624,10 @@ pub fn self_browser_screenshot(
     input: oneiron_browser::ScreenshotInput,
 ) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
     driver.screenshot(input)
+}
+pub fn connector_outbound_schedule(
+    memory: &Memory<'_>,
+    input: OutboundScheduleRequest,
+) -> MemoryResult<crate::memory::OutboundIntentReceipt> {
+    crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)
 }
