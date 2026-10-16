@@ -34,6 +34,7 @@ fn call_class_uses_kind_tag_inside_envelope() {
 fn rate_limit_error_uses_contract_retry_after_field() {
     let value = serde_json::to_value(RetryableLlmError::RateLimited {
         retry_after: Some(250),
+        resets_at: Vec::new(),
     })
     .unwrap();
     let JsonValue::Object(error) = value else {
