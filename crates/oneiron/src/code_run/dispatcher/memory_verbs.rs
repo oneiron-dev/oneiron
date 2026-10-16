@@ -71,6 +71,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
+            | SelfEffect::TasksRefuse
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),

@@ -74,11 +74,9 @@ impl Vault {
                     .map_or(0, |elapsed| {
                         u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
                     });
-                if let Err(error) = self.shed_rebuildable_heap(
-                    ShedCause::LongOutboundWait,
-                    waited_secs,
-                    now_ms,
-                ) {
+                if let Err(error) =
+                    self.shed_rebuildable_heap(ShedCause::LongOutboundWait, waited_secs, now_ms)
+                {
                     // Shedding is optional; failure must not cancel or resend
                     // an admitted, possibly already paid provider request.
                     tracing::warn!(kind = ?error.kind(), "slim: long-wait shed failed");

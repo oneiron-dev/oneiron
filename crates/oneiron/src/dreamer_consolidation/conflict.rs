@@ -513,12 +513,17 @@ fn canonicalize_value(value: &Value) -> Value {
 
 /// Independent corroboration for one candidate: collapsed turn evidence
 /// counts once per source; prior CLAIM refs count ONLY when
-/// `claim_evidence_admissible` (GATE-11: Generated-origin priors add zero).
+/// `claim_evidence_admissible` (GATE-11: Generated-origin priors add zero)
+/// and are not Imported: another person's claim is never firsthand.
 #[must_use]
 pub fn corroboration_count(collapsed: &CollapsedEvidence, prior_heads: &[PriorHead]) -> usize {
     let prior_signals = prior_heads
         .iter()
-        .filter(|prior| claim_evidence_admissible(&prior.body))
+        .filter(|prior| {
+            claim_evidence_admissible(&prior.body)
+                && prior.body.source != Some(ClaimSource::Imported)
+                && crate::claim::claim_evidence_taint(&prior.body) != Some(ClaimSource::Imported)
+        })
         .count();
     collapsed.independent.len() + prior_signals
 }
