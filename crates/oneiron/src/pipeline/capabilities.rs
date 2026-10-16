@@ -5,7 +5,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::CapabilityHit;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +19,14 @@ pub(super) const SKILL_RANK_CANDIDATE_LIMIT: usize = 256;
 
 pub(super) fn is_capability(kind: u8) -> bool {
     matches!(kind, ENTITY_TYPE_SKILL | ENTITY_TYPE_AGENT_DEF)
+}
+
+/// `learning.*` claims are measured state for the learning views only; they
+/// never enter companion memory.
+fn is_learning_claim(kind: u8, body: &[u8]) -> bool {
+    kind == ENTITY_TYPE_CLAIM
+        && crate::claim::decode_claim_body(body, true)
+            .is_ok_and(|claim| crate::learning::is_learning_predicate(&claim.predicate))
 }
 
 pub(crate) fn capability_hit(
@@ -234,6 +242,7 @@ pub(super) fn memory_candidate_count(
         if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
             && let Some(header) = EntityMetadataHeader::parse(&raw)
             && !is_capability(header.entity_type)
+            && !is_learning_claim(header.entity_type, &raw[ENTITY_METADATA_HEADER_LEN..])
         {
             count += 1;
         }
@@ -263,7 +272,8 @@ impl CapabilityLane {
             return Ok(false);
         };
         match self {
-            Self::Memory => Ok(!is_capability(header.entity_type)),
+            Self::Memory => Ok(!is_capability(header.entity_type)
+                && !is_learning_claim(header.entity_type, &raw[ENTITY_METADATA_HEADER_LEN..])),
             Self::Skill | Self::Agent => {
                 let expected = if self == Self::Skill {
                     ENTITY_TYPE_SKILL

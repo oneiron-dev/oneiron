@@ -406,6 +406,12 @@ impl Vault {
                 if body.subject != ClaimSubject::Entity(*subject) || !claim_surfaceable(&body) {
                     continue;
                 }
+                // A preference shapes what the companion does, not only what
+                // it reads: while its critical confirmation is open it stays
+                // effector-ineligible (ARCH-0026 §G3).
+                if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, rtxn, &id)? {
+                    continue;
+                }
                 if body.valid_from.is_some_and(|v| v > at) || body.valid_to.is_some_and(|v| v <= at)
                 {
                     continue;
