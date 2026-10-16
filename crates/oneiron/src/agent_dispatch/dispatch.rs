@@ -183,13 +183,30 @@ impl<'a> AgentDispatcher<'a> {
     /// [`Self::dispatch`] except the queued attempt carries the TASK backlink,
     /// and the caller owns the transaction so the TASK and its realizing
     /// dispatch commit together (ONE-1700 assignee routing).
+    ///
+    /// A TASK a comment's assignment made waits while that comment is
+    /// unattached (OF-368): its attempt is minted paused for the hold, never
+    /// dropped, and a reattach resumes it.
     pub(crate) fn dispatch_for_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         task_ref: EntityId,
         input: DispatchAgent,
     ) -> Result<AgentDispatchOutcome> {
-        self.dispatch_in_txn(wtxn, Some(task_ref), input, AgentSpawnContext::default())
+        let now = input.now;
+        let mut outcome =
+            self.dispatch_in_txn(wtxn, Some(task_ref), input, AgentSpawnContext::default())?;
+        if let AgentDispatchOutcome::Dispatched(status) = &mut outcome
+            && let Some(hold) = self.vault.annotation_task_hold_in_txn(wtxn, &task_ref)?
+        {
+            status.attempt = AttemptQueue::new(self.vault).hold_for_annotation_in_txn(
+                wtxn,
+                status.attempt.id,
+                hold,
+                now,
+            )?;
+        }
+        Ok(outcome)
     }
 
     pub(super) fn dispatch_in_txn(
