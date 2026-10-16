@@ -292,7 +292,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/claims.rs` | src | s | 5 fn · 1 crate-vis | — | Claim-candidate builder doors plus the gap-decay op constructor |
 | `src/batch/builder/commit.rs` | src | m | 2 fn · 3 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
 | `src/batch/builder/edges.rs` | src | m | 14 fn · 1 crate-vis | — | Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers |
-| `src/batch/builder/mod.rs` | src | s | 1 struct · 5 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
+| `src/batch/builder/mod.rs` | src | s | 1 struct · 6 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/ops.rs` | src | s | 3 crate-vis | — | Batch op vocabulary and shared op constructors |
 | `src/batch/builder/preflight.rs` | src | s | 1 crate-vis | — | Claim-gate preflight loop including CommitmentGapDecay arms |
 | `src/batch/builder/puts.rs` | src | m | 2 fn · 11 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
@@ -333,7 +333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/tests.rs` | test | L | — | — | — |
 | `src/batch/facet_identity.rs` | src | s | 1 crate-vis | — | FACET overwrite checks for immutable substrate identity and retired privacy axes |
 | `src/batch/facet_validation.rs` | src | s | 6 crate-vis | — | — |
-| `src/batch/gate_mode.rs` | src | s | 13 crate-vis | — | — |
+| `src/batch/gate_mode.rs` | src | s | 14 crate-vis | — | — |
 | `src/batch/gate_staging.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 crate-vis | — | Final-state leader-chat TURN candidates, independent of batch op order |
@@ -1329,7 +1329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edge.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 re-export · 15 crate-vis | DecodedEdgeValue, EdgeConfirmationStatus, EdgeInfo, EdgeProvenanceFlags, EdgeValueLayout | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
 | `src/edge/kind.rs` | src | s | 1 enum · 4 fn · 1 const | EdgeKind | The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and… |
 | `src/edge/tests.rs` | test | s | — | — | — |
-| `src/edit_distance.rs` | src | L | 4 struct · 1 enum · 13 fn · 3 const · 10 mod · 2 crate-vis | FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
+| `src/edit_distance.rs` | src | L | 4 struct · 1 enum · 13 fn · 3 const · 11 mod · 2 crate-vis | FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef | ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the… |
 | `src/edit_distance/attribution/archive.rs` | src | s | 3 crate-vis | — | Inert restoration of skill amendment-cost history; never a judged local cost |
 | `src/edit_distance/attribution/audit.rs` | src | s | 1 struct · 4 fn | AmendmentAuditFixture | Held-out judge audit (Blind Curator guard) |
 | `src/edit_distance/attribution/evidence_judge.rs` | src | m | 7 fn · 4 crate-vis | — | Amendment evidence doors and the judging pass |
@@ -1338,6 +1338,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_distance/attribution/stored.rs` | src | s | 28 crate-vis | — | Stored rows: key shapes, row shapes, and the row codec |
 | `src/edit_distance/attribution/taxonomy.rs` | src | m | 4 struct · 1 enum · 12 fn · 1 type · 2 crate-vis | AmendmentCause, AmendmentEvidence, AmendmentJudgment, AmendmentShare, PreferenceProposal | Amendment taxonomy: classes, causes, evidence and judgment types |
 | `src/edit_distance/attribution/tests.rs` | test | L | — | — | — |
+| `src/edit_distance/compile.rs` | src | m | 2 struct · 4 enum · 4 fn | ActingRevision, ActingTarget, CompiledLine, CompiledLineKind, RevisionDecision, RevisionStatus | Compiling approved preferences into acting revisions (OF-379): every manual edit is a critique of the… |
 | `src/edit_distance/delta/lanes.rs` | src | m | 1 struct · 6 fn · 1 crate-vis | DeltaCaptureContext | The three delta capture lanes plus the precedence chooser; pure over inputs |
 | `src/edit_distance/delta/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | ED-01 (ARCH-0056 §2, ONE-1757): the amendment-Δ schema, its two capture lanes, and the chooser every… |
 | `src/edit_distance/delta/schema.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 crate-vis | AmendmentDelta, DeltaSource, OpsSummary | Delta schema types, the shared d_norm metric, encode/decode, and version/count helpers |
@@ -2492,6 +2493,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/prompt.rs` | src | m | 5 struct · 6 fn · 4 const | PromptRecompileStamp, ResolvedPrompt, SessionPromptAssembly, SessionPromptParts, StampedLlmRequest | — |
 | `src/provenance/actor_substrate.rs` | src | s | 1 fn · 1 const · 8 crate-vis | — | Actor-class validation, legacy evidence transition, and model substrate codec |
 | `src/provenance/archive.rs` | src | s | 2 crate-vis | — | Foreign archive provenance reconstructed through the owning lifecycle |
+| `src/provenance/birth.rs` | src | s | 1 struct · 4 fn · 1 const · 6 crate-vis | RowBirth | Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the… |
+| `src/provenance/body.rs` | src | s | 2 struct · 2 enum · 3 fn · 9 crate-vis | BodyLocation, BodyRef, BodyState, OwnedBody | Who owns a body and whether it is whole |
 | `src/provenance/codec.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |
 | `src/provenance/derived_attachment.rs` | src | s | 3 crate-vis | — | Validate generated support evidence at the provenance write door |
 | `src/provenance/edge_ref.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const · 10 crate-vis | EdgeRef, SupersessionStatus | Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status |
@@ -2500,8 +2503,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/provenance/imported/tests.rs` | test | s | — | — | — |
 | `src/provenance/invalidation.rs` | src | s | 4 crate-vis | — | The stale door's provenance hook: a wrapper whose cited source was erased stops justifying its semantic edge… |
 | `src/provenance/lifecycle.rs` | src | m | 17 crate-vis | — | Claim lifecycle primitives: precedence, close/retract, stamps, and loading shapes |
-| `src/provenance/made_by.rs` | src | s | 3 struct · 4 enum · 2 fn · 1 crate-vis | MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByPredicate, MadeByProcess, MadeByTrigger | Rule A provenance vocabulary shared by text commits and retrieval |
-| `src/provenance/mod.rs` | src | s | 2 mod · 3 re-export · 11 crate-vis | — | `edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15) |
+| `src/provenance/made_by.rs` | src | s | 3 struct · 4 enum · 3 fn · 1 crate-vis | MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByPredicate, MadeByProcess, MadeByTrigger | Rule A provenance vocabulary shared by text commits and retrieval |
+| `src/provenance/mod.rs` | src | s | 4 mod · 3 re-export · 12 crate-vis | — | `edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15) |
 | `src/provenance/queries.rs` | src | m | 2 fn · 7 crate-vis | — | Vault read scans: named-target guards and live/retracted cohort queries |
 | `src/provenance/tests.rs` | test | m | — | — | — |
 | `src/provenance/text_commit.rs` | src | s | 2 struct · 1 fn | RowProvenance, TextCommitReceipt | Durable per-commit text provenance |
@@ -2803,7 +2806,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/codec.rs` | src | m | 11 crate-vis | — | Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode |
 | `src/skill_attribution/judge.rs` | src | s | 1 struct · 1 trait · 1 fn · 1 const · 1 crate-vis | AttributionJudge, RuleAttributionJudge | Classification seam: the judge trait, the deterministic rule tier, and verdict routing |
 | `src/skill_attribution/judge_supersession.rs` | src | s | 1 struct · 2 fn · 5 crate-vis | DisplacedJudgeReceipt | Judge-revision provenance for routed receipts, and non-destructive displacement |
-| `src/skill_attribution/mod.rs` | src | s | 7 re-export · 6 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/mod.rs` | src | s | 8 re-export · 6 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/positive.rs` | src | s | 1 struct · 1 enum · 4 fn | PositiveFinding, PositiveSkillProposal | The positive lane (OF-379): a win that taught the skill something |
 | `src/skill_attribution/projector.rs` | src | s | 6 fn · 5 crate-vis | — | Evidence door and ordered idempotent projection from evidence to judgments and edit proposals |
 | `src/skill_attribution/split.rs` | src | s | 2 crate-vis | — | The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out… |
 | `src/skill_attribution/sweep.rs` | src | m | 2 struct · 1 trait · 2 fn | AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource | TASK-lane receipt pump: capture once, route, then resume both idempotent projections |

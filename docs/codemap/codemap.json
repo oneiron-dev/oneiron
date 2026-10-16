@@ -3174,7 +3174,7 @@
      "path": "src/batch/builder/mod.rs",
      "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "struct": 1
      }
     },
@@ -3641,7 +3641,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -16446,7 +16446,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 13,
-      "mod": 10,
+      "mod": 11,
       "struct": 4
      }
     },
@@ -16542,6 +16542,25 @@
      "path": "src/edit_distance/attribution/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActingRevision",
+      "ActingTarget",
+      "CompiledLine",
+      "CompiledLineKind",
+      "RevisionDecision",
+      "RevisionStatus"
+     ],
+     "path": "src/edit_distance/compile.rs",
+     "purpose": "Compiling approved preferences into acting revisions (OF-379): every manual edit is a critique of the…",
+     "surface": {
+      "enum": 4,
+      "fn": 4,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -30422,6 +30441,39 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RowBirth"
+     ],
+     "path": "src/provenance/birth.rs",
+     "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BodyLocation",
+      "BodyRef",
+      "BodyState",
+      "OwnedBody"
+     ],
+     "path": "src/provenance/body.rs",
+     "purpose": "Who owns a body and whether it is whole",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30527,7 +30579,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -30538,8 +30590,8 @@
      "path": "src/provenance/mod.rs",
      "purpose": "`edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15)",
      "surface": {
-      "crate-vis": 11,
-      "mod": 2,
+      "crate-vis": 12,
+      "mod": 4,
       "re-export": 3
      }
     },
@@ -34138,7 +34190,22 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 6,
-      "re-export": 7
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PositiveFinding",
+      "PositiveSkillProposal"
+     ],
+     "path": "src/skill_attribution/positive.rs",
+     "purpose": "The positive lane (OF-379): a win that taught the skill something",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -43238,7 +43305,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -43686,7 +43753,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 16,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43896,7 +43963,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44136,7 +44203,7 @@
    },
    "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2646,
+   "source_files": 2650,
    "test_files": 903
   },
   "oneiron-android": {
