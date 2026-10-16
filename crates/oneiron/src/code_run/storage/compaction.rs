@@ -13,10 +13,10 @@ use crate::{EntityId, Error, Result, Vault};
 /// [`encode`] spells.
 const COVERAGE: SideTable<(EntityId, EntityId), CodeRunCompactionCoverage, Raw> =
     SideTable::new(&side_table::CODE_RUN_COMPACTION);
-/// Version 2 adds the accepted body's digest. No shipped server wrote a
-/// version 1 row: before it, no host ran a compaction backend.
-const VERSION: u8 = 2;
-const BODY_LEN: usize = 1 + 16 * 3 + 8 * 3 + 32;
+/// Version 2 adds the accepted body's digest; version 3 the calls its
+/// sources were read from. No vault holds an older row.
+const VERSION: u8 = 3;
+const BODY_LEN: usize = 1 + 16 * 3 + 8 * 4 + 32;
 
 /// A run-local span derived from the durable replay and the sealed compaction
 /// request, not from model-supplied bytes or an assembled context-vector length.
@@ -26,6 +26,7 @@ pub(crate) struct ExecutorOutputSpan {
     session_ref: EntityId,
     first: u64,
     last: u64,
+    calls: u64,
     #[cfg(test)]
     fail_after_write: bool,
 }
@@ -45,8 +46,14 @@ impl ExecutorOutputSpan {
             .turn;
         let completed = u64::try_from(record.step_checkpoints.len())
             .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
+        let calls = request.host_calls().ok_or(Error::InvariantViolation(
+            "executor compaction request is cut from no host log",
+        ))?;
+        let made = u64::try_from(record.bridge_calls.len())
+            .map_err(|_| Error::ArithmeticOverflow("executor call count"))?;
         if first > last
             || last >= completed
+            || calls > made
             || request.window.first().is_none_or(|row| row.turn != first)
         {
             return Err(Error::InvalidConfig(
@@ -58,6 +65,7 @@ impl ExecutorOutputSpan {
             session_ref: request.session_ref,
             first,
             last,
+            calls,
             #[cfg(test)]
             fail_after_write: false,
         })
@@ -86,6 +94,10 @@ pub(crate) struct CodeRunCompactionCoverage {
     epoch: u64,
     first: u64,
     last: u64,
+    /// How many of the run's calls the summary's sources were read from: the
+    /// ids those calls served are its sources, directly or through the epoch
+    /// before it, so the next epoch lets this one stand for them.
+    calls: u64,
     /// BLAKE3 of the SUMMARY body the gate accepted: a generic write that
     /// replaces it later never renders as the run's summary.
     digest: [u8; 32],
@@ -108,6 +120,9 @@ impl CodeRunCompactionCoverage {
     pub(crate) fn last(&self) -> u64 {
         self.last
     }
+    pub(crate) fn calls(&self) -> u64 {
+        self.calls
+    }
 }
 
 impl RawValue for CodeRunCompactionCoverage {
@@ -129,6 +144,7 @@ fn encode(row: &CodeRunCompactionCoverage) -> Vec<u8> {
     raw.extend_from_slice(&row.epoch.to_be_bytes());
     raw.extend_from_slice(&row.first.to_be_bytes());
     raw.extend_from_slice(&row.last.to_be_bytes());
+    raw.extend_from_slice(&row.calls.to_be_bytes());
     raw.extend_from_slice(&row.digest);
     raw
 }
@@ -153,7 +169,8 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
         epoch: number(49)?,
         first: number(57)?,
         last: number(65)?,
-        digest: raw[73..].try_into().map_err(|_| corrupt())?,
+        calls: number(73)?,
+        digest: raw[81..].try_into().map_err(|_| corrupt())?,
     };
     if row.epoch == 0 || row.first > row.last {
         return Err(corrupt());
@@ -236,6 +253,7 @@ impl Vault {
             epoch: mint.epoch(),
             first: span.first,
             last: span.last,
+            calls: span.calls,
             digest: *blake3::hash(&minted.body).as_bytes(),
         };
         verify_summary(self, &*txn, &row)?.ok_or(Error::InvariantViolation(
@@ -246,12 +264,14 @@ impl Vault {
         let mut last = None;
         for item in COVERAGE.iter_from(&self.store, &*txn, span.run_id.as_bytes())? {
             let (_, prior) = item?;
-            last = last.max(Some((prior.epoch, prior.last)));
+            last = last.max(Some((prior.epoch, prior.last, prior.calls)));
         }
         let continues = match last {
             None => row.epoch == 1,
-            Some((epoch, end)) => {
-                epoch.checked_add(1) == Some(row.epoch) && end.checked_add(1) == Some(row.first)
+            Some((epoch, end, calls)) => {
+                epoch.checked_add(1) == Some(row.epoch)
+                    && end.checked_add(1) == Some(row.first)
+                    && calls <= row.calls
             }
         };
         if !continues {

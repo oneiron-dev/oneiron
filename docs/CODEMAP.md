@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2650 | 903 | 56 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2653 | 903 | 56 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 24 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -88,7 +88,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `channel_identity_provider` | dir | 15 | m | — | Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3) |
 | `channel_identity_selection` | dir | 7 | m | yes | Relationship-context channel-identity selection law (ONE-1826) |
 | `checkout` | file+dir | 10 | m | — | — |
-| `claim` | dir | 63 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
+| `claim` | dir | 64 | L | yes | CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18) |
 | `cluster` | file+dir | 2 | m | — | Pure, deterministic claim clustering — a PROPOSE-ONLY tool |
 | `code_artifact` | file | 1 | m | yes | — |
 | `code_document` | dir | 7 | m | yes | Base-mode live code files: actor-stamped Loro operations and verified tested frontiers |
@@ -192,7 +192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `own_rate` | file | 1 | s | yes | Node-local OF-520 own-rate windows |
 | `panic_report` | file | 1 | s | — | The content-free panic report a host installs before it opens a vault |
 | `persona_snapshot` | dir | 7 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
-| `pipeline` | dir | 55 | L | — | — |
+| `pipeline` | dir | 56 | L | — | — |
 | `policy_model` | dir | 45 | m | yes | Policy classification over two planes |
 | `ports` | dir | 42 | m | yes | Transaction-composable storage ports |
 | `posterior` | file | 1 | s | — | Shared Beta posterior bandit seam |
@@ -261,7 +261,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `wave_orchestration` | file+dir | 2 | m | — | Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05) |
 | `web_fetch` | file+dir | 4 | m | — | OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a… |
 | `workspace_roster` | dir | 63 | L | yes | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
-| `world_keys` | dir | 14 | L | yes | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
+| `world_keys` | dir | 15 | L | yes | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `write_envelope` | file+dir | 2 | m | yes | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 
 ## oneiron-android
@@ -419,7 +419,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `conformance` | file | 1 | s | Typed Component Model fixture |
 | `filesystem` | file | 1 | m | Descriptor-relative workspace access |
 | `protocol` | file | 1 | s | Strict, bounded host/guest JSON framing and admission state machine |
-| `runtime` | file | 1 | m | Canonical typed Component Model execution with four read-only imports |
+| `runtime` | file | 1 | m | Canonical typed Component Model execution with six non-write imports |
 | `tests` | file | 1 | — | — |
 
 ## oneiron-image

@@ -5,9 +5,7 @@ use super::taxonomy::{AmendmentCause, AmendmentClass, AmendmentEvidence, classif
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::skill_attribution::{
-    AttributionAuditReport, AttributionJudge, RuleAttributionJudge, unclear_floor,
-};
+use crate::skill_attribution::{AttributionAuditReport, AttributionDecisions, unclear_floor};
 
 // ---------------------------------------------------------------------------
 // Defect-injection audit (Blind Curator guard)
@@ -32,16 +30,17 @@ pub struct AmendmentAuditFixture {
 /// Storage errors.
 pub fn run_judge_audit(vault: &Vault) -> Result<f32> {
     let fixtures = held_out_amendment_fixtures();
-    let report = run_judge_audit_with_judge(
+    let report = run_judge_audit_with_decisions(
         vault,
         &fixtures,
-        &RuleAttributionJudge,
+        None,
         vault.store.clock.now_recorded_at(),
     )?;
     Ok(report.pass_rate())
 }
 
-/// The audit harness: any fixture set, any tier.
+/// The audit harness: any fixture set, the host's decisions or (with `None`)
+/// the rule tier.
 ///
 /// Reuses [`AttributionAuditReport`] rather than minting a second metric shape —
 /// two evidence classes, one number ops reads. The rows land in this module's
@@ -49,18 +48,18 @@ pub fn run_judge_audit(vault: &Vault) -> Result<f32> {
 ///
 /// # Errors
 ///
-/// Storage errors, and whatever `judge` returns.
-pub fn run_judge_audit_with_judge(
+/// Storage errors, and whatever the decision path returns.
+pub fn run_judge_audit_with_decisions(
     vault: &Vault,
     fixtures: &[AmendmentAuditFixture],
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
     at: u64,
 ) -> Result<AttributionAuditReport> {
     let floor = unclear_floor(vault)?;
     let mut passed = 0;
     let mut abstained = 0;
     for fixture in fixtures {
-        let answer = classify_amendment(&fixture.evidence, judge, &[], floor)?
+        let answer = classify_amendment(&fixture.evidence, decisions, &[], floor)?
             .and_then(|split| split.sole());
         if answer.is_none() {
             abstained += 1;

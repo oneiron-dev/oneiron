@@ -13,6 +13,7 @@ use super::{
     PolicyRevision, SequenceCounter, WorldKeyBinding, WorldKeyId, WrapRecipient, open_world_key,
     recipients, refused,
 };
+use super::pads::pad_in_txn;
 use crate::authority::{
     Destination, EditOrigin, EffectiveRead, WorldPrivacy, own_world_key_records_in_txn,
     read_pin_and_earlier_in_txn,
@@ -108,6 +109,9 @@ impl Vault {
                     if held.is_some_and(|held| held.conflicted) {
                         continue;
                     }
+                    let Some(pad) = pad_in_txn(&self.store, txn, &id)? else {
+                        continue;
+                    };
                     let opened = own
                         .iter()
                         .map(|(_, record)| record)
@@ -125,7 +129,7 @@ impl Vault {
                                 policy: record.policy,
                                 commitment: record.commitment,
                             };
-                            open_world_key(&binding, me, &secret.secret, &envelope)
+                            open_world_key(&binding, me, &secret.secret, &envelope, &pad)
                                 .ok()
                                 .map(|key| (key, record.owner))
                         });
