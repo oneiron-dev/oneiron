@@ -258,8 +258,14 @@ impl Vault {
 /// from SKILL dependencies (which name other skills, not registry packages).
 pub fn dependency_inventory(package: &HubPackage) -> Result<Vec<DependencyCoordinate>> {
     package.content_hash()?;
+    files_dependency_inventory(&package.files)
+}
+/// The same resolution over any file tree, such as a whole pack.
+pub(super) fn files_dependency_inventory(
+    files: &[super::HubFile],
+) -> Result<Vec<DependencyCoordinate>> {
     let mut coordinates = BTreeSet::new();
-    for file in &package.files {
+    for file in files {
         if file.path.rsplit('/').next() == Some("package-lock.json") {
             let value: serde_json::Value =
                 serde_json::from_slice(&file.content).map_err(|_| invalid())?;

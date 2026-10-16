@@ -4,6 +4,7 @@ mod hosting;
 mod liveness;
 #[cfg(test)]
 mod tests;
+mod upkeep;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -20,6 +21,7 @@ pub use liveness::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
