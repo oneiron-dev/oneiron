@@ -599,6 +599,22 @@ async fn handle_connection(
                                 .await;
                             break;
                         }
+                        ProtocolError::WaitedOut => {
+                            tracing::warn!(
+                                conn_id,
+                                reason = "waited_out",
+                                "document waited for its turn past its deadline — closing"
+                            );
+                            transport
+                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                    code: close_codes::TRY_AGAIN_LATER,
+                                    reason: Utf8Bytes::from_static(
+                                        "waited for its turn past its deadline: nothing was applied",
+                                    ),
+                                })))
+                                .await;
+                            break;
+                        }
                         ProtocolError::InvalidPayload(msg) => {
                             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
                             break;

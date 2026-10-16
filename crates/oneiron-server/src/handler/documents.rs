@@ -407,9 +407,15 @@ pub(super) fn document_delivery_retrying(
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
-                    let vv = open_for(server, doc.entity, &request.selector.member_ref)?
-                        .version_vector()
-                        .map_err(storage_error)?;
+                    let document = match open_for(server, doc.entity, &request.selector.member_ref)
+                    {
+                        Err(ProtocolError::WaitedOut) => {
+                            retry.extend(notice(&doc));
+                            continue;
+                        }
+                        document => document?,
+                    };
+                    let vv = document.version_vector().map_err(storage_error)?;
                     out.push(
                         transport::encode_document(doc.entity, document_sub_tags::ACK, &vv)
                             .into_result()
@@ -424,8 +430,8 @@ pub(super) fn document_delivery_retrying(
     Ok(out)
 }
 
-/// Whether an export ended at its turn's deadline, so its notice is tried
-/// again.
+/// Whether a document's open ended at its turn's deadline: a notice is tried
+/// again, and a peer's frame is answered [`ProtocolError::WaitedOut`].
 fn waited_out(error: &oneiron::Error) -> bool {
     error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
 }
@@ -472,7 +478,8 @@ fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId
 
 /// Opens `entity` for `member`'s work. Past the vault's live-document row the
 /// open waits its turn, off the runtime worker; it is never refused for the
-/// count (rule 5), and a wait past its deadline ends the request.
+/// count (rule 5), and a wait past its deadline ends the request with
+/// [`ProtocolError::WaitedOut`].
 fn open_for(
     server: &SyncServer,
     entity: EntityId,
@@ -488,6 +495,9 @@ fn open_for(
 }
 
 fn storage_error(error: oneiron::Error) -> ProtocolError {
+    if waited_out(&error) {
+        return ProtocolError::WaitedOut;
+    }
     ProtocolError::Persistence(error.to_string())
 }
 
