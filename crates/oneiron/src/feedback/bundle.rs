@@ -353,7 +353,7 @@ impl FeedbackHealerDiagnosis {
 /// confusion or a wish can each carry one. Both strings are shown to the owner
 /// byte for byte on the approval card and leave only as approved, so a
 /// proposal that quotes vault text has already asked the owner first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackProposal {
     /// What went wrong.
@@ -372,7 +372,7 @@ impl FeedbackProposal {
         }
     }
 
-    fn validate(&self) -> Result<(), FeedbackError> {
+    pub(super) fn validate(&self) -> Result<(), FeedbackError> {
         checked_note(
             "proposal problem",
             &self.problem,
