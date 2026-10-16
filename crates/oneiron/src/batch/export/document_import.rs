@@ -341,7 +341,7 @@ impl Vault {
         }
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
-        let (restored_secrets, unchanged_secrets) =
+        let (restored_secrets, unchanged_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
@@ -359,6 +359,7 @@ impl Vault {
             withheld_results,
             restored_secrets,
             unchanged_secrets,
+            missing_secrets,
         })
     }
 }
@@ -404,28 +405,40 @@ fn stage_run_results(
 /// The owner's own archive's custody records, each restored under its own id
 /// through the custody registration door, in the import's transaction. A
 /// record already here byte for byte is unchanged; any other collision is
-/// refused, never overwritten.
+/// refused, never overwritten. A record the archive carried as its handle
+/// only is returned as a missing secret to re-enter.
 fn restore_secrets_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     secrets: &[super::ArchiveSecretCustody],
     document: &WholeVaultDocument,
-) -> Result<(usize, usize)> {
+) -> Result<(
+    usize,
+    usize,
+    Vec<crate::secret_custody::SecretCustodyMetadata>,
+)> {
     use base64::Engine as _;
     let rows: BTreeSet<&str> = document.entities().map(|row| row.id.as_str()).collect();
     let mut seen = BTreeSet::new();
-    let (mut restored, mut unchanged) = (0, 0);
+    let (mut restored, mut unchanged, mut missing) = (0, 0, Vec::new());
     for secret in secrets {
         let id = parse_id(&secret.id)?;
         if !seen.insert(id) || rows.contains(secret.id.as_str()) {
             return Err(invalid("archive custody record id appears twice"));
         }
+        if secret.metadata.name != secret.name {
+            return Err(invalid("archive custody record name disagrees with its metadata"));
+        }
+        let Some(body) = &secret.body else {
+            missing.push(secret.metadata.clone());
+            continue;
+        };
         let body = base64::engine::general_purpose::STANDARD
-            .decode(&secret.body)
+            .decode(body)
             .map_err(|_| invalid("invalid archive custody record body"))?;
         let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
-        if record.name != secret.name {
-            return Err(invalid("archive custody record name disagrees with its body"));
+        if record.metadata() != secret.metadata {
+            return Err(invalid("archive custody record disagrees with its body"));
         }
         if let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
         {
@@ -442,7 +455,7 @@ fn restore_secrets_in_txn(
         crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
         restored += 1;
     }
-    Ok((restored, unchanged))
+    Ok((restored, unchanged, missing))
 }
 
 fn put_run_results_in_txn(

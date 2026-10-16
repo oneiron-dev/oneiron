@@ -82,16 +82,20 @@ impl ArchiveRecordKind {
     }
 }
 
-/// One custody record: its id, its name, and its body in the custody codec
-/// (the record's one serialization), standard base64. The body holds the
-/// secret value; it never passes through the document's nulling, because
-/// carrying it is the point.
+/// One custody record: its id, its handle (the short id a model reads), its
+/// value-less metadata, and, when the archive carries values, its body in the
+/// custody codec (the record's one serialization), standard base64. The body
+/// holds the secret value; it never passes through the document's nulling,
+/// because carrying it is the point. Without a body the record is a handle
+/// only, and a re-import lists it as a missing secret to re-enter.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ArchiveSecretCustody {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) body: String,
+    pub(crate) handle: Option<String>,
+    pub(crate) metadata: crate::secret_custody::SecretCustodyMetadata,
+    pub(crate) body: Option<String>,
 }
 
 impl std::fmt::Debug for ArchiveSecretCustody {
@@ -99,7 +103,12 @@ impl std::fmt::Debug for ArchiveSecretCustody {
         f.debug_struct("ArchiveSecretCustody")
             .field("id", &self.id)
             .field("name", &self.name)
-            .field("body", &format_args!("<redacted {} chars>", self.body.len()))
+            .field("handle", &self.handle)
+            .field("metadata", &self.metadata)
+            .field(
+                "body",
+                &format_args!("<redacted {} chars>", self.body.as_ref().map_or(0, String::len)),
+            )
             .finish()
     }
 }

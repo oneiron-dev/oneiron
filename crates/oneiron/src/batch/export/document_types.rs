@@ -36,6 +36,9 @@ pub struct WholeVaultDocumentManifest {
     pub files: Vec<ArchiveFile>,
     /// OF-490: agents whose diaries this export holds out.
     pub diary_holds: Vec<ExportDiaryHold>,
+    /// Whether this archive carries custody secret values (the default for
+    /// the owner's own archive) or each custody record as its handle only.
+    pub secrets_included: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +253,9 @@ pub struct WholeVaultImportReceipt {
     /// own ids, and those already here unchanged.
     pub restored_secrets: usize,
     pub unchanged_secrets: usize,
+    /// Custody records the archive carried as handles only: secrets to
+    /// re-enter through the owner's registration door.
+    pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
 }
 
 impl WholeVaultDocument {

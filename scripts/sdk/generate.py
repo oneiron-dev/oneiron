@@ -121,7 +121,7 @@ def remote_boundary(row):
         if binding.get('assemble'):
             values = [(a['name'], ARGUMENTS[a['kind']]['field'].format(name=a['name'])) for a in args]
             fields = ', '.join(name if value == name else name + ': ' + value for name, value in values)
-            if row['name'] == 'describe':
+            if row['name'] == 'describe' or binding.get('defaults'):
                 fields += ', ..Default::default()'
             setup = f'let input = {rust_type(row["input"])} {{ {fields} }};'
             value = '&input'

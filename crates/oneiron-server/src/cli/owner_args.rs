@@ -158,6 +158,11 @@ pub struct ExportArgs {
     #[arg(long, default_value = "archive")]
     pub format: String,
 
+    /// Carry your custody secrets' values (the default). `--include-secrets
+    /// false` exports each as its handle only, to re-enter after import.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub include_secrets: bool,
+
     /// Write the export to this new file (owner-only); stdout when omitted.
     #[arg(long)]
     pub out: Option<PathBuf>,

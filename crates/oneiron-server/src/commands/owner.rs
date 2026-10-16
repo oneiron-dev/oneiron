@@ -411,6 +411,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         .memory(owner, oneiron::edge::EdgeActorClass::Human)
         .export(&oneiron::memory::ExportOptions {
             format: Some(args.format),
+            include_secrets: Some(args.include_secrets),
         })
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let Some(out) = args.out else {
@@ -608,6 +609,8 @@ struct ImportedArchive {
     withheld_results: usize,
     restored_secrets: usize,
     unchanged_secrets: usize,
+    /// Secrets the archive carried as handles only: re-enter each one.
+    missing_secrets: Vec<String>,
 }
 
 /// Re-imports a whole-vault archive through the vault's import doors.
@@ -628,6 +631,11 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         withheld_results: receipt.withheld_results,
         restored_secrets: receipt.restored_secrets,
         unchanged_secrets: receipt.unchanged_secrets,
+        missing_secrets: receipt
+            .missing_secrets
+            .into_iter()
+            .map(|secret| secret.name)
+            .collect(),
     })
 }
 

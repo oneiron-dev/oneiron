@@ -19,6 +19,12 @@ use crate::side_table::{self, Named, SideTable};
 pub struct ExportOptions {
     #[serde(default)]
     pub format: Option<String>,
+    /// Whether the archive carries custody secret values. Absent means yes:
+    /// "all your data is all your data" (owner, 2026-10-17). `false` exports
+    /// each custody record as its handle only; a re-import lists those as
+    /// missing secrets to re-enter.
+    #[serde(default)]
+    pub include_secrets: Option<bool>,
 }
 
 /// The `format` that names the whole-vault archive.
@@ -213,7 +219,8 @@ fn render_export(
             &["Use: archive."],
         ));
     }
-    let export = vault.export_whole_vault_with_admission(locality, admit)?;
+    let include_secrets = opts.include_secrets.unwrap_or(true);
+    let export = vault.export_whole_vault_with_admission(locality, include_secrets, admit)?;
     let digest = blake3::hash(&export.bytes).to_hex().to_string();
     let receipt = ExportReceipt {
         at: vault.store.clock.now_recorded_at(),

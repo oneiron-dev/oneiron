@@ -315,13 +315,15 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.recall", value)
     }
-    /// Exports the full vault through the shared five-format serializer.
+    /// Exports the whole vault as one re-importable archive (a ZIP of JSONL
+    /// records, files by BLAKE3 and a manifest), custody secrets included.
     pub fn vault_export(
         &self,
         format: Option<&str>,
     ) -> Result<oneiron::memory::MemoryExport, MemoryError> {
         let input = oneiron::memory::ExportOptions {
             format: format.map(str::to_owned),
+            ..Default::default()
         };
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(

@@ -34,6 +34,7 @@ pub(crate) fn serialize_vault_snapshot(mut snapshot: ExportSnapshot) -> Result<W
         records: Vec::new(),
         files: Vec::new(),
         diary_holds: snapshot.diary_holds,
+        secrets_included: snapshot.secrets_included,
     };
     let mut document = WholeVaultDocument {
         manifest,

@@ -32,6 +32,7 @@ pub(crate) struct ExportSnapshot {
     pub(crate) diary_reads: Vec<ExportDiaryRead>,
     pub(crate) diary_holds: Vec<ExportDiaryHold>,
     pub(crate) secrets: Vec<ArchiveSecretCustody>,
+    pub(crate) secrets_included: bool,
 }
 
 /// One run's result manifests, as its replay record names them.
@@ -59,8 +60,14 @@ impl Vault {
     /// archive (OF-222), not a retrieval selection. Live off-record overlay
     /// rows, deleted shells, archive tombstones, credential custody rows and
     /// unpublished LFS chunks are excluded. No caller can disable nulling.
-    pub fn export_whole_vault(&self) -> Result<WholeVaultExport> {
-        self.export_whole_vault_with_admission(CallerLocality::OnDevice, |_| Ok(()))
+    ///
+    /// The owner's own archive carries custody secret values unless
+    /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
+    /// all your data"); then each custody record goes as its handle only.
+    pub fn export_whole_vault(&self, include_secrets: bool) -> Result<WholeVaultExport> {
+        self.export_whole_vault_with_admission(CallerLocality::OnDevice, include_secrets, |_| {
+            Ok(())
+        })
     }
 
     /// The archive of exactly `records` and the graph between them, for a
@@ -71,7 +78,9 @@ impl Vault {
         &self,
         records: &BTreeSet<EntityId>,
     ) -> Result<WholeVaultExport> {
-        self.export_archive_snapshot(CallerLocality::OffDevice, Some(records), |_| Ok(()))
+        self.export_archive_snapshot(CallerLocality::OffDevice, Some(records), false, |_| {
+            Ok(())
+        })
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
@@ -83,15 +92,17 @@ impl Vault {
     pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
         &self,
         locality: CallerLocality,
+        include_secrets: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
-        self.export_archive_snapshot(locality, None, admit)
+        self.export_archive_snapshot(locality, None, include_secrets, admit)
     }
 
     fn export_archive_snapshot<E: From<Error>>(
         &self,
         locality: CallerLocality,
         only: Option<&BTreeSet<EntityId>>,
+        include_secrets: bool,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
         let artifact = self.whole_vault_export_manifest_artifact(
@@ -143,12 +154,20 @@ impl Vault {
             // custody records, so a re-import keeps every key. A scoped
             // export (a removed owner's, a contact's, a share's) never does.
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
-                if only.is_none()
-                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
-                    && let Some(secret) =
-                        archive_custody_secret(&id, &raw[ENTITY_METADATA_HEADER_LEN..], locality)?
-                {
-                    secrets.push(secret);
+                if only.is_none() && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live() {
+                    let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
+                        &self.store,
+                        &rtxn,
+                        &id,
+                    )?
+                    .map(|(name, hash)| format!("{name}:{hash:02x}"));
+                    secrets.extend(archive_custody_secret(
+                        &id,
+                        handle,
+                        &raw[ENTITY_METADATA_HEADER_LEN..],
+                        locality == CallerLocality::OnDevice,
+                        include_secrets,
+                    )?);
                 }
                 continue;
             }
@@ -320,6 +339,7 @@ impl Vault {
             diary_reads,
             diary_holds,
             secrets,
+            secrets_included: include_secrets && only.is_none(),
         })
         .map_err(E::from)
     }
@@ -375,26 +395,32 @@ fn note_diary_author(
     Ok(super::diary_author(&body))
 }
 
-/// A custody record as an archive row, when this export carries it: an
-/// active record, and for a caller off this device only a portable one (a
-/// device-bound value never leaves this device, DEC-0005).
+/// A custody record as an archive row. A revoked record is not exported.
+/// The value goes with an active record when secrets are included, and for a
+/// caller off this device (`on_device` false) only when it is portable: a
+/// device-bound value never leaves this device (DEC-0005). Every other live
+/// record goes as its handle, to re-enter after import.
 fn archive_custody_secret(
     id: &EntityId,
+    handle: Option<String>,
     body: &[u8],
-    locality: CallerLocality,
+    on_device: bool,
+    include_secrets: bool,
 ) -> Result<Option<ArchiveSecretCustody>> {
-    use base64::Engine as _;
     use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    use base64::Engine as _;
     let record = crate::secret_custody::decode_secret_custody_body(body)?;
-    if record.status != SecretCustodyStatus::Active
-        || (locality != CallerLocality::OnDevice
-            && (record.device_only || record.class != CustodyClass::CustodyPortable))
-    {
+    if record.status == SecretCustodyStatus::Revoked {
         return Ok(None);
     }
+    let value = include_secrets
+        && record.status == SecretCustodyStatus::Active
+        && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable));
     Ok(Some(ArchiveSecretCustody {
         id: id.to_hex(),
         name: record.name.clone(),
-        body: base64::engine::general_purpose::STANDARD.encode(body),
+        handle,
+        metadata: record.metadata(),
+        body: value.then(|| base64::engine::general_purpose::STANDARD.encode(body)),
     }))
 }

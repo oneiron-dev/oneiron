@@ -287,10 +287,15 @@ members disagree with it. It is plaintext and re-imports into a fresh vault
 Credentials inside records are nulled by the serializer; tainted, secret-marked,
 credential-bearing and binary result bodies are withheld and named in `result_body.jsonl`.
 
-Your own archive also carries your keys: each active secret-custody record, in
-`records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. A caller
-off this device gets only portable ones; an export-first removal's archive, like any export to a
-contact or share, carries none. Keep the archive as safe as the keys in it.
+Your own archive also carries your keys, by default: each active secret-custody record's value,
+in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
+the archive as safe as the keys in it. To leave the values out, export with
+`--include-secrets false` (`{"include_secrets": false}` on `vault.export`): each custody record
+then goes as its handle and value-less metadata, the manifest says `secrets_included: false`, and
+a re-import lists those as `missing_secrets` to re-enter. A caller off this device gets values
+only for portable records (device-bound ones go as handles); suspended records always go as
+handles; an export-first removal's archive, like any export to a contact or share, carries no
+custody record.
 
 A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
 receipt with the reason `export`. An agent that reviews each read of its diary first
