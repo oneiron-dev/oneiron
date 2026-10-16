@@ -288,6 +288,9 @@ side_tables! {
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
     /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.
     DEFERRED_SPAWNED_BY_ENDPOINT: SyncState b"se:" Raw;
+    /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
+    /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
+    SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
     /// An entity document's shallow-since version vector (document family). Key: hex32 (NOTE head
     /// id).
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;

@@ -52,6 +52,7 @@ mod oneironer;
 mod owner;
 pub mod projection;
 mod protocol;
+pub mod replay_judge;
 pub mod runtime;
 pub mod server;
 mod skills_pack;
