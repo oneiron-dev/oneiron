@@ -57,6 +57,16 @@ pub enum EditOp {
     /// One schema-validated native Word revision transaction. The organ crate
     /// owns its versioned JSON syntax and the writer, not the spreadsheet seam.
     DocxRevision { transaction: String },
+    /// One native deck transaction (ARCH-0077). The organ crate owns its
+    /// closed grammar, the verbs and their checks; `report` is the run's
+    /// canonical report, whose handoff hash binds candidate bytes, base,
+    /// write set and report. A settlement replays it over the pinned base.
+    DeckTransaction {
+        transaction: String,
+        report: String,
+        #[serde(default)]
+        context: super::deck::DeckEditContext,
+    },
     /// Write a single cell.
     SetCell {
         sheet: String,
@@ -105,7 +115,7 @@ impl EditOp {
     #[must_use]
     pub fn sheet(&self) -> Option<&str> {
         match self {
-            Self::DocxRevision { .. } => None,
+            Self::DocxRevision { .. } | Self::DeckTransaction { .. } => None,
             Self::SetCell { sheet, .. }
             | Self::SetRange { sheet, .. }
             | Self::AddFormulaColumn { sheet, .. }
@@ -126,7 +136,10 @@ impl EditOp {
     pub const fn may_affect_values(&self) -> bool {
         !matches!(
             self,
-            Self::AddSheet { .. } | Self::PptxComment { .. } | Self::MintPptxSlideCreationId { .. }
+            Self::AddSheet { .. }
+                | Self::PptxComment { .. }
+                | Self::MintPptxSlideCreationId { .. }
+                | Self::DeckTransaction { .. }
         )
     }
 
@@ -160,7 +173,7 @@ impl EditOp {
                     creation_id: *creation_id,
                 })
             }
-            Self::DocxRevision { .. } => None,
+            Self::DocxRevision { .. } | Self::DeckTransaction { .. } => None,
             Self::InsertRows { sheet, at, count } => Some(AnchorEffect::Shift(StructuralShift {
                 sheet: sheet.clone(),
                 axis: Axis::Row,
@@ -220,6 +233,7 @@ impl EditOp {
                 format!("mint slide {slide} creationId {creation_id}")
             }
             Self::DocxRevision { .. } => "apply tracked Word revision".to_owned(),
+            Self::DeckTransaction { report, .. } => super::deck::render_report(report),
             Self::SetCell {
                 sheet,
                 cell,
