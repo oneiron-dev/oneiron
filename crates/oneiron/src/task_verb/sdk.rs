@@ -214,11 +214,22 @@ pub use super::sdk_connector::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
 
-/// `vault.receipts`'s one input.
+/// `vault.writes.pending`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
+}
+/// `vault.receipts`'s input: a page size, and the receipt kinds to list as
+/// `ReceiptKind` names them (`gate`, `hook`, `outbound`, ...). With no kinds
+/// it lists the gate decision ledger; an unknown kind is refused.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VaultReceiptsRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<String>,
 }
 /// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
 /// previous page returned as `next_after`, and a page size
