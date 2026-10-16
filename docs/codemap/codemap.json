@@ -36844,7 +36844,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ResolvedShare",
@@ -36900,7 +36900,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 7,
       "struct": 2,
@@ -41574,7 +41574,7 @@
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
-      "const": 40,
+      "const": 42,
       "enum": 1,
       "fn": 27,
       "mod": 1,
@@ -46020,7 +46020,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OpenedSealedContent",
@@ -46033,20 +46033,23 @@
      "purpose": "Sealed world content (OF-570 (d), world privacy fix 8): one window of a private world, sealed under a key…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 14,
+      "fn": 16,
       "struct": 4
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SealedTake"
+     ],
      "path": "src/world_keys/content_window.rs",
      "purpose": "The window side of sealed world content: what a reader seals from a private world's window, and how a reader…",
      "surface": {
-      "fn": 2
+      "enum": 1,
+      "fn": 5
      }
     },
     {
@@ -46086,7 +46089,7 @@
      "surface": {
       "crate-vis": 10,
       "fn": 3,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -48320,7 +48323,7 @@
     "share": {
      "files": 4,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Revocable brief read grants"
     },
@@ -48612,7 +48615,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 95,
+   "over_bar": 97,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2931,
    "test_files": 903
@@ -62325,7 +62328,7 @@
      "path": "src/handler/conn_state.rs",
      "purpose": "Per-connection budgets, quotas, and sync-mode binding",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
