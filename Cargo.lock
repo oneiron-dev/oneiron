@@ -8441,6 +8441,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "clap",
+ "dirs",
  "ed25519-dalek 2.2.0",
  "futures-util",
  "half",

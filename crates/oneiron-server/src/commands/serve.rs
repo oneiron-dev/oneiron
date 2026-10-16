@@ -17,7 +17,12 @@ use crate::server::SyncServer;
 /// How long open connections get to finish after a stop is requested.
 const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
-pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
+/// `config_file` is the file `config` was read from, which the server's
+/// runtime file names for a client that queues imports to it.
+pub(super) async fn serve_with_config(
+    config: ServeConfig,
+    config_file: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     use oneiron_vault_contract::host::{Host, HostLimits};
 
     tracing::info!(
@@ -118,6 +123,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         || Ok(()),
     );
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
+    #[cfg(unix)]
+    let bound = listener.local_addr()?;
     // `/a/` on an origin of its own, so a code bundle's scripts never run on
     // the API's: same host, its own port. Bound before any worker starts too.
     let artifact_bind = SocketAddr::new(addr.ip(), config.artifact_port);
@@ -148,8 +155,17 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
+    #[cfg(unix)]
+    let vault_id = crate::local_servers::vault_id(sync_server.vault());
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
+    // Ready and bound: a client on this host can find it now. The file goes
+    // when this returns, a clean stop or a late startup error alike.
+    #[cfg(unix)]
+    let _registered =
+        crate::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
+    #[cfg(not(unix))]
+    let _ = config_file;
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
     let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {

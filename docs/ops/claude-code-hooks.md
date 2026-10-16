@@ -1,11 +1,12 @@
 # Claude Code hooks: your vault in every session
 
-Four Claude Code hooks connect a session to your running vault. You make no
-calls by hand:
+Four Claude Code hooks connect a session to your vault, and a fifth is there
+if you want it. You make no calls by hand:
 
 | Claude Code event | Hook | What happens |
 |---|---|---|
-| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | A short recall for the project. Claude Code adds it to the session's context. |
+| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line; then a short recall for the project. Claude Code adds both to the session's context. |
+| `UserPromptSubmit` (only if you add it) | `prompt` | A short recall for what you just asked, from the bound vault. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
 | `SessionEnd` | `hand-over` | A last queue, for a session that ended mid-reply. |
@@ -14,17 +15,19 @@ The hooks sit beside the MCP tools ([Connect an agent](connect-an-agent.md)). Th
 tools are for what Claude decides to look up or save. The hooks run every time,
 without Claude asking.
 
-The scripts are in [`examples/claude-code-hooks/`](../../examples/claude-code-hooks/):
-`oneiron_hook.py` (Python 3.9+, standard library only), `settings.json` (the
-snippet to merge) and `check.sh` (the end-to-end check).
+The hooks are part of the `oneiron` binary: `oneiron hook --host claude-code
+<event>`. [`examples/claude-code-hooks/`](../../examples/claude-code-hooks/)
+holds `settings.json` (the snippet to merge) and `check.sh` (the end-to-end
+check).
 
 ## How it works
 
 ```
-Claude Code ──SessionStart──▶ oneiron_hook.py session-start ──▶ oneiron mcp ──▶ serve: recall
-            ◀── stdout: the recalled lines, added to context
+Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bind a vault (below)
+                                                       ──▶ oneiron mcp ──▶ serve: recall
+            ◀── stdout: the vault's line and the recalled lines, added to context
 
-Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron_hook.py hand-over
+Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron import claude-code <log> --queue   (writes one small file)
                                    serve, every 5 s ──▶ imports the queued log
 ```
@@ -45,13 +48,71 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron_hook.py hand-over
   vault stopped: the import ledger lands each message once, so the next
   `Stop` adds only the new messages. A Claude Code session brings its subagent
   logs (`<session>/subagents/`) with it.
-- **Nothing blocks.** Each hook prints nothing and exits 0 when the vault is
-  down, slow or refuses. A session queued while `serve` is down waits in the
-  queue and lands when `serve` starts. A mistyped hook command exits 1, which
+- **Nothing blocks.** Each hook exits 0 when the vault is down, slow or
+  refuses. `session-start` still prints its one line, which then says no
+  vault answered; nothing else is printed. A session queued while `serve` is
+  down waits in the queue and lands when `serve` starts. A mistyped hook command exits 1, which
   Claude Code shows as a hook error and then goes on. No hook ever exits 2, so
   none can block a compaction or keep a reply from ending.
 - **No hook reads or prints a credential.** `oneiron mcp` reads the credential
   file itself.
+
+## Which vault a session uses
+
+`session-start` binds the first of these, then prints one line naming it
+(ARCH-0028 `#plugin-first-run`):
+
+1. **A pin.** The hook's `--url`, else `ONEIRON_URL`, else `url` in
+   `hook.toml` in your oneiron config folder (`$XDG_CONFIG_HOME/oneiron/`,
+   else `~/.config/oneiron/`, the folder of the default `oneiron.toml`):
+
+   ```toml
+   url = "http://127.0.0.1:9090"
+   ```
+
+   A pinned vault that does not answer is not swapped for another; the line
+   says so.
+2. **A running local vault.** Every `serve` registers itself (below). The
+   hook asks each with `GET /.well-known/oneiron`, which needs no credential,
+   and binds the one that answers. When several answer it binds the newest,
+   says so, and prints the one command that pins it.
+3. **The hosted vault, when you are logged into the cloud.** Not built yet:
+   `oneiron connect` brings the login. The hook passes over this step.
+4. **A local server it starts.** The hook runs `oneiron serve --host
+   127.0.0.1` with the config every command reads when none is named
+   (`ONEIRON_CONFIG`, else the default `oneiron.toml`), in a process of its
+   own that keeps running after the session. It logs to `serve.log` in the
+   run folder. If that server answers within the hook's `--timeout`, the
+   session binds it; if not, the next session finds it. With no config there
+   is no vault to start: the line says to set one up with `oneiron init`.
+
+`prompt` binds the same way but never starts a server and prints no line of
+its own. `hand-over` queues into the queue of `--config` if you give it,
+else of the running local vault the pin names (or the newest one), else of
+the default config.
+
+### Runtime files
+
+Each `serve` writes one file once its listener is bound and it is ready, and
+removes it when it stops cleanly. The file is JSON: the vault id (`null`
+until the vault is rooted), the `url` a client on this host reaches it at,
+its `pid`, its vault folder (`state_dir`), the config it read and when it
+started. The folder is:
+
+- `$XDG_RUNTIME_DIR/oneiron/` where the platform has a runtime folder
+  (Linux);
+- else `run/` in your oneiron config folder, for example
+  `~/.config/oneiron/run/` on macOS.
+
+Never the repository, never a vault folder. The folder is created readable
+and writable by you alone (0700) and each file by you alone (0600). A hook
+reads neither a folder another user owns or can write, nor a file that is a
+link or another user's. A file whose process is gone (a `serve` that was
+killed) is stale: the next hook removes it. A file whose process lives but
+whose server does not answer is passed over and kept, since that server may
+still be starting.
+
+A `serve` from before runtime files registers nothing; restart it once.
 
 ## 1. Turn on the import queue
 
@@ -112,40 +173,46 @@ Add the four entries in `examples/claude-code-hooks/settings.json` to the
 project's `.claude/settings.json`. Keep your existing entries. Then replace the
 placeholders with full paths. Claude Code does not expand `~` there.
 
-- `/path/to/oneiron_hook.py`: where you keep the script.
 - `/path/to/oneiron`: the `oneiron` binary. Hooks run with Claude Code's
   `PATH`, which may not include it.
-- `http://127.0.0.1:9090`: the server's origin. Use the `host` and `port` that
-  `serve` listens on.
 - `/path/to/claude-code-hooks.cred`: the file from step 2.
-- `/path/to/oneiron.toml`: the config `serve` reads. The queue's place comes
-  from it.
+
+The hooks find the vault themselves ([above](#which-vault-a-session-uses)).
+Add `--url <origin>` to `session-start` to pin one there instead, and
+`--config /path/to/oneiron.toml` to `hand-over` when `serve` reads a config
+other than the default and may be stopped when a session ends.
 
 ```json
 {
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "timeout": 15,
-        "command": "python3 /path/to/oneiron_hook.py session-start --oneiron /path/to/oneiron --url http://127.0.0.1:9090 --credential-file /path/to/claude-code-hooks.cred" } ] }
+        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred" } ] }
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "timeout": 10,
-        "command": "python3 /path/to/oneiron_hook.py hand-over --oneiron /path/to/oneiron --config /path/to/oneiron.toml" } ] }
+        "command": "/path/to/oneiron hook --host claude-code hand-over" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "timeout": 10,
-        "command": "python3 /path/to/oneiron_hook.py hand-over --oneiron /path/to/oneiron --config /path/to/oneiron.toml" } ] }
+        "command": "/path/to/oneiron hook --host claude-code hand-over" } ] }
     ],
     "SessionEnd": [
       { "hooks": [ { "type": "command", "timeout": 5,
-        "command": "python3 /path/to/oneiron_hook.py hand-over --oneiron /path/to/oneiron --timeout 4 --config /path/to/oneiron.toml" } ] }
+        "command": "/path/to/oneiron hook --host claude-code hand-over --timeout 4" } ] }
     ]
   }
 }
 ```
 
-Start a new Claude Code session in a project the vault knows. The recalled
-lines appear in its context under "From your Oneiron vault".
+Start a new Claude Code session in a project the vault knows. Its context
+opens with the line naming the vault, then the recalled lines under "From
+your Oneiron vault".
+
+To recall for each prompt as well, add a `UserPromptSubmit` entry running
+`/path/to/oneiron hook --host claude-code prompt --credential-file
+/path/to/claude-code-hooks.cred`. It recalls at the `light` effort unless
+you set `--effort`, and prints nothing when it finds nothing.
 
 ### Next to your other hooks
 
@@ -186,9 +253,11 @@ What the hooks already imported stays in your vault, like any import.
 
 ## Limits and timings
 
-- `session-start` gives up after 8 seconds (`--timeout`) and prints at most 8
-  hits (`--limit`), each up to 400 characters, about 6,000 characters in all.
-  Claude Code caps a hook's added context at 10,000 characters.
+- `session-start` gives up after 8 seconds (`--timeout`), binding included,
+  and prints at most 8 hits (`--limit`), each up to 400 characters, about
+  6,000 characters in all, after its one line. Each probe of a vault waits
+  at most 2 seconds. `prompt` has the same limits. Claude Code caps a hook's
+  added context at 10,000 characters.
 - `hand-over` takes well under a second: it writes one small file. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
@@ -198,7 +267,7 @@ What the hooks already imported stays in your vault, like any import.
   `log_too_large` warning in `serve`'s log, and the rest of the session
   lands.
 - `--query "<words>"` on `session-start` recalls those words instead of the
-  project's name.
+  project's name (on `prompt`, instead of the prompt).
 - `--effort <light|medium|high|xhigh|max>` on `session-start` picks recall's
   effort; it stays `light` unless you set it. Above light the server embeds
   the query first, and a model that is still loading leaves recall on its
@@ -214,5 +283,6 @@ Hook events, their input fields, stdout handling and timeouts:
 `examples/claude-code-hooks/check.sh /path/to/oneiron` runs the whole loop on
 invented data in a temporary folder. A `Stop` event arrives while the vault is
 down, and the session waits in the queue. Then `serve` starts and imports it.
-Last, a `SessionStart` event in the same project prints a line from that
-session. It never touches your own sessions or vault.
+Last, a `SessionStart` event in the same project binds that `serve` by its
+runtime file and prints a line from that session. It never touches your own
+sessions, vault, runtime files or pin.
