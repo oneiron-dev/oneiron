@@ -276,15 +276,41 @@ the repair for a vault refused after an analyzer or dictionary change. A running
 ## Export
 
 ```sh
-oneiron export --format md --out vault.md      # toon (default), md, json, yaml or txt
-oneiron export --format json > vault.json      # stdout when --out is omitted
+oneiron export --out vault.zip                 # the whole-vault archive (format `archive`)
+oneiron export > vault.zip                     # stdout when --out is omitted
 ```
 
-On a running server, `POST /v1/core/facade/vault.export` with `{"format": "md"}` and an owner
-credential. Each export tries to write a receipt (time, format, bytes, digest, who), and
-`doctor` shows the latest one recorded. The receipt is best effort: if it cannot be written the
-export still succeeds, a warning is logged, and `last_export` stays as it was. An export is a
-readable archive of your knowledge. It is not a backup: restore from a backup file.
+The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per record kind under
+`records/` (`records/entity/<kind>.jsonl` per entity type, then `edge`, `pack`, `agent_pack`,
+`derivation_envelope`, `run` and `result_body`), and each attached file once under
+`files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
+record file and attached file with its length and BLAKE3, and an import refuses an archive whose
+members disagree with it. It is plaintext and re-imports into a fresh vault
+(`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Credentials inside records are nulled by the serializer; tainted, secret-marked,
+credential-bearing and binary result bodies are withheld and named in `result_body.jsonl`.
+
+Your own archive also carries your keys, by default: each active secret-custody record's value,
+in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
+the archive as safe as the keys in it. To leave the values out, export with
+`--include-secrets false` (`{"include_secrets": false}` on `vault.export`): each custody record
+then goes as its handle and value-less metadata, the manifest says `secrets_included: false`, and
+a re-import lists those as `missing_secrets` to re-enter. A caller off this device gets values
+only for portable records (device-bound ones go as handles); suspended records always go as
+handles; an export-first removal's archive, like any export to a contact or share, carries no
+custody record.
+
+A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
+receipt with the reason `export`. An agent that reviews each read of its diary first (its
+OF-490 review setting, on for Eiri) has its diaries held out of the archive, and the manifest's
+`diary_holds` names it.
+
+On a running server, `POST /v1/core/facade/vault.export` with `{}` (or `{"format": "archive"}`)
+and an owner credential; the reply's `archive` is the ZIP in standard base64. Each export tries to
+write a receipt (time, format, bytes, digest, who, diary reads), and `doctor` shows the latest one
+recorded. The receipt is best effort: if it cannot be written the export still succeeds, a warning
+is logged, and `last_export` stays as it was. An export is your exit path, not a backup: restore
+from a backup file, the vault's encrypted snapshot.
 
 ## Secret scan switch
 
@@ -622,6 +648,36 @@ and a disk at its `disk_reserve_bytes` floor gets `507`.
 The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inbox?after=<seq>
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
+
+## Answer the decision ladder's asks
+
+When a typed decision climbs past every model rung (the dial reaches the
+owner, the read says "ask up?", or the clock cut an irreversible step), the
+server's decision ladder queues it for you (run-with-models.md, section 12).
+The ask waits in the vault, through restarts, until you answer.
+
+`GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them
+oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
+- its arrival number `seq`;
+- the question (its text and the answers its contract takes);
+- the principal it is for, and the evidence ids;
+- why it was asked;
+- the answer the ladder held, if any, and the model that read it;
+- your answer, once given.
+`open=true` keeps only the unanswered asks.
+
+Answer one with `POST /v1/owner/decisions/asks/answer`:
+
+```json
+{"seq": 3, "answer": {"kind": "choice", "value": "allow"}}
+```
+
+`kind` is `noul` (`value` true or false), `choice` (one of the question's
+options) or `score` (a number in its range). An abstention is not an answer.
+The decision waiting on the ask gets your answer. When your answer differs
+from the ladder's, the case is kept for the Coach, which tunes when the
+ladder asks you. Sending the same answer again changes nothing. A different
+answer to an answered ask is refused.
 
 ## Saved queries after a pack update
 

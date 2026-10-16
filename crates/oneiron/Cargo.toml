@@ -106,6 +106,8 @@ tokio-tungstenite = { version = "0.26", optional = true }
 base64 = "0.22"
 futures-util = { version = "0.3", optional = true }
 zstd = "0.13"
+# The whole-vault archive (OF-222) is one ZIP of JSONL records, files and a manifest.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
 kamadak-exif = "0.5"

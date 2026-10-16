@@ -7,7 +7,8 @@
 //! the agent's own read log, where the agent sees it. An agent whose review
 //! setting is on (on for Eiri; the host that provisions her turns it on by
 //! her agent id) answers each reader's reason Y/N first, and one yes admits
-//! one read. A vault export is a read with the reason `export`. An agent
+//! one read. A vault export is a read with the reason `export`
+//! (`crate::batch::export::EXPORT_DIARY_READ_REASON`). An agent
 //! reading its own diary needs none of this.
 //!
 //! [`DiaryReadGate`] makes every decision, so the export writer and the
@@ -34,8 +35,6 @@ use serde::{Deserialize, Serialize};
 
 /// The verb a diary-read Grant names.
 pub const DIARY_READ_VERB: &str = "diary.read";
-/// The reason every vault export's diary read states.
-pub const EXPORT_DIARY_READ_REASON: &str = "export";
 const REASON_MAX_BYTES: usize = 512;
 const READS_LIMIT_DEFAULT: u32 = 50;
 const READS_LIMIT_MAX: u32 = 500;

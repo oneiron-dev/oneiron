@@ -94,14 +94,14 @@ pub use claims::{
 pub use diary_read::{
     DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
     DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
-    DiaryReadsView, DiaryReviewAnswer, DiaryReviewState, EXPORT_DIARY_READ_REASON,
+    DiaryReadsView, DiaryReviewAnswer, DiaryReviewState,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
-pub use export::{ExportOptions, ExportReceipt, MemoryExport};
+pub use export::{EXPORT_TARGET_ARCHIVE, ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
