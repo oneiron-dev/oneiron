@@ -26494,8 +26494,8 @@
      "path": "src/memory/skill_authoring.rs",
      "purpose": "Authored skill saves and forks over the existing skill lifecycle gate",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
+      "crate-vis": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -35220,6 +35220,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CallableCard",
+      "CallableCardView",
+      "CallableCase",
+      "CallableGateVerdict",
+      "CallableHarness",
+      "CaseSplit",
+      "HarnessScore",
+      "SkillForkRequest",
+      "SkillSaveRequest",
+      "SkillSourceFile"
+     ],
+     "path": "src/skill/helper.rs",
+     "purpose": "Agent-authored executable helpers (OF-353): a callable SKILL an agent writes for itself, found, promoted and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 10,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -35256,6 +35281,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 7
      }
     },
@@ -40713,7 +40739,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 69
+      "fn": 72
      }
     },
     {
@@ -45789,7 +45815,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46050,7 +46076,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2767,
+   "source_files": 2768,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53487,7 +53513,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 51
+      "fn": 54
      }
     },
     {
@@ -54336,7 +54362,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 52
+      "fn": 55
      }
     },
     {
