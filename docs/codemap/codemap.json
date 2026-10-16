@@ -10570,7 +10570,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/codebase/tests.rs",
@@ -17789,7 +17789,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/agent_verb_regressions.rs",
@@ -22778,7 +22778,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 178,
       "re-export": 72
      }
@@ -25700,6 +25700,16 @@
       "fn": 6,
       "struct": 10,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/msgpack_shape.rs",
+     "purpose": "A budget check of untrusted MessagePack before it is decoded",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -31195,7 +31205,7 @@
      "path": "src/recovery/quarantine.rs",
      "purpose": "Atomic no-clobber quarantine renames",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -38489,6 +38499,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
+      "const": 2,
       "fn": 37
      }
     },
@@ -42877,6 +42888,13 @@
      "layout": "dir",
      "purpose": "Durable batched speculation over real detached worktrees"
     },
+    "msgpack_shape": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A budget check of untrusted MessagePack before it is decoded"
+    },
     "note": {
      "files": 37,
      "impl_vault": true,
@@ -43454,7 +43472,7 @@
    },
    "over_bar": 47,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2608,
+   "source_files": 2609,
    "test_files": 897
   },
   "oneiron-android": {
@@ -51339,7 +51357,6 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "const": 2,
       "fn": 13,
       "mod": 1,
       "re-export": 2,
@@ -56600,6 +56617,7 @@
      "notable": [
       "McpPageBudget",
       "McpPageCursorError",
+      "McpPageResume",
       "McpPageSource",
       "McpResultEnd",
       "McpRetrievalHealth"
@@ -56610,8 +56628,8 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 3,
-      "fn": 19,
-      "struct": 2
+      "fn": 22,
+      "struct": 3
      }
     },
     {
