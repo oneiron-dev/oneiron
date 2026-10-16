@@ -120,7 +120,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
     if requires_frozen_call_validation
         && !matches!(
-            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            authority.validate_frozen_call_grant(vault, &call)?,
             FrozenCallValidation::Valid
         )
     {
@@ -166,10 +166,8 @@ fn send_pending_with_gate<T: OutboundTransport>(
             &prepared.payload,
             prepared.gate.provenance.actor_entity_ref,
         )?;
-        let required_grant_id = match &prepared.authorization {
-            PreparedAuthorization::None => None,
-            PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
-        };
+        let required_grant_id =
+            super::admission::required_grant_id(vault, &wtxn, &prepared.authorization);
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         let governance = gate::evaluate_external_effect_policy(
@@ -180,7 +178,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             required_grant_id,
             match &prepared.authorization {
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-                PreparedAuthorization::None => None,
+                PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => {
+                    None
+                }
             },
             record
                 .admitted_approval
@@ -224,7 +224,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
         && !matches!(
-            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            authority.validate_frozen_call_grant(vault, &call)?,
             FrozenCallValidation::Valid
         )
     {

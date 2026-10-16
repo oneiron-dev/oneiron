@@ -224,15 +224,21 @@ impl PolicyManifestResolution {
                     .with_receipt_reasons(external_effect_receipt_reasons(effect))
                     .with_policy_refusal(None, None, true);
             }
+            // The posture answers the counterparty's opt-out. An owner-revoked
+            // contact is the owner's own word, so it holds under any posture
+            // and no posture row decides it.
+            let (posture, posture_row) = if effect.counterparty_contact_revoked {
+                (CommOptOutPosture::Escalate, None)
+            } else {
+                (posture, effective_posture.deciding_row)
+            };
             match (effect.counterparty_send_override, posture) {
                 (Some(_), _) => {}
                 (None, CommOptOutPosture::AllowWithReceipt) => {
-                    deciding_row = effective_posture
-                        .deciding_row
-                        .map(|row| row.row_ref.as_str());
+                    deciding_row = posture_row.map(|row| row.row_ref.as_str());
                 }
                 (None, CommOptOutPosture::Escalate) => {
-                    let row = effective_posture.deciding_row;
+                    let row = posture_row;
                     return GateDecision::pending(vec![GateReasonCode::PendingCounterpartyOptOut])
                         .with_receipt_reasons(external_effect_receipt_reasons(effect))
                         .with_policy_refusal(
