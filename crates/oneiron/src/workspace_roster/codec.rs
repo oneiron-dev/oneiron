@@ -98,11 +98,11 @@ pub(super) fn write_journal(
     intent: &MemberOnboardingIntent,
     record: &OnboardingJournal,
     writer: &WriteActor,
-    mailbox_owner: Option<&AuthenticatedOwner>,
+    proofs: MailboxProofs<'_>,
 ) -> Result<()> {
     require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
     let revision = if record.step.rank() >= MemberOnboardingStep::MailboxBound.rank() {
-        verify_mailbox_revision(vault, intent, mailbox_owner)?
+        verify_mailbox_revision(vault, intent, proofs)?
     } else {
         None
     };
@@ -515,21 +515,102 @@ pub(super) fn validate_mailbox_request(mailbox: &DelegatedMailboxOnboarding) -> 
     Ok(())
 }
 
-pub(super) fn require_mailbox_owner<'a>(
+/// The two proofs a delegated-mailbox onboarding carries: the member
+/// PERSON's own consent, and the vault owner's authorization of the autonomy
+/// grants minted for the mailbox. When the member owns the vault, one proof
+/// is both.
+#[derive(Clone, Copy)]
+pub(super) struct MailboxProofs<'a> {
+    member: Option<&'a AuthenticatedOwner>,
+    owner: Option<&'a AuthenticatedOwner>,
+}
+
+impl<'a> MailboxProofs<'a> {
+    /// One proof that consents as the member and authorizes as the owner.
+    pub(super) const fn one(proof: Option<&'a AuthenticatedOwner>) -> Self {
+        Self {
+            member: proof,
+            owner: proof,
+        }
+    }
+
+    pub(super) const fn separate(
+        member: &'a AuthenticatedOwner,
+        owner: &'a AuthenticatedOwner,
+    ) -> Self {
+        Self {
+            member: Some(member),
+            owner: Some(owner),
+        }
+    }
+
+    /// The proof the autonomy grant doors take. They check it on the owner
+    /// tier, so a member who does not own the vault mints nothing with it.
+    pub(super) fn grant_owner(self) -> Result<&'a AuthenticatedOwner> {
+        self.owner
+            .ok_or(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "mailbox onboarding requires the vault owner's authorization",
+            )))
+    }
+}
+
+/// The member's own consent: a live PERSON's proof for `intent.person_ref`,
+/// owner of this vault or not. A preflight; the acts that rely on it check
+/// it again in their own transaction ([`require_mailbox_member_in_txn`]).
+pub(super) fn require_mailbox_owner(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    owner: Option<&'a AuthenticatedOwner>,
-) -> Result<&'a AuthenticatedOwner> {
+    proofs: MailboxProofs<'_>,
+) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    require_mailbox_member_in_txn(vault, &txn, intent, proofs)
+}
+
+/// [`require_mailbox_owner`] in `txn`: the grant mint's committing
+/// transaction, or the snapshot a publication fence covers.
+pub(super) fn require_mailbox_member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &MemberOnboardingIntent,
+    proofs: MailboxProofs<'_>,
+) -> Result<()> {
     let refused = || {
         Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             "mailbox onboarding requires its member's authenticated consent owner",
         ))
     };
-    let owner = owner.ok_or_else(refused)?;
-    if owner.revalidate_person(vault)? != intent.person_ref {
+    let member = proofs.member.ok_or_else(refused)?;
+    if member.revalidate_person_in_txn(vault, txn)? != intent.person_ref {
         return Err(refused());
     }
-    Ok(owner)
+    Ok(())
+}
+
+/// A test's act at the consent window.
+#[cfg(test)]
+type ConsentWindowHook = Box<dyn FnOnce(&Vault)>;
+
+#[cfg(test)]
+thread_local! {
+    static CONSENT_WINDOW: std::cell::RefCell<Option<ConsentWindowHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `hook` once, at the next point where a member's consent was checked
+/// and the act relying on it has not begun.
+#[cfg(test)]
+pub(super) fn set_consent_window_for_test(hook: impl FnOnce(&Vault) + 'static) {
+    CONSENT_WINDOW.with(|window| *window.borrow_mut() = Some(Box::new(hook)));
+}
+
+/// Where a member's consent can lapse between its check and the act.
+pub(super) fn consent_window(vault: &Vault) {
+    #[cfg(test)]
+    if let Some(hook) = CONSENT_WINDOW.with(|window| window.borrow_mut().take()) {
+        hook(vault);
+    }
+    #[cfg(not(test))]
+    let _ = vault;
 }
 
 pub(super) fn require_active_mailbox(
@@ -554,15 +635,19 @@ pub(super) fn require_active_mailbox(
 pub(super) fn verify_mailbox_revision(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
-    owner: Option<&AuthenticatedOwner>,
+    proofs: MailboxProofs<'_>,
 ) -> Result<Option<usize>> {
     let Some(mailbox) = &intent.delegated_mailbox else {
         return Ok(None);
     };
-    let owner = require_mailbox_owner(vault, intent, owner)?;
+    let owner = proofs.grant_owner()?;
+    consent_window(vault);
     let now = vault.store.authorization_now()?;
     let revision = vault.store.env.info().last_txn_id;
     let txn = vault.store.env.read_txn()?;
+    // The member's consent inside the fenced snapshot: a lapse before the
+    // revision capture shows here, and one after it moves the revision.
+    require_mailbox_member_in_txn(vault, &txn, intent, proofs)?;
     let identity = read_onboarding_mailbox_in_txn(vault, &txn, intent, mailbox)?
         .ok_or(Error::EntityNotFound)?;
     require_active_mailbox(mailbox, identity.state())?;
