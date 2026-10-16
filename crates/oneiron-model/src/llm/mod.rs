@@ -33,6 +33,7 @@ pub use self::scope::{Scope, ScopeResource};
 mod catalog;
 mod error;
 mod fallback;
+pub mod limit;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
 mod failure_policy;
 pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
