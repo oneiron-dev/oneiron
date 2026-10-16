@@ -20,6 +20,7 @@ use crate::sync::local_claims::withheld_claim_carriers;
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
+use crate::sync::row_birth::{BirthReach, copy_births_within};
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
@@ -254,8 +255,9 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
 
     // Tombstone rows are entity ids without type metadata. A guest-share
     // snapshot omits them to avoid leaking deleted membership/topology counts.
-    // Its NOTEs already passed the selection that made `source`. No birth
-    // goes to a guest: a birth is vault refs, and those never travel (OF-491).
+    // Its NOTEs already passed the selection that made `source`. A guest is
+    // another vault, as far as its rows' births go.
+    copy_births_within(source, &out, BirthReach::OtherVault)?;
     crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
@@ -336,19 +338,9 @@ fn authorized_base_edge_endpoints(
     Ok(allowed)
 }
 
-/// Whether an export carries the births of the rows it ships (Rule A).
-/// A birth is all vault refs (input rows, actor, trigger, input hash), and
-/// vault refs never travel (OF-491): births stay with the owner's machines,
-/// and a copy for another vault carries none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Births {
-    Carry,
-    Omit,
-}
-
 /// `withhold` names the worlds kept off the machine the export serves. Every
 /// export door withholds; promotion authority asks only what the grant
-/// covers. `births` says whether the shipped rows' births go with them.
+/// covers. `reach` says where the shipped rows' births may go.
 pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -356,7 +348,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
     withhold: Withhold<'_>,
-    births: Births,
+    reach: BirthReach,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -754,10 +746,8 @@ pub(super) fn filter_window_doc(
     });
 
     // Rule A: a birth crosses only beside an owner this filter shipped, and
-    // only to the owner's machines.
-    if births == Births::Carry {
-        crate::sync::row_birth::copy_births_for_entities(source, &out)?;
-    }
+    // only as far as `reach` lets it.
+    copy_births_within(source, &out, reach)?;
     crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)

@@ -19,9 +19,8 @@ use crate::federation::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
-use super::authorize::{
-    Births, authorize_selector_export, filter_window_doc, strip_guest_share_metadata,
-};
+use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
+use crate::sync::row_birth::BirthReach;
 
 /// Current selector payload schema version.
 pub const SYNC_SELECTOR_SCHEMA_VERSION: u64 = 2;
@@ -309,9 +308,9 @@ pub fn filtered_window_doc_for_peer(
     selector: &SyncSelector,
     peer: crate::authority::PeerMachine,
 ) -> Result<LoroDoc> {
-    let births = match peer {
-        crate::authority::PeerMachine::Proven { .. } => Births::Carry,
-        crate::authority::PeerMachine::Unknown => Births::Omit,
+    let reach = match peer {
+        crate::authority::PeerMachine::Proven { .. } => BirthReach::OwnMachines,
+        crate::authority::PeerMachine::Unknown => BirthReach::OtherVault,
     };
     let position = authorize_selector_export(
         vault,
@@ -326,7 +325,7 @@ pub fn filtered_window_doc_for_peer(
         selector,
         &position,
         Withhold::Peer(peer),
-        births,
+        reach,
     )
 }
 
@@ -354,7 +353,7 @@ pub fn filtered_window_doc_for(
         selector,
         &position,
         withhold,
-        Births::Carry,
+        BirthReach::OwnMachines,
     )
 }
 
@@ -380,7 +379,7 @@ pub(in crate::sync) fn granted_window_doc(
         selector,
         &position,
         Withhold::Nothing,
-        Births::Carry,
+        BirthReach::OwnMachines,
     )
 }
 
@@ -425,7 +424,7 @@ pub fn guest_share_envelope_body(
         selector,
         &position,
         Withhold::Unknown,
-        Births::Omit,
+        BirthReach::OtherVault,
     )?;
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
