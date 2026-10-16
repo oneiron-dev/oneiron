@@ -17,6 +17,8 @@
 //! `since`. There is no mutable participant set beside it; who may take part
 //! now is read live from room standing and receipts, never from this stream.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::super::join_consent::{
@@ -25,8 +27,10 @@ use super::super::join_consent::{
 };
 use super::super::join_door::rooms_join_in_txn;
 use super::super::join_receipt::JoinReceiptRef;
+use super::{ProjectRoom, RoomTurn, invalid, require_member, room_in, turn_in};
 use crate::agent_dispatch::SpendScopeId;
-use crate::error::{ClaimError, Error, Result};
+use crate::error::{ClaimError, Error, RecordError, Result};
+use crate::memory::WitnessTurn;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use crate::store::Store;
@@ -517,4 +521,386 @@ fn json<T: Serialize>(value: &T) -> Result<String> {
 
 fn lacks(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
+}
+
+/// The thread a room turn belongs to: its root, the stable id the thread's
+/// joins and receipts name, never the moving tip. A root names its trunk
+/// anchor and answers it, or nothing; a reply inherits its root by walking
+/// `reply_to`. `None` for a trunk turn, or one whose chain reaches no root.
+pub(super) fn thread_root_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    mut reply_to: Option<EntityId>,
+    mut thread_of: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    let mut id = turn;
+    let mut seen = BTreeSet::new();
+    loop {
+        let Some(anchor) = thread_of else {
+            return Ok(None);
+        };
+        let Some(parent) = reply_to.filter(|parent| *parent != anchor) else {
+            return Ok(Some(id));
+        };
+        if !seen.insert(id) || seen.len() > 100_000 {
+            return Err(invalid());
+        }
+        let row = turn_in(vault, txn, parent)?;
+        id = parent;
+        reply_to = row
+            .reply_to
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
+        thread_of = row
+            .thread_of
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
+    }
+}
+
+/// [`thread_root_in_txn`] for a stored turn.
+pub(super) fn turn_root_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &RoomTurn,
+) -> Result<Option<EntityId>> {
+    thread_root_in_txn(
+        vault,
+        txn,
+        EntityId::from_hex(&turn.turn_id)?,
+        turn.reply_to
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?,
+        turn.thread_of
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?,
+    )
+}
+
+/// The speech door for a room turn: OF-528's for a seated speaker. A speaker
+/// standing on a receipt has no seat, so it passes on speaking as a persona
+/// (a live PERSON, or an enabled and active AGENT_DEF), never as upkeep.
+pub(super) fn admit_speech_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+    standing: Option<&AgentStanding>,
+) -> Result<()> {
+    match standing {
+        Some(AgentStanding::Receipt(_)) => {
+            if super::hosting::eligible_room_speaker_in(vault, txn, actor)? {
+                Ok(())
+            } else {
+                Err(Error::Record(RecordError::ConversationDenied))
+            }
+        }
+        _ => super::hosting::admit_room_speech_in(vault, txn, room, actor),
+    }
+}
+
+/// Whether `actor` may be named in a room it has no seat in: an agent that
+/// speaks as a persona. Naming enrolls no one and reveals nothing; the agent
+/// still claims and speaks only on a Ready receipt.
+pub(super) fn addressable_agent_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    at: u64,
+) -> Result<bool> {
+    Ok(matches!(
+        participant_in_txn(vault, txn, actor, at)?,
+        Some(JoinSubject::Agent(_))
+    ) && super::hosting::eligible_room_speaker_in(vault, txn, actor)?)
+}
+
+/// Records `Addressed { turn }` for each agent named on `turn` that stands
+/// on a Ready receipt for its thread or room now. An agent named without one
+/// is recorded when its claim on the turn passes, never on the naming alone.
+pub(super) fn record_addressed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    turn: EntityId,
+    addressed: &BTreeSet<String>,
+    at: u64,
+) -> Result<()> {
+    for named in addressed {
+        let named = EntityId::from_hex(named)?;
+        let Some(subject @ JoinSubject::Agent(_)) = participant_in_txn(vault, txn, named, at)?
+        else {
+            continue;
+        };
+        let Some(receipt) = joined(require_join_covering_in_txn(
+            vault, txn, room, branch, &subject, None,
+        ))?
+        else {
+            continue;
+        };
+        record_participation_in_txn(
+            vault,
+            txn,
+            room,
+            branch,
+            &subject,
+            &JoinCause::Addressed { turn },
+            Some(&receipt),
+            at,
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether `actor`, taking part as `subject`, reads the project room
+/// `record`: from its seat, as before, or, for an agent, on a Ready receipt
+/// for the room. A thread's receipt opens no room-wide read.
+pub(super) fn reads_room_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    record: &ProjectRoom,
+    actor: EntityId,
+    subject: Option<JoinSubject>,
+) -> Result<bool> {
+    if record.member_ids.contains(&actor.to_hex()) {
+        return Ok(true);
+    }
+    let Some(subject @ JoinSubject::Agent(_)) = subject else {
+        return Ok(false);
+    };
+    Ok(joined(require_join_covering_in_txn(
+        vault, txn, room, None, &subject, None,
+    ))?
+    .is_some())
+}
+
+/// The room read entry (OF-529): `require_member` for a person, and for an
+/// agent its seat or a Ready receipt for the room. Returns the room as its
+/// project vouches for it.
+pub(in crate::workspace_roster) fn require_reader(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<ProjectRoom> {
+    let record = room_in(vault, txn, room)?;
+    let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
+    if !reads_room_in_txn(vault, txn, room, &record, actor, subject)? {
+        return Err(invalid());
+    }
+    Ok(record)
+}
+
+/// The speech precheck before a witness (OF-529): `require_member` for a
+/// person; for an agent, its seat or a Ready receipt for the thread its reply
+/// lands in, or for the room. The witness transaction decides again.
+pub(super) fn require_speaker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    input: &WitnessTurn,
+    actor: EntityId,
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    let Some(JoinSubject::Agent(agent)) = participant_in_txn(vault, txn, actor, now)? else {
+        require_member(vault, txn, room, actor)?;
+        return Ok(());
+    };
+    room_in(vault, txn, room)?;
+    let parent = input
+        .messages
+        .iter()
+        .filter_map(|message| message.metadata.as_ref()?.get("room_reply_to")?.as_str())
+        .find_map(|parent| EntityId::from_hex(parent).ok());
+    let branch = match parent {
+        Some(parent) => turn_root_in_txn(vault, txn, &turn_in(vault, txn, parent)?)?,
+        None => None,
+    };
+    agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(invalid)?;
+    Ok(())
+}
+
+/// Who claims a room turn, and on what (OF-529).
+pub(super) struct Claimant {
+    room: EntityId,
+    actor: EntityId,
+    branch: Option<EntityId>,
+    /// `None` for a person, who claims from its seat as before.
+    agent: Option<AgentStanding>,
+}
+
+impl Claimant {
+    /// A person claims from its seat, as before. An agent claims on a Ready
+    /// receipt for the turn's thread or the room, or the seat its project
+    /// gives it; it never takes a seat to claim.
+    pub(super) fn admit_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+        turn: &RoomTurn,
+        actor: EntityId,
+    ) -> Result<Self> {
+        let branch = turn_root_in_txn(vault, txn, turn)?;
+        let now = vault.store.clock.now_recorded_at();
+        let agent = match participant_in_txn(vault, txn, actor, now)? {
+            Some(JoinSubject::Agent(agent)) => Some(
+                agent_standing_in_txn(vault, txn, room, branch, agent, None)?
+                    .ok_or_else(invalid)?,
+            ),
+            _ => {
+                require_member(vault, txn, room, actor)?;
+                None
+            }
+        };
+        Ok(Self {
+            room,
+            actor,
+            branch,
+            agent,
+        })
+    }
+
+    /// Claiming a turn is speaking: see [`admit_speech_in`].
+    pub(super) fn admit_speech_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        admit_speech_in(vault, txn, self.room, self.actor, self.agent.as_ref())
+    }
+
+    /// The open TASK of the claimed turn's thread this agent holds now: the
+    /// task's stored assignee, re-read at every claim, so a reassigned or
+    /// terminal task authorizes nothing new. No signed room rule allows an
+    /// owner fallback, so the assignee alone holds it. A person holds none.
+    pub(super) fn held_task_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        turn: &RoomTurn,
+    ) -> Result<Option<EntityId>> {
+        if self.agent.is_none() {
+            return Ok(None);
+        }
+        for task in thread_tasks_in_txn(vault, txn, turn)? {
+            match crate::task_verb::open_thread_task_holder_in(
+                vault,
+                txn,
+                task,
+                crate::gate::TaskHolderFallback::AssigneeOnly,
+            ) {
+                Ok(Some(holder)) if holder == self.actor => return Ok(Some(task)),
+                Ok(_) | Err(Error::EntityNotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Records the agent's participation once its claim passes: named on the
+    /// turn, and holding the thread's task. A person's claim records nothing.
+    pub(super) fn record_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        turn: EntityId,
+        named: bool,
+        task: Option<EntityId>,
+    ) -> Result<()> {
+        let Some(standing) = &self.agent else {
+            return Ok(());
+        };
+        let subject = JoinSubject::Agent(self.actor);
+        let at = vault.store.clock.now_recorded_at();
+        let causes = named
+            .then_some(JoinCause::Addressed { turn })
+            .into_iter()
+            .chain(task.map(|task| JoinCause::Task { task }));
+        for cause in causes {
+            record_participation_in_txn(
+                vault,
+                txn,
+                self.room,
+                self.branch,
+                &subject,
+                &cause,
+                standing.receipt(),
+                at,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// The TASK ids bound along `turn`'s thread chain, from the turn up to its
+/// root, where a thread's task binds.
+fn thread_tasks_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &RoomTurn,
+) -> Result<Vec<EntityId>> {
+    let mut tasks = Vec::new();
+    let mut current = Some(turn.clone());
+    let mut seen = BTreeSet::new();
+    while let Some(row) = current.take() {
+        if !seen.insert(row.turn_id.clone()) || seen.len() > 100_000 {
+            return Err(invalid());
+        }
+        for task in &row.task_ids {
+            tasks.push(EntityId::from_hex(task)?);
+        }
+        if row.thread_of.is_none() || super::liveness::is_thread_root(&row) {
+            break;
+        }
+        current = match row.reply_to.as_deref() {
+            Some(parent) => Some(turn_in(vault, txn, EntityId::from_hex(parent)?)?),
+            None => None,
+        };
+    }
+    Ok(tasks)
+}
+
+/// Records `task`'s holder as a participant of the thread `row` belongs to,
+/// when the holder is an agent standing on a Ready receipt there now;
+/// otherwise its first passing claim records it. Binding a task mints none,
+/// and a person holding one joins by writing.
+pub(in crate::workspace_roster) fn record_bound_task_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    row: &RoomTurn,
+    task: EntityId,
+) -> Result<()> {
+    let Some(holder) = crate::task_verb::open_thread_task_holder_in(
+        vault,
+        txn,
+        task,
+        crate::gate::TaskHolderFallback::AssigneeOnly,
+    )?
+    else {
+        return Ok(());
+    };
+    let now = vault.store.clock.now_recorded_at();
+    let Some(subject @ JoinSubject::Agent(_)) = participant_in_txn(vault, txn, holder, now)? else {
+        return Ok(());
+    };
+    let branch = turn_root_in_txn(vault, txn, row)?;
+    let Some(receipt) = joined(require_join_covering_in_txn(
+        vault, txn, room, branch, &subject, None,
+    ))?
+    else {
+        return Ok(());
+    };
+    record_participation_in_txn(
+        vault,
+        txn,
+        room,
+        branch,
+        &subject,
+        &JoinCause::Task { task },
+        Some(&receipt),
+        now,
+    )
 }
