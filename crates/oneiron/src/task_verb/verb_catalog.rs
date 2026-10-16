@@ -12,6 +12,7 @@ pub enum AgentVerb {
     VaultPeopleGet,
     SelfMessage,
     SelfGrantsAsk,
+    SelfMemoryDiaryQuery,
     Cancel,
     Steer,
     Describe,
@@ -32,6 +33,19 @@ pub enum AgentVerb {
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultPacksPut,
+    VaultSharedProposeDelete,
+    VaultSharedProposeTransfer,
+    VaultSharedProposeRemoveOwner,
+    VaultSharedExecute,
+    VaultSharedReceipt,
+    VaultSharedOutcomes,
+    VaultSharedDeletion,
+    VaultMembersAdd,
+    VaultMembersChange,
+    VaultMembersRemove,
+    VaultMembersLeave,
+    VaultAuthorityHandoffAlarms,
+    VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -44,6 +58,7 @@ pub enum AgentVerb {
     VaultArtifactsProposals,
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
+    VaultArtifactsReviewSlides,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -64,6 +79,13 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultProjectsPropose,
+    VaultProjectsProposals,
+    VaultProjectsDismissCard,
+    VaultProjectsConfirm,
+    VaultProjectsGoalIntake,
+    VaultRoomsJoin,
+    VaultRoomsConsent,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
@@ -97,6 +119,10 @@ pub enum AgentVerb {
     SelfBrowserWaitFor,
     SelfBrowserExpect,
     SelfBrowserScreenshot,
+    SelfBrowserView,
+    SelfBrowserCrop,
+    SelfBrowserZoom,
+    SelfBrowserBatch,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -134,6 +160,7 @@ impl AgentVerb {
         Self::VaultPeopleGet,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
+        Self::SelfMemoryDiaryQuery,
         Self::Cancel,
         Self::Steer,
         Self::Describe,
@@ -154,6 +181,19 @@ impl AgentVerb {
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultPacksPut,
+        Self::VaultSharedProposeDelete,
+        Self::VaultSharedProposeTransfer,
+        Self::VaultSharedProposeRemoveOwner,
+        Self::VaultSharedExecute,
+        Self::VaultSharedReceipt,
+        Self::VaultSharedOutcomes,
+        Self::VaultSharedDeletion,
+        Self::VaultMembersAdd,
+        Self::VaultMembersChange,
+        Self::VaultMembersRemove,
+        Self::VaultMembersLeave,
+        Self::VaultAuthorityHandoffAlarms,
+        Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -166,6 +206,7 @@ impl AgentVerb {
         Self::VaultArtifactsProposals,
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
+        Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -186,6 +227,13 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultProjectsPropose,
+        Self::VaultProjectsProposals,
+        Self::VaultProjectsDismissCard,
+        Self::VaultProjectsConfirm,
+        Self::VaultProjectsGoalIntake,
+        Self::VaultRoomsJoin,
+        Self::VaultRoomsConsent,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
@@ -219,6 +267,10 @@ impl AgentVerb {
         Self::SelfBrowserWaitFor,
         Self::SelfBrowserExpect,
         Self::SelfBrowserScreenshot,
+        Self::SelfBrowserView,
+        Self::SelfBrowserCrop,
+        Self::SelfBrowserZoom,
+        Self::SelfBrowserBatch,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -259,6 +311,7 @@ impl AgentVerb {
             Self::VaultPeopleGet => "vault.people.get",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
+            Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
             Self::Describe => "describe",
@@ -279,6 +332,21 @@ impl AgentVerb {
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
+            Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
+            Self::VaultSharedProposeRemoveOwner => "vault.shared.propose_remove_owner",
+            Self::VaultSharedExecute => "vault.shared.execute",
+            Self::VaultSharedReceipt => "vault.shared.receipt",
+            Self::VaultSharedOutcomes => "vault.shared.outcomes",
+            Self::VaultSharedDeletion => "vault.shared.deletion",
+            Self::VaultMembersAdd => "vault.members.add",
+            Self::VaultMembersChange => "vault.members.change",
+            Self::VaultMembersRemove => "vault.members.remove",
+            Self::VaultMembersLeave => "vault.members.leave",
+            Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => {
+                "vault.authority.handoff_alarms.acknowledge"
+            }
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -291,6 +359,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
+            Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -311,6 +380,13 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultProjectsPropose => "vault.projects.propose",
+            Self::VaultProjectsProposals => "vault.projects.proposals",
+            Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
+            Self::VaultProjectsConfirm => "vault.projects.confirm",
+            Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
+            Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
@@ -344,6 +420,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
             Self::SelfBrowserExpect => "self.browser.expect",
             Self::SelfBrowserScreenshot => "self.browser.screenshot",
+            Self::SelfBrowserView => "self.browser.view",
+            Self::SelfBrowserCrop => "self.browser.crop",
+            Self::SelfBrowserZoom => "self.browser.zoom",
+            Self::SelfBrowserBatch => "self.browser.batch",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -380,6 +460,7 @@ impl AgentVerb {
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -400,6 +481,19 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultSharedReceipt
+                | Self::VaultSharedOutcomes
+                | Self::VaultSharedDeletion
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -412,6 +506,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -432,6 +527,13 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -493,6 +595,10 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -509,6 +615,7 @@ impl AgentVerb {
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -529,6 +636,19 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultSharedReceipt
+                | Self::VaultSharedOutcomes
+                | Self::VaultSharedDeletion
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -541,6 +661,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -561,6 +682,13 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -633,6 +761,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultSharedOutcomes
+                | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -643,6 +773,7 @@ impl AgentVerb {
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
+                | Self::VaultProjectsProposals
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
@@ -678,6 +809,7 @@ impl AgentVerb {
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -694,6 +826,19 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultSharedReceipt
+                | Self::VaultSharedOutcomes
+                | Self::VaultSharedDeletion
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -706,6 +851,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -726,6 +872,13 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -759,6 +912,10 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -796,10 +953,20 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -810,6 +977,11 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -827,6 +999,7 @@ impl AgentVerb {
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
+                | Self::SelfBrowserBatch
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -868,6 +1041,7 @@ impl AgentVerb {
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
@@ -888,6 +1062,19 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultSharedProposeDelete => &["spec"],
+            Self::VaultSharedProposeTransfer => &["spec"],
+            Self::VaultSharedProposeRemoveOwner => &["spec"],
+            Self::VaultSharedExecute => &["spec"],
+            Self::VaultSharedReceipt => &["spec"],
+            Self::VaultSharedOutcomes => &["spec"],
+            Self::VaultSharedDeletion => &[],
+            Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersChange => &["spec"],
+            Self::VaultMembersRemove => &["spec"],
+            Self::VaultMembersLeave => &["spec"],
+            Self::VaultAuthorityHandoffAlarms => &[],
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -900,6 +1087,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -920,6 +1108,13 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsPropose => &["spec"],
+            Self::VaultProjectsProposals => &["spec"],
+            Self::VaultProjectsDismissCard => &["spec"],
+            Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsGoalIntake => &["spec"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -953,6 +1148,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -991,6 +1190,7 @@ impl AgentVerb {
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[],
@@ -1011,6 +1211,19 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultSharedProposeDelete => &["spec"],
+            Self::VaultSharedProposeTransfer => &["spec"],
+            Self::VaultSharedProposeRemoveOwner => &["spec"],
+            Self::VaultSharedExecute => &["spec"],
+            Self::VaultSharedReceipt => &["spec"],
+            Self::VaultSharedOutcomes => &["spec"],
+            Self::VaultSharedDeletion => &[],
+            Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersChange => &["spec"],
+            Self::VaultMembersRemove => &["spec"],
+            Self::VaultMembersLeave => &["spec"],
+            Self::VaultAuthorityHandoffAlarms => &[],
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1023,6 +1236,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -1043,6 +1257,13 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsPropose => &["spec"],
+            Self::VaultProjectsProposals => &["spec"],
+            Self::VaultProjectsDismissCard => &["spec"],
+            Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsGoalIntake => &["spec"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1076,6 +1297,10 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],

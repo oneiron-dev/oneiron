@@ -71,6 +71,20 @@ impl<'a> GatedDeletion<'a> {
         Some((self.context.room?, self.context.room_role?))
     }
 
+    /// Who a legal-hold refusal of this delete names. A room delete is a
+    /// member's; a human's delete with no room passed the owner binding this
+    /// gate carries.
+    pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
+        use crate::deletion::LegalHoldActorKind as Kind;
+        let kind = match (self.context.actor_class, self.context.room_role) {
+            (EdgeActorClass::Agent, _) => Kind::Agent,
+            (EdgeActorClass::System, _) => Kind::Unattributed,
+            (EdgeActorClass::Human, Some(_)) => Kind::Member,
+            (EdgeActorClass::Human, None) => Kind::Owner,
+        };
+        crate::store::legal_hold::HoldActor::new(kind, Some(self.context.actor.to_hex()))
+    }
+
     pub(crate) fn new(context: DeletionGateContext, reverify: DeletionCheck<'a>) -> Self {
         Self {
             context,
