@@ -152,7 +152,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "send",
                     "sendMessage",
-                    json!({"chat_id": "integer|string", "text": "string", "parse_mode": "optional string"}),
+                    json!({"chat_id": "integer|string", "text": "string", "parse_mode": "optional string", "posting": {"default": "named_participant", "post_as_owner_supported": false, "policy_risk": true, "owner_path": "Telegram Business reply-as-you (business_connection_id); no sink sends it yet"}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
@@ -207,7 +207,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "send",
                     "chat.postMessage",
-                    json!({"channel": "channel_id", "text": "string", "blocks": "optional block kit array", "thread_ts": "optional string", "username": "persona display name", "icon_url": "optional persona avatar URL", "icon_emoji": "optional persona emoji", "metadata": "optional app-level-token identity metadata"}),
+                    json!({"channel": "channel_id", "text": "string", "blocks": "optional block kit array", "thread_ts": "optional string", "username": "persona display name", "icon_url": "optional persona avatar URL", "icon_emoji": "optional persona emoji", "metadata": "optional app-level-token identity metadata", "posting": {"default": "named_participant", "post_as_owner_supported": false, "policy_risk": true, "owner_path": "user-token chat.postMessage; the app requests no user scopes yet"}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
