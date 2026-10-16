@@ -31,7 +31,7 @@ pub const INSPECTION_HANDLE_LEN: usize = INSPECTION_HANDLE_VERSION.len() + 1 + 3
 
 /// What an inspector shows: one entity or one claim, by id. Locator data
 /// only; it proves nothing about who may read it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InspectionState {
     pub target_ref: EntityId,
