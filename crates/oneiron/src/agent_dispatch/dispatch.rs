@@ -206,6 +206,8 @@ impl<'a> AgentDispatcher<'a> {
         let requested_ref = input.target.agent_definition_ref()?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
+        let origin =
+            self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
         let mut dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
         // OF-532: state the launch (count, expected spend, cap) in this
         // transaction and freeze it into the payload; the scope is reserved
@@ -219,7 +221,10 @@ impl<'a> AgentDispatcher<'a> {
             input.now,
         )?;
         dispatch_input.launch = Some(launch.statement.clone());
-        let encoded = encode_agent_dispatch_input(&dispatch_input)?;
+        let encoded = super::origin::with_origin_conversation(
+            encode_agent_dispatch_input(&dispatch_input)?,
+            origin,
+        );
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
             wtxn,
             EnqueueDreamerAttempt {

@@ -25,9 +25,20 @@
 //!   rows stay consentable (bundle verbs, tray) and gap-decay per item, so
 //!   receipts remain the always-on audit trail.
 
+mod list;
 mod model;
+mod notification;
 mod projection;
 mod resolve;
+
+pub use self::list::{
+    INBOX_PAGE_DEFAULT, INBOX_PAGE_MAX, NotificationMark, NotificationPage, NotificationRow,
+};
+pub use self::notification::{
+    NOTIFICATION_PRODUCER_CONNECTOR, NOTIFICATION_PRODUCER_DOCS_IMPORT,
+    NOTIFICATION_PRODUCER_FINDING, NOTIFICATION_PRODUCER_JOB, NotificationBody, NotificationEvent,
+    NotificationKind, NotificationSource, decode_notification_body, encode_notification_body,
+};
 
 pub use self::model::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,

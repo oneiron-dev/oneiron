@@ -438,6 +438,7 @@ impl Vault {
             MEMBERSHIP.put(&self.store, &mut txn, &key, &members)?;
         }
         crate::consent::spend_approve_once_in_txn(&self.store, &mut txn, &authorization)?;
+        self.record_import_notification_in_txn(&mut txn, request_id, &receipt.asset_refs, now)?;
         txn.commit()?;
         Ok(receipt)
     }

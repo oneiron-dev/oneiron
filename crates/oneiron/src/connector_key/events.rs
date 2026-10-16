@@ -399,6 +399,7 @@ impl Vault {
             };
             self.store.append_gate_decision_in_txn(txn, &receipt)?;
             WAKE_DECISION.put(&self.store, txn, &key, &decision)?;
+            self.record_connector_notification_in_txn(txn, id, &event.event_id, attempt_id, now)?;
             decisions.push(decision);
         }
         Ok(decisions)

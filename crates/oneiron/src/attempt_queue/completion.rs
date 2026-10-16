@@ -5,7 +5,7 @@ use crate::error::Result;
 use super::encoding::{decode_record, encode_record};
 use super::engine::AttemptQueue;
 use super::telemetry::invalid_transition;
-use super::types::{AttemptState, CompleteAttempt, CompleteOutcome};
+use super::types::{AttemptRecord, AttemptState, CompleteAttempt, CompleteOutcome};
 use super::validate::{validate_lease_owner, validate_transition_lease};
 
 impl AttemptQueue<'_> {
@@ -50,6 +50,7 @@ impl AttemptQueue<'_> {
                     &input.lease_owner,
                 )?;
                 crate::dreamer_wake::apply_projection_in_txn(self.store, wtxn, &record)?;
+                self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(CompleteOutcome::Completed(record))
             }
             state => Err(invalid_transition("complete", state.as_str())),
@@ -58,6 +59,20 @@ impl AttemptQueue<'_> {
 }
 
 impl AttemptQueue<'_> {
+    /// Records the inbox notification for a row this handle just settled, in
+    /// the transaction that settles it (OF-221). Only a vault-opened handle
+    /// has the vault's entity door to write through.
+    pub(crate) fn notify_settled_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+    ) -> Result<()> {
+        if let Some(vault) = self.vault {
+            vault.record_job_notification_in_txn(wtxn, record)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn complete_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
