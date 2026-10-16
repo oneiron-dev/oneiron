@@ -384,7 +384,8 @@ impl Vault {
 
     /// Tool callers must use this door before auto-fire. An unknown tool or
     /// a changed row cannot reuse the prior stamp; a revision change closes
-    /// the whole key until re-registration and re-consent.
+    /// the whole key until re-registration and re-consent. A slate row set to
+    /// `always ask` or `never allow` never auto-fires either.
     pub fn connector_tool_requires_confirmation(&self, id: &EntityId, tool: &str) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         let record =
@@ -392,7 +393,9 @@ impl Vault {
         if record.status != ConnectorKeyStatus::Active {
             return Ok(true);
         }
-        Ok(record.tool_requires_confirmation(tool))
+        Ok(record.tool_requires_confirmation(tool)
+            || super::super::connector_tool_setting_in_txn(&self.store, &txn, &record, tool)?
+                >= crate::connector_key::SlateDisposition::AlwaysAsk)
     }
 }
 

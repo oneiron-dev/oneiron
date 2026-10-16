@@ -124,6 +124,14 @@ pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which capability setting one connector grant-slate row drafts (auto, always ask or
+/// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
+pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
+    name: "connector.grant_slate.draft",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -137,4 +145,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     DESCRIPTION_FIT,
     AUTO_CHECK,
     CONFLICT_SETTLE,
+    CONNECTOR_SLATE_DRAFT,
 ];
