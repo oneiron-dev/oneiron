@@ -46,17 +46,15 @@ fn speak(
 fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
-    let host = EntityId::now();
+    let host = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let holder = EntityId::from_bytes([0xE1; 16])?;
-    for id in [host, holder] {
-        vault.put_entity(
-            &id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"actor",
-        )?;
-    }
+    vault.put_entity(
+        &holder,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
     let source_id = EntityId::now();
     let mut source = ProjectRecord::new(
         source_id,
