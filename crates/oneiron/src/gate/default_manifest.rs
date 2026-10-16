@@ -922,11 +922,12 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 ),
             ]),
         ),
-        // Approval is triggered above this threshold. Keep the default as
-        // policy data so owner-authenticated manifest edits control it.
+        // A fan-out raises the exceptional-width check above this threshold;
+        // the approval mode, not the threshold, decides whether it pauses. Keep the default as policy data so
+        // owner-authenticated manifest edits control it.
         (
             Value::from(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY),
-            Value::from(25_u64),
+            Value::from(1_000_u64),
         ),
         // An actor's fan-out requests past create_rate still land; the first
         // past it in a window raises OF-520's question. The row sits at ten
