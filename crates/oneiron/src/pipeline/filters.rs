@@ -139,20 +139,6 @@ pub(super) fn import_claim_gate_decisions_for_scores(
     }
 }
 
-/// Carries a scan gate's rejections into the run's gate. A scan that filters
-/// every posting drops the claims the gate rejects before they reach the
-/// run, which counts them as it counts a fetched claim the gate rejects.
-pub(super) fn import_claim_gate_rejections(
-    claim_gate: &mut ClaimStatusGateCache,
-    probe_gate: &ClaimStatusGateCache,
-) {
-    for (id, decision) in &probe_gate.decisions {
-        if decision.is_none() {
-            claim_gate.decisions.entry(*id).or_insert(None);
-        }
-    }
-}
-
 /// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
 /// post-fusion claim filter for the `strict` / `prefer` facet modes.
 ///
