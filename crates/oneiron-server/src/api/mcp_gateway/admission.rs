@@ -52,6 +52,10 @@ pub(crate) fn mcp_admit_scoped_call(
         McpValidatedToolArgs::ExecuteCode(_) => {
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
         }
+        // It reads only what execute_code ran, so it is admitted as that is.
+        McpValidatedToolArgs::ReadResult(_) => {
+            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_READ_RESULT_TOOL, "name");
+        }
         McpValidatedToolArgs::Verb(verb) => verb,
     };
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
@@ -181,6 +185,7 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
     match args {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
         McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
+        McpValidatedToolArgs::ReadResult(_) => crate::mcp::MCP_READ_RESULT_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
     }
 }

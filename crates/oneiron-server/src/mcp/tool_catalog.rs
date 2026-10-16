@@ -1,7 +1,9 @@
 //! MCP tool-argument constants and the validated arguments the endpoint
 //! decoder produces.
 
-use super::endpoint_args::{McpExecuteCodeToolArgs, McpSetupToolArgs, McpVerbToolArgs};
+use super::endpoint_args::{
+    McpExecuteCodeToolArgs, McpReadResultToolArgs, McpSetupToolArgs, McpVerbToolArgs,
+};
 use serde::Serialize;
 
 pub const MCP_TOOL_ARGS_SCHEMA_VERSION: &str = "mcp_tool_args.v1";
@@ -28,6 +30,8 @@ pub enum McpValidatedToolArgs {
     Setup(Box<McpSetupToolArgs>),
     /// ONE-1704 primary endpoint: the REPL against the same gated vault API.
     ExecuteCode(Box<McpExecuteCodeToolArgs>),
+    /// A direct read of one `execute_code` run's result, beside it.
+    ReadResult(Box<McpReadResultToolArgs>),
     /// ONE-1704 tool-first endpoint: one GENERATED tool per exported verb row.
     Verb(Box<McpVerbToolArgs>),
 }

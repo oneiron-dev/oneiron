@@ -31,10 +31,10 @@
       if (typeof text !== "string") throw new TypeError("invalid_verb_input");
       return text;
     };
-    const verb = name => (input = {}) => {
-      const text = verbInput(input);
-      return Promise.resolve(send(name, text)).then(decode);
-    };
+    // `self.fold` takes `(span, {note?})`, sent as `[from, through]` or `[[from, through], {note}]`.
+    const verb = name => name === "self.fold"
+      ? (span, options) => Promise.resolve(send(name, verbInput(options === undefined ? span : [span, options]))).then(decode)
+      : (input = {}) => { const text = verbInput(input); return Promise.resolve(send(name, text)).then(decode); };
     // A call under a root the SDK does not have (`tools.`, `self.mcp.`,
     // `memory.`) or of a verb a root does not hold is sent as written: the
     // host answers the typed WRONG_ROOT correction before any effect, and the
@@ -74,6 +74,29 @@
       if (typeof held === "function") throw new TypeError("verb row shadows a host import");
       target[leaf] = held ? Object.assign(verb(name), held) : verb(name);
     }
+    // A result is named by its ref: a bound name (`r7`), a handle, a range
+    // of either (`r7#0-4096`), or a card or chunk that carries one.
+    const refOf = r => {
+      const ref = typeof r === "string" ? r : (r?.ref ?? r?.handle ?? r?.name);
+      if (typeof ref !== "string") throw new TypeError("result ref must be a name, handle or card");
+      return ref;
+    };
+    const read = (name, input) => Promise.resolve(send(name, verbInput(input))).then(decode);
+    // Every result card the program is given carries its reads as methods
+    // that are not fields, so its JSON is unchanged: `r.slice({lines: [0, 50]})`.
+    const card = value => {
+      if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+      const ref = refOf(value);
+      const methods = {
+        slice: sel => bare.slice(ref, sel),
+        search: (pattern, opts) => bare.search(ref, pattern, opts),
+        query: q => bare.query(ref, q),
+        chunks: by => bare.chunks(ref, by),
+        describe: () => bare.describe(ref),
+      };
+      for (const key in methods) Object.defineProperty(value, key, {value: methods[key], enumerable: false});
+      return Object.freeze(value);
+    };
     // `store(value, name?)` streams the value to the host as the result
     // frames do, then binds it: a string as given, any other value as its
     // JSON. The host answers the stored result's card.
@@ -81,7 +104,55 @@
     bare.store = (value, name) => {
       if (name !== undefined && typeof name !== "string") throw new TypeError("store name must be a string");
       sendFramed("store", text(value), true);
-      return Promise.resolve(send("store", verbInput(name === undefined ? {} : {name}))).then(decode);
+      return Promise.resolve(send("store", verbInput(name === undefined ? {} : {name}))).then(decode).then(card);
+    };
+    // `describe` of a result answers its card; of anything else, the verb's
+    // own answer.
+    const describeVerb = bare.describe;
+    if (describeVerb) bare.describe = r => {
+      const result = r && typeof r === "object" && (typeof r.ref === "string" || typeof r.handle === "string");
+      return describeVerb(result ? refOf(r) : r).then(reply =>
+        reply && typeof reply.handle === "string" && typeof reply.bytes === "number" ? card(reply) : reply);
+    };
+    // A result's reads: deterministic, each answered in one message, each
+    // with where to go on from. The host checks the run's grant, the rows
+    // the result was served from and its taint at every one.
+    for (const name of ["slice", "search", "query", "chunks"])
+      if (name in bare) throw new TypeError("verb row shadows a host import");
+    bare.slice = (r, sel = {}) => read("slice", {ref: refOf(r), ...sel});
+    bare.search = (r, pattern, opts = {}) => read("search", {ref: refOf(r), pattern, ...opts});
+    bare.query = (r, q) => read("query", typeof q === "string" ? {ref: refOf(r), path: q} : {ref: refOf(r), ...q})
+      .then(reply => {
+        if (reply && reply.derived) reply.derived = card(reply.derived);
+        return reply;
+      });
+    // `chunks(r, by)` pages its chunks only as they are iterated, a page
+    // per host call; `page(cursor?)` answers one page as it comes.
+    bare.chunks = (r, by = {}) => {
+      const ref = refOf(r);
+      const page = (cursor = by.cursor) => read("chunks", {ref, ...by, cursor}).then(reply => {
+        if (reply && Array.isArray(reply.chunks)) reply.chunks = reply.chunks.map(card);
+        return reply;
+      });
+      return Object.freeze({
+        page,
+        [Symbol.asyncIterator]() {
+          let entries = [], at = 0, cursor = by.cursor, more = true;
+          return {
+            async next() {
+              while (at >= entries.length) {
+                if (!more) return {done: true, value: undefined};
+                const reply = await page(cursor);
+                entries = reply.chunks ?? [];
+                at = 0;
+                cursor = reply.next;
+                more = !reply.done && cursor !== undefined;
+              }
+              return {done: false, value: entries[at++]};
+            },
+          };
+        },
+      });
     };
     for (const root of ["tools", "connectors", "mcp", "memory", "board", "shared", "home", "sdk"])
       if (!roots.has(root)) bare[root] = refusal(root);

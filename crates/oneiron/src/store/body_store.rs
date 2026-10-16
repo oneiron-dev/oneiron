@@ -35,7 +35,7 @@ const TEMP_PREFIX: &str = ".tmp-";
 pub(crate) const LINE_INDEX_SUFFIX: &str = ".lines";
 
 /// Bytes per block of a body's sparse line index.
-const LINE_INDEX_BLOCK_BYTES: u64 = 64 * 1024;
+pub(crate) const LINE_INDEX_BLOCK_BYTES: u64 = 64 * 1024;
 
 /// Bytes of a body's head its preview is built from.
 const PREVIEW_HEAD_BYTES: usize = 64 * 1024;
@@ -175,6 +175,40 @@ impl BodyDir {
         if !written {
             self.discard(&temp);
         }
+    }
+
+    /// The sparse line index of the body with `digest`, `len` bytes long:
+    /// the newline count before each 64 KiB block. `None` when this
+    /// directory holds none, or one that is not one count per block.
+    pub(crate) fn read_line_index(&self, digest: &[u8; 32], len: u64) -> Option<Vec<u64>> {
+        let fd = openat(
+            &self.dir,
+            format!("{}{LINE_INDEX_SUFFIX}", body_file_name(digest)),
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .ok()?;
+        let mut file = File::from(fd);
+        let size = len.div_ceil(LINE_INDEX_BLOCK_BYTES).checked_mul(8)?;
+        let metadata = file.metadata().ok()?;
+        if !metadata.is_file() || metadata.len() != size {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(usize::try_from(size).ok()?);
+        file.read_to_end(&mut bytes).ok()?;
+        if bytes.len() as u64 != size {
+            return None;
+        }
+        Some(
+            bytes
+                .chunks_exact(8)
+                .map(|count| {
+                    let mut word = [0; 8];
+                    word.copy_from_slice(count);
+                    u64::from_be_bytes(word)
+                })
+                .collect(),
+        )
     }
 
     /// Copies in the body with `digest` from `source`, checking its digest

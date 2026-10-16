@@ -1,6 +1,8 @@
 //! MCP endpoint surface: modes, verb bindings, and the registered tool listing.
 
-use super::endpoint_schema::{execute_code_tool_schema, setup_tool_schema, verb_tool_schema};
+use super::endpoint_schema::{
+    execute_code_tool_schema, read_result_tool_schema, setup_tool_schema, verb_tool_schema,
+};
 use oneiron::code_run::vault_read::{MEMORY_VERBS, VaultReadMethod};
 use oneiron::task_verb::sdk::AgentVerb;
 use serde::Serialize;
@@ -15,6 +17,11 @@ pub const MCP_SETUP_TOOL: &str = "setup_oneiron";
 /// The durable plain-JavaScript execution tool. It is advertised only after
 /// the host binds a verified production runtime, backend and budget lease.
 pub const MCP_EXECUTE_CODE_TOOL: &str = "execute_code";
+
+/// The direct read of one `execute_code` run's results, with no model call
+/// and no run entered. It is registered beside `execute_code`, and only
+/// with it.
+pub const MCP_READ_RESULT_TOOL: &str = "read_result";
 
 /// A configuration refusal, not an unsupported execution surface. A server
 /// without a verified host refuses before creating a durable run.
@@ -286,6 +293,7 @@ impl McpGeneratedVerbTool {
 pub enum McpEndpointTool {
     Setup,
     ExecuteCode,
+    ReadResult,
     Verb(McpGeneratedVerbTool),
 }
 
@@ -295,6 +303,7 @@ impl McpEndpointTool {
         match self {
             Self::Setup => MCP_SETUP_TOOL,
             Self::ExecuteCode => MCP_EXECUTE_CODE_TOOL,
+            Self::ReadResult => MCP_READ_RESULT_TOOL,
             Self::Verb(tool) => tool.name,
         }
     }
@@ -306,6 +315,7 @@ impl McpEndpointTool {
             // this release. The text states the shipped contract so a schema
             // dump can never read as an offer.
             Self::ExecuteCode => "Run a durable plain-JavaScript task in the verified QuickJS WASM sandbox. Reuse the same run_ref and task to resume; completed calls return their stored result without repeating effects.".to_owned(),
+            Self::ReadResult => "Read one result of a durable execute_code run without a model call: its card (describe), or a slice, search, query or chunks page of it, by the name the run bound, its handle or a range ref. Only the run this credential's run_ref names is read; its served rows and its taint are checked as inside the run, and every reply fits one message with a cursor to read on.".to_owned(),
             Self::Verb(tool) if tool.memory_method().is_some() => format!(
                 "{} One atomic native response; nested arrays retain the native request budgets and result metadata. Narrow connector ceilings fail closed.",
                 tool.memory_method().map_or("", VaultReadMethod::description)
@@ -322,6 +332,7 @@ impl McpEndpointTool {
         match self {
             Self::Setup => setup_tool_schema(),
             Self::ExecuteCode => execute_code_tool_schema(),
+            Self::ReadResult => read_result_tool_schema(),
             Self::Verb(tool) => verb_tool_schema(tool),
         }
     }
@@ -386,6 +397,7 @@ impl McpRegisteredSurface {
         };
         if available {
             tools.push(McpEndpointTool::ExecuteCode);
+            tools.push(McpEndpointTool::ReadResult);
         }
         let listing = Value::Array(
             tools
