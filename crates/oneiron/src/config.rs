@@ -439,6 +439,10 @@ pub struct VaultConfig {
     /// alone. Hosts that admit many simultaneous sessions must cap concurrency
     /// themselves to bound total overlay memory.
     pub off_record_overlay_budget_bytes: usize,
+    /// What each engine `[limits]` row is set to (OF-520): work past one is
+    /// served, and the port the host installed is asked whether everything is
+    /// okay ([`crate::Vault::set_limit_ask`]).
+    pub limits: crate::limit_ask::EngineLimits,
     /// Deployment privacy posture and the key custody paired with it.
     ///
     /// Defaults to self-host/local with an owner-held local key for every
@@ -643,6 +647,7 @@ impl VaultConfig {
             skip_text_index_manifest_check: false,
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
+            limits: crate::limit_ask::EngineLimits::default(),
         }
     }
 
@@ -674,6 +679,7 @@ impl VaultConfig {
             skip_text_index_manifest_check: false,
             off_record_enabled: true,
             off_record_overlay_budget_bytes: DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES,
+            limits: crate::limit_ask::EngineLimits::default(),
         }
     }
 }

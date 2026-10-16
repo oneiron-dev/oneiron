@@ -137,6 +137,7 @@ git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
+keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

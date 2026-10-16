@@ -772,6 +772,81 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     assert_eq!(bodies[11], Value::Null);
 }
 
+/// Rule five at the keyed filter row: `callers` searches on one credential,
+/// each with a filter past the old 64 KiB ceiling and past a row set to 16
+/// bytes, are all answered, and the row asks.
+pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission::Crossing {
+    use crate::wire_telemetry::LimitRow;
+    use oneiron::limit_ask::EngineLimit;
+    const SECRET: &str = "keyed-row-test-secret";
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = oneiron::VaultConfig::default();
+    config.limits.set(EngineLimit::KeyedFilterJsonBytes, 16);
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let app = crate::build_app(Arc::clone(&server));
+    let token = format!(
+        "{}scope=core:read,core:write;principal_ref={};actor_class=human",
+        crate::test_credentials::RECIPE_PREFIX,
+        actor.to_hex()
+    );
+    let post = |verb: &str, payload: Value| {
+        app.clone().oneshot(crate::test_credentials::bind_request(
+            &server,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Authorization", &token)
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        ))
+    };
+    let put = json!({"namespace":["notes"],"key":"theme","value":{"name":"dark"},"request_id":"filter-row","source":"user_stated"});
+    assert_eq!(
+        post("key_value_put", put).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let mut refused = 0;
+    for n in 0..callers {
+        let filter =
+            json!({"name": "dark", "note": format!("{n}{}", "x".repeat(MAX_ENTITY_PAYLOAD_BYTES))});
+        let search = json!({"namespace_prefix":["notes"],"filter":filter,"limit":10});
+        let response = post("key_value_search", search).await.unwrap();
+        if response.status() != StatusCode::OK {
+            refused += 1;
+            continue;
+        }
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        // The stored value has no `note`, so the whole filter matches nothing.
+        assert_eq!(
+            body,
+            json!([]),
+            "search {n} is answered over its whole filter"
+        );
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: server
+            .wire_telemetry
+            .limit_questions()
+            .latest(LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes))
+            .is_some(),
+    }
+}
+
 #[tokio::test]
 async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
     use oneiron::authority::SlipCaveat;

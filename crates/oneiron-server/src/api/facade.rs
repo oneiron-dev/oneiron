@@ -27,7 +27,7 @@
 
 mod agent_verbs;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

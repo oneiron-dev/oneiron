@@ -277,6 +277,10 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::scan_check::PendingScanChecks,
+    /// The engine's `[limits]` rows on this vault: what they are set to,
+    /// fixed at open, and the port a crossing asks through
+    /// ([`crate::Vault::set_limit_ask`]).
+    pub(crate) limit_watch: crate::limit_ask::LimitWatch,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.

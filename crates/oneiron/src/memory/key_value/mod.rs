@@ -222,9 +222,13 @@ impl Memory<'_> {
         check_namespace(&request.namespace_prefix, true)?;
         check_page(request.limit, request.offset)?;
         if let Some(filter) = &request.filter {
+            // A filter of any size is matched whole; past its row, the row asks.
             let bytes = serde_json::to_vec(filter)
                 .map_err(|_| MemoryError::bad_request("invalid filter"))?;
-            super::caps::check_payload_bytes("filter", bytes.len())?;
+            self.vault.limit_watch().measure(
+                crate::limit_ask::EngineLimit::KeyedFilterJsonBytes,
+                u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            );
             if filter.values().any(|value| {
                 value
                     .as_object()
