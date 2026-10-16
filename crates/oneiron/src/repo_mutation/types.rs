@@ -102,6 +102,9 @@ pub struct RepoMutationRequest {
     pub actor_id: Option<EntityId>,
     pub session_id: Option<EntityId>,
     pub provenance_claim_id: Option<EntityId>,
+    /// The authoring turn, activity, intent and model the reviewed document
+    /// operation records. Absent fields stay unrecorded.
+    pub op_provenance: crate::code_document::CodeOpProvenance,
     pub operation: RepoMutationOperation,
 }
 
@@ -113,6 +116,7 @@ impl RepoMutationRequest {
             actor_id: None,
             session_id: None,
             provenance_claim_id: None,
+            op_provenance: crate::code_document::CodeOpProvenance::default(),
             operation,
         }
     }
@@ -132,6 +136,12 @@ impl RepoMutationRequest {
     #[must_use]
     pub fn with_provenance_claim_id(mut self, claim_id: EntityId) -> Self {
         self.provenance_claim_id = Some(claim_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_op_provenance(mut self, provenance: crate::code_document::CodeOpProvenance) -> Self {
+        self.op_provenance = provenance;
         self
     }
 }
