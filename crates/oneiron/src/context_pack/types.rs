@@ -200,6 +200,9 @@ pub struct ContextPack {
     pub retrieval_quality: RetrievalQualityReport,
     pub results: Vec<ContextEntity>,
     pub neighbors: Vec<ContextEntity>,
+    /// Index-only handles to the instruction files on the ancestor paths of
+    /// the code units among results and neighbors, each listed once.
+    pub instruction_files: Vec<crate::codebase::CodeInstructionHandle>,
     pub stats: PackStats,
     pub empty: Option<EmptyContext>,
 }

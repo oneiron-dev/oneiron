@@ -11,20 +11,21 @@ use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 
-use super::{CODEBASE_CONTENT_HASH_LEN, CodebaseSnapshot};
+use super::CodebaseSnapshot;
 
 /// File names read as scoped instructions for everything beneath their directory.
 pub const CODE_INSTRUCTION_FILE_NAMES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 
 /// One instruction file in one snapshot, and the returned units it governs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CodeInstructionHandle {
     /// The CODE_ARTIFACT whose snapshot holds the file.
     pub code_artifact_id: EntityId,
     /// Canonical pinned repository ref of that snapshot.
     pub repo_ref: String,
     pub path: String,
-    pub content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
+    /// Lower-case hex of the file's snapshot content hash.
+    pub content_hash: String,
     /// The returned units on whose ancestor path the file sits.
     pub units: Vec<EntityId>,
 }
@@ -92,7 +93,8 @@ impl Vault {
                 else {
                     continue;
                 };
-                let content_hash = snapshot.files[index].content_hash;
+                let content_hash =
+                    crate::entity_id::bytes_to_hex_lower(&snapshot.files[index].content_hash);
                 let handle = handles
                     .entry((artifact, path.clone()))
                     .or_insert_with(|| CodeInstructionHandle {
