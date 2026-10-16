@@ -1,5 +1,7 @@
 //! Content-free, versioned tier-1 agent failure counts. This taxonomy is not
 //! the failure ladder's retry-routing class or a detector's repair tier.
+//! The two FIX6 code-fix exports, the Coach's invented examples and candidate
+//! fixes' results, live in the `code_fix` child beside them.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,8 +10,18 @@ use std::sync::{Mutex, MutexGuard};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
+mod code_fix;
 pub(crate) mod policy;
+mod verbatim;
 mod witness;
+pub use code_fix::{
+    CODE_FIX_MAX_CANDIDATE_ID_BYTES, CODE_FIX_MAX_MESSAGE_BYTES, CODE_FIX_MAX_MESSAGES,
+    CODE_FIX_MAX_NOTE_BYTES, CODE_FIX_RECORD_VERSION, CandidateFix, CandidateFixResult,
+    CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FixOutcome,
+    InventedExampleDraft, InventedFailureExample, InventedMessage, InventedRole, ReplayRun,
+    ScrubRun, ShadowRun,
+};
+pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
 
 use crate::config::failure_signals::FailureSignalConfig;
