@@ -45,6 +45,12 @@ impl SyncConnection {
         let mut ephemeral_housekeeping =
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // A residence-mode switch closes this socket; the next connect sends
+        // the new mode's hello. A live lane never changes mode.
+        let mut mode_rx = self.mode.subscribe();
+        if *mode_rx.borrow_and_update() != client.config.residence_mode {
+            return LoopExit::Disconnected("residence mode changed".into());
+        }
 
         loop {
             // Compute sleep future for debounce timer
@@ -333,6 +339,14 @@ impl SyncConnection {
                             let _ = event_tx.send(SyncEvent::Error(format!("Stream idle finalize refused: {error}")));
                         },
                         Err(error) => { let _ = event_tx.send(SyncEvent::Error(format!("Stream idle pump failed: {error}"))); }
+                    }
+                }
+
+                changed = mode_rx.changed() => {
+                    if changed.is_ok() {
+                        flush_to_queue(&self.queue, &mut debounce_buffer);
+                        let _ = write.send(Message::Close(None)).await;
+                        return LoopExit::Disconnected("residence mode changed".into());
                     }
                 }
 

@@ -83,7 +83,8 @@ impl BatchBuilder<'_> {
         let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
         let gate_mode = gate_mode
             .with_birth_mask(self.birth_mask)
-            .with_text_births(std::mem::take(&mut self.text_births));
+            .with_text_births(std::mem::take(&mut self.text_births))
+            .with_births(std::mem::take(&mut self.births));
         // Taken only now: until here a refusal leaves a promotion replay's
         // ops to the builder's drop, which wipes them (Sol on engine-prs-30).
         let ops = std::mem::take(&mut self.ops);

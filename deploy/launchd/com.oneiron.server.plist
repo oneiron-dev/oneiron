@@ -16,6 +16,20 @@
     <string>__HOME__/.config/oneiron/oneiron.toml</string>
   </array>
 
+  <!-- launchd binds the daemon's socket and passes it in. The auth secret
+       may live in the login keychain instead of the config file:
+       security add-generic-password -s com.oneiron.server -a auth_secret -w -->
+  <key>Sockets</key>
+  <dict>
+    <key>Listeners</key>
+    <dict>
+      <key>SockNodeName</key>
+      <string>127.0.0.1</string>
+      <key>SockServiceName</key>
+      <string>9090</string>
+    </dict>
+  </dict>
+
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

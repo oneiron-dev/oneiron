@@ -55,6 +55,8 @@ pub(super) mod reason {
     pub(crate) const UNRESOLVED: &str = "project authority unresolved";
     pub(crate) const CYCLE_BOUND: &str = "project parent cycle past its world bound";
     pub(crate) const SEALED_OFF: &str = "project revision lies outside the owner's seal";
+    pub(crate) const PARENT_HEAD_PENDING: &str = "witnessed parent revision not yet received";
+    pub(crate) const PARENT_HEAD_LEADER: &str = "a parent witness names another leader";
 
     const ALL: &[&str] = &[
         NOT_HELD,
@@ -91,6 +93,8 @@ pub(super) mod reason {
         UNRESOLVED,
         CYCLE_BOUND,
         SEALED_OFF,
+        PARENT_HEAD_PENDING,
+        PARENT_HEAD_LEADER,
     ];
 
     /// The static text of a persisted reason; a reason this build does not

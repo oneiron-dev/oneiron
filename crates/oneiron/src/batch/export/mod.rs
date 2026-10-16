@@ -45,7 +45,7 @@ mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;
 mod provenance_import;
-pub(crate) use document_snapshot::ExportSnapshot;
+pub(crate) use document_snapshot::{ExportSnapshot, ExportSnapshotBody, ExportSnapshotRun};
 pub use document_types::*;
 #[cfg(test)]
 mod document_tests;

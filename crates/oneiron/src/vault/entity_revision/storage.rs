@@ -189,7 +189,10 @@ pub(crate) fn capture_entity_revision(
 ) -> Result<()> {
     let header = EntityMetadataHeader::parse(new_raw)
         .ok_or(Error::CorruptedIndex("entity revision header"))?;
-    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+    // A world key's pad is erased with its world, so no history keeps it.
+    if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+        || header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
+    {
         return Ok(());
     }
     let prior = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
@@ -454,12 +457,20 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
         return Err(crate::secret_custody::reject_secret_custody_byte());
     }
+    if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
+        return Err(crate::world_keys::refused(
+            "a world key's pad has no revisions",
+        ));
+    }
     if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&vault.store, txn, id, header.entity_type)?
         || vault.archive_tombstone_in_txn(txn, id)?.is_some()
         || (raw.len() == ENTITY_METADATA_HEADER_LEN
             && vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
+        // Words a deletion withdrew never serve, at any selected version.
+        || (raw.len() > ENTITY_METADATA_HEADER_LEN
+            && crate::ports::withdrawn_in_txn(store, txn, id)?)
     {
         return Ok(None);
     }

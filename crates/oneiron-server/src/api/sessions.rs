@@ -69,13 +69,7 @@ pub(super) async fn mode(
     };
     server
         .vault
-        .set_session_mode_within(
-            id,
-            req.mode,
-            facet_ref,
-            actor(&auth, req.actor)?,
-            &facets,
-        )
+        .set_session_mode_within(id, req.mode, facet_ref, actor(&auth, req.actor)?, &facets)
         .map_err(|e| core_engine_error("session mode failed", e))?;
     Ok(Json(
         json!({"mode":req.mode,"facet_ref":facet_ref.map(|facet| facet.to_hex())}),

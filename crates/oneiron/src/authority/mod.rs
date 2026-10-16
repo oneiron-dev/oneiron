@@ -65,9 +65,11 @@ mod machine_write;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod owner_project_slip;
 mod owner_roots;
 mod pinned_root;
 mod readonly_fold;
+mod recover_many;
 mod retired_signers;
 mod revoke_proof;
 mod sequence_ancestry;
@@ -133,9 +135,14 @@ pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::*;
 pub use fold_engine::*;
 pub use fold_state::*;
-pub use handoff_equivocation::AuthorityHandoffEquivocation;
+pub use handoff_equivocation::{
+    AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
+};
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
+pub use recover_many::{
+    VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep, recover_vaults,
+};
 pub use ingest_observation::*;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{

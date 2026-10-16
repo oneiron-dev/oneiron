@@ -87,7 +87,7 @@ class OneironStore(BaseStore):
 
     def _prepare(self, op: Op) -> tuple[str, dict[str, Any]]:
         if isinstance(op, GetOp):
-            return "key_value_get", _address(op.namespace, op.key)
+            return "get", _address(op.namespace, op.key)
         if isinstance(op, PutOp):
             request = _address(op.namespace, op.key)
             if op.ttl is not None:
@@ -95,8 +95,8 @@ class OneironStore(BaseStore):
             if op.index is not None and op.index is not False:
                 raise NotImplementedError("OneironStore has no vector index configuration")
             if op.value is None:
-                return "key_value_delete", request
-            return "key_value_put", {**request, "value": _json_object(op.value),
+                return "delete", request
+            return "put", {**request, "value": _json_object(op.value),
                 "request_id": uuid4().hex, "source": self._source}
         if isinstance(op, SearchOp):
             _page(op.limit, op.offset)
@@ -106,7 +106,7 @@ class OneironStore(BaseStore):
             if filters and any(isinstance(value, dict) and any(key.startswith("$") for key in value)
                                for value in filters.values()):
                 raise NotImplementedError("OneironStore supports exact field equality, not operator filters")
-            return "key_value_search", {"namespace_prefix": _namespace(op.namespace_prefix, empty=True),
+            return "search", {"namespace_prefix": _namespace(op.namespace_prefix, empty=True),
                 "filter": filters, "limit": op.limit, "offset": op.offset}
         if isinstance(op, ListNamespacesOp):
             _page(op.limit, op.offset)
@@ -123,7 +123,7 @@ class OneironStore(BaseStore):
                 match = long[:len(short)] == short if condition.match_type == "prefix" else (not short or long[-len(short):] == short)
                 incompatible |= not match
                 patterns[condition.match_type] = long
-            return ("empty" if incompatible else "key_value_namespaces"), {
+            return ("empty" if incompatible else "namespaces"), {
                 **patterns, "max_depth": op.max_depth, "limit": op.limit, "offset": op.offset}
         raise TypeError("unsupported LangGraph store operation")
 
@@ -137,12 +137,12 @@ class OneironStore(BaseStore):
             if verb == "empty":
                 results.append([])
                 continue
-            result = getattr(self._memory, verb)(request)
-            if verb == "key_value_get":
+            result = getattr(self._memory.vault.kv, verb)(request)
+            if verb == "get":
                 results.append(None if result is None else _item(result))
-            elif verb == "key_value_search":
+            elif verb == "search":
                 results.append([_item(item, search=True) for item in result])
-            elif verb == "key_value_namespaces":
+            elif verb == "namespaces":
                 results.append([tuple(namespace) for namespace in result])
             else:
                 # The keyed SDK's strict transactional write contract returns

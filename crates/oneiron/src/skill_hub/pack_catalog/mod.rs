@@ -4,6 +4,9 @@ mod builtin;
 pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;
+mod hooks;
+mod hub_install;
+mod local;
 mod manifest;
 mod migrations;
 mod source;
@@ -11,6 +14,12 @@ mod source;
 pub use crate::gate::PackInstallPolicyOverride;
 pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
+pub(crate) use hooks::is_hook_binding;
+pub use hooks::{
+    HookActorClass, HookOutcomeKind, HookPhase, HookSelector, PackHook, PackHookBinding,
+};
+pub use hub_install::hub_pin;
+pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
 pub use screening::PackInstallRules;

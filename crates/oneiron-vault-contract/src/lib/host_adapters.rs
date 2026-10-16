@@ -8,8 +8,21 @@ use zeroize::Zeroizing;
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::InProcessHost;
+#[cfg(not(target_arch = "wasm32"))]
+mod embedded;
+#[cfg(not(target_arch = "wasm32"))]
+pub use embedded::{AppHost, EmbeddedHost};
 #[cfg(unix)]
-pub use native::{LaunchdHost, SystemdHost};
+mod desktop;
+#[cfg(unix)]
+pub use desktop::{
+    ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource,
+    SystemdHost,
+};
+#[cfg(target_os = "linux")]
+mod vsock;
+#[cfg(target_os = "linux")]
+pub use vsock::{FirecrackerGuest, GuestLink, VsockListener, VsockStream, connect_blocking};
 
 /// The embedding WASM runtime supplies only its sandbox capabilities. It may
 /// implement sleep with a browser timer or WASI poll; it must not exit on idle.
