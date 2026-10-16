@@ -709,7 +709,10 @@ fn decide_path_new_judge_call_and_dropped_bypass_both_fail() {
     let seat = "crates/oneiron/src/llm/seat.rs";
     let without = pairs.iter().map(|(rel, source)| {
         let source = if rel == seat {
-            source.replace("pub trait SeatJudge: Send + Sync {", "pub trait SeatPick: Send + Sync {")
+            source.replace(
+                "pub trait SeatJudge: Send + Sync {",
+                "pub trait SeatPick: Send + Sync {",
+            )
         } else {
             source.clone()
         };
