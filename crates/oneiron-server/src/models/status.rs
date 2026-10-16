@@ -47,6 +47,8 @@ fn kind_name(kind: ProviderKind) -> &'static str {
         ProviderKind::AnthropicCompat => "anthropic-compat",
         ProviderKind::LocalOpenaiCompat => "local-openai-compat",
         ProviderKind::Oneironer => "oneironer",
+        ProviderKind::Cartesia => "cartesia",
+        ProviderKind::Elevenlabs => "elevenlabs",
     }
 }
 

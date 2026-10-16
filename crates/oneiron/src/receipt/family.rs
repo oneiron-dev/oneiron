@@ -27,6 +27,7 @@ use super::projection::{
     finalize_receipt_scan, project_receipts_by_brief,
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
+use super::record::reference_refusal_receipts;
 use super::record::{scan_suppression_receipts, served_form_receipts};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -345,6 +346,9 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
         records.extend(brief_share_receipts(vault, &rtxn, query)?);
+        records.extend(crate::share_travel::export_travel_receipts(
+            vault, &rtxn, query,
+        )?);
         records.extend(crate::artifact_hosting::artifact_publish_receipts(
             vault, &rtxn, query,
         )?);
@@ -361,6 +365,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     // outbound-only).
     if query.includes_kind(ReceiptKind::ServedForm) {
         records.extend(served_form_receipts(vault, &rtxn, query)?);
+    }
+    // OF-063: the writes refused for naming a record their writer could not
+    // resolve. Its own kind and its own RECEIPT_RECORDs, read through the type
+    // index in the shared txn, as served forms are.
+    if query.includes_kind(ReceiptKind::ReferenceRefusal) {
+        records.extend(reference_refusal_receipts(vault, &rtxn, query)?);
     }
 
     // ED-01 (ONE-1757): the reserved Δ slot is filled from its own side-ledger

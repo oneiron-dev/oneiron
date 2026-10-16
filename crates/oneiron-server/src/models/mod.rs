@@ -38,6 +38,7 @@ mod driven;
 #[cfg(test)]
 mod fallback_tests;
 mod forward;
+mod hosted_speech;
 mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
@@ -58,10 +59,12 @@ mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod voice;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaQuestion};
+use cooldown::FallbackRung;
+pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
@@ -260,6 +263,9 @@ impl ModelRuntime {
             }
         }
         let mut router = ModelRouter::default();
+        // Each chat model the router serves is one a parked offer's calls
+        // may fall back to, once the owner names it (`use_fallback`).
+        let mut fallbacks = Vec::new();
         for (rerank, backends) in [(false, &built), (true, &rerankers)] {
             for (name, backend) in backends {
                 let provider = &config.providers[name];
@@ -274,15 +280,20 @@ impl ModelRuntime {
                         // chat route; the reranker reaches it through its seat.
                         && !(rerank && router.served(&rung.model).is_some())
                     {
-                        router.insert(
-                            rung.model.clone(),
-                            provider.locality,
-                            Arc::new(OfferLadder::bare(rung, Arc::clone(&rests))),
-                        );
+                        let ladder = Arc::new(OfferLadder::bare(rung, Arc::clone(&rests)));
+                        if !rerank {
+                            fallbacks.push(FallbackRung {
+                                provider: name.clone(),
+                                model: ladder.model().clone(),
+                                ladder: Arc::downgrade(&ladder),
+                            });
+                        }
+                        router.insert(ladder.model().clone(), provider.locality, ladder);
                     }
                 }
             }
         }
+        rests.offer_fallbacks(fallbacks);
         let mut seats = BTreeMap::new();
         for (role, ladder) in &config.roles {
             let mut rungs = Vec::new();
@@ -381,6 +392,13 @@ impl ModelRuntime {
         &self.media
     }
 
+    /// Hears each stable recovery of an offer whose provider was down
+    /// (OF-305), for the memory work its outage stopped.
+    #[must_use]
+    pub fn recoveries(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.rests.recoveries()
+    }
+
     /// The owner's open quota questions (OF-305): each offer parked on a
     /// spent usage window or spent credit, and the choices it offers.
     #[must_use]
@@ -389,10 +407,17 @@ impl ModelRuntime {
     }
 
     /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
-    /// puts its offer back in rotation now. `false` when no such question is
-    /// open or it offers no such choice.
-    pub fn answer_quota(&self, id: &str, choice: QuotaChoice) -> oneiron::Result<bool> {
-        self.rests.answer(id, choice)
+    /// puts its offer back in rotation now, and `use_fallback` sends its
+    /// calls to `fallback`, one of the question's fallbacks, while it is
+    /// parked. `false` when no such question is open, it offers no such
+    /// choice, or it offers no such fallback.
+    pub fn answer_quota(
+        &self,
+        id: &str,
+        choice: QuotaChoice,
+        fallback: Option<&str>,
+    ) -> oneiron::Result<bool> {
+        self.rests.answer(id, choice, fallback)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.
@@ -484,8 +509,11 @@ fn build_provider(
             ))
         }
         // The tagger slot's worker is the consumer of this kind; it never
-        // answers generate calls, so no LLM backend is built for it.
-        ProviderKind::Oneironer => return Ok(None),
+        // answers generate calls, so no LLM backend is built for it. A
+        // speech provider's only client is its media rung's.
+        ProviderKind::Oneironer | ProviderKind::Cartesia | ProviderKind::Elevenlabs => {
+            return Ok(None);
+        }
     };
     Ok(Some(backend))
 }

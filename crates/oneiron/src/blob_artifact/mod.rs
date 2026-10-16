@@ -62,7 +62,8 @@ pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF
 pub use self::verbs::{
     ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
     DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, KeptProposal, NativeOutputRequest,
-    ProposalSettleRequest, UndoneKeep,
+    ProposalSettleRequest, ReleasedWait, SlideReviewOutcome, SlideReviewSubmit,
+    SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 pub use self::versions::{

@@ -118,6 +118,7 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         })?;
         entries.push((Value::from(KEY_LAUNCH), Value::from(json)));
     }
+    super::room_join::encode_room_keys(input, &mut entries)?;
     Ok(Value::Map(entries))
 }
 
@@ -147,6 +148,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut type_ref = None;
     let mut budget = None;
     let mut launch = None;
+    let mut room = None;
+    let mut join = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -317,11 +320,13 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                         "task_type_ref must be node_id@tree_version",
                     ),
                 ))?;
-                type_ref = Some(crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
-                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-                        "task_type_ref must be node_id@tree_version",
-                    ))
-                })?);
+                type_ref = Some(
+                    crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
+                        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                            "task_type_ref must be node_id@tree_version",
+                        ))
+                    })?,
+                );
             }
             KEY_BUDGET => {
                 budget = Some(value.as_u64().ok_or(Error::Artifact(
@@ -340,6 +345,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            super::types::KEY_ROOM => room = Some(super::room_join::decode_room(value)?),
+            super::types::KEY_JOIN => join = Some(super::room_join::decode_join(value)?),
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -427,6 +434,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         type_ref: type_ref.unwrap_or_default(),
         budget,
         launch,
+        room,
+        join,
     })
 }
 
@@ -463,7 +472,9 @@ pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
 /// The OF-543 type stamp of a queue row's dispatch payload, for the
 /// terminal attempt receipt. `None` only for non-dispatch rows.
 #[must_use]
-pub(crate) fn attempt_task_type_ref(record: &AttemptRecord) -> Option<crate::task_type::TaskTypeRef> {
+pub(crate) fn attempt_task_type_ref(
+    record: &AttemptRecord,
+) -> Option<crate::task_type::TaskTypeRef> {
     record_dispatch_input(record).map(|input| input.type_ref)
 }
 

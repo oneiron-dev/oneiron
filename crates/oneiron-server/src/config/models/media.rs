@@ -11,9 +11,19 @@
 //! rungs = ["openai:gpt-image-1", "local:flux-schnell"]
 //! max_references = 8
 //! rates = [{ unit = "image", per = 1, tokens = 4000 }]
+//!
+//! [models.media.speech]
+//! rungs = ["cartesia-compat:sonic", "local:voxcpm2"]
+//! tiers = { "tts-live" = "local:voxcpm2", "tts-deferred" = "local:voxcpm2" }
 //! ```
+//!
+//! A speech or transcription seat's `tiers` bind voice tiers to its rungs:
+//! the vault's voice rows (`asr-live`, `tts-live`, ...) name a tier, and the
+//! voice cascade speaks or hears on the one rung bound to it. A rung no
+//! tier names serves `ai.speech` and `ai.transcribe` calls only.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron::ModelTierRef;
 use oneiron::llm::media::{AiOperation, MediaCaps, Modality, NativeRate};
 use serde::Deserialize;
 
@@ -42,6 +52,9 @@ struct MediaSeatFile {
     max_references: Option<usize>,
     #[serde(default)]
     rates: Vec<NativeRate>,
+    /// Voice tier -> the rung (`"<provider>:<model>"`) that serves it.
+    #[serde(default)]
+    tiers: BTreeMap<String, String>,
 }
 
 /// The resolved `[models.media]`.
@@ -65,6 +78,8 @@ impl Default for MediaSettings {
 pub struct MediaSeatConfig {
     pub rungs: Vec<ModelRef>,
     pub caps: MediaCaps,
+    /// The voice tiers its rungs serve, each bound to one rung.
+    pub tiers: BTreeMap<ModelTierRef, ModelRef>,
 }
 
 impl MediaFile {
@@ -116,8 +131,8 @@ impl MediaSeatFile {
                 matches!(
                     provider.kind,
                     ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
-                ),
-                "models.media.{key}: {model} is not on an OpenAI-compatible provider; media calls speak its /v1 media paths"
+                ) || (provider.kind.speech_only() && operation == AiOperation::Speech),
+                "models.media.{key}: {model} is not on an OpenAI-compatible provider; media calls speak its /v1 media paths, and a cartesia or elevenlabs provider serves the speech seat only"
             );
             // The credential broker sends chat calls only. A media call sent
             // without it would carry no key, while its offer says the broker
@@ -148,6 +163,24 @@ impl MediaSeatFile {
             caps.native_rates.retain(|known| known.unit != rate.unit);
             caps.native_rates.push(rate);
         }
-        Ok(MediaSeatConfig { rungs, caps })
+        anyhow::ensure!(
+            self.tiers.is_empty()
+                || matches!(operation, AiOperation::Speech | AiOperation::Transcribe),
+            "models.media.{key}.tiers: only the speech and transcribe seats serve voice tiers"
+        );
+        let mut tiers = BTreeMap::new();
+        for (tier, rung) in self.tiers {
+            anyhow::ensure!(
+                !tier.trim().is_empty(),
+                "models.media.{key}.tiers: a tier has a name"
+            );
+            let model = ModelRef::parse(&format!("models.media.{key}.tiers.{tier}"), &rung)?;
+            anyhow::ensure!(
+                rungs.contains(&model),
+                "models.media.{key}.tiers.{tier}: {model} is not one of this seat's rungs"
+            );
+            tiers.insert(ModelTierRef(tier), model);
+        }
+        Ok(MediaSeatConfig { rungs, caps, tiers })
     }
 }

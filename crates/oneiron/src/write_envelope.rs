@@ -444,6 +444,15 @@ impl ClaimCandidate {
         &self.predicate
     }
 
+    /// The candidate's free values: its value, evidence and scope. The batch
+    /// door's mask on write (OF-560) moves a secret it finds in one into
+    /// custody and leaves the handle in its place.
+    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut Value> {
+        std::iter::once(&mut self.value)
+            .chain(self.evidence.as_mut())
+            .chain(self.scope.as_mut())
+    }
+
     /// The stored body. A candidate that names a facet keeps it; otherwise the
     /// body carries `default_facet`, the vault default when the body is stored.
     pub(crate) fn into_claim_body(

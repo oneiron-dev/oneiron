@@ -38,6 +38,7 @@ mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
 mod planner;
 mod resident;
+mod room_join;
 mod spend_calibration;
 mod spend_lease;
 mod spend_record;
@@ -66,16 +67,17 @@ pub use self::launch::{
 pub use self::spend_calibration::{
     AgentSpendCalibration, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, SpendBasis,
 };
+pub(crate) use self::spend_lease::payer_binds_in_txn;
 pub use self::spend_record::{
-    ChildSpend, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal,
-    SpendState,
+    ChildSpend, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement,
+    SpendSignal, SpendState,
 };
 
+pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
 };
-pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::dispatch::AgentDispatcher;
 pub use self::planner::{
     AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,

@@ -3,6 +3,8 @@
 use crate::server::SyncServer;
 mod editor_budget;
 mod presentation;
+#[cfg(unix)]
+pub(crate) mod seal_worker;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};

@@ -9,13 +9,24 @@ use serde::{Deserialize, Serialize};
 
 use super::{ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource};
 use crate::edge::EdgeActorClass;
+use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
+use crate::edit_roundtrip::slides_review::{
+    SlideReviewError, SlideReviewLabels, SlideReviewRequest, SlideReviewUnit,
+};
 use crate::edit_roundtrip::{DeckEditContext, EditOutcome};
-use crate::edit_settle::{KeepUndo, NativeOutput, PendingProposalView, SettleConsent};
+use crate::edit_settle::{
+    KeepUndo, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
+};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::memory::{Memory, MemoryResult};
+use crate::llm::decision::{
+    DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionQuestion, Reversibility,
+    SlideReviewLimits,
+};
+use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByTrigger};
 use crate::receipt::ReceiptRecord;
+use crate::share_travel::{BornWith, TravelChoice, TravelKind};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -33,9 +44,13 @@ pub struct ArtifactExportRequest {
     pub artifact_ref: String,
     #[serde(default)]
     pub version: Option<u64>,
+    /// The born-with text to send with the file; absent sends none (OF-491).
+    #[serde(default)]
+    pub travel: Option<TravelChoice>,
 }
 
-/// One version's export file, its bytes base64.
+/// One version's export file, its bytes base64, with the born-with text the
+/// sharer chose to send. Its made_by stays home; `vault.artifacts.view` reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactExportFile {
     pub artifact_ref: String,
@@ -44,7 +59,7 @@ pub struct ArtifactExportFile {
     pub name: String,
     pub media_type: String,
     pub content_hash: String,
-    pub made_by: MadeBy,
+    pub born_with: BornWith,
     pub content_base64: String,
 }
 
@@ -121,6 +136,74 @@ pub struct ProposalSettleRequest {
     /// Why a proposal was discarded.
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+/// One slide review of an artifact's head: the units to judge, each with
+/// the image its renderer made of those exact bytes, and the typed question
+/// every unit is asked through the host's decide() ladder. Answered units
+/// become comments in one proposal held for Keep or Discard.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlideReviewSubmit {
+    pub artifact_ref: String,
+    /// The run ref the proposal is held under: the consume-once key.
+    pub run_ref: String,
+    pub units: Vec<SlideReviewUnitInput>,
+    /// The typed question (`DecisionQuestion`), as JSON.
+    pub question: serde_json::Value,
+    /// Who the comments are by (`PptxAuthor`), as JSON.
+    pub author: serde_json::Value,
+    /// The display words, severity words included (`SlideReviewLabels`), as JSON.
+    pub labels: serde_json::Value,
+    /// `reversible_read` (the default) or `outbound_effect`.
+    #[serde(default)]
+    pub reversibility: Option<serde_json::Value>,
+    /// Access-checked evidence beside the deck, by ref.
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+    /// Each unit call's budget; 30 s when absent.
+    #[serde(default)]
+    pub unit_budget_ms: Option<u64>,
+    /// The whole review's deadline from now; five minutes when absent.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+    /// The made_by envelope Keep gives the version, as JSON.
+    #[serde(default)]
+    pub made_by: Option<serde_json::Value>,
+}
+
+/// One unit to judge: a slide or a shape (`PptxCommentTarget`, as JSON),
+/// its rendered image (base64) and the renderer that made it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlideReviewUnitInput {
+    pub target: serde_json::Value,
+    pub review_image: String,
+    pub renderer: String,
+}
+
+/// What a review did: the proposal held for Keep (none when no unit was
+/// answered), the units the ladder left unanswered, and those it refused.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlideReviewOutcome {
+    pub proposed: Option<PendingProposalView>,
+    pub abstained: Vec<serde_json::Value>,
+    pub refused: Vec<SlideUnitRefused>,
+}
+
+/// A unit the review would not ask as given, and the slide unit it offers
+/// instead, if any.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlideUnitRefused {
+    pub target: serde_json::Value,
+    pub reason: String,
+    pub offer: Option<serde_json::Value>,
+}
+
+/// Whether a held organ call was let go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleasedWait {
+    pub released: bool,
 }
 
 /// A kept proposal: the version it became, the threads it moved, its receipt.
@@ -205,25 +288,35 @@ impl Memory<'_> {
             .blob_artifact_view(&entity(&input.artifact_ref)?)?)
     }
 
-    /// `vault.artifacts.export`: one version's export file.
+    /// `vault.artifacts.export`: one version's export file, with the born-with
+    /// text the caller chose to send and a share receipt listing it.
     pub fn artifacts_export(
         &self,
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
-        let Some(file) = self
-            .vault()
-            .export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
+        let vault = self.vault();
+        let Some(file) = vault.export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
         else {
             return Ok(None);
         };
+        let born_with = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact)
+            .project(vault.born_with_text(&file.artifact_id, Some(&file.made_by))?);
+        let content_hash = super::hash_hex(&file.content_hash);
+        vault.record_export_travel(
+            file.artifact_id.to_hex(),
+            file.version,
+            content_hash.clone(),
+            &self.actor(),
+            &born_with,
+        )?;
         Ok(Some(ArtifactExportFile {
             artifact_ref: file.artifact_id.to_hex(),
             version: file.version,
             kind: file.kind,
             name: file.name,
             media_type: file.media_type,
-            content_hash: super::hash_hex(&file.content_hash),
-            made_by: file.made_by,
+            content_hash,
+            born_with,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&file.bytes),
         }))
     }
@@ -275,6 +368,150 @@ impl Memory<'_> {
         Ok(self
             .vault()
             .pending_proposals(&entity(&input.artifact_ref)?)?)
+    }
+
+    /// `vault.artifacts.review_slides` on an embedded handle, which holds no
+    /// decision ladder: a server's host door answers it.
+    pub fn artifacts_review_slides(
+        &self,
+        _input: &SlideReviewSubmit,
+    ) -> MemoryResult<SlideReviewOutcome> {
+        Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "slide review asks through a server's decision ladder",
+            &["Call vault.artifacts.review_slides on a server, where the host's ladder answers."],
+        ))
+    }
+
+    /// `vault.artifacts.review_slides` through a host's decide() ladder:
+    /// reviews the artifact's head as the bound actor and holds the
+    /// proposal for Keep or Discard (`vault.artifacts.keep`/`discard`).
+    pub fn artifacts_review_slides_through(
+        &self,
+        input: &SlideReviewSubmit,
+        ladder: &DecisionLadder<'_>,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+    ) -> MemoryResult<SlideReviewOutcome> {
+        let artifact = entity(&input.artifact_ref)?;
+        let required = |value: &serde_json::Value, field: &str| -> MemoryResult<serde_json::Value> {
+            if value.is_null() {
+                return Err(invalid(&format!("a slide review names its {field}")).into());
+            }
+            Ok(value.clone())
+        };
+        let question: DecisionQuestion =
+            json_field(Some(required(&input.question, "question")?), "question")?
+                .ok_or_else(|| invalid("a slide review names its question"))?;
+        let author: PptxAuthor = json_field(Some(required(&input.author, "author")?), "author")?
+            .ok_or_else(|| invalid("a slide review names its author"))?;
+        let labels: SlideReviewLabels =
+            json_field(Some(required(&input.labels, "labels")?), "labels")?
+                .ok_or_else(|| invalid("a slide review names its labels"))?;
+        let reversibility: Reversibility = json_field(input.reversibility.clone(), "reversibility")?
+            .unwrap_or(Reversibility::ReversibleRead);
+        let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
+        let units = input
+            .units
+            .iter()
+            .map(|unit| {
+                let target: PptxCommentTarget = json_field(Some(unit.target.clone()), "target")?
+                    .ok_or_else(|| invalid("a slide review unit names its target"))?;
+                let review_image = base64::engine::general_purpose::STANDARD
+                    .decode(&unit.review_image)
+                    .map_err(|_| invalid("a unit's review image is not base64"))?;
+                Ok(SlideReviewUnit {
+                    target,
+                    review_image,
+                    renderer: unit.renderer.clone(),
+                })
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let evidence = input
+            .evidence_refs
+            .iter()
+            .map(|reference| entity(reference))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let actor = self.artifact_actor();
+        let (_, at) = self.artifact_moment();
+        let started = std::time::Instant::now();
+        let request = SlideReviewRequest {
+            units: &units,
+            question: &question,
+            principal: actor.entity_ref(),
+            answered_by: actor.entity_ref(),
+            author: &author,
+            dial,
+            resident_dial: None,
+            // The vault re-imposes its stored policy's limits.
+            limits: SlideReviewLimits::default(),
+            policy,
+            reversibility,
+            labels: &labels,
+            ladder,
+            evidence: &evidence,
+            budget: std::time::Duration::from_millis(input.unit_budget_ms.unwrap_or(30_000)),
+            deadline: started
+                + std::time::Duration::from_millis(input.deadline_ms.unwrap_or(300_000)),
+            run_ref: &input.run_ref,
+            at,
+        };
+        let run = self
+            .vault()
+            .review_blob_artifact_slides(&artifact, &request)
+            .map_err(|error| match error {
+                SlideReviewError::Vault(error) => MemoryError::from(error),
+                other => MemoryError::from(Error::InvalidConfig(other.to_string())),
+            })?;
+        let proposed = match &run.proposal {
+            Some(proposal) => Some(self.vault().retain_edit_proposal(
+                &artifact,
+                proposal,
+                made_by.as_ref(),
+                actor,
+                at,
+            )?),
+            None => None,
+        };
+        let target_json = |target: &PptxCommentTarget| {
+            serde_json::to_value(target).unwrap_or(serde_json::Value::Null)
+        };
+        Ok(SlideReviewOutcome {
+            proposed,
+            abstained: run
+                .abstained
+                .iter()
+                .map(|unit| target_json(&unit.target))
+                .collect(),
+            refused: run
+                .refused
+                .iter()
+                .map(|unit| SlideUnitRefused {
+                    target: target_json(&unit.target),
+                    reason: format!("{:?}", unit.reason),
+                    offer: unit.offer.as_ref().map(target_json),
+                })
+                .collect(),
+        })
+    }
+
+    /// `vault.artifacts.waits`: the organ calls held beside one artifact
+    /// until one of the owner's nodes can run them, each saying why it waits.
+    pub fn artifacts_waits(&self, input: &ArtifactRefRequest) -> MemoryResult<Vec<OrganWaitView>> {
+        Ok(self.vault().organ_waits(&entity(&input.artifact_ref)?)?)
+    }
+
+    /// `vault.artifacts.release_wait`: lets one held organ call go, by its
+    /// run ref (`proposal_ref`), under the consent a Discard needs.
+    pub fn artifacts_release_wait(
+        &self,
+        input: &ProposalSettleRequest,
+    ) -> MemoryResult<ReleasedWait> {
+        self.artifact_consent(input.brief_ref.clone())?;
+        let released = self
+            .vault()
+            .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
+        Ok(ReleasedWait { released })
     }
 
     /// `vault.artifacts.propose_deck`: runs one native deck transaction over

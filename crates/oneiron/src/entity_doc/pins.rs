@@ -436,7 +436,11 @@ impl Vault {
         message: &EntityId,
         citation: &EntityId,
     ) -> Result<Option<CitationPin>> {
-        ENTITY_DOC_PIN.get(&self.store, txn, &HexPair(HexId(*message), HexId(*citation)))
+        ENTITY_DOC_PIN.get(
+            &self.store,
+            txn,
+            &HexPair(HexId(*message), HexId(*citation)),
+        )
     }
 }
 

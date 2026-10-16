@@ -17,9 +17,16 @@ doctest = false
 oneiron = { version = "0.1.0", path = "../oneiron" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
+# The mesh leg: organ calls to the owner's other nodes (OF-575 MESH).
+oneiron-mesh-transport = { version = "0.1.0", path = "../oneiron-mesh-transport" }
 # An organ starts with its socket on fd 3 and stdio only.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 blake3 = { workspace = true }
+# The file-backed seal key (OF-415): its PEM files, and the RSA or P-256
+# signer, at the seal organ's exact pins.
+base64 = "0.22"
+p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+rsa = { version = "=0.9.10", default-features = false, features = ["sha2", "std"] }
 # The seal binding's DER checks, at the seal organ's exact pins: general
 # ASN.1 crates, not the organ.
 cms = { version = "=0.2.3", default-features = false, features = ["std"] }
@@ -35,7 +42,7 @@ serde = { workspace = true }
 sha2 = "=0.10.9"
 thiserror = { workspace = true }
 # reqwest's own runtime, driven here so one deadline bounds a whole fetch.
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
 x509-cert = { version = "=0.2.5", default-features = false, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
