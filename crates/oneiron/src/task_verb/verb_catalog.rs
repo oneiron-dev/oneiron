@@ -16,6 +16,7 @@ pub enum AgentVerb {
     VaultRecall,
     VaultExport,
     VaultReceipts,
+    VaultReceiptsGet,
     VaultKvGet,
     VaultKvPut,
     VaultKvDelete,
@@ -74,7 +75,28 @@ pub enum AgentVerb {
     SelfBrowserWaitFor,
     SelfBrowserExpect,
     SelfBrowserScreenshot,
+    VaultCommit,
+    VaultRemember,
+    VaultClaimsRetract,
+    VaultForget,
+    VaultClaimsList,
+    VaultClaimsHistory,
+    VaultDelete,
+    VaultWritesPending,
+    VaultHydrate,
+    VaultGet,
+    VaultSearchBm25,
+    VaultNeighbors,
+    VaultStructuralPut,
+    VaultHabitsCheckin,
+    VaultClaimsAdmit,
+    VaultArtifactsPut,
+    VaultArtifactsAppend,
+    VaultArtifactsRead,
     ConnectorOutboundSchedule,
+    VaultNotesCreate,
+    VaultNotesFromEntity,
+    VaultNotesEdit,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -93,6 +115,7 @@ impl AgentVerb {
         Self::VaultRecall,
         Self::VaultExport,
         Self::VaultReceipts,
+        Self::VaultReceiptsGet,
         Self::VaultKvGet,
         Self::VaultKvPut,
         Self::VaultKvDelete,
@@ -151,7 +174,28 @@ impl AgentVerb {
         Self::SelfBrowserWaitFor,
         Self::SelfBrowserExpect,
         Self::SelfBrowserScreenshot,
+        Self::VaultCommit,
+        Self::VaultRemember,
+        Self::VaultClaimsRetract,
+        Self::VaultForget,
+        Self::VaultClaimsList,
+        Self::VaultClaimsHistory,
+        Self::VaultDelete,
+        Self::VaultWritesPending,
+        Self::VaultHydrate,
+        Self::VaultGet,
+        Self::VaultSearchBm25,
+        Self::VaultNeighbors,
+        Self::VaultStructuralPut,
+        Self::VaultHabitsCheckin,
+        Self::VaultClaimsAdmit,
+        Self::VaultArtifactsPut,
+        Self::VaultArtifactsAppend,
+        Self::VaultArtifactsRead,
         Self::ConnectorOutboundSchedule,
+        Self::VaultNotesCreate,
+        Self::VaultNotesFromEntity,
+        Self::VaultNotesEdit,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -173,6 +217,7 @@ impl AgentVerb {
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
             Self::VaultReceipts => "vault.receipts",
+            Self::VaultReceiptsGet => "vault.receipts.get",
             Self::VaultKvGet => "vault.kv.get",
             Self::VaultKvPut => "vault.kv.put",
             Self::VaultKvDelete => "vault.kv.delete",
@@ -231,7 +276,28 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
             Self::SelfBrowserExpect => "self.browser.expect",
             Self::SelfBrowserScreenshot => "self.browser.screenshot",
+            Self::VaultCommit => "vault.commit",
+            Self::VaultRemember => "vault.remember",
+            Self::VaultClaimsRetract => "vault.claims.retract",
+            Self::VaultForget => "vault.forget",
+            Self::VaultClaimsList => "vault.claims.list",
+            Self::VaultClaimsHistory => "vault.claims.history",
+            Self::VaultDelete => "vault.delete",
+            Self::VaultWritesPending => "vault.writes.pending",
+            Self::VaultHydrate => "vault.hydrate",
+            Self::VaultGet => "vault.get",
+            Self::VaultSearchBm25 => "vault.search.bm25",
+            Self::VaultNeighbors => "vault.neighbors",
+            Self::VaultStructuralPut => "vault.structural.put",
+            Self::VaultHabitsCheckin => "vault.habits.checkin",
+            Self::VaultClaimsAdmit => "vault.claims.admit",
+            Self::VaultArtifactsPut => "vault.artifacts.put",
+            Self::VaultArtifactsAppend => "vault.artifacts.append",
+            Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
+            Self::VaultNotesCreate => "vault.notes.create",
+            Self::VaultNotesFromEntity => "vault.notes.from_entity",
+            Self::VaultNotesEdit => "vault.notes.edit",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -249,6 +315,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -298,7 +365,28 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::ConnectorList
                 | Self::ConnectorStatus
+                | Self::VaultCommit
+                | Self::VaultRemember
+                | Self::VaultClaimsRetract
+                | Self::VaultForget
+                | Self::VaultClaimsList
+                | Self::VaultClaimsHistory
+                | Self::VaultDelete
+                | Self::VaultWritesPending
+                | Self::VaultHydrate
+                | Self::VaultGet
+                | Self::VaultSearchBm25
+                | Self::VaultNeighbors
+                | Self::VaultStructuralPut
+                | Self::VaultHabitsCheckin
+                | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsPut
+                | Self::VaultArtifactsAppend
+                | Self::VaultArtifactsRead
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultNotesCreate
+                | Self::VaultNotesFromEntity
+                | Self::VaultNotesEdit
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -333,6 +421,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -382,7 +471,28 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::ConnectorList
                 | Self::ConnectorStatus
+                | Self::VaultCommit
+                | Self::VaultRemember
+                | Self::VaultClaimsRetract
+                | Self::VaultForget
+                | Self::VaultClaimsList
+                | Self::VaultClaimsHistory
+                | Self::VaultDelete
+                | Self::VaultWritesPending
+                | Self::VaultHydrate
+                | Self::VaultGet
+                | Self::VaultSearchBm25
+                | Self::VaultNeighbors
+                | Self::VaultStructuralPut
+                | Self::VaultHabitsCheckin
+                | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsPut
+                | Self::VaultArtifactsAppend
+                | Self::VaultArtifactsRead
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultNotesCreate
+                | Self::VaultNotesFromEntity
+                | Self::VaultNotesEdit
         )
     }
     pub const fn is_section(self) -> bool {
@@ -417,6 +527,9 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
+                | Self::VaultCommit
+                | Self::VaultForget
+                | Self::VaultWritesPending
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -427,6 +540,12 @@ impl AgentVerb {
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
                 | Self::Describe
+                | Self::VaultClaimsList
+                | Self::VaultClaimsHistory
+                | Self::VaultHydrate
+                | Self::VaultGet
+                | Self::VaultSearchBm25
+                | Self::VaultNeighbors
         )
     }
     pub const fn requires_unscoped(self) -> bool {
@@ -439,6 +558,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultReceiptsGet
                 | Self::VaultKvGet
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -497,7 +617,22 @@ impl AgentVerb {
                 | Self::SelfBrowserWaitFor
                 | Self::SelfBrowserExpect
                 | Self::SelfBrowserScreenshot
+                | Self::VaultCommit
+                | Self::VaultRemember
+                | Self::VaultClaimsRetract
+                | Self::VaultForget
+                | Self::VaultDelete
+                | Self::VaultWritesPending
+                | Self::VaultStructuralPut
+                | Self::VaultHabitsCheckin
+                | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsPut
+                | Self::VaultArtifactsAppend
+                | Self::VaultArtifactsRead
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultNotesCreate
+                | Self::VaultNotesFromEntity
+                | Self::VaultNotesEdit
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -541,13 +676,31 @@ impl AgentVerb {
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
+                | Self::VaultCommit
+                | Self::VaultRemember
+                | Self::VaultClaimsRetract
+                | Self::VaultForget
+                | Self::VaultDelete
+                | Self::VaultStructuralPut
+                | Self::VaultHabitsCheckin
+                | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsPut
+                | Self::VaultArtifactsAppend
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultNotesCreate
+                | Self::VaultNotesFromEntity
+                | Self::VaultNotesEdit
         )
     }
     pub const fn proposes(self) -> bool {
         matches!(
             self,
-            Self::Cancel | Self::TasksCreate | Self::VaultClaimsUpsert
+            Self::Cancel
+                | Self::TasksCreate
+                | Self::VaultClaimsUpsert
+                | Self::VaultCommit
+                | Self::VaultRemember
+                | Self::VaultClaimsAdmit
         )
     }
     pub const fn argument_fields(self) -> &'static [&'static str] {
@@ -567,6 +720,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
             Self::VaultKvDelete => &["spec"],
@@ -625,7 +779,28 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::VaultCommit => &["spec"],
+            Self::VaultRemember => &["spec"],
+            Self::VaultClaimsRetract => &["spec"],
+            Self::VaultForget => &["spec"],
+            Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsHistory => &["spec"],
+            Self::VaultDelete => &["spec"],
+            Self::VaultWritesPending => &["spec"],
+            Self::VaultHydrate => &["spec"],
+            Self::VaultGet => &["spec"],
+            Self::VaultSearchBm25 => &["spec"],
+            Self::VaultNeighbors => &["spec"],
+            Self::VaultStructuralPut => &["spec"],
+            Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultClaimsAdmit => &["spec"],
+            Self::VaultArtifactsPut => &["spec"],
+            Self::VaultArtifactsAppend => &["spec"],
+            Self::VaultArtifactsRead => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
+            Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesFromEntity => &["spec"],
+            Self::VaultNotesEdit => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -645,6 +820,7 @@ impl AgentVerb {
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultReceiptsGet => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
             Self::VaultKvDelete => &["spec"],
@@ -703,7 +879,28 @@ impl AgentVerb {
             Self::SelfBrowserWaitFor => &["spec"],
             Self::SelfBrowserExpect => &["spec"],
             Self::SelfBrowserScreenshot => &["spec"],
+            Self::VaultCommit => &["spec"],
+            Self::VaultRemember => &["spec"],
+            Self::VaultClaimsRetract => &["spec"],
+            Self::VaultForget => &["spec"],
+            Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsHistory => &["spec"],
+            Self::VaultDelete => &["spec"],
+            Self::VaultWritesPending => &["spec"],
+            Self::VaultHydrate => &["spec"],
+            Self::VaultGet => &["spec"],
+            Self::VaultSearchBm25 => &["spec"],
+            Self::VaultNeighbors => &["spec"],
+            Self::VaultStructuralPut => &["spec"],
+            Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultClaimsAdmit => &["spec"],
+            Self::VaultArtifactsPut => &["spec"],
+            Self::VaultArtifactsAppend => &["spec"],
+            Self::VaultArtifactsRead => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
+            Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesFromEntity => &["spec"],
+            Self::VaultNotesEdit => &["spec"],
         }
     }
 }

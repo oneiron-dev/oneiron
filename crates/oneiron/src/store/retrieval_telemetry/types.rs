@@ -244,6 +244,8 @@ pub struct RetrievalRunRecord {
     #[serde(default)]
     pub state: super::state::RetrievalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_trace: Option<crate::pipeline::retrieval_policy::RetrievalPolicyTrace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_inputs: Option<super::state::RetrievalReplayInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<super::state::RetrievalTurn>,
@@ -306,6 +308,7 @@ impl RetrievalRunRecord {
             signals,
             result_ids,
             state: super::state::RetrievalState::one_shot(&score_breakdown),
+            policy_trace: None,
             replay_inputs: None,
             turn: None,
             score_breakdown,
@@ -359,15 +362,15 @@ pub struct RetrievalOutcome {
     pub metadata: BTreeMap<String, String>,
 }
 
-/// End-of-turn judgement supplied by the ARCH-0053 attribution gate. The
-/// engine checks that the judged memory surfaced in this run and that the
-/// turn matches; it never infers retrieval credit from a raw outcome reward.
+/// End-of-turn judgement supplied by the ARCH-0053 attribution gate. Only the
+/// explicitly named contributing runs receive credit; memory overlap never
+/// selects runs or divides the terminal signal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalEndOutcome {
-    pub run_id: RetrievalRunId,
+    #[serde(rename = "retrievalRunIds")]
+    pub retrieval_run_ids: Vec<RetrievalRunId>,
     pub key: String,
     pub turn_id: [u8; 16],
-    pub activated_memory_id: [u8; 16],
     pub gate_score: f32,
     pub confirmed_fact_hit: bool,
     pub latency_scale_us: u64,
@@ -379,8 +382,9 @@ pub struct RetrievalEndOutcome {
 /// an arbitrary `RetrievalOutcome.reward` remains telemetry, not a label.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalRewardEvidence {
+    #[serde(rename = "retrievalRunIds")]
+    pub retrieval_run_ids: Vec<RetrievalRunId>,
     pub turn_id: [u8; 16],
-    pub activated_memory_id: [u8; 16],
     pub gate_score: f32,
     pub confirmed_fact_hit: bool,
     pub latency_scale_us: u64,
@@ -388,10 +392,8 @@ pub struct RetrievalRewardEvidence {
 }
 
 impl RetrievalRewardEvidence {
-    pub(super) fn reward(&self, run: &RetrievalRunRecord) -> Result<f32> {
-        if run.turn.is_none_or(|turn| turn.turn_id != self.turn_id)
-            || !run.result_ids.contains(&self.activated_memory_id)
-            || !self.gate_score.is_finite()
+    pub(super) fn validate(&self) -> Result<()> {
+        if !self.gate_score.is_finite()
             || self.gate_score <= 0.0
             || self.gate_score > 1.0
             || self.latency_scale_us == 0
@@ -400,6 +402,18 @@ impl RetrievalRewardEvidence {
         {
             return Err(Error::InvalidConfig(
                 "invalid gated retrieval end outcome".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn reward(&self, run: &RetrievalRunRecord) -> Result<f32> {
+        self.validate()?;
+        if run.turn.is_none_or(|turn| turn.turn_id != self.turn_id)
+            || !self.retrieval_run_ids.contains(&run.run_id)
+        {
+            return Err(Error::InvalidConfig(
+                "retrieval end outcome does not name this run and turn".to_owned(),
             ));
         }
         let hit = if self.confirmed_fact_hit { 1.0 } else { 0.0 };
