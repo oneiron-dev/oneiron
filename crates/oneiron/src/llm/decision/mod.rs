@@ -20,6 +20,8 @@ pub use local::{
 pub mod questions;
 mod read;
 pub use read::DecisionReadProvider;
+mod routine;
+pub use routine::*;
 mod seat;
 mod slides_policy;
 mod types;
