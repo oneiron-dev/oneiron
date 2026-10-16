@@ -205,6 +205,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "self.skills.save",
+                crate::code_run::vault_read::request_schema::<crate::skill::helper::SkillSaveRequest>(
+                ),
+            ),
+            (
+                "self.skills.fork",
+                crate::code_run::vault_read::request_schema::<crate::skill::helper::SkillForkRequest>(
+                ),
+            ),
+            (
+                "self.skills.callables",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -317,6 +331,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.folds",
                 crate::code_run::vault_read::request_schema::<crate::compaction::FoldsInput>(),
+            ),
+            (
+                "tasks.refuse",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
         ])
     });
@@ -667,6 +685,21 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "self.skills.save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.skills.fork" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.skills.callables" => &[],
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -896,6 +929,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "self.skills.save" => {
+            let _input: crate::skill::helper::SkillSaveRequest = decode(value.clone())?;
+        }
+        "self.skills.fork" => {
+            let _input: crate::skill::helper::SkillForkRequest = decode(value.clone())?;
+        }
+        "self.skills.callables" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -1013,6 +1055,9 @@ pub fn invoke(
         "vault.rooms.trunk" => encode(vault_rooms_trunk(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
+        "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
+        "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -1435,6 +1480,36 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn self_skills_save(
+    memory: &Memory<'_>,
+    input: crate::skill::helper::SkillSaveRequest,
+) -> MemoryResult<crate::memory::SkillAuthoringReceipt> {
+    Ok({
+        let (id, record, files) = crate::skill::helper::skill_save_parts(&input)?;
+        memory.skill_save_with_source(
+            id,
+            &record,
+            files,
+            input.expected_version.as_deref(),
+            crate::unix_seconds_now(),
+        )?
+    })
+}
+pub fn self_skills_fork(
+    memory: &Memory<'_>,
+    input: crate::skill::helper::SkillForkRequest,
+) -> MemoryResult<crate::memory::SkillAuthoringReceipt> {
+    Ok({
+        let (parent, id) = crate::skill::helper::fork_target(&input)?;
+        memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())?
+    })
+}
+pub fn self_skills_callables(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
+    memory.skill_callables()
 }
 pub fn ai_options(
     memory: &Memory<'_>,

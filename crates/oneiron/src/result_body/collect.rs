@@ -128,7 +128,7 @@ impl Vault {
                 if removed == limit {
                     break;
                 }
-                if remove_unnamed(dir, &entry, now, Some(&self.result_body_pins))? {
+                if remove_unnamed(dir, &entry, now, &self.result_body_pins)? {
                     removed += 1;
                 }
             }

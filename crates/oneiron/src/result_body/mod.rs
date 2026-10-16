@@ -1,6 +1,7 @@
 //! Result body lifetime (OF-597): reader pins, the collector of released and
-//! orphan body files, the prune of checkpoint bodies beside backup images, and
-//! the copy of an off-record body into the vault's `bodies/`.
+//! orphan body files, and the copy of an off-record body into the vault's
+//! `bodies/`. A checkpoint seals its bodies inside its own artifact, so none
+//! outlives the image that carries it.
 //!
 //! A body file goes only once nothing names it: no descriptor holds its digest
 //! (`provenance::body`), and no reader pins it. The collector drops the body's
@@ -11,8 +12,6 @@
 //! descriptor, never a joined path.
 
 #[cfg(unix)]
-mod checkpoint;
-#[cfg(unix)]
 mod collect;
 #[cfg(unix)]
 mod files;
@@ -21,8 +20,6 @@ mod pins;
 mod promote;
 
 #[cfg(unix)]
-pub use checkpoint::{CheckpointBodyPruneReport, prune_checkpoint_bodies};
-#[cfg(unix)]
 pub use collect::ResultBodyCollectReport;
 pub(crate) use pins::{ResultBodyPin, ResultBodyPins};
 
@@ -30,8 +27,7 @@ pub(crate) use pins::{ResultBodyPin, ResultBodyPins};
 use crate::side_table::{self, Raw, SideTable};
 
 /// How old a body file no row names must be before it goes: a body is
-/// whole on disk before the row naming it commits, and a snapshot writes its
-/// bodies before its image.
+/// whole on disk before the row naming it commits.
 #[cfg(unix)]
 const BODY_GRACE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 

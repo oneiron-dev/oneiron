@@ -1,5 +1,5 @@
-//! Body directory work for the collector and the checkpoint prune, done
-//! through the directory's descriptor: nothing here follows a link.
+//! Body directory work for the collector, done through the directory's
+//! descriptor: nothing here follows a link.
 
 use std::fs::File;
 use std::time::{Duration, SystemTime};
@@ -91,7 +91,7 @@ pub(super) fn remove_unnamed(
     dir: &BodyDir,
     entry: &BodyEntry,
     now: SystemTime,
-    pins: Option<&ResultBodyPins>,
+    pins: &ResultBodyPins,
 ) -> Result<bool> {
     let body = body_file_name(&entry.digest);
     if entry.index && file_age(dir, &body, now)?.is_some() {
@@ -113,13 +113,10 @@ pub(super) fn remove_unnamed(
             unlink_body(dir, &entry.digest)
         }
     };
-    match pins {
-        Some(pins) => Ok(pins
-            .unless_pinned(&entry.digest, remove)
-            .transpose()?
-            .is_some()),
-        None => remove().map(|()| true),
-    }
+    Ok(pins
+        .unless_pinned(&entry.digest, remove)
+        .transpose()?
+        .is_some())
 }
 
 /// Syncs `dir`, so the unlinks in it last.

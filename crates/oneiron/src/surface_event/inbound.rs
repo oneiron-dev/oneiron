@@ -58,7 +58,7 @@ impl SurfaceSourceApp {
             "discord" => Some(Self::Discord),
             "web" => Some(Self::Web),
             "voice" => Some(Self::Voice),
-            "imessage" => Some(Self::IMessage),
+            "imessage" | "imessage_bridge" | "imessage_mfb" => Some(Self::IMessage),
             "line" => Some(Self::Line),
             "telegram" => Some(Self::Telegram),
             "linkedin" => Some(Self::LinkedIn),

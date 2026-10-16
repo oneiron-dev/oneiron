@@ -9858,7 +9858,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -9932,7 +9932,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 8,
       "re-export": 1,
       "struct": 1,
@@ -9956,7 +9956,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 4,
       "re-export": 7
      }
@@ -9985,16 +9985,17 @@
       "CodeRunReplayCursor",
       "CodeRunReplayGeneration",
       "CodeRunReplayRecord",
+      "CodeRunResultBinding",
       "CodeRunStepCheckpoint"
      ],
      "path": "src/code_run/replay.rs",
      "purpose": "—",
      "surface": {
-      "const": 7,
-      "crate-vis": 7,
+      "const": 8,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 18,
-      "struct": 10
+      "fn": 20,
+      "struct": 11
      }
     },
     {
@@ -10005,13 +10006,16 @@
       "MemoryEdgeInput",
       "MemorySearchInput",
       "MemorySupersedeInput",
-      "MemoryTimeRange"
+      "MemoryTimeRange",
+      "TaskRefuseDomain",
+      "TaskRefuseInput"
      ],
      "path": "src/code_run/run_verbs.rs",
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "struct": 5
+      "enum": 1,
+      "struct": 6
      }
     },
     {
@@ -10063,7 +10067,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 11,
       "struct": 2
      }
@@ -10075,7 +10079,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -10159,6 +10163,8 @@
       "SelfMemoryWriteResult",
       "SelfSpeechCall",
       "SelfSpeechResult",
+      "SelfTaskRefusalResult",
+      "SelfTaskRefuseCall",
       "SelfWakePolicyWriteCall"
      ],
      "path": "src/code_run/types.rs",
@@ -10166,8 +10172,8 @@
      "surface": {
       "const": 2,
       "enum": 6,
-      "fn": 17,
-      "struct": 24,
+      "fn": 19,
+      "struct": 26,
       "trait": 2
      }
     },
@@ -10413,6 +10419,64 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/dns.rs",
+     "purpose": "DNS goes to the host's resolver through the same proxy",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/fixture.rs",
+     "purpose": "Host-declared fixture origin",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/egress/http.rs",
+     "purpose": "Guarded, pinned HTTP with manual redirects and final-domain decisions",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EgressConfig",
+      "OpenEgressProxy"
+     ],
+     "path": "src/code_sandbox/egress/mod.rs",
+     "purpose": "The engine's open egress proxy",
+     "surface": {
+      "fn": 3,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EgressReceipt"
+     ],
+     "path": "src/code_sandbox/egress/receipt.rs",
+     "purpose": "Proxy receipts use the existing owner-local gate ledger",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "FirecrackerBackend"
      ],
@@ -10443,10 +10507,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_sandbox/firecracker/egress.rs",
+     "purpose": "Native VM network channels terminate at the engine's one egress proxy",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_sandbox/firecracker/launch.rs",
      "purpose": "Jailer launch, resource ceilings and process custody for one microVM",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 10
      }
     },
     {
@@ -10456,6 +10530,16 @@
      "path": "src/code_sandbox/firecracker/launch/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/firecracker/oci_session.rs",
+     "purpose": "Native OCI sessions in a no-NIC Firecracker VM",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -10502,7 +10586,7 @@
      "path": "src/code_sandbox/microvm/adapter.rs",
      "purpose": "The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -10518,9 +10602,23 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContainerBackend"
+     ],
+     "path": "src/code_sandbox/microvm/container.rs",
+     "purpose": "OCI code and browser sessions on Linux hosts without a usable microVM",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -10550,14 +10648,15 @@
       "ExecutionBudget",
       "GuestImage",
       "MicroVmExit",
-      "MicroVmHandle"
+      "MicroVmHandle",
+      "OciGuestImage"
      ],
      "path": "src/code_sandbox/microvm/handle.rs",
      "purpose": "The VM value objects: guest image, running handle, exit and execution budget",
      "surface": {
       "crate-vis": 1,
-      "fn": 11,
-      "struct": 4
+      "fn": 12,
+      "struct": 5
      }
     },
     {
@@ -10568,7 +10667,7 @@
      "purpose": "MicroVM execution lane for foreign and ingested guest code",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -10607,7 +10706,7 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 5,
+      "mod": 6,
       "re-export": 5
      }
     },
@@ -10704,6 +10803,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/isolated.rs",
+     "purpose": "Finite foreign steps use the selected backend, never an engine worker",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -10714,7 +10823,7 @@
      "purpose": "Pinned, in-process Component Model execution for host-trusted code",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "fn": 4,
       "mod": 1,
       "struct": 2
      }
@@ -11711,13 +11820,13 @@
      "kind": "src",
      "notable": [
       "CompanionExpression",
-      "CompanionRecordKey",
-      "CompanionRecordKind",
       "CompanionScope",
-      "CompanionSubject"
+      "CompanionSubject",
+      "CompanionSubjectKind",
+      "CompanionTaskKey"
      ],
      "path": "src/companion/model.rs",
-     "purpose": "Typed companion record domain: kinds, scopes, subjects, provenance, and records",
+     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
      "surface": {
       "crate-vis": 3,
       "enum": 4,
@@ -15114,7 +15223,7 @@
      "purpose": "Connector shapes, wire enums, attempt-payload codec, and serde adapters",
      "surface": {
       "const": 6,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 5,
       "fn": 12,
       "struct": 6
@@ -15134,7 +15243,7 @@
      "purpose": "Dispatcher organ with dispatch, execute, authorize, and capture doors",
      "surface": {
       "crate-vis": 1,
-      "fn": 8,
+      "fn": 10,
       "struct": 2,
       "trait": 3
      }
@@ -15148,7 +15257,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 45,
       "enum": 1,
       "type": 1
      }
@@ -15182,7 +15291,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -15199,9 +15308,33 @@
      "path": "src/dispatch_byoa/provider.rs",
      "purpose": "Named propose-only Dreamer runners over the existing foreign CLI sandbox",
      "surface": {
+      "const": 3,
       "fn": 3,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LoginPlacement",
+      "OnSeatSpent",
+      "RunnerSeat",
+      "RunnerSeatPolicy",
+      "RunnerWork",
+      "SeatAuth",
+      "SeatRoute",
+      "SeatSpent"
+     ],
+     "path": "src/dispatch_byoa/seat.rs",
+     "purpose": "Owner-chosen runner seats (OF-137): which named runner takes a Dreamer's work under whose sign-in, and where…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 9,
+      "struct": 4
      }
     },
     {
@@ -15382,9 +15515,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -15450,7 +15583,7 @@
      "path": "src/dreamer_consolidation/persistence.rs",
      "purpose": "Persistent contradiction markers and prior-head context for consolidation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -15614,6 +15747,27 @@
      "surface": {
       "enum": 1,
       "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConflictSettleDecisions",
+      "ConflictSettleReceipt",
+      "ConflictSettlement",
+      "OpenConflict",
+      "ParkedConflictPass",
+      "SettledConflict"
+     ],
+     "path": "src/dreamer_consolidation/settle.rs",
+     "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
       "struct": 5
      }
     },
@@ -16182,8 +16336,8 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 7,
-      "crate-vis": 3,
+      "const": 8,
+      "crate-vis": 4,
       "fn": 5,
       "trait": 1
      }
@@ -18629,7 +18783,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 40
      }
     },
     {
@@ -18712,6 +18866,8 @@
       "JsCodeModeStep",
       "JsCodeModeStepOutcome",
       "JsCodeModeStream",
+      "JsResultCall",
+      "JsResultRef",
       "SelfDispatchResponse"
      ],
      "path": "src/engine_executor/types.rs",
@@ -18719,7 +18875,7 @@
      "surface": {
       "const": 6,
       "crate-vis": 3,
-      "enum": 3,
+      "enum": 5,
       "fn": 6,
       "struct": 8,
       "trait": 2,
@@ -24433,7 +24589,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 10,
+      "const": 12,
       "fn": 1,
       "struct": 1
      }
@@ -24484,7 +24640,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 8,
+      "fn": 10,
       "struct": 9,
       "trait": 3
      }
@@ -24511,13 +24667,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionImage"
+     ],
+     "path": "src/llm/decision/media.rs",
+     "purpose": "Images a typed decision reads",
+     "surface": {
+      "const": 4,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -24768,6 +24938,7 @@
       "DecisionTime",
       "EvidenceVersion",
       "HumanAskReason",
+      "ImageBox",
       "PairedReading",
       "PersonChangedAnswer",
       "ProviderPin",
@@ -24781,8 +24952,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 8,
-      "fn": 6,
-      "struct": 10
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -25804,6 +25975,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/conflict_settle.rs",
+     "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26316,8 +26497,8 @@
      "path": "src/memory/skill_authoring.rs",
      "purpose": "Authored skill saves and forks over the existing skill lifecycle gate",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
+      "crate-vis": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -31764,6 +31945,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "IMessageTapback",
+      "IMessageTapbackInput",
+      "IMessageTapbackOperation",
+      "ReactionChannelCapability"
+     ],
+     "path": "src/reaction/channel_adapters.rs",
+     "purpose": "Channel-specific reaction forms",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/reaction/erase.rs",
      "purpose": "Reactions follow the room deletion doors: deleting a conversation record deletes the reaction claims about…",
@@ -31792,8 +31992,8 @@
      "path": "src/reaction/mod.rs",
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -31812,6 +32012,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReactionMeaning",
+      "ReactionOutcome",
+      "ReactionOutcomeEvidence"
+     ],
+     "path": "src/reaction/outcomes.rs",
+     "purpose": "Interpreted reaction evidence for landing and commitment outcome bindings",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -31823,7 +32041,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -32257,6 +32475,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactKind",
+      "CheckpointKey"
+     ],
+     "path": "src/recovery/checkpoint/artifact.rs",
+     "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -32507,8 +32741,8 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 12,
-      "re-export": 1,
+      "fn": 14,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -34989,6 +35223,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CallableCard",
+      "CallableCardView",
+      "CallableCase",
+      "CallableGateVerdict",
+      "CallableHarness",
+      "CaseSplit",
+      "HarnessScore",
+      "SkillForkRequest",
+      "SkillSaveRequest",
+      "SkillSourceFile"
+     ],
+     "path": "src/skill/helper.rs",
+     "purpose": "Agent-authored executable helpers (OF-353): a callable SKILL an agent writes for itself, found, promoted and…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 10,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -35025,6 +35284,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
       "crate-vis": 5,
+      "mod": 1,
       "re-export": 7
      }
     },
@@ -36542,7 +36802,7 @@
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
       "crate-vis": 7,
-      "fn": 9,
+      "fn": 10,
       "struct": 5
      }
     },
@@ -36639,7 +36899,34 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 11
+      "re-export": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComputeDestination",
+      "OfferAnswer",
+      "OfferAnswerRecord",
+      "OfferCandidate",
+      "OfferCheck",
+      "OfferCheckInput",
+      "OfferCost",
+      "OfferEvidence",
+      "OfferIntent",
+      "OfferModelPin",
+      "OfferOption",
+      "SeatWorkload",
+      "TrainingOffer",
+      "TrainingOfferDraft"
+     ],
+     "path": "src/skill_optimize/offer.rs",
+     "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
+     "surface": {
+      "enum": 4,
+      "fn": 7,
+      "struct": 10
      }
     },
     {
@@ -36957,7 +37244,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -39061,7 +39348,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/authorize.rs",
@@ -40455,7 +40742,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 69
+      "fn": 72
      }
     },
     {
@@ -40812,7 +41099,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Coverage",
@@ -43297,7 +43584,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 3,
       "re-export": 13,
       "struct": 2
@@ -43453,15 +43740,16 @@
      "kind": "src",
      "notable": [
       "VaultKeyStatus",
+      "VaultKeyUnlock",
       "VaultKeyWrapInfo",
       "VaultKeyWrapKind"
      ],
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 13,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -44592,8 +44880,8 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 31,
-     "impl_vault": false,
+     "files": 40,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Sandbox boundary contract for code-mode execution"
@@ -44802,7 +45090,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44816,7 +45104,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45145,7 +45433,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45166,7 +45454,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45355,7 +45643,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
-     "files": 15,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45369,7 +45657,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -45530,7 +45818,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45558,7 +45846,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -45789,9 +46077,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 70,
+   "over_bar": 69,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2750,
+   "source_files": 2768,
    "test_files": 903
   },
   "oneiron-android": {
@@ -47871,13 +48159,13 @@
   "oneiron-browser": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -47942,7 +48230,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
-      "fn": 3,
+      "fn": 5,
       "struct": 2
      }
     }
@@ -47951,7 +48239,7 @@
     "cdp": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
     },
@@ -48123,11 +48411,46 @@
   "oneiron-container": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-fence.rs",
+     "purpose": "Engine-mounted Linux fence launcher, not a development runner",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EgressRelay",
+      "HttpRequest",
+      "HttpResponse"
+     ],
+     "path": "src/egress.rs",
+     "purpose": "Host-owned transport",
+     "surface": {
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher.rs",
+     "purpose": "Unprivileged in-container launcher and syscall-argument broker",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "ContainerRuntime",
       "Error",
+      "FenceConfig",
+      "FenceProof",
       "GuestLimits",
       "GuestSeccomp",
       "GuestSession",
@@ -48136,27 +48459,134 @@
       "SessionManifest"
      ],
      "path": "src/lib.rs",
-     "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice",
+     "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
      "surface": {
       "enum": 2,
-      "fn": 8,
-      "struct": 6,
+      "fn": 12,
+      "re-export": 5,
+      "struct": 8,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linux.rs",
+     "purpose": "Linux UAPI used on both sides of the seccomp listener",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RelayReply",
+      "RelayRequest"
+     ],
+     "path": "src/relay_protocol.rs",
+     "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "NativeFenceGuard"
+     ],
+     "path": "src/supervisor.rs",
+     "purpose": "Host custody of the seccomp listener and all network transports",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionLease",
+      "SessionTransport"
+     ],
+     "path": "src/transport.rs",
+     "purpose": "A selected backend's private duplex transport and lifetime custody",
+     "surface": {
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire.rs",
+     "purpose": "Private, bounded launcher/supervisor protocol",
+     "surface": {
+      "crate-vis": 8
      }
     }
    ],
    "modules": {
-    "lib": {
+    "egress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host-owned transport"
+    },
+    "launcher": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice"
+     "purpose": "Unprivileged in-container launcher and syscall-argument broker"
+    },
+    "linux": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Linux UAPI used on both sides of the seccomp listener"
+    },
+    "relay_protocol": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock"
+    },
+    "supervisor": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Host custody of the seccomp listener and all network transports"
+    },
+    "transport": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A selected backend's private duplex transport and lifetime custody"
+    },
+    "wire": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Private, bounded launcher/supervisor protocol"
     }
    },
    "over_bar": 0,
-   "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice",
-   "source_files": 1,
+   "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
+   "source_files": 9,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -51051,6 +51481,7 @@
      "path": "src/boot.rs",
      "purpose": "Linux-only PID-1 setup, isolated execution, and final-delivery custody",
      "surface": {
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -51063,6 +51494,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/egress.rs",
+     "purpose": "The native microVM supervisor's network reaches only the engine's vsock",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51085,7 +51526,7 @@
      "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "re-export": 2,
       "type": 1
      }
@@ -51102,10 +51543,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native.rs",
+     "purpose": "Native OCI session inside a no-NIC microVM",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -51150,12 +51601,26 @@
      "layout": "file",
      "purpose": "Typed Component Model fixture"
     },
+    "egress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The native microVM supervisor's network reaches only the engine's vsock"
+    },
     "filesystem": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Descriptor-relative workspace access"
+    },
+    "native": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Native OCI session inside a no-NIC microVM"
     },
     "protocol": {
      "files": 1,
@@ -51181,7 +51646,7 @@
    },
    "over_bar": 0,
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
-   "source_files": 7,
+   "source_files": 9,
    "test_files": 2
   },
   "oneiron-image": {
@@ -52214,7 +52679,7 @@
   "oneiron-llm-systemone": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SystemOneSeat"
@@ -53051,7 +53516,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 51
+      "fn": 54
      }
     },
     {
@@ -53900,7 +54365,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 52
+      "fn": 55
      }
     },
     {
@@ -54472,9 +54937,20 @@
      "surface": {
       "const": 8,
       "fn": 1,
+      "mod": 1,
       "re-export": 3,
       "struct": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/network.rs",
+     "purpose": "Address checks shared by SSRF-guarded fetches and the sandbox proxy",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -54514,6 +54990,13 @@
      "layout": "file",
      "purpose": "Host-authored prelude plus source under one guest program ceiling"
     },
+    "network": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Address checks shared by SSRF-guarded fetches and the sandbox proxy"
+    },
     "path": {
      "files": 1,
      "impl_vault": false,
@@ -54531,7 +55014,7 @@
    },
    "over_bar": 0,
    "purpose": "Portable, pure shape rules shared by the host and the isolated guest",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 0
   },
   "oneiron-seal": {
@@ -56467,13 +56950,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -56712,6 +57195,16 @@
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/conflict_routes.rs",
+     "purpose": "`/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57906,7 +58399,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/serve.rs",
@@ -58427,7 +58920,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -58585,7 +59078,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -60467,13 +60960,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GpuDerivationJob",
+      "GpuLeaseGuard",
+      "GpuPodConfig",
+      "GpuPool",
+      "GpuPoolConfig"
+     ],
+     "path": "src/runtime/gpu_pool.rs",
+     "purpose": "The serve host's owner of the per-region GPU registry",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/runtime/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -61283,7 +61794,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 219,
+     "files": 220,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61472,7 +61983,7 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61523,7 +62034,7 @@
    },
    "over_bar": 18,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 400,
+   "source_files": 402,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -131,6 +131,11 @@ export class Oneiron {
     memory: {
       diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),
     },
+    skills: {
+      save: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsSave(input) as unknown),
+      fork: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsFork(input) as unknown),
+      callables: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsCallables(input) as unknown),
+    },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }

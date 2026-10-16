@@ -461,10 +461,7 @@ impl Vault {
     /// disposition in the same read snapshot. The source identity and hash stay
     /// those of the import; a later activation or retirement is not a new import.
     /// Like `hub_import_receipt`, this door grants no read authority.
-    pub fn current_hub_import_receipts(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Vec<HubImportReceipt>> {
+    pub fn current_hub_import_receipts(&self, entity: &EntityId) -> Result<Vec<HubImportReceipt>> {
         let txn = self.store.env.read_txn()?;
         let Some(record) = self.get_skill_record_in_txn(&txn, entity)? else {
             return Ok(Vec::new());
@@ -496,9 +493,7 @@ impl Vault {
                     }
                     disposition => disposition,
                 },
-                SkillLifecycle::Stale => {
-                    InstallDisposition::NotInstalled(InstallHoldReason::Stale)
-                }
+                SkillLifecycle::Stale => InstallDisposition::NotInstalled(InstallHoldReason::Stale),
                 SkillLifecycle::Quarantined => {
                     InstallDisposition::NotInstalled(InstallHoldReason::Quarantined)
                 }
