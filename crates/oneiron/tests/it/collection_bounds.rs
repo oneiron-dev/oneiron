@@ -11,11 +11,13 @@ use oneiron::lens::{
     LensNode,
 };
 use oneiron::psych_profile::{
-    MAX_PSYCH_PROFILE_SOURCE_REVISIONS, PsychProfile, PsychProfileConfidence,
-    decode_psych_profile_body, encode_psych_profile_body,
+    PsychProfile, PsychProfileConfidence, decode_psych_profile_body, encode_psych_profile_body,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
+
+/// Most source revisions one PsychProfile snapshot cites (the engine's bound).
+const SOURCE_BOUND: usize = 4096;
 
 /// A reader whose bytes end where the decoder must have stopped.
 struct ReadPastRefusal;
@@ -218,7 +220,7 @@ fn a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_eve
     let vault = Vault::open(dir.path(), config).expect("open vault");
     crate::common::provision_engine_machines(&vault);
     let subject = EntityId::from_bytes([0x5B; 16]).expect("subject");
-    let over = MAX_PSYCH_PROFILE_SOURCE_REVISIONS + 1;
+    let over = SOURCE_BOUND + 1;
 
     // Constructor, then a host-built record handed to the store.
     profile(subject, source_ids(over)).expect_err("the constructor refuses");
@@ -252,8 +254,7 @@ fn a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_eve
     decode_psych_profile_body(&forged_body).expect_err("the decoder refuses");
 
     // Control: a snapshot at the bound stores and reads back whole.
-    let at_bound = profile(subject, source_ids(MAX_PSYCH_PROFILE_SOURCE_REVISIONS))
-        .expect("a profile at the bound");
+    let at_bound = profile(subject, source_ids(SOURCE_BOUND)).expect("a profile at the bound");
     vault
         .put_psych_profile(&subject, &at_bound)
         .expect("a profile at the bound stores");
@@ -261,8 +262,5 @@ fn a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_eve
         .get_psych_profile(&subject)
         .expect("read")
         .expect("stored");
-    assert_eq!(
-        stored.source_revision_ids.len(),
-        MAX_PSYCH_PROFILE_SOURCE_REVISIONS
-    );
+    assert_eq!(stored.source_revision_ids.len(), SOURCE_BOUND);
 }

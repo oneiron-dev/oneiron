@@ -1319,7 +1319,8 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
             Some(&json!({ "sourceRevisionIds": ids })),
         )
     };
-    let bound = oneiron::psych_profile::MAX_PSYCH_PROFILE_SOURCE_REVISIONS;
+    // oneiron's MAX_PSYCH_PROFILE_SOURCE_REVISIONS.
+    let bound = 4096;
 
     let (status, _) = route_json(server.clone(), refresh(bound + 1)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
