@@ -194,6 +194,14 @@ pub const WIRE_HEALTH: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// Whether one held automated sign act lands (ARCH-0064 D6): allow or decline. Asked of
+/// the vault owner role alone. Keyed by the document, the recipient and the hold.
+pub const ESIGN_HELD_SIGNING: QuestionFamily = QuestionFamily {
+    name: "esign.held_signing",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which capability setting one connector grant-slate row drafts (auto, always ask or
 /// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
 pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
@@ -309,6 +317,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
     WIRE_HEALTH,
+    ESIGN_HELD_SIGNING,
     CONNECTOR_SLATE_DRAFT,
     CONFLICT_RESOLUTION,
     CORRECTION,

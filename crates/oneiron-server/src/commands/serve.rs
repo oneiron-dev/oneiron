@@ -219,6 +219,7 @@ pub(super) async fn serve_with_config(
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
     workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(&sync_server)));
+    workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(&sync_server)));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).

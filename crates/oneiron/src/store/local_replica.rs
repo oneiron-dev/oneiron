@@ -117,6 +117,8 @@ pub(crate) enum KeepReason {
     Pending,
     /// An engine delete guard refuses it.
     Guarded,
+    /// A standing legal hold names it (OF-470).
+    LegalHold,
 }
 
 /// What one call removed and kept, for the caller's log.
@@ -296,6 +298,8 @@ impl<'a> Census<'a> {
         let kind = header.entity_type;
         let reason = if self.keep.kinds.contains(&kind) {
             KeepReason::Kind(kind)
+        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())? {
+            KeepReason::LegalHold
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
         } else if self.tombstones.contains(id) {

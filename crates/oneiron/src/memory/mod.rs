@@ -129,7 +129,10 @@ pub use oneiron_contracts::memory::{
 };
 // OF-063: a write that names a record its writer cannot resolve is refused
 // with this code; hover and open resolve a typed record ref through the lens.
-pub use crate::lens::{RecordRef, RecordRefPreview, ResolveRecordRefRequest};
+pub use crate::lens::{
+    LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview,
+    ResolveRecordRefRequest,
+};
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
