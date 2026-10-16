@@ -1,0 +1,26 @@
+[Unit]
+Description=Oneiron house model: EXL3 + DFlash2 generation server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=oneiron-house
+Group=oneiron-house
+WorkingDirectory=/opt/oneiron
+EnvironmentFile=-/etc/oneiron-house.env
+Environment=HF_HOME=/var/cache/oneiron-house XDG_CACHE_HOME=/var/cache/oneiron-house TORCH_EXTENSIONS_DIR=/var/cache/oneiron-house/torch_extensions
+CacheDirectory=oneiron-house
+CacheDirectoryMode=0700
+ExecStart=/opt/oneiron/deploy/house-model/serve-exl3.sh
+Restart=always
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/oneiron-house
+
+[Install]
+WantedBy=multi-user.target

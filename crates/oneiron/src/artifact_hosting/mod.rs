@@ -33,11 +33,14 @@ use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 
 mod pointer_rows;
+mod publication_sync;
 use self::pointer_rows::{
     decode_artifact_pointer_row, hex_nibble, put_artifact_pointer_in_txn, snapshot_file_entry,
     validate_artifact_path,
 };
 pub(crate) use self::pointer_rows::{remove_blob_pointers_in_txn, validate_artifact_id};
+use self::publication_sync::mark_publication_in_txn;
+pub use self::publication_sync::{ArtifactPublicationFrame, ArtifactPublicationOutcome};
 
 pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
 
@@ -552,6 +555,9 @@ impl Vault {
             artifact: artifact.to_owned(),
         };
         let removed = ARTIFACT_POINTERS.delete(&self.store, &mut wtxn, &key)?;
+        if removed {
+            mark_publication_in_txn(&self.store, &mut wtxn, channel, artifact)?;
+        }
         wtxn.commit()?;
         Ok(removed)
     }

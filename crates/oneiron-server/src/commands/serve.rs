@@ -99,7 +99,12 @@ pub(super) async fn serve_with_config(
         .with_embedder(embedder)
         .with_tagger(tagger)
         .with_owner_host(owner_host)
-        .with_browser_guest(config.browser.as_ref().map(crate::config::BrowserConfig::guest))
+        .with_browser_guest(
+            config
+                .browser
+                .as_ref()
+                .map(crate::config::BrowserConfig::guest),
+        )
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,

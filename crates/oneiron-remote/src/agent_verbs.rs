@@ -22,10 +22,14 @@ impl OneironClient {
         if !oneiron::task_verb::sdk::AgentVerb::from_name(verb)
             .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade)
         {
-            return Err(crate::error::bad_request(
-                "unknown SDK agent verb",
-                &["Use a verb from the SDK catalog."],
-            ));
+            return Err(
+                oneiron::task_verb::sdk::wrong_root(verb).unwrap_or_else(|| {
+                    crate::error::bad_request(
+                        "unknown SDK agent verb",
+                        &["Use a verb from the SDK catalog."],
+                    )
+                }),
+            );
         }
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {

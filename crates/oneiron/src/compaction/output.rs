@@ -207,16 +207,21 @@ impl OutputWorkingContext {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<Vec<OutputContextView>> {
-        self.assemble_with(turn, policy, |source| restore_output(vault, source))
+        self.assemble_with(turn, policy, |source| {
+            restore_output(vault, source).map(Some)
+        })
     }
 
     /// Assemble through the owner's own routed raw-output store. The callback
     /// is invoked for full views only; overview and stub never read raw bytes.
+    ///
+    /// `restore` returns `None` for a Full body the caller will not hold in
+    /// memory; that entry's view is its stub, which reads it by reference.
     pub fn assemble_with(
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
-        mut restore: impl FnMut(OutputRef) -> Result<Vec<u8>>,
+        mut restore: impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
     ) -> Result<Vec<OutputContextView>> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -282,14 +287,16 @@ impl OutputContextEntry {
         turn: u64,
         policy: OutputDecayPolicy,
     ) -> Result<OutputContextView> {
-        self.view_with(turn, policy, &mut |source| restore_output(vault, source))
+        self.view_with(turn, policy, &mut |source| {
+            restore_output(vault, source).map(Some)
+        })
     }
 
     fn view_with(
         &self,
         turn: u64,
         policy: OutputDecayPolicy,
-        restore: &mut impl FnMut(OutputRef) -> Result<Vec<u8>>,
+        restore: &mut impl FnMut(OutputRef) -> Result<Option<Vec<u8>>>,
     ) -> Result<OutputContextView> {
         if policy.overview_after_turns > policy.stub_after_turns {
             return Err(Error::InvalidConfig(
@@ -302,7 +309,9 @@ impl OutputContextEntry {
         } else if age >= policy.overview_after_turns {
             (OutputTier::Overview, self.overview.as_bytes().to_vec())
         } else {
-            let bytes = restore(self.source)?;
+            let Some(bytes) = restore(self.source)? else {
+                return Ok(self.stub_view());
+            };
             self.source.verify(&bytes)?;
             (OutputTier::Full, bytes)
         };

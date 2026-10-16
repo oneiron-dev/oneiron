@@ -93,8 +93,9 @@ impl Versions {
     }
 
     fn require(&mut self, doc: &EntityDoc, frontier: &[u8]) -> Result<usize> {
-        self.find(doc, &decode_frontier(frontier)?)
-            .ok_or(invalid("entity document names a version it no longer retains"))
+        self.find(doc, &decode_frontier(frontier)?).ok_or(invalid(
+            "entity document names a version it no longer retains",
+        ))
     }
 }
 
@@ -140,18 +141,27 @@ fn history(
     let mut versions = Versions::default();
     let head = versions
         .find(doc, &doc.doc.oplog_frontiers())
-        .ok_or(Error::InvariantViolation("live head outside retained history"))?;
+        .ok_or(Error::InvariantViolation(
+            "live head outside retained history",
+        ))?;
     if shallow {
         versions
             .find(doc, &doc.doc.shallow_since_frontiers())
-            .ok_or(Error::InvariantViolation("purge floor outside retained history"))?;
+            .ok_or(Error::InvariantViolation(
+                "purge floor outside retained history",
+            ))?;
     }
     let mut pin_rows = Vec::with_capacity(pins.len());
     for pin in pins {
         let at = versions.require(doc, &pin.anchor.frontier)?;
         let origin = doc.fork(&pin.anchor.frontier)?;
         let (start, end) = super::verbs::resolve(&origin, *entity, &pin.anchor)?;
-        let quote: String = origin.text().chars().skip(start).take(end - start).collect();
+        let quote: String = origin
+            .text()
+            .chars()
+            .skip(start)
+            .take(end - start)
+            .collect();
         if quote != pin.anchor.quote {
             return Err(invalid("entity document pin no longer quotes its version"));
         }
@@ -211,7 +221,9 @@ fn history(
     let parents = hasse(&versions.vvs);
     let order = canonical_order(&parents, &texts)?;
     if order[head] != texts.len() - 1 {
-        return Err(Error::InvariantViolation("live head is not the last version"));
+        return Err(Error::InvariantViolation(
+            "live head is not the last version",
+        ));
     }
     let mut by_index = vec![0; order.len()];
     for (node, &index) in order.iter().enumerate() {
@@ -221,7 +233,9 @@ fn history(
     for &node in &by_index {
         let mut mapped: Vec<u32> = parents[node].iter().map(|&p| order[p] as u32).collect();
         mapped.sort_unstable();
-        let first = mapped.first().map_or("", |&p| texts[by_index[p as usize]].as_str());
+        let first = mapped
+            .first()
+            .map_or("", |&p| texts[by_index[p as usize]].as_str());
         let mut version = CanonicalEntityDocumentHistory::splice(first, &texts[node])?;
         version.parents = mapped;
         carried.push(version);
@@ -357,8 +371,7 @@ fn canonical_order(parents: &[Vec<usize>], texts: &[String]) -> Result<Vec<usize
         let mut best: Option<(Vec<usize>, usize)> = None;
         let mut tied = false;
         for node in 0..parents.len() {
-            if order[node] != usize::MAX || parents[node].iter().any(|&p| order[p] == usize::MAX)
-            {
+            if order[node] != usize::MAX || parents[node].iter().any(|&p| order[p] == usize::MAX) {
                 continue;
             }
             let mut key: Vec<usize> = parents[node].iter().map(|&p| order[p]).collect();
@@ -491,13 +504,17 @@ fn refuse_loss(
     for (_, purge) in ENTITY_DOC_PURGE_RECEIPT.scan_from(store, txn, &prefix(entity))? {
         let receipt = raw(&purge.receipt)?;
         if !history.is_some_and(|h| h.purges.iter().any(|carried| carried.receipt == receipt)) {
-            return Err(invalid("entity document recovery would undo an owner purge"));
+            return Err(invalid(
+                "entity document recovery would undo an owner purge",
+            ));
         }
     }
     for (_, pin) in ENTITY_DOC_PIN.scan_from(store, txn, &prefix(entity))? {
         let citation = raw(&pin.citation)?;
         if !history.is_some_and(|h| h.pins.iter().any(|carried| carried.citation == citation)) {
-            return Err(invalid("entity document recovery would drop a citation pin"));
+            return Err(invalid(
+                "entity document recovery would drop a citation pin",
+            ));
         }
     }
     Ok(())
@@ -575,7 +592,9 @@ fn replay(
     let doc = if history.shallow {
         let shallow = EntityDoc::from_snapshot(&doc.shallow_snapshot(&frontiers[0].encode())?)?;
         if shallow.text() != row.text {
-            return Err(Error::InvariantViolation("replayed purge changed live state"));
+            return Err(Error::InvariantViolation(
+                "replayed purge changed live state",
+            ));
         }
         shallow
     } else {
@@ -697,7 +716,12 @@ fn bind_rows(
                 .update(output, UpdateOptions::default())
                 .map_err(|_| invalid("entity document fork replay"))?;
             branch.doc.commit();
-            ENTITY_DOC_FORK_SNAPSHOT.put(store, txn, &record.fork, &branch.shallow_snapshot(&base)?)?;
+            ENTITY_DOC_FORK_SNAPSHOT.put(
+                store,
+                txn,
+                &record.fork,
+                &branch.shallow_snapshot(&base)?,
+            )?;
         }
     }
     Ok(())
