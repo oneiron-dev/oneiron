@@ -286,6 +286,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.keystore.validate()?;
     config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
+    if let Some(browser) = &config.browser {
+        browser.validate()?;
+    }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -490,6 +493,7 @@ struct FileServeConfig {
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
+    browser: Option<super::BrowserConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -540,6 +544,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             limits: value.limits,
             import: value.import,
             models: None,
+            browser: value.browser,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -592,6 +597,8 @@ struct PartialServeConfig {
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
+    /// `[browser]` is file-only, as `[models]` is.
+    browser: Option<super::BrowserConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -654,6 +661,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
+            .field("browser", &self.browser)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -797,6 +805,9 @@ impl PartialServeConfig {
         if let Some(value) = self.models {
             resolved.models = Some(value);
         }
+        if let Some(value) = self.browser {
+            resolved.browser = Some(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -869,6 +880,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             limits: None,
             import: None,
             models: None,
+            browser: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

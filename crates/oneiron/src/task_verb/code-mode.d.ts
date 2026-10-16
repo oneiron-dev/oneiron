@@ -6,6 +6,17 @@ declare namespace self {
       subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
       unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     };
+    browser: {
+      click(input: { ref: string }): Promise<unknown>;
+      expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
+      find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
+      observe(input: { since?: number | null }): Promise<unknown>;
+      open(input: { url: string }): Promise<unknown>;
+      screenshot(input: object): Promise<unknown>;
+      select(input: { option: string; ref: string }): Promise<unknown>;
+      type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
+      wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
+    };
     can(input: { ask: object }): Promise<unknown>;
     cancel(input: { task_ref: string }): Promise<unknown>;
     claim_upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;

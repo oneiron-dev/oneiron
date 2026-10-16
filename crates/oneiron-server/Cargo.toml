@@ -47,6 +47,8 @@ oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract"
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 # Every subprocess starts with only the descriptors it is named.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
+# Code mode's browser: a Chromium guest in a container, driven over CDP.
+oneiron-browser = { path = "../oneiron-browser", features = ["driver"] }
 # This install's this-device-only key slots (world privacy P6b).
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 # The Dreamer's starter motor: the server owns the wake supervisor and the

@@ -275,6 +275,9 @@ pub struct ServeConfig {
     /// Absent means no model seat is filled: every model-free path runs and
     /// the Dreamer reports idle for want of a model.
     pub models: Option<super::ModelsConfig>,
+    /// The `[browser]` section, absent until the config file names it.
+    /// Absent means code runs have no browser.
+    pub browser: Option<super::BrowserConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -332,6 +335,7 @@ impl Default for ServeConfig {
             limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
+            browser: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -395,6 +399,7 @@ impl fmt::Debug for ServeConfig {
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
+            .field("browser", &self.browser)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
