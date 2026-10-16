@@ -169,39 +169,21 @@ impl Vault {
             )
         })
     }
-    /// Commits one screened install, from a hub ask or the owner's own put:
-    /// bundled skills, the receipt, and for Active the kinds, predicate
-    /// ownership and the pack-drift repair of an update.
-    pub(super) fn commit_pack_install_in_txn(
+    /// Imports each bundled skill and admits it through the one install
+    /// transition, writing its import receipt. A hold keeps every skill
+    /// Candidate beside its pack; with none, an unloadable skill fails the
+    /// install. Hub and owner installs share it with the engine's own
+    /// built-in seed and qualification (OF-378).
+    pub(super) fn admit_pack_skills_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         source: &PackSource,
-        commit: &PackCommit<'_>,
-    ) -> Result<PackInstallDisposition> {
-        if let Some(qualification) = commit.qualification {
-            validate_qualification(source, qualification)?;
-        }
-        let at = crate::unix_seconds_now();
-        let (skills, skill_sources) =
-            self.import_pack_skills_in_txn(txn, &source, &commit.hub, at)?;
-        let candidate_reason = if commit.verdict.rules_hit {
-            Some(PackCandidateReason::RulesHit)
-        } else if commit.foreign.is_some()
-            && self.pack_advisory_hold_in_txn(txn, source.content_hash())?
-        {
-            Some(PackCandidateReason::Advisories)
-        } else if source.has_code() && !commit.verdict.code_auto_install {
-            Some(PackCandidateReason::CodeAutoInstallOff)
-        } else if source.manifest.kind == PackKind::Connector && commit.qualification.is_none() {
-            Some(PackCandidateReason::QualificationRequired)
-        } else {
-            None
-        };
-        let status = if candidate_reason.is_some() {
-            PackInstallStatus::Candidate
-        } else {
-            PackInstallStatus::Active
-        };
+        hub: &HubRef,
+        foreign: Option<&ForeignSkillPublisher>,
+        hold: Option<PackCandidateReason>,
+        at: u64,
+    ) -> Result<Vec<EntityId>> {
+        let (skills, skill_sources) = self.import_pack_skills_in_txn(txn, source, hub, at)?;
         // One transition owns each bundled skill's admission and final receipt.
         // No intermediate Candidate label can escape this transaction.
         for source in &skill_sources {
@@ -212,7 +194,7 @@ impl Vault {
             let plan = InstallPlan::pack(
                 &record,
                 InstallBinding::new(&source.reference, source.hash, &capabilities),
-                candidate_reason.map(|reason| match reason {
+                hold.map(|reason| match reason {
                     PackCandidateReason::RulesHit => InstallHoldReason::RulesHit,
                     PackCandidateReason::CodeAutoInstallOff => {
                         InstallHoldReason::CodeAutoInstallOff
@@ -231,7 +213,7 @@ impl Vault {
                 at,
                 None,
             )?;
-            if status == PackInstallStatus::Active
+            if hold.is_none()
                 && !matches!(
                     result.disposition,
                     InstallDisposition::Installed | InstallDisposition::AlreadyInstalled
@@ -244,10 +226,51 @@ impl Vault {
                 &source.entity,
                 source.hash,
                 &source.reference,
-                commit.foreign.map(|publisher| (publisher, result, "")),
+                foreign.map(|publisher| (publisher, result, "")),
                 at,
             )?;
         }
+        Ok(skills)
+    }
+    /// Commits one screened install, from a hub ask or the owner's own put:
+    /// bundled skills, the receipt, and for Active the kinds, predicate
+    /// ownership and the pack-drift repair of an update.
+    pub(super) fn commit_pack_install_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: &PackSource,
+        commit: &PackCommit<'_>,
+    ) -> Result<PackInstallDisposition> {
+        if let Some(qualification) = commit.qualification {
+            validate_qualification(source, qualification)?;
+        }
+        let at = crate::unix_seconds_now();
+        let candidate_reason = if commit.verdict.rules_hit {
+            Some(PackCandidateReason::RulesHit)
+        } else if commit.foreign.is_some()
+            && self.pack_advisory_hold_in_txn(txn, source.content_hash())?
+        {
+            Some(PackCandidateReason::Advisories)
+        } else if source.has_code() && !commit.verdict.code_auto_install {
+            Some(PackCandidateReason::CodeAutoInstallOff)
+        } else if source.manifest.kind == PackKind::Connector && commit.qualification.is_none() {
+            Some(PackCandidateReason::QualificationRequired)
+        } else {
+            None
+        };
+        let status = if candidate_reason.is_some() {
+            PackInstallStatus::Candidate
+        } else {
+            PackInstallStatus::Active
+        };
+        let skills = self.admit_pack_skills_in_txn(
+            txn,
+            source,
+            commit.hub,
+            commit.foreign,
+            candidate_reason,
+            at,
+        )?;
         if status == PackInstallStatus::Active
             && let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)?
         {

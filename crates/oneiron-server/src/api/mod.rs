@@ -111,6 +111,8 @@ mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
 mod llm;
+#[cfg(feature = "mesh")]
+pub(crate) use llm::MeshLlm;
 mod mcp_gateway;
 mod memory;
 // ONE-207 [RET-207]: the provider-neutral memory reasoning route. It owns the
