@@ -30,6 +30,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.namespaces", post(vault_kv_namespaces))
         .route("/vault.weave.report", post(vault_weave_report))
         .route("/vault.weave.digest", post(vault_weave_digest))
+        .route("/vault.weave.link.wrong", post(vault_weave_link_wrong))
         .route("/vault.packs.put", post(vault_packs_put))
         .route(
             "/vault.packs.setup.prepare",
@@ -817,6 +818,21 @@ async fn vault_weave_digest(
         class,
         "vault.weave.digest",
         value,
+    )?))
+}
+async fn vault_weave_link_wrong(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.weave.link.wrong")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.link.wrong", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_weave_link_wrong(&server, &auth, facade_input(value)?).await?,
     )?))
 }
 async fn vault_packs_put(

@@ -55,6 +55,7 @@ vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
+vaultWeaveLinkWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown

@@ -26,6 +26,7 @@ mod agent_verbs;
 pub(super) mod role_picks;
 pub(super) mod host_doors;
 mod shared_act_doors;
+mod weave_doors;
 #[cfg(test)]
 pub(super) mod tests;
 

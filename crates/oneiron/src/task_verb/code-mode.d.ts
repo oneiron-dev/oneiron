@@ -231,6 +231,9 @@ declare const vault: {
   };
   weave: {
     digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    link: {
+      wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
+    };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;

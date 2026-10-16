@@ -42,8 +42,9 @@ mod weave_correction;
 mod weave_report;
 mod weave_serve;
 pub use weave_serve::{
-    WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveReaderKind, WeaveReaderRef,
-    WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveSectionInput, WeaveSectionView,
+    WeaveDigestRequest, WeaveDigestView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind,
+    WeaveReaderRef, WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveSectionInput,
+    WeaveSectionView, WeaveWrongLinkRequest,
 };
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};

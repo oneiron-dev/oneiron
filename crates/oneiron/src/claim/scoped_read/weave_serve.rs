@@ -5,11 +5,13 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader,
-    WeaveDigestSchedule, WeaveItem, WeaveReader, WeaveReport, WeaveSectionKind, WeaveSectionSpec,
+    WeaveDigestSchedule, WeaveItem, WeaveLinkCorrection, WeaveReader, WeaveReport,
+    WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
+use crate::provenance::EdgeRef;
 use crate::EntityId;
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +71,56 @@ pub struct WeaveDigestRequest {
     /// The period's due Unix second, as its inbox notice names it.
     #[serde(default)]
     pub scheduled_for: Option<u64>,
+}
+
+/// `vault.weave.link.wrong`'s input: one link, as the reader's report
+/// serves it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveWrongLinkRequest {
+    pub source_ref: String,
+    pub kind: String,
+    pub target_ref: String,
+}
+
+impl WeaveWrongLinkRequest {
+    fn link(&self) -> MemoryResult<EdgeRef> {
+        let entity = |hex: &str| {
+            EntityId::from_hex(hex)
+                .map_err(|_| MemoryError::bad_request("a weave link names entity ids"))
+        };
+        Ok(EdgeRef::new(
+            entity(&self.source_ref)?,
+            EdgeKind::from_name(&self.kind)
+                .ok_or_else(|| MemoryError::bad_request("unknown weave edge kind"))?,
+            entity(&self.target_ref)?,
+        ))
+    }
+}
+
+/// One filed wrong-link label. It labels the link for the loops; the link
+/// itself stays.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WeaveLinkCorrectionView {
+    pub label_ref: String,
+    pub source_ref: String,
+    pub kind: String,
+    pub target_ref: String,
+    pub actor_ref: String,
+    pub recorded_at: u64,
+}
+
+impl WeaveLinkCorrectionView {
+    fn from_correction(correction: &WeaveLinkCorrection) -> Self {
+        Self {
+            label_ref: correction.id.to_hex(),
+            source_ref: correction.link.source.to_hex(),
+            kind: correction.link.kind.name().to_owned(),
+            target_ref: correction.link.target.to_hex(),
+            actor_ref: correction.actor.to_hex(),
+            recorded_at: correction.recorded_at,
+        }
+    }
 }
 
 /// One served item. A claim comes through the same served claim view as
@@ -256,6 +308,22 @@ impl Memory<'_> {
         stored
             .map(|stored| self.weave_digest_view(stored))
             .transpose()
+    }
+
+    /// `vault.weave.link.wrong`: the one-tap wrong control on a link the
+    /// bound human sees in its own lens, filed as a label under `proof`. An
+    /// owner proof in `owner` files from the owner lens; an agent files
+    /// nothing.
+    pub fn weave_wrong_link(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        proof: &AuthenticatedOwner,
+        request: &WeaveWrongLinkRequest,
+    ) -> MemoryResult<WeaveLinkCorrectionView> {
+        let reader = self.weave_reader(owner)?;
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let filed = read.report_wrong_link(proof, reader, request.link()?)?;
+        Ok(WeaveLinkCorrectionView::from_correction(&filed))
     }
 
     fn weave_digest_view(&self, stored: StoredWeaveDigest) -> MemoryResult<WeaveDigestView> {

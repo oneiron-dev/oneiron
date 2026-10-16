@@ -203,6 +203,9 @@ export class Oneiron {
     weave: {
       report: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveReport(input) as unknown),
       digest: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveDigest(input) as unknown),
+      link: {
+        wrong: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as unknown),
+      },
     },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
