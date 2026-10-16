@@ -86,7 +86,7 @@ pub enum HookOutcomeKind {
 }
 
 impl HookOutcomeKind {
-    fn applies_in(self, phase: HookPhase) -> bool {
+    pub(crate) fn applies_in(self, phase: HookPhase) -> bool {
         use HookOutcomeKind::{
             AddBlock, Annotate, Ask, Continue, Effect, Enqueue, Nothing, Propose, Redact, Rewrite,
             Skip,

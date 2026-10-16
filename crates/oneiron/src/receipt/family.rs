@@ -306,6 +306,9 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(channel_identity_lifecycle_receipts(vault, query)?);
     }
+    if query.includes_kind(ReceiptKind::Hook) {
+        records.extend(crate::runtime_hooks::hook_receipts(vault, query)?);
+    }
 
     // The settle projection opens its own read txn, so it runs before the shared
     // `rtxn` below to avoid a nested read transaction on this thread. It applies
