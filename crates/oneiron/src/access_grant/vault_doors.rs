@@ -13,6 +13,30 @@ use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
 use crate::error::RecordError;
 
 impl Vault {
+    /// A companion-profile grant names a live PERSON, and a live FACET when
+    /// it is bounded to one. No other scope shape is judged here.
+    fn check_companion_profile_target(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: &AccessGrant,
+    ) -> Result<()> {
+        let Some((person_ref, facet_ref)) = grant.scope.companion_profile_refs() else {
+            return Ok(());
+        };
+        let live_as = |id: &EntityId, kind: u8| match crate::vault::live_entity_row_in_txn(
+            &self.store,
+            txn,
+            id,
+        )? {
+            crate::vault::LiveEntityRow::Live { entity_type, .. } if entity_type == kind => Ok(()),
+            _ => Err(invalid_grant()),
+        };
+        live_as(&person_ref, crate::registry::ENTITY_TYPE_PERSON)?;
+        facet_ref.map_or(Ok(()), |facet_ref| {
+            live_as(&facet_ref, crate::registry::ENTITY_TYPE_FACET)
+        })
+    }
+
     fn check_channel_identity_access_write(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -51,6 +75,7 @@ impl Vault {
         let data = encode_access_grant_body(grant)?;
         let mut wtxn = self.store.env.write_txn()?;
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
+        self.check_companion_profile_target(&wtxn, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
         self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
         wtxn.commit()?;
@@ -62,6 +87,7 @@ impl Vault {
         let data = encode_access_grant_body(grant)?;
         let mut wtxn = self.store.env.write_txn()?;
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
+        self.check_companion_profile_target(&wtxn, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
         if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));

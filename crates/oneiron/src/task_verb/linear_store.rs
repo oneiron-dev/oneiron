@@ -171,6 +171,7 @@ impl<'v> VaultLinearTaskStore<'v> {
         fields.status = match body.state.as_ref() {
             Some(TaskExecutionState::Working { .. }) => "working".to_owned(),
             Some(TaskExecutionState::Interrupted { .. }) => "interrupted".to_owned(),
+            Some(TaskExecutionState::Blocked { .. }) => "blocked".to_owned(),
             Some(TaskExecutionState::Terminal(record)) => record.disposition.as_str().to_owned(),
             None | Some(TaskExecutionState::Queued) => fields.status,
         };

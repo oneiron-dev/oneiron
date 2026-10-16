@@ -206,7 +206,7 @@ impl SessionClosePredicate {
 /// The pre-planned SessionEnd → Meso wake for [`Vault::end_session_with_wake`]:
 /// the output of the production planning trio (`read_watermark` →
 /// `scan_dirty_turns` → `plan_partitions`) run OUTSIDE the end transaction,
-/// plus the facts the transaction needs to guard and settle the round.
+/// plus a preview of the admission window. Close replans atomically.
 #[derive(Debug, Clone)]
 pub struct SessionEndWake {
     /// Preview partition plans over the dirty-turn backlog — the SAME payload
@@ -222,16 +222,16 @@ pub struct SessionEndWake {
     /// settlement basis, so a screened-out turn is still consumed by this
     /// round rather than left dirty forever.
     pub plans: Vec<ConsolidationPartitionPlan>,
-    /// The Meso watermark the plans were taken against. The transaction
-    /// re-reads the watermark and skips the enqueue + advance when it
-    /// moved — another planner already owns those turns.
+    /// The Meso watermark this preview was taken against. Close rebuilds
+    /// the round in its own transaction, so a late arrival or a competing
+    /// planner cannot make this preview skip consolidation.
     pub planned_watermark: u64,
     /// Admissible dirty-turn IDs in the planned watermark window, in
     /// deterministic `(learned_at, id)` scan order. The transaction
     /// re-collects and exactly compares this identity set before settling.
     pub planned_turn_ids: Vec<EntityId>,
-    /// Where the watermark advances after the enqueue (the scan's max
-    /// `learned_at`), if the scan found dirty turns.
+    /// The preview's maximum effective dirty key, bounded by store time.
+    /// Close recomputes it from the same snapshot as its enqueue.
     pub advance_watermark_to: Option<u64>,
 }
 
@@ -495,8 +495,14 @@ impl Vault {
     pub(crate) fn plan_session_end_wake_in_txn(&self, wtxn: &RwTxn<'_>) -> Result<SessionEndWake> {
         let scope = DreamerConsolidationScope::Meso;
         let watermark = read_watermark_in_txn(self, wtxn, scope)?;
-        let dirty_ids =
-            collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
+        let admission_time = crate::ports::job_recorded_at_in_txn(&self.store, wtxn)?;
+        let dirty_ids = collect_dirty_turn_ids_in_txn(
+            self,
+            wtxn,
+            scope,
+            watermark.last_learned_at,
+            admission_time,
+        )?;
 
         let dirty = read_partition_turns_in_txn(self, wtxn, scope, &dirty_ids)?;
 
@@ -561,7 +567,7 @@ impl Vault {
         expected: &EntityId,
         predicate: SessionClosePredicate,
         now: u64,
-        wake: &SessionEndWake,
+        _wake: &SessionEndWake,
         end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
         let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
@@ -599,48 +605,23 @@ impl Vault {
         // dirty turns behind.
         register_substitution_mine_in_txn(self, wtxn, &id, now)?;
 
-        // (d) The durable wake, same commit. Skipped wholesale when the
-        // Meso watermark or bounded dirty snapshot moved since the plan
-        // was taken: those turns belong to a later planning round.
+        // (d) Replan from this close's snapshot, never from a stale preview.
+        // A late TURN and its carrier may have landed since that preview;
+        // both admission and settlement must name the same current prefix.
         let scope = DreamerConsolidationScope::Meso;
+        let wake = self.plan_session_end_wake_in_txn(wtxn)?;
         let current = read_watermark_in_txn(self, wtxn, scope)?;
-        if current.last_learned_at == wake.planned_watermark {
-            let dirty_snapshot_matches = match wake.advance_watermark_to {
-                Some(advance_to) => {
-                    let in_txn_ids = collect_dirty_turn_ids_in_txn(
-                        self,
-                        wtxn,
-                        scope,
-                        wake.planned_watermark,
-                        advance_to,
-                    )?;
-                    // EXACT identity is the only matching leg: a round whose
-                    // turns vanished between plan and close is a stale round,
-                    // and enqueuing it would settle the watermark COMPLETE past
-                    // every key at that second — including turns no planner ever
-                    // saw. Plan and fence are the same in-transaction read, so
-                    // for a live round this holds by construction.
-                    in_txn_ids.as_slice() == wake.planned_turn_ids.as_slice()
-                }
-                None => wake.planned_turn_ids.is_empty(),
-            };
-            if dirty_snapshot_matches {
-                // Rebuild both extraction and accounting from the fenced IDs
-                // under this transaction's policy, bodies, and partition facts.
-                // Preview plans are not authority after policy/body drift.
-                enqueue_partition_attempts_in_txn(
-                    self,
-                    wtxn,
-                    scope,
-                    &wake.planned_turn_ids,
-                    &current,
-                    None,
-                    now,
-                )?;
-                if let Some(advance_to) = wake.advance_watermark_to {
-                    advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
-                }
-            }
+        enqueue_partition_attempts_in_txn(
+            self,
+            wtxn,
+            scope,
+            &wake.planned_turn_ids,
+            &current,
+            None,
+            now,
+        )?;
+        if let Some(advance_to) = wake.advance_watermark_to {
+            advance_watermark_in_txn(self, wtxn, scope, advance_to)?;
         }
 
         Ok(Some(EndedSession {

@@ -192,7 +192,20 @@ fn named_in(
 
 impl Vault {
     /// The single normalized connector-in door for reactions.
-    pub fn ingest_reaction(&self, input: ReactionIngress) -> Result<ReactionChange> {
+    pub fn ingest_reaction(&self, mut input: ReactionIngress) -> Result<ReactionChange> {
+        match &mut input {
+            ReactionIngress::ProviderAdd {
+                glyph, generation, ..
+            }
+            | ReactionIngress::Echo {
+                glyph, generation, ..
+            }
+            | ReactionIngress::Remove {
+                glyph, generation, ..
+            } => {
+                *glyph = super::channel_adapters::channel_glyph(&generation.connector, glyph)?;
+            }
+        }
         self.with_write_txn_grouped(|txn| {
             let fold = admission_in(self, txn)?;
             match &input {
@@ -208,6 +221,19 @@ impl Vault {
                     let chain = chain_in(self, txn, &fold, *message, *by, glyph)?;
                     if let Some(index) = named_in(self, txn, &fold, &chain, generation)? {
                         return Ok(replayed(chain[index].id));
+                    }
+                    if generation.connector == "imessage_bridge"
+                        && let Some(newer) = super::channel_adapters::replace_tapbacks_in(
+                            self,
+                            txn,
+                            &fold,
+                            *message,
+                            *by,
+                            glyph,
+                            *occurred_at,
+                        )?
+                    {
+                        return Ok(replayed(newer));
                     }
                     if let Some(live) = chain.iter().rev().find(|row| row.live()) {
                         // The provider shows our own live reaction: an echo that
@@ -259,6 +285,17 @@ impl Vault {
                         return Err(invalid(
                             "echo target is already bound to a provider generation",
                         ));
+                    }
+                    if generation.connector == "imessage_bridge" && row.live() {
+                        super::channel_adapters::replace_tapbacks_in(
+                            self,
+                            txn,
+                            &fold,
+                            *message,
+                            *by,
+                            glyph,
+                            row.value.occurred_at,
+                        )?;
                     }
                     let now = self.store.clock.now_recorded_at();
                     bind_echo_in_txn(self, txn, row.id, generation, now)?;
