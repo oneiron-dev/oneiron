@@ -43756,7 +43756,7 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 32
      }
     },
@@ -43815,7 +43815,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 164
+      "fn": 169
      }
     },
     {
@@ -43855,6 +43855,25 @@
       "enum": 5,
       "fn": 16,
       "struct": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LegalHoldEraseState",
+      "LegalHoldErasedRecord",
+      "LegalHoldLiftAndEraseRequest",
+      "LegalHoldLiftAndErased",
+      "LegalHoldPlaceRequest",
+      "LegalHoldWidenRequest"
+     ],
+     "path": "src/task_verb/sdk_legal_hold.rs",
+     "purpose": "The inputs and answers of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 5
      }
     },
     {
@@ -46026,7 +46045,7 @@
      "path": "src/workspace_roster/codec.rs",
      "purpose": "Roster reads, journal records, and canonical onboarding encodings",
      "surface": {
-      "crate-vis": 44
+      "crate-vis": 45
      }
     },
     {
@@ -46072,7 +46091,7 @@
      "path": "src/workspace_roster/join_consent.rs",
      "purpose": "Three consents, three parties (OF-531): one typed decision that joins a payer's spend, a vault's membership…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 9,
       "fn": 6,
       "struct": 6
@@ -46877,7 +46896,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "enum": 1
      }
     },
@@ -46998,6 +47017,16 @@
       "const": 1,
       "enum": 1,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/workplace_join.rs",
+     "purpose": "Workplace actors join rooms through the three consents (OF-417 slice 2)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -49442,7 +49471,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 105,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -49575,7 +49604,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49598,7 +49627,7 @@
    },
    "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2994,
+   "source_files": 2996,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57271,7 +57300,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 142
+      "fn": 147
      }
     },
     {
@@ -58284,7 +58313,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 143
+      "fn": 148
      }
     },
     {
@@ -60743,7 +60772,17 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/legal_hold_doors.rs",
+     "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -61412,6 +61451,16 @@
      "notable": [],
      "path": "src/api/owner_routes/inbox_routes.rs",
      "purpose": "`/v1/owner/inbox`: the owner's view of the agent inbox lens (ARCH-0063 R4, INB-03)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/legal_hold_routes.rs",
+     "purpose": "`/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same owner door as every other owner…",
      "surface": {
       "crate-vis": 1
      }
@@ -62363,7 +62412,7 @@
      "surface": {
       "enum": 9,
       "fn": 3,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 20
      }
     },
@@ -62420,6 +62469,11 @@
       "ImportFolderRescanArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
+      "LegalHoldLiftArgs",
+      "LegalHoldPlaceArgs",
+      "LegalHoldTargetArgs",
+      "LegalHoldWidenArgs",
+      "LegalHoldsCommand",
       "MaintainArgs",
       "RecoverClockArgs",
       "RecoverWindowArgs",
@@ -62439,8 +62493,8 @@
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 7,
-      "struct": 24
+      "enum": 8,
+      "struct": 28
      }
     },
     {
@@ -62469,7 +62523,7 @@
       "const": 1,
       "crate-vis": 4,
       "fn": 12,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 1
      }
     },
@@ -62709,14 +62763,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -65328,7 +65382,7 @@
      "path": "src/owner/history.rs",
      "purpose": "Erase history (ARCH-0038, ARCH-0032 #pins): the owner drops a text's edit history below its oldest pin, by…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -66520,7 +66574,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 248,
+     "files": 250,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66814,9 +66868,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 26,
+   "over_bar": 27,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 470,
+   "source_files": 472,
    "test_files": 182
   },
   "oneiron-spawn": {
