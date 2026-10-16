@@ -5,9 +5,10 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::{Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
-/// Vault-local content-addressed store of a recoverable full tool/agent output blob. Key: hash32.
-const OUTPUT_BLOB: SideTable<[u8; 32], Vec<u8>, Raw> =
-    SideTable::new(&side_table::COMPACTION_OUTPUT_BLOB);
+/// The occurrence path a context output's manifest names. Its body is one of
+/// the code-run raw-output family, keyed by its content: inline in its row
+/// up to the inline bound, past it a file beside data.mdb.
+const CONTEXT_OUTPUT_PATH: &str = "context/output";
 
 /// Immutable derived text summary of one output, keyed by source content hash and
 /// summarization-recipe hash. Key: hash32 + hash32.
@@ -327,29 +328,21 @@ impl OutputContextEntry {
     }
 }
 
-/// Vault-local content-addressed side store. No interpretation or claim write.
+/// Stores an output in the vault's result-body store, keyed by its content.
+/// No interpretation or claim write.
 pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
-    let source = OutputRef::from_bytes(bytes);
-    vault.with_write_txn_grouped(|txn| {
-        if let Some(existing) = OUTPUT_BLOB.get(&vault.store, txn, &source.hash)? {
-            if existing.as_slice() != bytes {
-                return Err(Error::CorruptedIndex("output content address"));
-            }
-        } else {
-            OUTPUT_BLOB.put(&vault.store, txn, &source.hash, &bytes.to_vec())?;
-        }
-        Ok(())
-    })?;
-    Ok(source)
+    let mut sink = vault.code_run_output_sink()?;
+    sink.write(bytes)?;
+    Ok(vault
+        .publish_code_run_output(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None)?
+        .output_ref())
 }
 
+/// The whole body `source` names, checked against its digest and length.
 pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
-    let txn = vault.store.env.read_txn()?;
-    let bytes = OUTPUT_BLOB
-        .get(&vault.store, &txn, &source.hash)?
-        .ok_or(Error::CorruptedIndex("missing recoverable output"))?;
-    source.verify(&bytes)?;
-    Ok(bytes)
+    vault
+        .get_raw_body(source)?
+        .ok_or(Error::CorruptedIndex("missing recoverable output"))
 }
 
 /// Summary is an immutable derived projection keyed by source and recipe version.

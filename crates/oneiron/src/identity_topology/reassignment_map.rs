@@ -564,7 +564,7 @@ fn claim_is_forkable_in_txn(
     if !crate::batch::ClaimMaterialization::succession_source_live(store, txn, claim)? {
         return Ok(false);
     }
-    let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, claim)? else {
         return Ok(false);
     };
     let body =

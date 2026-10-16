@@ -276,40 +276,35 @@ pub struct HeldOutReplayCase<'a> {
     pub held_out_receipts: &'a [String],
 }
 
-/// Judges one instruction version against held-out evidence.
-///
-/// The production tier is a host-supplied implementation over the engine's LLM
-/// surface under [`skill_edit_score_call_purpose`]; this module constructs no
-/// client (the [`crate::skill_attribution::AttributionJudge`] /
-/// [`crate::skill_optimize::SkillOptimizeAuthor`] posture). There is deliberately no in-engine
-/// default: any scalar this crate could compute without a replay would be the
-/// optimizer grading its own edit, which is the one thing the gate exists to
-/// prevent — so the seam is a required argument rather than a defaulted one.
+/// Host replay data and the Coach's configured typed-decision path.
+/// Replay and pair sampling are evidence preparation, not judge callbacks.
+/// Scores, blind preferences, judge audits and tradeoffs all run on that path.
+/// Independent honesty findings are supplied by the replay auditor.
 pub trait HeldOutReplayScorer {
-    /// Immutable skill revision that owns these candidate scores.
     fn judge_revision(&self) -> &str;
 
-    /// Scores `case` on `0.0..=1.0`, higher is better.
-    ///
-    /// # Errors
-    ///
-    /// Implementation-defined. A scorer that cannot judge must error rather
-    /// than guess: an invented scalar is a silent accept.
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
+    fn decisions(&self) -> crate::skill_optimize::SkillOptimizeDecisions<'_>;
 
-    /// Optional scorer-declared task axes, excluding the engine's mandatory
-    /// honesty floor. Empty selects a single primary task axis. Honesty is
-    /// always measured separately from independently checked replay findings.
-    /// Neither the task axis name nor the goal definition lives in this trait.
-    fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
-        Ok(Vec::new())
-    }
+    /// Scoped task inputs and rollouts for exactly these reserved receipts.
+    /// Do not include observed success labels: the engine joins those later.
+    fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<serde_json::Value>;
 
-    /// A vector scorer must judge each declared axis explicitly. The scalar
-    /// single-primary path calls `score` at the gate and never invokes this.
-    fn score_goal_axis(&self, _case: &HeldOutReplayCase<'_>, _axis: &GoalAxisSpec) -> Result<f32> {
-        Err(invalid("no goal-axis scorer is registered for this axis"))
-    }
+    /// Sample response-only near ties before the rubric is read. The shared
+    /// decision path, not this sampler, chooses which response is preferred.
+    fn blind_pairs(
+        &self,
+        task: &str,
+        receipts: &[String],
+    ) -> Result<Vec<crate::skill_optimize::SkillReplayPair>>;
+
+    /// Persist every typed question and receipt, including abstentions, in
+    /// the host's ordinary decision journal. Failure aborts scoring.
+    fn record_decision(
+        &self,
+        question: &crate::llm::decision::DecisionQuestion,
+        decision: &crate::llm::decision::TypedDecision,
+        state: &serde_json::Value,
+    ) -> Result<()>;
 
     /// Independently examine every objective of every held-out replay for
     /// hidden flaws. Raw confession and judge agreement are not findings. The
@@ -322,48 +317,9 @@ pub trait HeldOutReplayScorer {
         Err(invalid("no held-out honesty auditor is registered"))
     }
 
-    /// Jev answers a pending tradeoff no preference rule matched, outside any
-    /// write transaction. `None` gives no model verdict, and the responsible
-    /// person is asked.
-    fn jev_tradeoff(
-        &self,
-        _question: &SkillTradeoffQuestion,
-    ) -> Result<Option<JevTradeoffVerdict>> {
-        Ok(None)
-    }
-
-    /// Score requirement coverage using only the task identity and rubric text.
-    /// An unimplemented auditor fails closed rather than fabricating a result.
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
-        Err(invalid("no structural judge auditor is registered"))
-    }
-
-    /// Choose near-tie rollout pairs and freeze response-only preferences.
-    /// This is called BEFORE `score`, `structural_audit`, or `contrastive_audit`;
-    /// no rubric text, scalar score or outcome label is supplied. The host
-    /// resolves held-out receipt ids to questions and rollouts, excludes
-    /// equivalent preferences, and gives each sampled pair a stable reference.
-    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
-        Err(invalid(
-            "no blind contrastive preference sampler is registered",
-        ))
-    }
-
-    /// Score rubric separation against the SAME frozen response preferences
-    /// for both instruction versions. The preference cannot be changed here.
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> Result<f32> {
-        Err(invalid("no contrastive judge auditor is registered"))
-    }
-
-    /// Predict the binary task-success outcome of each held-out receipt, in
-    /// case order, WITHOUT seeing its label. Labels are joined by the engine
-    /// from the outcome ledger only after this call returns.
-    fn predict_task_success(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
-        Err(invalid("no judge world-outcome predictor is registered"))
+    /// Declarations only; the authenticated goal still owns the axis set.
+    fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        Ok(Vec::new())
     }
 }
 

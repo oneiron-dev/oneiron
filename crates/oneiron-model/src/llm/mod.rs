@@ -46,6 +46,7 @@ pub use failure_policy::{
 };
 pub mod image;
 mod label_read;
+pub mod media;
 pub use label_read::{LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet};
 mod model_id;
 mod protocol;
@@ -77,10 +78,11 @@ pub use self::call::{
     ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, TierPrecedence,
 };
 pub use self::catalog::{
-    LlmCapability, LlmCatalogCost, LlmCatalogEntry, REASONING_BUDGET_PARAM, ReasoningEffort,
+    LlmCapability, LlmCatalogCost, LlmCatalogEntry, MEDIA_METADATA_KEY, REASONING_BUDGET_PARAM,
+    ReasoningEffort,
 };
 pub use self::error::{
-    BudgetDenied, FatalLlmError, LabelReadFailure, LlmError, RetryableLlmError,
+    BudgetDenied, FatalLlmError, LabelReadFailure, LlmError, RetryableLlmError, SpentKind,
     UnsupportedCapability,
 };
 // Public so `oneiron`'s auto-checker names a dynamic model the same way the safeguard

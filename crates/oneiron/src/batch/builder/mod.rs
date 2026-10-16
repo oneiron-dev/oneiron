@@ -43,6 +43,8 @@ pub struct BatchBuilder<'a> {
     birth_mask: Option<EntityId>,
     /// Every source each ASSET_TEXT this batch births was written from.
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
+    /// The Rule A birth envelope of each row this batch births.
+    births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
@@ -101,6 +103,7 @@ impl<'a> BatchBuilder<'a> {
             origin,
             birth_mask: None,
             text_births: std::collections::HashMap::new(),
+            births: Vec::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
@@ -112,6 +115,18 @@ impl<'a> BatchBuilder<'a> {
     /// stamped with. It must be a stored FACET row.
     pub(crate) fn mask(mut self, mask: Option<EntityId>) -> Self {
         self.birth_mask = mask;
+        self
+    }
+
+    /// Stamps `id`'s Rule A birth envelope (`made_by`) in the transaction
+    /// that applies this batch, after every op: the row must be live then.
+    /// Birth is immutable, so a second, different envelope refuses the batch.
+    pub(crate) fn made_by(
+        mut self,
+        id: &EntityId,
+        birth: crate::provenance::birth::RowBirth,
+    ) -> Self {
+        self.births.push((*id, birth));
         self
     }
 
