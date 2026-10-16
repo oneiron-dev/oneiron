@@ -37,6 +37,7 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod commitment_routes;
 mod conflict_routes;
 mod cooperative_deletion_routes;
 mod decision_ask_routes;
@@ -87,6 +88,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/pack-drift", get(pack_drift_repairs))
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
+        .merge(commitment_routes::routes())
         .merge(conflict_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())

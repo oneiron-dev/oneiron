@@ -70,11 +70,15 @@ pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn};
 pub(crate) use output::{check_links, check_span_order};
-pub(crate) use provisional::{refuse_held_id_in_txn, release_held_id_in_txn};
+pub(crate) use provisional::{
+    mint_for_span_in_txn, provisional_in_txn, refuse_held_id_in_txn, release_held_id_in_txn,
+    resolve_in_txn as resolve_provisional_in_txn,
+};
 pub(crate) use save::save_shadow_output_in_txn;
 pub(crate) use tags::{
-    current_tags_in_txn, erase_in_txn, erase_scope_exists_in_txn, saved_turn_mood_in_txn,
-    tag_set_in_txn, tear_in_txn,
+    current_tags_in_txn, erase_in_txn, erase_scope_exists_in_txn, message_text_in_txn,
+    readable_page_in_txn, saved_turn_mood_in_txn, settle_mention_in_txn, tag_set_in_txn,
+    tear_in_txn,
 };
 
 #[cfg(test)]
