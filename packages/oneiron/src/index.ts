@@ -206,6 +206,12 @@ export class Oneiron {
     },
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+      setup: {
+        prepare: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as unknown),
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupGet(input) as unknown),
+        answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as unknown),
+        verify: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksSetupVerify(input) as unknown),
+      },
     },
     authority: {
       audit: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultAuthorityAudit(input) as unknown),

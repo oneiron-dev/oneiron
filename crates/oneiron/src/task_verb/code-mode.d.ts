@@ -167,6 +167,12 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+    setup: {
+      answer(input: { answer?: object | null; card_action?: object | null; pack: string; source?: string | null }): Promise<unknown>;
+      get(input: { pack: string; source?: string | null }): Promise<unknown>;
+      prepare(input: { pack: string; source?: string | null }): Promise<unknown>;
+      verify(input: { connection: string; pack: string; source?: string | null }): Promise<unknown>;
+    };
   };
   people: {
     get(input: { pr: string }): Promise<unknown>;

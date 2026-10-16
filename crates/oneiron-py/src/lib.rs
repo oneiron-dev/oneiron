@@ -446,6 +446,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_packs_setup_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.setup.prepare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.setup.prepare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_setup_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.setup.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.setup.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_setup_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.setup.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.setup.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_setup_verify(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.setup.verify")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.setup.verify", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_authority_audit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.authority.audit")?;
         let output = py
