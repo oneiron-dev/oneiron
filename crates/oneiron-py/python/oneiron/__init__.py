@@ -218,6 +218,9 @@ class Oneiron:
         return json.loads(_translate(lambda: self._client.ask(json.dumps(input))))
     def wait(self, handle, step_key="sdk.wait"):
         return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
+    @property
+    def self(self) -> "Oneiron._SelfVerbs":
+        return Oneiron._SelfVerbs(self._client)
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -310,5 +313,20 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+    class _SelfVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def skills(self) -> "Oneiron._SelfSkillsVerbs":
+            return Oneiron._SelfSkillsVerbs(self._client)
+    class _SelfSkillsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_save(json.dumps(spec))))
+        def fork(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_fork(json.dumps(spec))))
+        def callables(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps(spec))))
 
 # END GENERATED FACADE VERBS

@@ -93,6 +93,107 @@ pub fn callable_catalog(vault: &Vault) -> Result<Vec<CallableCard>> {
     Ok(cards)
 }
 
+/// A callable card as the SDK returns it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CallableCardView {
+    /// The skill entity id, hex.
+    pub skill: String,
+    pub skill_id: String,
+    pub version: String,
+    pub desc: String,
+    /// The entry file the call runs.
+    pub reference: String,
+    pub arguments: JsonValue,
+    pub returns: JsonValue,
+}
+
+impl From<CallableCard> for CallableCardView {
+    fn from(card: CallableCard) -> Self {
+        Self {
+            skill: card.skill.to_hex(),
+            skill_id: card.skill_id,
+            version: card.version,
+            desc: card.desc,
+            reference: card.call.reference,
+            arguments: card.call.arguments,
+            returns: card.call.returns,
+        }
+    }
+}
+
+/// One source file of a saved skill: `SKILL.md`, or a script it calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSourceFile {
+    pub path: String,
+    /// UTF-8 file text.
+    pub content: String,
+}
+
+/// `self.skills.save`: an agent saves a skill it wrote, `SKILL.md` and
+/// scripts together. A callable helper declares `role: callable` and its
+/// `call` contract in the frontmatter. A new skill lands Candidate +
+/// Proposed; nothing here activates it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSaveRequest {
+    /// The skill entity to revise, hex; absent mints a new skill.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub files: Vec<SkillSourceFile>,
+    /// The version the caller last read, for an update.
+    #[serde(default)]
+    pub expected_version: Option<String>,
+}
+
+/// `self.skills.fork`: an agent forks a skill under its own identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillForkRequest {
+    /// The parent skill entity, hex.
+    pub parent: String,
+    /// The fork's entity id, hex; absent mints one.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// The fork's own skill identity.
+    pub skill_id: String,
+}
+
+/// Parses a save request into the entity id, the record its `SKILL.md`
+/// frontmatter declares, and the exact source files.
+///
+/// # Errors
+///
+/// [`ArtifactError::InvalidSkillBody`] for a malformed tree, frontmatter or
+/// call contract; [`Error`] for a malformed id.
+pub fn skill_save_parts(input: &SkillSaveRequest) -> Result<(EntityId, SkillRecord, Vec<HubFile>)> {
+    let files: Vec<HubFile> = input
+        .files
+        .iter()
+        .map(|file| HubFile::new(file.path.clone(), file.content.clone().into_bytes()))
+        .collect();
+    let package = crate::skill_hub::package_from_files(files)?;
+    let id = match &input.id {
+        Some(hex) => EntityId::from_hex(hex)?,
+        None => EntityId::now(),
+    };
+    Ok((id, package.record, package.files))
+}
+
+/// The id a fork request names, or a fresh one.
+///
+/// # Errors
+///
+/// [`Error`] for a malformed id.
+pub fn fork_target(input: &SkillForkRequest) -> Result<(EntityId, EntityId)> {
+    let parent = EntityId::from_hex(&input.parent)?;
+    let id = match &input.id {
+        Some(hex) => EntityId::from_hex(hex)?,
+        None => EntityId::now(),
+    };
+    Ok((parent, id))
+}
+
 /// One frozen case: the arguments a call took and the result it should give.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallableCase {

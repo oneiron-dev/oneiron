@@ -661,6 +661,36 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "self.skills.save" => {
+            let mut map = serde_json::Map::new();
+            if let Some(value) = &a.id {
+                map.insert("id".to_owned(), json!(value));
+            }
+            map.insert(
+                "files".to_owned(),
+                json!(a.files.as_ref().ok_or_else(invalid)?),
+            );
+            if let Some(value) = &a.expected_version {
+                map.insert("expected_version".to_owned(), json!(value));
+            }
+            Ok(Value::Object(map))
+        }
+        "self.skills.fork" => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "parent".to_owned(),
+                json!(a.parent.as_ref().ok_or_else(invalid)?),
+            );
+            if let Some(value) = &a.id {
+                map.insert("id".to_owned(), json!(value));
+            }
+            map.insert(
+                "skill_id".to_owned(),
+                json!(a.skill_id.as_ref().ok_or_else(invalid)?),
+            );
+            Ok(Value::Object(map))
+        }
+        "self.skills.callables" => Ok(Value::Object(serde_json::Map::new())),
         _ => Err(invalid()),
     }
 }
@@ -829,6 +859,29 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
+        "self.skills.save" => {
+            if let Some(value) = input.get("id") {
+                arguments.insert("id".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("files") {
+                arguments.insert("files".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("expected_version") {
+                arguments.insert("expected_version".to_owned(), value.clone());
+            }
+        }
+        "self.skills.fork" => {
+            if let Some(value) = input.get("parent") {
+                arguments.insert("parent".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("id") {
+                arguments.insert("id".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("skill_id") {
+                arguments.insert("skill_id".to_owned(), value.clone());
+            }
+        }
+        "self.skills.callables" => {}
         _ => return Err(invalid()),
     }
     serde_json::from_value(Value::Object(arguments)).map_err(|_| invalid())
@@ -1279,6 +1332,30 @@ async fn execute_agent_verb_listing(
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.save" => {
+            let input: oneiron::skill::helper::SkillSaveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_skills_save(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.fork" => {
+            let input: oneiron::skill::helper::SkillForkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_skills_fork(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.skills.callables" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_skills_callables(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         _ => Err(invalid()),

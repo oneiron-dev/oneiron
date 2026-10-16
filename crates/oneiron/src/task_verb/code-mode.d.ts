@@ -20,6 +20,11 @@ declare namespace self {
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
+  const skills: {
+    callables(input: object): Promise<unknown>;
+    fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
+    save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
+  };
 }
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;

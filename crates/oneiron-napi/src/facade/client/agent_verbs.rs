@@ -309,4 +309,25 @@ impl NativeClient {
             .agent_verb("vault.rooms.speak", input)
             .map_err(facade_error)
     }
+    #[napi]
+    pub fn self_skills_save(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_fork(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.fork", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_callables(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.callables", input)
+            .map_err(facade_error)
+    }
 }

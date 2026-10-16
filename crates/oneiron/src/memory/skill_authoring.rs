@@ -127,6 +127,15 @@ impl Memory<'_> {
         })
     }
 
+    /// Every loadable callable helper and its call contract: what an agent
+    /// may call, and what each call takes and returns.
+    pub fn skill_callables(&self) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
+        Ok(crate::skill::helper::callable_catalog(self.vault)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     /// Saves exact source files atomically with the authored candidate and its
     /// author receipt. Source capture grants no activation or scan clearance.
     /// A supplied content hash must match; use `None` to derive it from files.

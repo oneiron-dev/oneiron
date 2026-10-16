@@ -32,6 +32,9 @@ pub enum AgentVerb {
     VaultRoomsTrunk,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    SelfSkillsSave,
+    SelfSkillsFork,
+    SelfSkillsCallables,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -75,6 +78,9 @@ impl AgentVerb {
         Self::VaultRoomsTrunk,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::SelfSkillsSave,
+        Self::SelfSkillsFork,
+        Self::SelfSkillsCallables,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -121,6 +127,9 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::SelfSkillsSave => "self.skills.save",
+            Self::SelfSkillsFork => "self.skills.fork",
+            Self::SelfSkillsCallables => "self.skills.callables",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -163,6 +172,9 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::SelfSkillsSave
+                | Self::SelfSkillsFork
+                | Self::SelfSkillsCallables
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -213,6 +225,9 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::SelfSkillsSave
+                | Self::SelfSkillsFork
+                | Self::SelfSkillsCallables
         )
     }
     pub const fn is_section(self) -> bool {
@@ -244,6 +259,7 @@ impl AgentVerb {
                 | Self::VaultRoomsMessages
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
+                | Self::SelfSkillsCallables
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -282,6 +298,9 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::SelfSkillsSave
+                | Self::SelfSkillsFork
+                | Self::SelfSkillsCallables
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -311,6 +330,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::SelfSkillsSave
+                | Self::SelfSkillsFork
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
@@ -356,6 +377,9 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::SelfSkillsSave => &["id", "files", "expected_version"],
+            Self::SelfSkillsFork => &["parent", "id", "skill_id"],
+            Self::SelfSkillsCallables => &[],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -400,6 +424,9 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::SelfSkillsSave => &["files"],
+            Self::SelfSkillsFork => &["parent", "skill_id"],
+            Self::SelfSkillsCallables => &[],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],

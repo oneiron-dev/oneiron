@@ -124,6 +124,15 @@ impl OneironClient {
                     "vault.rooms.speak" => remote_agent_verb_output::<
                         oneiron::memory::WitnessReceipt,
                     >(client, verb, &input),
+                    "self.skills.save" => remote_agent_verb_output::<
+                        oneiron::memory::SkillAuthoringReceipt,
+                    >(client, verb, &input),
+                    "self.skills.fork" => remote_agent_verb_output::<
+                        oneiron::memory::SkillAuthoringReceipt,
+                    >(client, verb, &input),
+                    "self.skills.callables" => remote_agent_verb_output::<
+                        Vec<oneiron::skill::helper::CallableCardView>,
+                    >(client, verb, &input),
                     _ => Err(crate::error::bad_request(
                         "unknown SDK agent verb",
                         &["Use a verb from the SDK catalog."],
@@ -557,5 +566,41 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn self_skills_save(
+        &self,
+        input: &oneiron::skill::helper::SkillSaveRequest,
+    ) -> Result<oneiron::memory::SkillAuthoringReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.save", value)
+    }
+    pub fn self_skills_fork(
+        &self,
+        input: &oneiron::skill::helper::SkillForkRequest,
+    ) -> Result<oneiron::memory::SkillAuthoringReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.fork", value)
+    }
+    pub fn self_skills_callables(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::skill::helper::CallableCardView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.callables", value)
     }
 }
