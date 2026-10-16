@@ -1499,7 +1499,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_signals/tests.rs` | test | m | — | — | — |
 | `src/failure_signals/verbatim.rs` | src | s | 2 const · 1 crate-vis | — | The FIX6 verbatim-span guard: an invented example shares no run of words with the real chat it was drawn from |
 | `src/failure_signals/witness.rs` | src | s | 1 struct · 1 fn · 8 crate-vis | Tier1Observation | Vault-local, non-serializable producer observations |
-| `src/fanout_auto.rs` | src | m | 5 struct · 5 enum · 1 trait · 6 fn · 3 crate-vis | AppliedFanoutEscalationRuling, FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
+| `src/fanout_auto.rs` | src | m | 6 struct · 5 enum · 6 fn · 1 const · 3 crate-vis | AppliedFanoutEscalationRuling, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutDecisions, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `src/fanout_auto/tests.rs` | test | s | — | — | ONE-1720 (ES-07) unit tests: the closed verdict vocabulary, the fixed evaluation order (blank-context floor… |
 | `src/federation/content_write.rs` | src | s | 15 crate-vis | — | Actor-bound content transaction interface |
 | `src/federation/coreference.rs` | src | m | 1 enum · 3 fn · 1 const · 3 crate-vis | CoreferenceStatus | Cross-vault same_as links and per-pact share consent (FED-07) |
@@ -1910,7 +1910,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/autocheck.rs` | src | m | 4 struct · 1 enum · 1 trait · 4 fn · 2 const · 5 crate-vis | AutoCheckCandidate, AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract |
 | `src/llm/budget/mod.rs` | src | s | 1 re-export | — | Vault-local durable RSI budget ledger |
 | `src/llm/budget/rsi.rs` | src | m | 5 struct · 3 enum · 12 fn | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose | Vault-local durable reserve/settle/refund ledger for research-loop spend |
-| `src/llm/decision/catalogue.rs` | src | s | 1 struct · 1 fn · 3 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/llm/decision/catalogue.rs` | src | s | 1 struct · 1 fn · 4 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/llm/decision/codec.rs` | src | s | 6 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/ladder.rs` | src | L | 9 struct · 3 trait · 8 fn · 1 const · 4 crate-vis | DecisionCall, DecisionLadder, DecisionModel, DecisionPack, DecisionProvider, HumanDecisionQueue, HumanDecisionRequest, ModelDecisionProvider +4 | Host-injected, one-step decision ladder |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |

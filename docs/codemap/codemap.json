@@ -18511,12 +18511,12 @@
      "kind": "src",
      "notable": [
       "AppliedFanoutEscalationRuling",
-      "FanoutAskClassifier",
       "FanoutAskContext",
       "FanoutAskTrigger",
       "FanoutAskVerdict",
       "FanoutClassifierView",
       "FanoutDecisionHistory",
+      "FanoutDecisions",
       "FanoutEscalationRuling",
       "FanoutHistoryRuling",
       "FanoutProposalOutcome",
@@ -18525,11 +18525,11 @@
      "path": "src/fanout_auto.rs",
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam",
      "surface": {
+      "const": 1,
       "crate-vis": 3,
       "enum": 5,
       "fn": 6,
-      "struct": 5,
-      "trait": 1
+      "struct": 6
      }
     },
     {
@@ -23565,7 +23565,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 3,
+      "const": 4,
       "fn": 1,
       "struct": 1
      }
