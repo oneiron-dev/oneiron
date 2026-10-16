@@ -630,7 +630,7 @@ fn house_org_in_txn(
     let presets = super::records::PRESET.scan(&vault.store, txn)?;
     if !presets
         .iter()
-        .any(|(_, preset)| preset.house_actor_ref == agent)
+        .any(|(_, row)| row.preset.house_actor_ref == agent)
     {
         return Ok(None);
     }
@@ -643,7 +643,8 @@ fn house_org_in_txn(
         .shared_vault_creation_in_txn(txn)?
         .map(|creation| creation.vault_id);
     let mut found = None;
-    for (_, preset) in presets {
+    for (_, row) in presets {
+        let preset = row.preset;
         if preset.house_actor_ref != agent || preset.org_ref != anchor.subject_ref {
             continue;
         }
