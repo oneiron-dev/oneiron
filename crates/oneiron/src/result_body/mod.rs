@@ -24,7 +24,7 @@ mod promote;
 pub use checkpoint::{CheckpointBodyPruneReport, prune_checkpoint_bodies};
 #[cfg(unix)]
 pub use collect::ResultBodyCollectReport;
-pub(crate) use pins::ResultBodyPins;
+pub(crate) use pins::{ResultBodyPin, ResultBodyPins};
 
 #[cfg(unix)]
 use crate::side_table::{self, Raw, SideTable};

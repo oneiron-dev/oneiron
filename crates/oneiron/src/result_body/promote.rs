@@ -1,7 +1,6 @@
 //! Bringing an off-record result body into the vault's `bodies/`.
 
-use super::pins::ResultBodyPin;
-use super::{RAW_OUTPUT_SECRETS, raw_output_handle};
+use super::{RAW_OUTPUT_SECRETS, ResultBodyPin, raw_output_handle};
 use crate::{Error, Result, Vault};
 
 impl Vault {
