@@ -94,19 +94,48 @@ pub(crate) fn authenticated() {
 /// once they have closed. A WebSocket is not waited for: it ends with the
 /// process. A crossed descriptor floor asks its question in `questions`.
 pub(crate) async fn serve(
-    mut listener: TcpListener,
+    listener: TcpListener,
     app: Router,
     limits: ConnectionLimits,
     questions: Arc<LimitQuestions>,
     shutdown: impl Future<Output = ()>,
 ) {
-    let floor = Admission::<()>::new(
-        LimitRow::Connections,
-        questions,
-        limits.max_connections,
-        limits.queue_wait,
-    );
-    let strangers = Strangers::new(stranger_share(&limits));
+    let pool = ConnectionPool::new(&limits, questions);
+    serve_with_pool(listener, app, &pool, limits, shutdown).await;
+}
+
+/// The descriptor floor and the strangers' shares one set of limits
+/// describes. Listeners that serve from one pool share its bounds: two of
+/// them never hold twice the connections, and an address's strangers are
+/// counted across both.
+pub(crate) struct ConnectionPool {
+    floor: Admission<()>,
+    strangers: Strangers,
+}
+
+impl ConnectionPool {
+    pub(crate) fn new(limits: &ConnectionLimits, questions: Arc<LimitQuestions>) -> Self {
+        Self {
+            floor: Admission::<()>::new(
+                LimitRow::Connections,
+                questions,
+                limits.max_connections,
+                limits.queue_wait,
+            ),
+            strangers: Strangers::new(stranger_share(limits)),
+        }
+    }
+}
+
+/// [`serve`], taking its permits and strangers' places from `pool`.
+pub(crate) async fn serve_with_pool(
+    mut listener: TcpListener,
+    app: Router,
+    pool: &ConnectionPool,
+    limits: ConnectionLimits,
+    shutdown: impl Future<Output = ()>,
+) {
+    let ConnectionPool { floor, strangers } = pool;
     let (stopping, stop) = watch::channel(false);
     let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);
