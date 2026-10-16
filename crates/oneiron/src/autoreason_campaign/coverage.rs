@@ -215,7 +215,10 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         self.inner.record_decision(question, decision, state)
     }
 
-    fn replay_honesty(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplayObservation>> {
+    fn replay_honesty(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+    ) -> Result<Vec<HonestyReplayObservation>> {
         self.inner.replay_honesty(case)
     }
 

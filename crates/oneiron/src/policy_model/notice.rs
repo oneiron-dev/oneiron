@@ -284,7 +284,11 @@ pub(super) fn policy_decision_receipt_notices(
     verdict: &PolicyClassifyVerdict,
 ) -> Vec<GateSystemNoticeRecord> {
     let mut notices = Vec::new();
-    for decision in verdict.audit.iter().flat_map(|audit| &audit.typed_decisions) {
+    for decision in verdict
+        .audit
+        .iter()
+        .flat_map(|audit| &audit.typed_decisions)
+    {
         let json = serde_json::json!(decision).to_string();
         let mut start = 0;
         let mut part = 0;

@@ -341,7 +341,6 @@ pub use crate::companion::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
     EnqueueCompanionTaskOutcome,
 };
-pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
@@ -475,6 +474,7 @@ pub use crate::pipeline::{
     world_access_claim_body,
 };
 pub use crate::provider_confidence::PREDICATE_PROVIDER_ENRICHMENT;
+pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 // The provider-confidence shortcut rows are a DISPOSABLE cache with no
 // production control surface — reads repair them and the prior writer moves
 // them, and that is the whole contract. These three seams exist only so the

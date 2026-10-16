@@ -109,8 +109,10 @@ impl Vault {
         let Some(verdict) = pass.boundary_verdict() else {
             return Ok(false);
         };
-        Ok(verdict.binding != self.relay_policy_binding(request, config)?
-            || verdict.decision_binding != config.decision_binding(PolicyPlane::HostedLegal))
+        Ok(
+            verdict.binding != self.relay_policy_binding(request, config)?
+                || verdict.decision_binding != config.decision_binding(PolicyPlane::HostedLegal),
+        )
     }
 }
 
@@ -188,16 +190,27 @@ impl Vault {
         );
         if let Some(decisions) = config.hosted_decisions.as_deref() {
             let verdict = decisions.classify(
-                request, &prompt, AnswerPlane::Hosted(policy), binding, config, audit,
+                request,
+                &prompt,
+                AnswerPlane::Hosted(policy),
+                binding,
+                config,
+                audit,
             )?;
             if verdict.decision.skip_reason().is_some() {
                 return Ok(degraded_hosted_pass(
-                    binding, config, verdict.audit.map(|audit| *audit).unwrap_or_default(),
-                    RelayBoundaryDegrade::SafeguardModelResponseUnusable, true,
+                    binding,
+                    config,
+                    verdict.audit.map(|audit| *audit).unwrap_or_default(),
+                    RelayBoundaryDegrade::SafeguardModelResponseUnusable,
+                    true,
                 ));
             }
             return Ok(RelayBoundaryPass::classified(
-                verdict, None, true, RelayResolution::ModelDecided,
+                verdict,
+                None,
+                true,
+                RelayResolution::ModelDecided,
             ));
         }
         let Some(safeguard) = safeguard else {
