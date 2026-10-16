@@ -93,6 +93,21 @@ client, so list proxy hosts only, never a client network. An entry that does
 not parse, a `/0` block, or an address with bits set past its prefix stops
 startup. The default is empty: every caller is keyed by its own connection.
 
+`artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
+port of a second listener, on the same host, that serves hosted artifacts
+(`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
+that origin rather than the API's: there it keeps its module scripts and
+fonts, and no route it can reach holds API data. The API still answers `/a/`,
+but sandboxes a code bundle into an opaque origin there, where module scripts
+and fonts do not load. The default `0` takes any free port, which
+`/api/health` reports as `artifact_port`; clients open artifacts at the API's
+scheme and host with that port. Set a fixed port for links that outlive a
+restart. Behind a reverse proxy, publish that port on its own origin as well,
+and never list it in `allowed_origins`. Both listeners share the `[limits]`
+connection floor and each address's unauthenticated share. Managed serve
+(`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
+`/a/` is unchanged until the supervisor routes an artifact origin.
+
 `[limits]` bounds the work a caller can start. Every bound is finite, and a
 zero is a config error. The count rows sit far above fleet scale (each is at
 least ten times the 200 agents a fleet plans for, many of them on one
@@ -118,9 +133,16 @@ lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; pas
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
 projection_body_bytes = 4194304   # body bytes one multi-row read decodes
+git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
+git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
 ```
+
+The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
+its memory floor per blob, never a cap on the push: a push of any size lands
+while each blob fits and the disk keeps `git_scan_disk_floor_bytes` free. A
+push past either is refused whole, with a reason that names the key.
 
 Only the machine's own floors and the anonymous surface hold work back. Past
 `max_connections` the server stops accepting, so new sockets wait in the
