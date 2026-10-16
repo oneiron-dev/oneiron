@@ -140,13 +140,12 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
     Ok(())
 }
 
-/// Sol R7 on #1401: a credential that narrows neither worlds nor facets
-/// excludes no TASK on them, so a TASK it is denied counts, stamped or not.
-/// The root slip's NOTE-only search counts a replicated TASK, which arrives
-/// unstamped, as it did before TASKs were born in worlds; a slip narrowed to
-/// base reality cannot place that TASK, so it counts it nowhere.
+/// Sol R7 on #1401, under B7 (F21b): a search counts only rows its key's
+/// own ceiling admits. The root slip is denied a replicated TASK, which
+/// arrives unstamped, so its NOTE-only search counts it nowhere, as a slip
+/// narrowed to base reality, which cannot place that TASK, does not.
 #[test]
-fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
+fn no_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
     let writer = EntityId::now();
@@ -216,7 +215,7 @@ fn a_whole_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
             .receipt
             .suppressed_count)
     };
-    assert_eq!(counted(&root)?, 1, "the root slip counts the replica");
+    assert_eq!(counted(&root)?, 0, "the root slip cannot read the replica");
     assert_eq!(counted(&narrowed)?, 0, "a base-only slip counts it nowhere");
     Ok(())
 }
@@ -408,6 +407,9 @@ fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
             .text(&id, &[("body", "harbor ledger")]);
     }
     batch.commit().expect("seed the matching rows");
+    // The legacy fixture clears the policy manifest, and a vault with none
+    // reads nothing to a scoped key; the root slip brings the authority.
+    crate::test_util::authorize_readers(&vault, &[]);
     let issuer = HostSlipIssuer::from_secret(b"bounded search host root")?;
     vault.ensure_host_root_slip(&issuer)?;
     let proof = vault.verified_host_root_slip(&issuer)?;

@@ -514,6 +514,8 @@ fn an_undecodable_claim_does_not_fail_a_scoped_search() -> Result<()> {
     let mut junk = Vec::new();
     rmpv::encode::write_value(&mut junk, &rmpv::Value::from(1)).expect("msgpack encode");
     overwrite_entity_record(&vault, &broken, ENTITY_TYPE_CLAIM, &junk)?;
+    // A vault with no policy manifest reads nothing to a scoped key.
+    crate::test_util::authorize_readers(&vault, &[]);
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"undecodable claim host root")?;
     vault.ensure_host_root_slip(&issuer)?;
     let proof = vault.verified_host_root_slip(&issuer)?;
