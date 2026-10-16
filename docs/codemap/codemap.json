@@ -3605,7 +3605,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 1,
       "re-export": 2
      }
@@ -12988,7 +12988,7 @@
      "path": "src/context_pack/mod.rs",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 1,
       "re-export": 7
      }
@@ -13016,7 +13016,7 @@
      "path": "src/context_pack/quarantine.rs",
      "purpose": "Sync-quarantine rows read during pack assembly, and the index that excludes quarantined entities from a pack",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -16507,7 +16507,7 @@
      "purpose": "ED-04 miner dials, pinned keys, labels and the tone lexicon",
      "surface": {
       "const": 3,
-      "crate-vis": 28
+      "crate-vis": 27
      }
     },
     {
@@ -27942,7 +27942,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/channels.rs",
@@ -43171,7 +43171,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 44,
+   "over_bar": 45,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2597,
    "test_files": 881
