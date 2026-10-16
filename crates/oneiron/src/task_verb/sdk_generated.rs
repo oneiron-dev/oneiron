@@ -30,6 +30,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
             ),
             (
+                "self.memory.diary.reads",
+                crate::code_run::vault_read::request_schema::<crate::memory::DiaryReadsRequest>(),
+            ),
+            (
+                "self.memory.diary.review",
+                crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
+            ),
+            (
                 "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
             ),
@@ -67,7 +75,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.receipts",
-                crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VaultReceiptsRequest,
+                >(),
+            ),
+            (
+                "vault.images.view",
+                crate::code_run::vault_read::request_schema::<crate::memory::ImageViewRequest>(),
             ),
             (
                 "vault.receipts.get",
@@ -96,6 +110,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
+            ),
+            (
+                "vault.hooks.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::HooksReplayRequest,
+                >(),
             ),
             (
                 "vault.artifacts.view",
@@ -305,6 +325,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "ai.video.cancel",
                 crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
+            ),
+            (
+                "ai.verdict",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AiVerdictRequest,
+                >(),
             ),
             (
                 "connector.list",
@@ -529,6 +555,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.memory.diary.reads" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.memory.diary.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "cancel" => {
             properties.insert(
                 "task_ref".to_owned(),
@@ -616,6 +656,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.images.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.receipts.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -659,6 +706,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -985,6 +1039,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.verdict" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1177,6 +1238,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary" => {
             let _input: DiaryEntryRequest = decode(value.clone())?;
         }
+        "self.memory.diary.reads" => {
+            let _input: crate::memory::DiaryReadsRequest = decode(value.clone())?;
+        }
+        "self.memory.diary.review" => {
+            let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
+        }
         "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
         }
@@ -1215,12 +1282,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
         "vault.receipts" => {
-            let input: ReceiptsRequest = decode(value.clone())?;
+            let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
             crate::memory::caps::check_limit(
                 input
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
+        }
+        "vault.images.view" => {
+            let _input: crate::memory::ImageViewRequest = decode(value.clone())?;
         }
         "vault.receipts.get" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
@@ -1242,6 +1312,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
+        }
+        "vault.hooks.replay" => {
+            let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
+            input.limit()?;
         }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
@@ -1374,6 +1448,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "ai.video.cancel" => {
             let _input: AiVideoJobRequest = decode(value.clone())?;
+        }
+        "ai.verdict" => {
+            let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
+            crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
+            crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
         "connector.list" => {
             let _input: ConnectorListRequest = decode(value.clone())?;
@@ -1509,6 +1588,8 @@ pub fn invoke(
     match verb {
         "report" => encode(report(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
+        "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
+        "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
@@ -1519,6 +1600,7 @@ pub fn invoke(
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
@@ -1526,6 +1608,7 @@ pub fn invoke(
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
@@ -1586,6 +1669,7 @@ pub fn invoke(
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
         "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
+        "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
@@ -1716,6 +1800,18 @@ pub fn self_memory_diary(
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
     crate::task_verb::sdk::self_memory_diary_write(memory, input)
 }
+pub fn self_memory_diary_reads(
+    memory: &Memory<'_>,
+    input: crate::memory::DiaryReadsRequest,
+) -> MemoryResult<crate::memory::DiaryReadsView> {
+    memory.diary_reads(&input)
+}
+pub fn self_memory_diary_review(
+    memory: &Memory<'_>,
+    input: crate::memory::DiaryReviewAnswer,
+) -> MemoryResult<crate::memory::DiaryReadRequest> {
+    memory.answer_diary_read(&input)
+}
 pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
@@ -1809,18 +1905,25 @@ pub fn vault_export(
 }
 pub fn vault_receipts(
     memory: &Memory<'_>,
-    input: ReceiptsRequest,
+    input: crate::task_verb::sdk::VaultReceiptsRequest,
 ) -> MemoryResult<Vec<crate::memory::MemoryReceipt>> {
     crate::memory::caps::check_limit(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )?;
-    memory.receipts(
+    memory.receipts_of_kinds(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
+        &input.kinds,
     )
+}
+pub fn vault_images_view(
+    memory: &Memory<'_>,
+    input: crate::memory::ImageViewRequest,
+) -> MemoryResult<crate::memory::PulledImage> {
+    memory.view_image(&input)
 }
 pub fn vault_receipts_get(
     memory: &Memory<'_>,
@@ -1863,6 +1966,13 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_hooks_replay(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::HooksReplayRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::HookReplayRow>> {
+    input.limit()?;
+    crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
 }
 pub fn vault_artifacts_view(
     memory: &Memory<'_>,
@@ -2182,6 +2292,14 @@ pub fn ai_video_cancel(
     input: AiVideoJobRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiVideoCancelled> {
     crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
+}
+pub fn ai_verdict(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AiVerdictRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVerdict> {
+    crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
+    crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+    crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
 }
 pub fn connector_list(
     memory: &Memory<'_>,
