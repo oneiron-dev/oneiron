@@ -466,11 +466,12 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
-    /// Sets the share of the claim budget non-base worlds may occupy when the
-    /// pack is partitioned under [`WorldScope::All`] (default `0.5`). Base
-    /// claims are always kept; non-base claims beyond `floor(fraction × claim
-    /// budget)` are dropped so fiction cannot crowd base reality out. Only
-    /// consulted for `All` scope with surviving non-base claims.
+    /// Sets the share of the pack's claims non-base worlds may occupy under
+    /// [`WorldScope::All`] (default `0.5`). The pack's rows are selected so
+    /// non-base claims stay at most `floor(fraction × emitted claims)`: a base
+    /// claim ranked below fiction still gets its slot, and the pack goes short
+    /// rather than over the share when base claims are scarce. Only consulted
+    /// for `All` scope.
     pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
         self.non_base_world_fraction = fraction;
         self

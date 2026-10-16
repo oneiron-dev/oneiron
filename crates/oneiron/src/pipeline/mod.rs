@@ -1,6 +1,7 @@
 mod authority;
 mod blend;
 mod budget;
+pub(crate) use budget::non_base_claim_cap;
 mod capabilities;
 pub(crate) use capabilities::capability_hit;
 mod builder;

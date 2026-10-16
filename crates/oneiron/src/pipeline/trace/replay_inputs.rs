@@ -132,6 +132,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 "claims": b.claims, "turns": b.turns, "summaries": b.summaries,
                 "facets": b.facets, "other": b.other, "selected_edges": b.selected_edges,
             })),
+            "context_pack_world_share": builder.context_pack_world_share,
             "occurred_range": occurred_range,
             "learned_range": builder.learned_range,
             "since": builder.since_filter,

@@ -1468,3 +1468,39 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
     assert_eq!(scoped_vector_top[0].id, id_b);
     Ok(())
 }
+
+/// H38: a read's project filter is held to the ingest door's project-id
+/// bounds. On an empty vault the reads would otherwise succeed with no rows.
+#[test]
+fn query_and_pack_refuse_an_out_of_bounds_project_id() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let too_long = "p".repeat(CODEBASE_PROJECT_ID_MAX_BYTES + 1);
+    for bad in [too_long.as_str(), "", " project.alpha"] {
+        let query = vault
+            .query()
+            .search_text("needle", 1)
+            .filter_project_id(bad)
+            .run();
+        assert!(
+            matches!(
+                query,
+                Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(_)))
+            ),
+            "query accepted project id {bad:?}: {:?}",
+            query.map(|rows| rows.len())
+        );
+        let pack = vault
+            .context_pack()
+            .search_text("needle", 1)
+            .filter_project_id(bad)
+            .run();
+        assert!(
+            matches!(
+                pack,
+                Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(_)))
+            ),
+            "pack accepted project id {bad:?}: {:?}",
+            pack.map(|pack| pack.results.len())
+        );
+    }
+}

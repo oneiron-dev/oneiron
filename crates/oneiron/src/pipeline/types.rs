@@ -288,6 +288,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) claims_suppressed: usize,
     pub(crate) read_suppressed: usize,
     pub(crate) cosine_ghosts_dampened: usize,
+    /// Scored rows the pack's disclosure clamp withheld before selection
+    /// (`PipelineBuilder::disclosure_preselect`).
+    pub(crate) disclosure_clamped: Vec<EntityId>,
     pub(crate) total_in_scope: usize,
     pub(crate) empty_reason: Option<EmptyReason>,
     pub(crate) telemetry_run_id: Option<RetrievalRunId>,
