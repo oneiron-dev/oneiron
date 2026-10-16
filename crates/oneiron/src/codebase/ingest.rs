@@ -299,7 +299,8 @@ pub(crate) fn read_asset_blob_in_txn(
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<Vec<u8>> {
     let asset_id = codebase_asset_entity_id(content_hash)?;
-    let Some(raw) = vault.store.entities.get(txn, asset_id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &asset_id)?
+    else {
         return Err(Error::EntityNotFound);
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
