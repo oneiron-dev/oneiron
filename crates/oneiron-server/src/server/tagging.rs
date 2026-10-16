@@ -30,6 +30,7 @@ impl SyncServer {
     pub(crate) fn spawn_slot_workers(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
         [self.spawn_embedding_worker(), self.spawn_tagging_worker()]
             .into_iter()
+            .chain([self.spawn_media_embedding_worker()])
             .flatten()
             .collect()
     }

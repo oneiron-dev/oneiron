@@ -58,6 +58,10 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
                 "budget",
                 "Optional retrieval and serialization budget controls.",
             ),
+            (
+                "media",
+                "Optional media query (OF-370): base64 bytes the server embeds into one declared space through its ai.embed rung, searched beside query and query_vector.",
+            ),
         ],
     ),
     (
