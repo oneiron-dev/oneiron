@@ -47,7 +47,7 @@ pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool
 }
 
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
-    reverse_rematerialize_with(vault, doc, window_key, true)
+    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Unknown)
 }
 
 /// [`reverse_rematerialize`] into a sealed window's own mirror document
@@ -59,17 +59,18 @@ pub(crate) fn reverse_rematerialize_for_sealing(
     doc: &LoroDoc,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    reverse_rematerialize_with(vault, doc, window_key, false)
+    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Nothing)
 }
 
-/// [`reverse_rematerialize`], packing rows a device-only world keeps here
-/// unless `withhold_device_only`. Only promotion authority packs them: it
-/// asks what a grant covers and exports nothing.
+/// [`reverse_rematerialize`], packing every row except those of a world
+/// `withhold` names. Promotion authority packs them all: it asks what a grant
+/// covers and exports nothing. A residence read for a proved machine packs
+/// the private rows that machine may read.
 pub(in crate::sync) fn reverse_rematerialize_with(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
-    withhold_device_only: bool,
+    withhold: super::Withhold<'_>,
 ) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -145,16 +146,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         kept.extend(closure);
         entities_in_range = kept;
     }
-    let device_only = if withhold_device_only {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::settings::device_local_worlds_at(
-            vault,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?
-    } else {
-        std::collections::BTreeSet::new()
-    };
+    let device_only = withhold.worlds(vault)?;
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");

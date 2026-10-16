@@ -570,10 +570,21 @@ impl Connection {
         locality: oneiron::claim::CallerLocality,
         data: &[u8],
     ) -> Option<Vec<u8>> {
+        self.release_for(locality, oneiron::authority::PeerMachine::Unknown, data)
+    }
+
+    /// [`Self::release`] for the machine `peer` proved on the socket: a row
+    /// is judged by that machine's own world read settings (OF-534 G6).
+    pub(crate) fn release_for(
+        &mut self,
+        locality: oneiron::claim::CallerLocality,
+        peer: oneiron::authority::PeerMachine,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
         let routed = super::routing::addressed(data, self.conn_id)?;
         let envelope = super::wire::decode::<serde::de::IgnoredAny>(&routed.frame[1..]).ok();
         if routed.frame[0] == crate::protocol::TAG_RPC {
-            return self.release_reply(locality, &routed, envelope.as_ref());
+            return self.release_reply(locality, peer, &routed, envelope.as_ref());
         }
         let session = self.session.as_ref()?;
         if self.active.get(&routed.id) != Some(&routed.incarnation)
@@ -588,7 +599,7 @@ impl Connection {
             }
             self.withheld.remove(&routed.id);
         } else if kind.is_none_or(|kind| matches!(kind, "sub.data" | "sub.snapshot"))
-            && self.withholds(locality, routed.rows.as_deref(), routed.frame)
+            && self.withholds(locality, peer, routed.rows.as_deref(), routed.frame)
         {
             if session.queries.retire(routed.id).is_err() {
                 tracing::warn!("live-query retirement refused; resync required");
@@ -603,6 +614,7 @@ impl Connection {
     fn release_reply(
         &mut self,
         locality: oneiron::claim::CallerLocality,
+        peer: oneiron::authority::PeerMachine,
         routed: &super::routing::Routed<'_>,
         envelope: Option<&super::wire::Envelope<serde::de::IgnoredAny>>,
     ) -> Option<Vec<u8>> {
@@ -613,7 +625,7 @@ impl Connection {
             }
             return None;
         }
-        if !self.withholds(locality, routed.rows.as_deref(), routed.frame) {
+        if !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame) {
             return Some(routed.frame.to_vec());
         }
         if !last {
@@ -628,6 +640,7 @@ impl Connection {
     fn withholds(
         &self,
         locality: oneiron::claim::CallerLocality,
+        peer: oneiron::authority::PeerMachine,
         rows: Option<&[oneiron::EntityId]>,
         frame: &[u8],
     ) -> bool {
@@ -637,7 +650,7 @@ impl Connection {
         let (Some(rows), Some(server)) = (rows, self.hub.server.upgrade()) else {
             return true;
         };
-        crate::device_local::withholds_retained(server.vault(), locality, rows, frame)
+        crate::device_local::withholds_retained_for(server.vault(), locality, peer, rows, frame)
             .unwrap_or(true)
     }
 

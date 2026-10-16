@@ -72,6 +72,7 @@ pub(super) async fn handle_window_sync(
         authorize_promoted_window(
             server,
             require_bound_app_auth(server, conn_state)?,
+            conn_state.peer_machine(server.vault()),
             &key,
             &selector,
             &doc,
@@ -201,6 +202,7 @@ pub(super) async fn handle_window_sync(
         authorize_promoted_window(
             server,
             require_bound_app_auth(server, conn_state)?,
+            conn_state.peer_machine(server.vault()),
             &key,
             selector,
             &doc,
@@ -225,8 +227,15 @@ pub(super) async fn handle_window_sync(
             let remote = VersionVector::decode(payload)
                 .map_err(|_| ProtocolError::InvalidPayload("invalid version vector"))?;
             let mut vv = doc.oplog_vv();
-            if oneiron::sync::window::export_withheld(server.vault.as_ref(), &key, &doc, &remote)
-                .map_err(map_delta_export_err)?
+            let withheld = peer_withheld(server, conn_state)?;
+            if oneiron::sync::window::export_withheld_for(
+                server.vault.as_ref(),
+                &key,
+                &doc,
+                &remote,
+                withhold(withheld.as_ref()),
+            )
+            .map_err(map_delta_export_err)?
             {
                 vv = vv.intersection(&remote);
             }
@@ -279,6 +288,7 @@ pub(super) async fn handle_window_sync(
                         authorize_promoted_window(
                             server,
                             require_bound_app_auth(server, conn_state)?,
+                            conn_state.peer_machine(server.vault()),
                             &key,
                             selector,
                             &doc,
@@ -402,6 +412,31 @@ pub(super) fn ask_window_row(server: &SyncServer, bound: usize, held: usize) {
     );
 }
 
+/// The worlds kept off the machine this socket proved, read now, or `None`
+/// for an unknown destination (OF-534 G6). A full-window export judges the
+/// machine at the other end, not every machine at once.
+fn peer_withheld(
+    server: &SyncServer,
+    conn_state: &ConnState,
+) -> Result<Option<std::collections::BTreeSet<oneiron::EntityId>>, ProtocolError> {
+    oneiron::sync::residence::withheld_from_peer(
+        server.vault.as_ref(),
+        conn_state.peer_machine(server.vault()),
+    )
+    .map_err(map_delta_export_err)
+}
+
+/// The export door's withholding for `withheld`: a proved machine's own
+/// worlds, or the device's unknown-destination set.
+fn withhold(
+    withheld: Option<&std::collections::BTreeSet<oneiron::EntityId>>,
+) -> oneiron::sync::window::Withhold<'_> {
+    withheld.map_or(
+        oneiron::sync::window::Withhold::Unknown,
+        oneiron::sync::window::Withhold::Worlds,
+    )
+}
+
 /// Frames this window's answer to the version vector `remote_vv` for this socket. A promoted
 /// residence window answers from its baseline. A peer that holds nothing of the window imports
 /// a replacement as its first update, as before replacements existed; one that holds part of it
@@ -414,12 +449,14 @@ fn export_frame(
     doc: &loro::LoroDoc,
     remote_vv: &[u8],
 ) -> Result<Vec<u8>, ProtocolError> {
-    let export = oneiron::sync::window::export_window_since(
+    let withheld = peer_withheld(server, conn_state)?;
+    let export = oneiron::sync::window::export_window_since_for(
         server.vault.as_ref(),
         key,
         doc,
         remote_vv,
         conn_state.promotion_baselines.get(key),
+        withhold(withheld.as_ref()),
     )
     .map_err(map_delta_export_err)?;
     let (sub_tag, bytes) = match export {
@@ -453,11 +490,13 @@ fn replacement_frame(
     if !protocol::installs_window_replacements(conn_state.protocol_version) {
         return Err(ProtocolError::ReplacementUnsupported);
     }
-    oneiron::sync::window::export_window_replacement(
+    let withheld = peer_withheld(server, conn_state)?;
+    oneiron::sync::window::export_window_replacement_for(
         server.vault.as_ref(),
         key,
         doc,
         conn_state.promotion_baselines.get(key),
+        withhold(withheld.as_ref()),
     )
     .map_err(map_delta_export_err)?
     .map(|snapshot| {
@@ -473,6 +512,7 @@ fn replacement_frame(
 pub(super) fn authorize_promoted_window(
     server: &SyncServer,
     auth: &CoreAuth,
+    peer: oneiron::authority::PeerMachine,
     key: &WindowKey,
     selector: &SyncSelector,
     source: &loro::LoroDoc,
@@ -488,19 +528,23 @@ pub(super) fn authorize_promoted_window(
         ));
     }
     let proof = auth.verified_slip().ok_or(ProtocolError::RpcNoPrincipal)?;
-    let actor = server
-        .vault
-        .credential_read_key(proof)
-        .map_err(map_selector_filter_err)?
-        .ok_or(ProtocolError::RpcNoPrincipal)?;
-    let scoped = server.vault.scoped_read(actor);
+    // One admission for the machine this socket proved: the credential, the
+    // grant and every carried row's world for that machine (OF-534 G6).
+    let admission = oneiron::sync::residence::ResidenceAdmission::load(
+        &server.vault,
+        proof,
+        peer,
+        selector_grant_scope(),
+        selector,
+    )
+    .map_err(map_selector_filter_err)?;
     match promotion_covers_full_window(
         &server.vault,
         source,
         key,
         selector_grant_scope(),
         selector,
-        |id| scoped.is_entity_readable(&id),
+        |id| admission.allows_item(id),
     ) {
         Ok(true) => Ok(()),
         Ok(false) => Err(ProtocolError::InvalidPayload(
