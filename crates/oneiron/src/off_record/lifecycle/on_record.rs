@@ -42,7 +42,7 @@ pub(crate) struct OnRecordSaver {
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum SaverProof {
     Owner(crate::consent::AuthenticatedOwner),
-    Grant(SaveGrant),
+    Grant(Box<SaveGrant>),
 }
 
 impl SaverProof {

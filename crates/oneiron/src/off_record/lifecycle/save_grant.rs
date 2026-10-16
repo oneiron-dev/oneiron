@@ -247,7 +247,7 @@ impl OffRecordSession<'_> {
             )
         };
         recheck()?;
-        self.put_on_record(holder, SaverProof::Grant(grant.clone()), recheck)
+        self.put_on_record(holder, SaverProof::Grant(Box::new(grant.clone())), recheck)
     }
 
     /// The whole-talk save of a holder on their slip; with `answering`, only
