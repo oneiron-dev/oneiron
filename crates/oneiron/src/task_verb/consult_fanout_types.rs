@@ -11,9 +11,8 @@ pub use crate::outbound_chokepoint::FanoutApprovalMode as ConsultFanOutMode;
 /// Vault-owned approval knobs. There is no per-peer budget by default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsultFanOutPolicy {
-    /// The exceptional-width check threshold. Wider than this, an `auto`
-    /// fan-out raises the check and still lands, a `full-access` one just
-    /// lands, and a `manual` one pauses.
+    /// The exceptional-width check threshold. It only marks the check, which
+    /// never holds; `mode` gates every fan-out at any width.
     pub approval_threshold: u32,
     pub mode: ConsultFanOutMode,
     /// Optional anomaly detector, not a spend cap. Crossings pause visibly.

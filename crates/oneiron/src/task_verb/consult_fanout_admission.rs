@@ -1,9 +1,11 @@
 //! Meter, state and admit consult fan-outs before any TASK exists.
 //!
 //! Every fan-out states its counts, expected spend and cap before minting
-//! (OF-393). Width is a check, never a hold: an `auto` fan-out above the
-//! threshold still mints in the same transaction and carries its classified
-//! check, a `full-access` one just mints, and `manual` keeps its pause.
+//! (OF-393). The approval mode gates every fan-out at any width: `manual`
+//! pauses, `auto` mints on the decider's allow and otherwise pauses for the
+//! escalated role, `full-access` mints. The threshold only marks the
+//! exceptional-width check, which never holds: it rides the pause row of a
+//! held run and the statement of a minted one.
 
 use super::consult_fanout_store::{
     FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
@@ -266,11 +268,8 @@ impl Memory<'_> {
             },
             decisions,
         )?;
-        // AUTO classifies the width check; its answer never holds the run.
-        let disposition = if !has_pathology
-            && run.estimate.total_count > policy.approval_threshold
-            && policy.mode == super::ConsultFanOutMode::Auto
-        {
+        // AUTO rules on every auto fan-out, whatever its width.
+        let disposition = if !has_pathology && policy.mode == super::ConsultFanOutMode::Auto {
             auto.decide(&run.plan, &run.estimate)
                 .unwrap_or(FanoutAutoDisposition::SurfaceHuman)
         } else {
@@ -327,13 +326,9 @@ impl Memory<'_> {
                         return Err(Error::InvariantViolation("fan-out surface identity").into());
                     }
                     run.estimate = estimate;
-                    // A run held for pathology or by Manual mode asks its
-                    // width check on the same pause row; full access raises
-                    // none.
+                    // A held run asks its width check on its own pause row.
                     let threshold = u64::from(policy.approval_threshold);
-                    if run.plan.mode != super::ConsultFanOutMode::FullAccess
-                        && run.statement.crosses(threshold)
-                    {
+                    if run.statement.crosses(threshold) {
                         run.statement.raise_width_check(
                             threshold,
                             WidthCheckClass::Asked {

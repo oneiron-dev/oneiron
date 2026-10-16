@@ -1,7 +1,8 @@
 //! Authenticated exact-digest resume; ruling, policy and TASKs commit together.
 //!
-//! The same door answers a width check. Its run was minted at admission, so
-//! an answer releases nothing: approve-once acknowledges, approve-and-
+//! The same door answers a width question row (raised by a full-access run
+//! above the threshold). Its run was minted at admission, so an answer
+//! releases nothing: approve-once acknowledges, approve-and-
 //! remember acknowledges and persists the receipted policy row AUTO reads
 //! next time, and deny is refused because nothing was held.
 

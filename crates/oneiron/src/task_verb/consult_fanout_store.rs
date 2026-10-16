@@ -123,8 +123,8 @@ pub(super) struct StoredFanout {
     /// Stated before any TASK was minted; every read returns this copy.
     pub(super) statement: FanoutStatement,
     pub(super) pause: Option<FanoutApprovalRow>,
-    /// The non-blocking question row of an exceptional-width check AUTO could
-    /// not clear. The run was minted regardless.
+    /// The non-blocking question row of the exceptional-width check of a
+    /// full-access run above the threshold. The run was minted regardless.
     pub(super) check_row: Option<FanoutApprovalRow>,
     pub(super) dispatched_at: Option<u64>,
     pub(super) task_refs: Vec<String>,

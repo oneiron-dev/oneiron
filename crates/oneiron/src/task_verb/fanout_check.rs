@@ -1,11 +1,11 @@
 //! The exceptional-width check of fan-outs the engine never holds: a
 //! `tasks.ask` census and a wave plan (OF-393).
 //!
-//! The same knob and ladder as a consult fan-out: the vault's threshold row;
-//! under AUTO a covering standing approval clears the check and otherwise the
-//! next role is asked; full access just goes, with no check. Nothing here
-//! holds, refuses or narrows the work, and Manual mode asks rather than
-//! holds, because these fan-outs were never held for width.
+//! The same knob and ladder as a consult fan-out: the vault's threshold row
+//! marks the check; under AUTO a covering standing approval clears it, and
+//! otherwise the next role is asked. Nothing here holds, refuses or narrows
+//! the work: these fan-outs have no pause door, so every mode asks rather
+//! than holds.
 
 use super::consult_fanout_store::policy_in;
 use super::{ConsultFanOutMode, ConsultFanOutScope};
@@ -14,7 +14,7 @@ use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::error::Result;
 
 /// Raises `statement`'s width check when its width crosses the vault
-/// threshold, unless the vault runs full access. `scope` keys AUTO's standing read; `row_ref` names the durable
+/// threshold. `scope` keys AUTO's standing read; `row_ref` names the durable
 /// record the question rides on.
 pub(super) fn raise_unheld_width_check(
     vault: &Vault,
@@ -28,17 +28,17 @@ pub(super) fn raise_unheld_width_check(
     if !statement.crosses(threshold) {
         return Ok(());
     }
-    let classification = match policy.mode {
-        ConsultFanOutMode::FullAccess => return Ok(()),
+    let cleared = match policy.mode {
         ConsultFanOutMode::Auto => {
-            match crate::fanout_auto::covering_approval(vault, scope, statement.task_count) {
-                Some(row) => WidthCheckClass::AutoClear {
-                    policy_ref: Some(row.to_hex()),
-                },
-                None => WidthCheckClass::Asked { row_ref },
-            }
+            crate::fanout_auto::covering_approval(vault, scope, statement.task_count)
         }
-        ConsultFanOutMode::Manual => WidthCheckClass::Asked { row_ref },
+        ConsultFanOutMode::Manual | ConsultFanOutMode::FullAccess => None,
+    };
+    let classification = match cleared {
+        Some(row) => WidthCheckClass::AutoClear {
+            policy_ref: Some(row.to_hex()),
+        },
+        None => WidthCheckClass::Asked { row_ref },
     };
     statement.raise_width_check(threshold, classification);
     Ok(())

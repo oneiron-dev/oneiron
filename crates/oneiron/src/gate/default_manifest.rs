@@ -922,8 +922,8 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 ),
             ]),
         ),
-        // An auto fan-out raises the exceptional-width check above this
-        // threshold and lands either way. Keep the default as policy data so
+        // A fan-out raises the exceptional-width check above this threshold;
+        // the approval mode, not the threshold, decides whether it pauses. Keep the default as policy data so
         // owner-authenticated manifest edits control it.
         (
             Value::from(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY),

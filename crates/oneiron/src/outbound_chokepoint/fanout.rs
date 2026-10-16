@@ -2,8 +2,8 @@
 //!
 //! One reusable primitive answers a single question before any peer call or
 //! per-peer TASK exists: may this fan-out start, and if it may not, what does a
-//! human see? Width alone never decides it (OF-393). It runs entirely ahead of
-//! the parent module's decide →
+//! human see? The approval mode decides it at any width; width alone never
+//! does (OF-393). It runs entirely ahead of the parent module's decide →
 //! durable-pending → transport order, so a paused plan has created no effect to
 //! undo and no row to reconcile.
 //!
@@ -15,18 +15,19 @@
 //!    per-peer rate that crosses a supplied spike threshold. Pathology pauses
 //!    for judgment BEFORE any threshold or ladder logic; it never kills a run
 //!    and never drops one silently.
-//! 3. Above the threshold, width is a check, never a limit, and it rides the
-//!    existing r5v2 approval ladder rather than a new gate family. Under
-//!    `auto` the plan raises the exceptional-width check: AUTO classifies it,
-//!    and an absent, failing or uncertain classifier persists a non-blocking
-//!    question row; the plan proceeds either way. `full-access` just goes,
-//!    with no check. Only `manual`, a mode the owner chooses himself, still
-//!    pauses above the threshold. There is no depth limit, no total ceiling,
-//!    no per-peer default budget, and no silent cancellation path anywhere in
-//!    this module.
+//! 3. The r5v2 approval mode gates every plan, whatever its width: `manual`
+//!    pauses for the person; `auto` asks the injected classifier, and an
+//!    absent, failing or uncertain classifier pauses for the escalated role
+//!    (never a silent allow, never a silent kill); `full-access` just goes.
+//! 4. The threshold only marks the exceptional-width check, a check never a
+//!    limit. Above it the check rides the plan's pause row when the mode
+//!    holds the plan, is cleared by the classifier's allow under `auto`, and
+//!    under `full-access` is a non-blocking question row. There is no depth
+//!    limit, no total ceiling, no per-peer default budget, and no silent
+//!    cancellation path anywhere in this module.
 //!
 //! A human approval resumes the exact frozen plan digest and is always
-//! receipted; an answer to a width check is receipted the same way and
+//! receipted; an answer to a width question is receipted the same way and
 //! releases nothing, because nothing was held. Rendering and persisting the
 //! surfaced rows belong to the caller; this module requires a
 //! [`FanoutSurfaceSink`] and counts a pause or a question as surfaced only
@@ -249,19 +250,19 @@ pub(crate) struct FanoutApprovalRow {
     pub(crate) statement: Option<crate::agent_dispatch::FanoutStatement>,
 }
 
-/// How the AUTO rung classified the exceptional-width check of a plan that
-/// proceeds. No arm holds it.
+/// How the exceptional-width check of a plan that proceeds was classified.
+/// No arm holds it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FanoutWidthClass {
-    /// The AUTO rung allowed it.
+    /// `auto`: the classifier allowed the plan.
     AutoClear,
-    /// AUTO was absent, failing or uncertain: the next role is asked on this
+    /// `full-access`: no classifier is asked; the next role is asked on this
     /// non-blocking question row.
     Asked { row: Box<FanoutApprovalRow> },
 }
 
-/// The exceptional-width check an `auto` plan above the threshold raises. A
-/// check, never a limit: the plan carrying it proceeds.
+/// The exceptional-width check a proceeding plan above the threshold raises.
+/// A check, never a limit: the plan carrying it proceeds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FanoutWidthCheck {
     pub(crate) threshold: u32,
@@ -307,8 +308,8 @@ pub(crate) trait FanoutSurfaceSink {
 }
 
 /// The admission answer. Both arms carry the metering, because metering is
-/// free and unconditional. An `auto` plan above the threshold that proceeds
-/// has handed its width check to the sink first.
+/// free and unconditional. A plan above the threshold that proceeds has
+/// handed its width check to the sink first.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FanoutAdmission {
     Proceed {
@@ -372,13 +373,14 @@ pub(crate) fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
 /// Decides whether one fan-out plan may begin executing.
 ///
 /// Metering runs first and always. Pathology is detected before any threshold
-/// or ladder logic and pauses on its own. Size never holds an `auto` or
-/// `full-access` plan: above the caller-provided manifest `threshold` an
-/// `auto` plan raises the exceptional-width check, which the AUTO rung
-/// classifies and the sink records, and proceeds; a `full-access` plan just
-/// proceeds. `manual` alone keeps its pause above the threshold, because the
-/// owner chose that mode. Every paused branch returns before any callback that
-/// could create a peer TASK or reach transport.
+/// or ladder logic and pauses on its own. Then the approval mode rules at any
+/// width: `manual` pauses, `auto` proceeds only on the classifier's allow and
+/// otherwise pauses for the escalated role, and `full-access` proceeds. Size
+/// never holds a plan: above the caller-provided manifest `threshold` a
+/// proceeding plan hands its exceptional-width check to the sink (cleared by
+/// the allow under `auto`, a non-blocking question row under `full-access`),
+/// and a paused plan's row carries it. Every paused branch returns before any
+/// callback that could create a peer TASK or reach transport.
 ///
 /// # Errors
 ///
@@ -404,28 +406,35 @@ pub(crate) fn admit_fanout_plan(
     let threshold = threshold.ok_or_else(|| {
         Error::InvalidConfig("fan-out approval threshold policy row missing".into())
     })?;
+    // The mode gates the plan at any width. `true`: the classifier allowed it.
+    let cleared = match canonical.mode {
+        FanoutApprovalMode::Manual => return pause(&canonical, estimate, None, surface, now_ms),
+        // A classifier that is missing, unreachable, or wrong is not authority
+        // to start a fan-out, and is not authority to cancel one either: both
+        // failure and refusal land on the same human surface.
+        FanoutApprovalMode::Auto => match auto.decide(plan, &estimate) {
+            Ok(FanoutAutoDisposition::Allow) => true,
+            Ok(FanoutAutoDisposition::SurfaceHuman) | Err(_) => {
+                return pause(&canonical, estimate, None, surface, now_ms);
+            }
+        },
+        FanoutApprovalMode::FullAccess => false,
+    };
     if estimate.total_count <= threshold {
         return Ok(FanoutAdmission::Proceed { estimate });
     }
-
-    let class = match canonical.mode {
-        FanoutApprovalMode::FullAccess => return Ok(FanoutAdmission::Proceed { estimate }),
-        FanoutApprovalMode::Manual => return pause(&canonical, estimate, None, surface, now_ms),
-        // A classifier that is missing, unreachable, or wrong is not authority
-        // to hold a fan-out, and is not authority to cancel one either: both
-        // failure and refusal ask the next role on a row that holds nothing.
-        FanoutApprovalMode::Auto => match auto.decide(plan, &estimate) {
-            Ok(FanoutAutoDisposition::Allow) => FanoutWidthClass::AutoClear,
-            Ok(FanoutAutoDisposition::SurfaceHuman) | Err(_) => FanoutWidthClass::Asked {
-                row: Box::new(surfaced_row(
-                    &canonical,
-                    &estimate,
-                    None,
-                    RowFamily::WidthCheck,
-                    now_ms,
-                )),
-            },
-        },
+    let class = if cleared {
+        FanoutWidthClass::AutoClear
+    } else {
+        FanoutWidthClass::Asked {
+            row: Box::new(surfaced_row(
+                &canonical,
+                &estimate,
+                None,
+                RowFamily::WidthCheck,
+                now_ms,
+            )),
+        }
     };
     let check = FanoutWidthCheck { threshold, class };
     if let Some(surface_ref) = surface.persist_width_check(&check)? {
