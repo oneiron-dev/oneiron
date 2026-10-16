@@ -28,11 +28,14 @@ pub fn row_domain(verb: &str) -> VerbDomain {
 }
 
 /// The call of row `verb` on `memory`: its actor and class, the invocation
-/// its host bound or a fresh one, and the room a room turn runs in.
+/// its host bound or a fresh one, and the room a room turn runs in, as
+/// `room:<hex>` (the `<axis>:<value>` form a hook's scope names).
 #[must_use]
 pub fn row_call(memory: &Memory<'_>, verb: &str) -> VerbCall {
     let mut call = VerbCall::for_memory(memory, verb, row_domain(verb));
-    call.scope = memory.room_turn().map(|turn| turn.room.to_hex());
+    call.scope = memory
+        .room_turn()
+        .map(|turn| format!("room:{}", turn.room.to_hex()));
     call
 }
 
