@@ -54,8 +54,14 @@ impl ImageRef {
             Some(_) => return Err(Error::ImageNotPinned),
             None => reference,
         };
-        let hex = digest.strip_prefix("sha256:").ok_or(Error::ImageNotPinned)?;
-        if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        let hex = digest
+            .strip_prefix("sha256:")
+            .ok_or(Error::ImageNotPinned)?;
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             return Err(Error::ImageNotPinned);
         }
         Ok(Self(reference.to_owned()))
@@ -160,13 +166,29 @@ impl ContainerRuntime {
             generation: GENERATION.fetch_add(1, Ordering::Relaxed) + 1,
             fence_unproven: true,
         };
-        Ok(GuestSession { runtime: self.program.clone(), name, child, manifest, stderr_tail })
+        Ok(GuestSession {
+            runtime: self.program.clone(),
+            name,
+            child,
+            manifest,
+            stderr_tail,
+        })
     }
 }
 
 fn run_args(name: &str, spec: &GuestSpec) -> Result<Vec<OsString>> {
-    let GuestLimits { memory_mib, cpu_millis, pids, tmpfs_mib } = spec.limits;
-    for (limit, value) in [("memory_mib", memory_mib), ("cpu_millis", cpu_millis), ("pids", pids), ("tmpfs_mib", tmpfs_mib)] {
+    let GuestLimits {
+        memory_mib,
+        cpu_millis,
+        pids,
+        tmpfs_mib,
+    } = spec.limits;
+    for (limit, value) in [
+        ("memory_mib", memory_mib),
+        ("cpu_millis", cpu_millis),
+        ("pids", pids),
+        ("tmpfs_mib", tmpfs_mib),
+    ] {
         if value == 0 {
             return Err(Error::ZeroLimit(limit));
         }
@@ -204,7 +226,8 @@ fn run_args(name: &str, spec: &GuestSpec) -> Result<Vec<OsString>> {
 }
 
 fn read_only_mount(host: &Path, guest: &Path) -> Result<OsString> {
-    let plain = |path: &Path| path.is_absolute() && !path.as_os_str().as_encoded_bytes().contains(&b',');
+    let plain =
+        |path: &Path| path.is_absolute() && !path.as_os_str().as_encoded_bytes().contains(&b',');
     if !plain(host) || !plain(guest) {
         return Err(Error::Mount(host.to_owned()));
     }
@@ -252,7 +275,9 @@ impl GuestSession {
     pub fn stderr_tail(&self) -> String {
         self.stderr_tail
             .lock()
-            .map(|tail| String::from_utf8_lossy(&tail.iter().copied().collect::<Vec<_>>()).into_owned())
+            .map(|tail| {
+                String::from_utf8_lossy(&tail.iter().copied().collect::<Vec<_>>()).into_owned()
+            })
             .unwrap_or_default()
     }
 

@@ -281,6 +281,10 @@ pub struct StoreCore {
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
     pub(crate) limit_watch: crate::limit_ask::LimitWatch,
+    /// The pool code-mode result bodies held in memory draw on: this
+    /// vault's own until the host installs the process's
+    /// ([`crate::Vault::set_result_memory`]).
+    pub(crate) result_memory: RwLock<Arc<crate::result_memory::ResultMemoryPool>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.

@@ -535,7 +535,11 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
             .get(pin.version as usize)
             .ok_or(invalid("entity document pin version"))?;
         let (start, end) = (pin.start as usize, pin.end as usize);
-        let quote: String = text.chars().skip(start).take(end.saturating_sub(start)).collect();
+        let quote: String = text
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect();
         if start > end
             || end > text.chars().count()
             || quote != pin.quote
@@ -546,7 +550,12 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
     }
     strict(history.receipts.iter().map(|receipt| receipt.receipt))?;
     for receipt in &history.receipts {
-        for value in [receipt.receipt, receipt.proposal, receipt.fork, receipt.actor] {
+        for value in [
+            receipt.receipt,
+            receipt.proposal,
+            receipt.fork,
+            receipt.actor,
+        ] {
             id(value)?;
         }
         if !version(receipt.before) || !version(receipt.after) {

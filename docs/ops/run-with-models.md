@@ -74,12 +74,17 @@ key_env = "ANTHROPIC_API_KEY"
 
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
-the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
-tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at
+depth 7, the owner's ruling of 2026-10-16 for every workload), served by an
+exllamav3 OpenAI-compatible server with no schema:
 its provider sets `response_format = "none"`, so a JSON call goes out with
 no `response_format`. The fallback is llama.cpp `llama-server` on
 `Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
-(`--spec-type draft-simple --spec-draft-n-max 8`). The Dreamer's extraction
+(`--spec-type draft-simple --spec-draft-n-max 8`). `deploy/house-model/`
+ships both servers, one per GPU, as systemd units, and the `[models]` block
+that binds them (`models.toml`): the generative seats try EXL3 first and fall
+back to llama.cpp, and `local_reasoner` is the llama.cpp server alone, so the
+decision read (section 9) runs on the house weights. The Dreamer's extraction
 call sends no schema on any provider: a grammar built from one can strip the
 claim fields, so the engine checks the answer against the extraction
 contract itself, and an answer that breaks it is refused. Other JSON calls,
@@ -208,8 +213,9 @@ policy: extraction and narrative under `extraction`, the verdict under
 (`own_server`) OpenAI-compatible server is sent the level as
 `reasoning_effort` and in `chat_template_kwargs`, and the budget as
 `reasoning_budget_tokens` (llama.cpp reads all three per request; an
-exllamav3 server that renders `chat_template_kwargs` gets the level, not the
-budget). A hosted provider gets `reasoning_effort` alone. A model whose
+exllamav3 server that renders `chat_template_kwargs` gets the level; the
+house EXL3 server in `deploy/house-model/` reads the budget too, and closes the
+thought at it). A hosted provider gets `reasoning_effort` alone. A model whose
 provider does not declare `reasoning`, or a ladder with a rung that does not,
 takes no reasoning controls, so its calls are pinned to `none`; declare
 `reasoning` on a hosted provider whose model accepts `reasoning_effort`.
@@ -508,10 +514,13 @@ MCP, HTTP and WebSocket recall alike.
 
 ## 9. The decision read
 
-decide()'s escalation rung reads the `local_reasoner` model in one forward
-pass: the question's labels, "does this need more thinking?" and, when the
-recipe asks it, "ask a person?", as probabilities, with no text generated
-(the read idle-fold tests 4 and 5 measured). The model must be a llama.cpp
+decide()'s escalation rung reads the `local_reasoner` model as one pack: the
+question's labels, "does this need more thinking?" and, when the host asks
+it, "ask a person?", each its own typed question over the same state, sent in
+one request and read as probabilities, with no text generated. Each question
+is normalized over its own labels: idle-fold test 6b read "ask a person?" as
+its own question far better than as part of one joint label table (AUROC
+0.990 against 0.908). The model must be a llama.cpp
 `llama-server` reached on its native API (`/tokenize`, `/completion`; a
 `base_url` ending in `/v1` still reaches them), on the one rung
 `local_reasoner` has:
@@ -527,24 +536,38 @@ model = "house:qwen3.8-27b"
 
 [models.decision_read]
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
-max_response_bytes = 67108864                  # one read's answer (the default, 64 MiB)
+max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
 ```
 
-The recipe is yours, not the server's: it names the prompt template (with
-`{question}`, `{labels}`, `{paired}`, `{person}`, `{state}` and
-`{state.<key>}` slots), the joint label table's row wording (`row`, and
-`row_person` for the person question), the `yes` and `no` words, the
-single-token label verbalizers (`tokens`, at least four), the end token
+The recipe is yours, not the server's (`format = 2`): it names the prompt
+template (with `{question}`, `{labels}`, `{state}` and `{state.<key>}`
+slots), one label's row wording (`row`, with `{token}` and `{label}`), the
+`yes` and `no` words, `no_first` (a yes/no question lists no before yes, as
+test 6b's side questions did; its readout still reports yes first), the
+single-token label verbalizers (`tokens`, at least two), the end token
 (`eos`), `n_probs` (how many of the top probabilities come back),
-`n_probs_full` (the whole vocabulary, for the one retry below) and, for the
-owner's probe, `[probe] paired` and `person`. Each label must be
-one distinct token on the served tokenizer, or every read is refused. Option
-`i`, more thinking `j` and ask a person `k` sit at row `4i + 2k + j`
-(`2i + j` without the person question), so a question of `n` options needs
-`4n` tokens with it. The read's revision is the provider's `revision` plus a
-digest of the recipe and its template: change either and decide()'s pins name
-a new read.
+`n_probs_full` (the whole vocabulary, for the retry below) and, for the
+owner's probe, `[probe] paired` and `person`. Every question of a pack
+renders the same template over the same state with its own text and its own
+label rows, so the template's text before `{question}` is the pack's shared
+prefix; a question's text is its whole description. A question of `n` labels
+takes the first `n` tokens, so `tokens` bounds a choice question's options.
+Each label must be one distinct token on the served tokenizer, or every read
+is refused. The read's revision is the provider's `revision` plus a digest of
+the recipe and its template: change either and decide()'s pins name a new
+read.
+
+The pack goes to `/completion` as one request whose `prompt` is an array,
+one prompt per question, with `id_slot` -1: llama.cpp gives each prompt a
+free slot (run `llama-server` with one slot per question, `-np`, to read a
+pack side by side) and each slot's prompt cache keeps what it last read. The
+request reads the state once; it is not a promise that the shared prefix is
+evaluated once. decide()'s pack is "does this need more thinking?" first, then
+the call's questions in order, then "ask a person?" when the surface asks it.
+A call past the decision policy's questions-per-call row (16 by default) goes
+as several packs in turn, each with its own "more thinking?" and "ask a
+person?" questions.
 
 The read goes to llama.cpp's raw `/completion`, which applies no chat
 template, and the server adds no text: the rendered template is the whole
@@ -560,14 +583,15 @@ label among the top `n_probs` reads the same as over the whole vocabulary:
 idle-fold test 6 compared the house model's label numbers at 16,384 and at its
 full 262,144 bit for bit, 20 of 20 identical, and the shorter answer took
 about 1.5 s less to serialize per read. Some labels rank below the top
-16,384, so a read whose labels are not all listed is sent again, once, with
-`n_probs_full`; its time and tokens count in the read (17% of test 6's
-44-label reads needed it). Without `n_probs_full` there is no retry, so set
-`n_probs` to the whole vocabulary then.
+16,384, so a question whose labels are not all listed is sent again, alone
+and once, with `n_probs_full`; its time and tokens count in the read (17% of
+test 6's 44-label reads needed it). Without `n_probs_full` there is no retry,
+so set `n_probs` to the whole vocabulary then, and raise `max_response_bytes`
+to hold every question's full answer in one body (about 25 MiB each).
 
-Every read checks that no text came back and that generation stopped at the
-forced end token, on the retry as on the first call; a read that fails a
-check, or still misses a label, is refused typed (`LabelRead`: `EmittedText`,
+Every answer is checked: no text came back, and generation stopped at the
+forced end token, on a retry as on the first call. A read with any question
+that fails a check, or still misses a label, is refused whole, typed (`LabelRead`: `EmittedText`,
 `NotEosStop`, `MissingLabels`, `Malformed`) and is never read as a
 probability of zero.
 

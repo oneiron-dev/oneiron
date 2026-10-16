@@ -286,7 +286,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 
 #### decision-read-probe - `POST /v1/llm/decision_read`
 
-- when-to-use: Probe the house model's decision read: the label probabilities, P(more thinking) and P(ask a person) it gives one question over state the caller built, from one forward pass. A probe only; every typed decision still goes through decide() in process.
+- when-to-use: Probe the house model's decision read: the label probabilities, P(more thinking) and P(ask a person) it gives one question over state the caller built: each its own question over that state, read apart in one request. A probe only; every typed decision still goes through decide() in process.
 - trigger phrases:
   - "what does the house model read for this question?"
   - "probe the decision read"
@@ -625,7 +625,7 @@ Authentication: `Authorization: Bearer <owner-grade credential>`; scoped credent
 
 Body (JSON, at most 256 KiB): `{ "question": "...", "options": ["...", "..."], "state": { ... } }`. `options` (2 to 64 distinct labels, in order) is absent for a yes/no question. `state` is an object of at most 65,536 bytes that the caller built; the probe reads nothing from the vault. The model, its endpoint, the read recipe and the paired and person questions are the host's configuration (`[models.decision_read]`); a request cannot choose them.
 
-`200` returns `{ "model", "revision", "primary": [...], "paired_yes", "person_yes", "usage" }`. `primary` holds the options' probabilities in order (yes, then no, for a yes/no question), `paired_yes` is P(more thinking), and `person_yes`, present when the recipe asks the person question, is P(ask a person). `revision` names the served weights and the recipe.
+`200` returns `{ "model", "revision", "primary": [...], "paired_yes", "person_yes", "usage" }`. `primary` holds the options' probabilities in order (yes, then no, for a yes/no question), `paired_yes` is P(more thinking), and `person_yes`, present when the recipe asks the person question, is P(ask a person). Each is normalized over its own labels. `revision` names the served weights and the recipe.
 
 Errors: `400 invalid_request` (a bad question, options or state); `402 budget_denied`; `502 label_read`, whose `error.llm` names the failed check (`EmittedText`, `NotEosStop`, `MissingLabels` or `Malformed`; a failed read is never a probability of zero); `503 decision_read_unavailable` (no `[models.decision_read]`, or its recipe has no `[probe]`); `503 decision_read_waited_out` (the probe waited past `limits.queue_wait_timeout_ms` for its turn, and nothing was started).
 

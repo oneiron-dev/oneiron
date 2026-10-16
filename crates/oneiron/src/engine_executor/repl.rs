@@ -663,10 +663,17 @@ impl EngineNativeExecutor<'_> {
         let OutputAffordance::Reexpand(source) = action else {
             return Err(Error::InvalidConfig("expected reexpand action".into()).into());
         };
+        // The manifest names the body: no other observation is read.
         for seq in 0..completed_step_count(record)? {
-            let bytes = load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
-            if OutputRef::from_bytes(bytes.as_bytes()) == source {
-                return Ok(bytes.into_bytes());
+            let path = observation_output_path(seq);
+            let Some(output) = record.outputs.iter().find(|output| output.path == path) else {
+                continue;
+            };
+            if output.output_ref() == source {
+                return Ok(self
+                    .storage
+                    .get_code_run_raw_output(output)?
+                    .ok_or(Error::CorruptedIndex("executor replay output bytes"))?);
             }
         }
         Err(Error::CorruptedIndex("missing recoverable executor observation").into())
@@ -703,11 +710,10 @@ impl EngineNativeExecutor<'_> {
         Ok(steps)
     }
 
-    /// Every completed step's observation reference. A body is read once per
-    /// executor, in place, the first time its content handle is seen; a turn
-    /// after that reads no past body at all.
+    /// Every completed step's observation reference, from its manifest: no
+    /// past body is read to build a turn's context.
     pub(super) fn observation_refs(
-        &mut self,
+        &self,
         record: &CodeRunReplayRecord,
     ) -> EngineExecutorResult<Vec<(u64, CodeRunRawOutput, ObservationRef)>> {
         let mut refs = Vec::new();
@@ -718,16 +724,7 @@ impl EngineNativeExecutor<'_> {
                 .iter()
                 .find(|output| output.path == path)
                 .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-            let observation = match self.observations.get(&output.handle) {
-                Some(observation) => observation.clone(),
-                None => {
-                    let observation = observation_ref(&self.storage, output)?;
-                    self.observations
-                        .insert(output.handle.clone(), observation.clone());
-                    observation
-                }
-            };
-            refs.push((seq, output.clone(), observation));
+            refs.push((seq, output.clone(), observation_ref(output)));
         }
         Ok(refs)
     }
@@ -760,15 +757,31 @@ impl EngineNativeExecutor<'_> {
 
         let steps = self.sync_output_context(record)?;
         // Only a Full view expands its body; older steps cost their reference.
-        let views =
+        // A Full body is held against the run's share of the result-memory
+        // pool first: one that does not fit stays in its file, and its view
+        // falls back to the reference the run reads it by.
+        self.context_holds.clear();
+        let mut holds = Vec::new();
+        let mut left = Vec::new();
+        let views = {
+            let share = &self.result_share;
+            let watch = self.storage.limit_watch();
             self.output_context
                 .assemble_with(completed_steps, self.output_decay, |source| {
                     let seq = steps
                         .get(&source)
                         .ok_or(Error::CorruptedIndex("missing executor observation"))?;
+                    let Some(hold) = share.hold(source.byte_len, watch) else {
+                        left.push((*seq, source));
+                        return Ok(None);
+                    };
+                    holds.push((source, hold));
                     load_utf8_output(&self.storage, record, &observation_output_path(*seq))
-                        .map(String::into_bytes)
-                })?;
+                        .map(|text| Some(text.into_bytes()))
+                })?
+        };
+        let memory_note = result_memory_note(&self.result_share, &holds, &left);
+        self.context_holds = holds.into_iter().map(|(_, hold)| hold).collect();
         let epochs = self.compaction_epochs(record.run_id)?;
         if !epochs.is_empty() {
             self.admit_compaction_read()?;
@@ -812,6 +825,12 @@ impl EngineNativeExecutor<'_> {
             });
         }
 
+        if let Some(note) = memory_note {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text { text: note }],
+            });
+        }
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
@@ -855,4 +874,47 @@ impl EngineNativeExecutor<'_> {
         }
         Ok(request)
     }
+}
+
+/// Past 60% of the run's result-memory share, a line naming the biggest
+/// bodies held; and one line for every body that stayed in its file because
+/// it did not fit, naming why and how to read it.
+fn result_memory_note(
+    share: &crate::result_memory::ResultShare,
+    held: &[(OutputRef, crate::result_memory::ResultHold)],
+    left: &[(u64, OutputRef)],
+) -> Option<String> {
+    let mut lines = Vec::new();
+    let share_bytes = share.bytes();
+    let held_bytes = share.held();
+    if held_bytes.saturating_mul(10) > share_bytes.saturating_mul(6) {
+        let mut biggest: Vec<_> = held.iter().map(|(source, _)| *source).collect();
+        biggest.sort_by_key(|source| std::cmp::Reverse(source.byte_len));
+        let names: Vec<_> = biggest
+            .iter()
+            .take(3)
+            .map(|source| {
+                format!(
+                    "output:blake3:{}:{}",
+                    crate::entity_id::bytes_to_hex_lower(&source.hash),
+                    source.byte_len
+                )
+            })
+            .collect();
+        lines.push(format!(
+            "Result memory: {held_bytes} of this run's {share_bytes} bytes held \
+             (limits.code_result_session_memory_bytes); biggest: {}.",
+            names.join(", ")
+        ));
+    }
+    for (seq, source) in left {
+        lines.push(format!(
+            "Result of step {seq} ({} bytes) left context memory: it would pass \
+             limits.code_result_session_memory_bytes or limits.code_result_memory_bytes. \
+             It is stored whole; read it with sandbox.fs.read_file(\"{}\").",
+            source.byte_len,
+            recoverable_chunk_path(*seq, *source, 0)
+        ));
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }

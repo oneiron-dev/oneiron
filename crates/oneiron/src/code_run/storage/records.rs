@@ -1,11 +1,13 @@
 //! The code-run vault_meta row families: replay records, raw output, taint refs and heal counts.
 
+use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::secret_lease::SecretTaintRef;
 use crate::secret_rotation::{
     ArtifactTaintState, taint_state_for_refs_in_txn, validate_taint_refs,
 };
 use crate::session_overlay::RouteTarget;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::validate_raw_output;
@@ -16,16 +18,58 @@ use super::super::support::invalid_code_run_replay;
 pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
     SideTable::new(&side_table::CODE_RUN_REPLAY);
 
-/// Raw output bytes, keyed by their deterministic content handle.
-pub(super) const RAW_OUTPUTS: SideTable<String, Vec<u8>, Raw> =
+/// One result body, keyed by its deterministic content handle: inline, or the
+/// file beside `data.mdb` that holds it (OF-597).
+pub(super) const RAW_OUTPUTS: SideTable<String, StoredBody, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
+
+const STORED_INLINE: u8 = 0;
+const STORED_FILE: u8 = 1;
+
+/// Where one body's bytes are: in its row, within `[limits]
+/// code_result_inline_bytes`, or in the body file named by its digest, of
+/// `len` bytes. The row is written only once the file is whole on disk, so a
+/// row naming a file never names a partial one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StoredBody {
+    Inline(Vec<u8>),
+    File { len: u64 },
+}
+
+impl RawValue for StoredBody {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(match self {
+            Self::Inline(bytes) => {
+                let mut raw = Vec::with_capacity(bytes.len() + 1);
+                raw.push(STORED_INLINE);
+                raw.extend_from_slice(bytes);
+                raw
+            }
+            Self::File { len } => {
+                let mut raw = vec![STORED_FILE];
+                raw.extend_from_slice(&len.to_be_bytes());
+                raw
+            }
+        })
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        match bytes.split_first() {
+            Some((&STORED_INLINE, body)) => Ok(Self::Inline(body.to_vec())),
+            Some((&STORED_FILE, len)) => Ok(Self::File {
+                len: u64::from_be_bytes(
+                    len.try_into()
+                        .map_err(|_| Error::CorruptedIndex("code-run raw output row"))?,
+                ),
+            }),
+            _ => Err(Error::CorruptedIndex("code-run raw output row").into()),
+        }
+    }
+}
 
 /// SECRET-04 (ONE-1922): the FORWARD taint sidecar of one raw-output row.
 ///
-/// A sidecar rather than a wrapper because the raw-output row is bytes and
-/// nothing else — `get_code_run_raw_output` re-hashes it against its
-/// metadata, so a framing change there would break every stored output. The
-/// sidecar is keyed by the SAME handle, written in the SAME transaction, and
+/// A sidecar keyed by the SAME handle, written in the SAME transaction, and
 /// absent for the overwhelmingly common untainted run.
 const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
@@ -127,58 +171,64 @@ impl Vault {
         REPLAY_RECORDS.get(&self.store, &rtxn, run_id)
     }
 
-    /// Stores raw output bytes under a deterministic content handle.
-    pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
-        if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
-            return Err(invalid_code_run_replay(
-                "raw output metadata does not match bytes",
-            ));
-        }
-        let mut wtxn = self.store.env.write_txn()?;
-        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &raw.to_vec())?;
-        Ok(wtxn.commit()?)
+    /// A writer for one result body, into this vault's `bodies/`.
+    pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
+        Ok(BodySink::new(
+            self.store.body_dir()?,
+            self.limit_watch().bound(EngineLimit::CodeResultInlineBytes),
+        ))
     }
 
-    /// Stores raw output bytes ALONGSIDE the taint refs of the action that
+    /// Publishes the body `sink` wrote as the output at `path`: a spilled
+    /// body's file is whole on disk before the row naming it commits.
+    pub(crate) fn publish_code_run_output(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+    ) -> Result<CodeRunRawOutput> {
+        let (output, body) = finish_output(path, sink, complete, self.limit_watch())?;
+        let mut wtxn = self.store.env.write_txn()?;
+        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &body)?;
+        wtxn.commit()?;
+        Ok(output)
+    }
+
+    /// Stores a complete body held whole under its content handle; `output`
+    /// must be its manifest.
+    pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
+        self.put_code_run_raw_output_tainted(output, raw, &[])
+    }
+
+    /// Stores a complete body ALONGSIDE the taint refs of the action that
     /// produced them (SECRET-04, ONE-1922).
     ///
-    /// A SIBLING of [`Vault::put_code_run_raw_output`], not a replacement:
-    /// the existing signature is untouched, so every live persist call site
-    /// stays exactly as it was and no executor learns about secrets it does
-    /// not consume. A build leg that DID consume one calls this instead and
-    /// hands over the door receipt's taint token.
-    ///
-    /// One write transaction carries the sidecar and the raw-output row, so
+    /// One write transaction carries the sidecar and the body row, so
     /// tainted exhaust can never survive a half-failed write wearing no
     /// mark. An empty ref list is exactly the untainted put (the sidecar is
     /// cleared, not written empty).
-    ///
-    /// Deliberately a VAULT door and not (yet) an `ExecutorStorage` arm: the
-    /// durable executor has no secret awareness to route, so a passthrough
-    /// added here would be an uncalled arm on the executor's closed storage
-    /// set. The consumer that teaches a build leg to declare its taint adds
-    /// the arm together with the call site that needs it.
     pub fn put_code_run_raw_output_tainted(
         &self,
         output: &CodeRunRawOutput,
         raw: &[u8],
         taint_refs: &[SecretTaintRef],
     ) -> Result<()> {
-        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), raw)?;
-        if expected != *output {
+        validate_taint_refs(taint_refs)?;
+        let mut sink = self.code_run_output_sink()?;
+        sink.write(raw)?;
+        let (stored, body) = finish_output(output.path.clone(), sink, true, self.limit_watch())?;
+        if stored != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
-        validate_taint_refs(taint_refs)?;
-
         let mut wtxn = self.store.env.write_txn()?;
         if taint_refs.is_empty() {
             RAW_OUTPUT_TAINTS.delete(&self.store, &mut wtxn, &output.handle)?;
         } else {
             RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &output.handle, &taint_refs.to_vec())?;
         }
-        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &raw.to_vec())?;
+        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &body)?;
         Ok(wtxn.commit()?)
     }
 
@@ -252,52 +302,147 @@ impl Vault {
         })
     }
 
-    /// Loads raw output bytes for `output` and verifies they still match metadata.
+    /// Loads the whole body of `output`, checked against its digest. For
+    /// small bodies and explicit whole reads; context reads take ranges.
     pub fn get_code_run_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
-        let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)? else {
-            return Ok(None);
+        let body = {
+            let rtxn = self.store.env.read_txn()?;
+            RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)?
         };
-        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), &raw)?;
-        if expected != *output {
-            return Err(invalid_code_run_replay(
-                "stored raw output bytes drifted from metadata",
-            ));
-        }
-        Ok(Some(raw))
+        body.map(|body| load_whole_body(output, body, || Ok(vec![self.store.body_dir()?])))
+            .transpose()
     }
 
-    /// Lends one raw output's stored bytes to `read` in place, never copied
-    /// whole out of the store. Only their length is checked here; a reader
-    /// that needs the digest calls [`CodeRunRawOutput::verify_bytes`] once,
-    /// rather than hashing the whole body for every slice it takes.
-    pub(crate) fn with_code_run_raw_output_bytes<R>(
+    /// `len` bytes of `output`'s body from `offset`, cut at its end: an
+    /// inline body is read in place, a file by range. Nothing else of the
+    /// body is read.
+    pub(crate) fn read_code_run_raw_output_range(
         &self,
         output: &CodeRunRawOutput,
-        read: impl FnOnce(&[u8]) -> Result<R>,
-    ) -> Result<Option<R>> {
+        offset: u64,
+        len: usize,
+    ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = RAW_OUTPUTS.get_borrowed(&self.store, &rtxn, &output.handle)? else {
+        let Some(row) = RAW_OUTPUTS.get_borrowed(&self.store, &rtxn, &output.handle)? else {
             return Ok(None);
         };
-        lend_raw_output(output, &raw, read).map(Some)
+        read_body_row_range(output, &row, offset, len, || {
+            Ok(vec![self.store.body_dir()?])
+        })
+        .map(Some)
     }
 }
 
-/// Lends stored raw output bytes whose length matches their metadata.
-pub(super) fn lend_raw_output<R>(
+/// Finishes `sink` into the output's manifest and its row. A body that took
+/// the disk below `[limits] code_result_disk_floor_bytes` asks that row's
+/// question; it is stored whole all the same.
+pub(super) fn finish_output(
+    path: String,
+    sink: BodySink,
+    complete: bool,
+    watch: &LimitWatch,
+) -> Result<(CodeRunRawOutput, StoredBody)> {
+    let (facts, sunk) = sink.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS)?;
+    let output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
+    let body = match sunk {
+        SunkBody::Inline(bytes) => StoredBody::Inline(bytes),
+        SunkBody::File { free_bytes } => {
+            if let Some(free_bytes) = free_bytes {
+                watch.floor(EngineLimit::CodeResultDiskFloorBytes, free_bytes);
+            }
+            StoredBody::File { len: facts.len }
+        }
+    };
+    Ok((output, body))
+}
+
+/// The body file of `output` in the first of `dirs` that holds it.
+fn open_body_file(output: &CodeRunRawOutput, dirs: Vec<BodyDir>) -> Result<std::fs::File> {
+    for dir in dirs {
+        if let Some(file) = dir.open_body(&output.raw_blake3, output.raw_len)? {
+            return Ok(file);
+        }
+    }
+    Err(Error::CorruptedIndex("code-run result body file missing"))
+}
+
+/// The whole body of `output`, from its row or its file, checked against
+/// its digest.
+pub(super) fn load_whole_body(
     output: &CodeRunRawOutput,
-    raw: &[u8],
-    read: impl FnOnce(&[u8]) -> Result<R>,
-) -> Result<R> {
-    if u64::try_from(raw.len()).ok() != Some(output.raw_len) {
-        return Err(invalid_code_run_replay(
-            "stored raw output bytes drifted from metadata",
+    body: StoredBody,
+    dirs: impl FnOnce() -> Result<Vec<BodyDir>>,
+) -> Result<Vec<u8>> {
+    let bytes = match body {
+        StoredBody::Inline(bytes) => bytes,
+        StoredBody::File { len } => {
+            if len != output.raw_len {
+                return Err(drifted());
+            }
+            let len = usize::try_from(len)
+                .map_err(|_| Error::ArithmeticOverflow("code-run result body length"))?;
+            read_body_range(&open_body_file(output, dirs()?)?, 0, len)?
+        }
+    };
+    if u64::try_from(bytes.len()).ok() != Some(output.raw_len)
+        || *blake3::hash(&bytes).as_bytes() != output.raw_blake3
+    {
+        return Err(drifted());
+    }
+    Ok(bytes)
+}
+
+/// A range of the body whose stored row is `row`, cut at the body's end.
+pub(super) fn read_body_row_range(
+    output: &CodeRunRawOutput,
+    row: &[u8],
+    offset: u64,
+    len: usize,
+    dirs: impl FnOnce() -> Result<Vec<BodyDir>>,
+) -> Result<Vec<u8>> {
+    if offset > output.raw_len {
+        return Err(Error::InvalidConfig(
+            "result read starts past the body's end".into(),
         ));
     }
-    read(raw)
+    let end = offset.saturating_add(len as u64).min(output.raw_len);
+    let take = usize::try_from(end - offset)
+        .map_err(|_| Error::ArithmeticOverflow("code-run result range"))?;
+    match row.split_first() {
+        Some((&STORED_INLINE, body)) => {
+            if u64::try_from(body.len()).ok() != Some(output.raw_len) {
+                return Err(drifted());
+            }
+            let start = usize::try_from(offset)
+                .map_err(|_| Error::ArithmeticOverflow("code-run result range"))?;
+            Ok(body[start..start + take].to_vec())
+        }
+        Some((&STORED_FILE, _)) => read_body_range(&open_body_file(output, dirs()?)?, offset, take),
+        _ => Err(Error::CorruptedIndex("code-run raw output row")),
+    }
+}
+
+/// The body file a raw `vault_meta` row names, as its digest and length:
+/// `Some` only for a result body row stored as a file. A checkpoint reads
+/// its rows raw, so this is how it finds the files beside them.
+pub(crate) fn code_run_body_file_of_row(key: &[u8], value: &[u8]) -> Option<([u8; 32], u64)> {
+    let handle = key.strip_prefix(RAW_OUTPUTS.decl().prefix)?;
+    let hex =
+        handle.strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
+    let StoredBody::File { len } = StoredBody::from_raw(value).ok()? else {
+        return None;
+    };
+    let mut digest = [0; 32];
+    for (byte, pair) in digest.iter_mut().zip(hex.chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    (hex.len() == 64).then_some((digest, len))
+}
+
+fn drifted() -> Error {
+    invalid_code_run_replay("stored raw output bytes drifted from metadata")
 }
 
 pub(super) fn replay_generation_matches(

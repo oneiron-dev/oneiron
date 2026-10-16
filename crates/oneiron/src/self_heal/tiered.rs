@@ -3,17 +3,16 @@ use super::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body, validate_token,
 };
-use crate::entity_id::derived_domains::DECISION_QUESTION;
+use crate::llm::decision::catalogue::TELEMETRY_ANOMALY;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use rmpv::Value;
+use std::time::{Duration, Instant};
 
-/// The registered question every detector asks: does this telemetry show the anomaly?
-const QUESTION: &str = "self_heal.telemetry_anomaly";
-const QUESTION_VERSION: u32 = 1;
 /// A decision question's text bound. A detector's holds its prompt, its rubric and up to
 /// `QUESTION_FRAMING` bytes of separators and evidence line.
 const QUESTION_TEXT_MAX: usize = 16_384;
@@ -95,35 +94,28 @@ impl DetectorPolicy {
             )
         };
         let text = format!("{}\n\nRubric:\n{}{evidence_line}", self.prompt, self.rubric);
-        let id = EntityId::derive(
-            DECISION_QUESTION,
-            &[
-                QUESTION.as_bytes(),
-                tier.token().as_bytes(),
-                self.family.as_bytes(),
-                text.as_bytes(),
-            ],
-        )?;
-        Ok(DecisionQuestion {
-            id,
-            version: QUESTION_VERSION,
+        TELEMETRY_ANOMALY.question(
+            &[tier.token().as_bytes(), self.family.as_bytes()],
             text,
-            class: DecisionClass::Triage,
-            contract: AnswerContract::Noul,
-            accept_type: false,
-        })
+            AnswerContract::Noul,
+        )
     }
 }
 
 /// The shared decision path a detector's questions go through: the host's ladder, the
-/// principal the answers are for, and the dial and learned bands they run under. Telemetry
-/// reaches a provider only as evidence ids, as untrusted data, never as instructions; an
+/// principal the answers are for, the dial and learned bands they run under, the bounded
+/// state the host built from the runs, and each question's anytime budget. Telemetry reaches a
+/// provider only as evidence ids and that state, as untrusted data, never as instructions; an
 /// answer cannot choose its own detector id, event class or tier.
 pub struct DetectorDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
+    /// A JSON object of at most `MAX_DECISION_STATE_BYTES`, read by every provider.
+    pub state: &'a serde_json::Value,
+    /// Each question's one clock, from when it is asked.
+    pub budget: Duration,
 }
 
 impl DetectorDecisions<'_> {
@@ -138,9 +130,11 @@ impl DetectorDecisions<'_> {
             question,
             self.principal,
             evidence,
+            self.state,
             self.dial,
             &self.bands,
             Reversibility::ReversibleRead,
+            &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
         match decision.answer {
             DecisionAnswer::Noul(raised) => Ok((raised, decision.receipt)),

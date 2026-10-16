@@ -555,6 +555,7 @@ impl UsefulUpstreamJudge for Useful {
                 cost_per_thousand: None,
                 paired: Vec::new(),
                 person: Vec::new(),
+                time: None,
             },
             human_ask: None,
         })
