@@ -304,6 +304,14 @@ pub const TASK_SURFACE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which of these entities does one saved mention name, or is it someone new (OF-123)? Keyed
+/// by the mention's entity kind.
+pub const IDENTITY_SETTLE: QuestionFamily = QuestionFamily {
+    name: "dreamer.identity_settle",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -337,4 +345,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     CLAIM_REPLAY,
     TASK_REALIZE,
     TASK_SURFACE,
+    IDENTITY_SETTLE,
 ];

@@ -45,6 +45,7 @@ mod spend_calibration;
 mod spend_lease;
 mod spend_record;
 mod team_shape;
+mod team_stamp;
 mod types;
 mod widen;
 mod widen_record;
@@ -77,11 +78,11 @@ pub use self::spend_record::{
     SpendSignal, SpendState,
 };
 
-pub(crate) use self::codec::attempt_task_type_ref;
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
 };
+pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp};
 pub use self::dispatch::AgentDispatcher;
 pub use self::planner::{
     AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,
@@ -92,6 +93,7 @@ pub use self::team_shape::{
     CoordinationPattern, PayoffRow, PlannerCard, SEEDED_SHAPES, SeededShape, TEAM_SHAPE_LESSONS,
     TEAM_SHAPE_SKILL_NAME, TeamShape, seeded_shape,
 };
+pub use self::team_stamp::{TeamRunStamp, team_pattern};
 pub use self::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
     AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,

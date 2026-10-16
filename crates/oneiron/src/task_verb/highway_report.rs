@@ -61,6 +61,8 @@ enum Fence {
         lane: Lane,
         attempt: Option<AttemptRecord>,
         lease_owner: Option<String>,
+        /// OF-540: the team run the realizing attempt's dispatch froze.
+        team: Option<crate::agent_dispatch::TeamRunStamp>,
     },
     /// The reporter's external try already settled.
     Settled,
@@ -75,6 +77,7 @@ impl Fence {
                 lane,
                 attempt,
                 lease_owner,
+                ..
             } => Some((*lane, attempt.clone(), lease_owner.clone())),
             Self::Settled | Self::Stale | Self::WrongNode => None,
         }
@@ -528,10 +531,11 @@ impl Memory<'_> {
                     match host_fence_in(self.vault(), txn, binding, &task_hex)? {
                         // The runner settles its own try; the report moves the
                         // TASK alone.
-                        HostFence::Held(_) => Fence::Held {
+                        HostFence::Held(record) => Fence::Held {
                             lane,
                             attempt: None,
                             lease_owner: None,
+                            team: crate::agent_dispatch::attempt_team_stamp(&record)?,
                         },
                         HostFence::Stale => Fence::Stale,
                         HostFence::Missing => Fence::WrongNode,
@@ -546,6 +550,7 @@ impl Memory<'_> {
                         lane,
                         attempt: None,
                         lease_owner: None,
+                        team: None,
                     }
                 } else {
                     Fence::Stale
@@ -587,10 +592,13 @@ impl Memory<'_> {
                         if same_try
                             && record.lease_owner.as_deref() == Some(lease_owner.as_str()) =>
                     {
+                        // An external try carries a brief stamp, never a
+                        // dispatch payload, so it names no team run.
                         Fence::Held {
                             lane,
                             attempt: Some(record),
                             lease_owner: Some(lease_owner),
+                            team: None,
                         }
                     }
                     AttemptState::Completed | AttemptState::Failed
@@ -866,6 +874,14 @@ impl Memory<'_> {
         }
         let (current, fence) = self.fence_now(rt, via, task_ref, attempt.as_ref())?;
         stamp_fields(&mut lifecycle.fields, current.brief.as_ref());
+        // OF-540: the realizing attempt's frozen team run, never the
+        // project's current pattern.
+        if let Fence::Held {
+            team: Some(team), ..
+        } = &fence
+        {
+            crate::receipt::append_team_receipt_fields(&mut lifecycle.fields, team);
+        }
         if let Some(outcome) = fence.outcome() {
             return Ok(Self::fenced_out(task_ref, outcome, lifecycle, late_result));
         }

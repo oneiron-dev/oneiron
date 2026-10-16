@@ -1,6 +1,7 @@
 //! Host-driven answer work: observe under principal, invoke provider outside a write transaction,
 //! then atomically recheck source, authority, version and pause before settling claims.
 
+use super::graph_ask::{self, GraphAnswerer, GraphContextSource, GraphDecision, GraphUnitContext};
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
@@ -20,9 +21,21 @@ struct SourceRow {
 struct Prepared {
     unit: EntityId,
     frontier: [u8; 32],
-    proposal: AnswerProposal,
+    proposal: Proposed,
     arrival_marker: Option<Vec<u8>>,
 }
+
+/// One unit's answer: a provider's proposal the engine wraps in its own
+/// receipt, or a full ladder decision whose receipt it keeps.
+enum Proposed {
+    Proposal(AnswerProposal),
+    Decision(Box<TypedDecision>),
+}
+
+/// A unit's answerer: the record, the unit, its entity type and its body.
+/// `None` leaves the unit unanswered this run.
+type UnitAnswer<'a> =
+    dyn FnMut(&QuestionRecord, EntityId, u8, &[u8]) -> Result<Option<Proposed>> + 'a;
 
 /// The host supplies the answerer (and invokes this on arrival or on each timer tick).
 /// No model work runs under the vault write lock. A stale or paused run cannot land.
@@ -34,6 +47,26 @@ pub fn refresh_question(
     trigger: RefreshTrigger,
     now: u64,
     mut answerer: impl FnMut(&QuestionRecord, EntityId, &[u8]) -> Result<AnswerProposal>,
+) -> Result<Vec<AnswerRecord>> {
+    refresh_with(
+        vault,
+        actor,
+        principal,
+        question,
+        trigger,
+        now,
+        &mut |record, unit, _, body| answerer(record, unit, body).map(|p| Some(Proposed::Proposal(p))),
+    )
+}
+
+fn refresh_with(
+    vault: &Vault,
+    actor: WriteActor,
+    principal: EntityId,
+    question: EntityId,
+    trigger: RefreshTrigger,
+    now: u64,
+    answerer: &mut UnitAnswer<'_>,
 ) -> Result<Vec<AnswerRecord>> {
     let (record, head, units, arrival_marker) = {
         let txn = vault.store.env.read_txn()?;
@@ -90,11 +123,17 @@ pub fn refresh_question(
             let txn = vault.store.env.read_txn()?;
             source(vault, &txn, principal, actor, unit)?
         };
-        let Some(SourceRow { raw, frontier, .. }) = snapshot else {
+        let Some(SourceRow { kind, raw, frontier }) = snapshot else {
             continue;
         };
-        let proposal = answerer(&record, unit, &raw[ENTITY_METADATA_HEADER_LEN..])?;
-        validate_proposal(&record, &proposal)?;
+        let Some(proposal) = answerer(&record, unit, kind, &raw[ENTITY_METADATA_HEADER_LEN..])?
+        else {
+            continue;
+        };
+        match &proposal {
+            Proposed::Proposal(proposal) => validate_proposal(&record, proposal)?,
+            Proposed::Decision(decision) => validate_decided(&record, principal, decision)?,
+        }
         prepared.push(Prepared {
             unit,
             frontier,
@@ -141,32 +180,35 @@ pub fn refresh_question(
             },
         ) in prepared.iter().zip(inputs)
         {
-            let answer = AnswerRecord {
-                claim: EntityId::now(),
-                unit: p.unit,
-                decision: TypedDecision {
-                    answer: p.proposal.answer.clone(),
-                    probability: p.proposal.probability,
+            let decision = match &p.proposal {
+                Proposed::Proposal(proposal) => TypedDecision {
+                    answer: proposal.answer.clone(),
+                    probability: proposal.probability,
                     evidence: vec![p.unit],
-                    in_band: p
-                        .proposal
+                    in_band: proposal
                         .probability
                         .is_some_and(|v| record.definition.dial.band.contains(v)),
                     receipt: DecisionReceipt {
                         question,
                         question_version: head.version,
                         principal,
-                        providers: p.proposal.providers.clone(),
+                        providers: proposal.providers.clone(),
                         band: record.definition.dial.band,
                         band_version: 0,
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
-                        paired: p.proposal.paired.clone(),
+                        paired: proposal.paired.clone(),
                         person: Vec::new(),
                         time: None,
                     },
                     human_ask: None,
                 },
+                Proposed::Decision(decision) => (**decision).clone(),
+            };
+            let answer = AnswerRecord {
+                claim: EntityId::now(),
+                unit: p.unit,
+                decision,
                 frontier,
                 source_kind: kind,
                 answered_at: now,
@@ -235,6 +277,140 @@ pub fn refresh_due_questions(
     now: u64,
     mut answerer: impl FnMut(&QuestionRecord, EntityId, &[u8]) -> Result<AnswerProposal>,
 ) -> Result<RefreshBatch> {
+    let mut batch = RefreshBatch::default();
+    for (principal, question, trigger) in due_work(vault, now)? {
+        match refresh_question(
+            vault,
+            actor,
+            principal,
+            question,
+            trigger,
+            now,
+            &mut answerer,
+        ) {
+            Ok(answers) => batch.answers.extend(answers),
+            Err(error) => batch.failures.push(RefreshFailure {
+                question,
+                trigger,
+                error,
+            }),
+        }
+    }
+    Ok(batch)
+}
+
+/// [`refresh_due_questions`] through graph answerers, one per question:
+/// `answerer_for` makes it from the question's record and its principal,
+/// who also writes the answers as itself. Each unit is shown as a
+/// one-source graph context, with the image it holds when it is an ASSET
+/// and the answerer reads images, and a full decision keeps its own
+/// receipt. A question whose answerer cannot be made fails alone.
+pub fn refresh_due_questions_with<A: GraphAnswerer>(
+    vault: &Vault,
+    now: u64,
+    mut answerer_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<A>,
+) -> Result<RefreshBatch> {
+    let mut batch = RefreshBatch::default();
+    for (principal, question, trigger) in due_work(vault, now)? {
+        let answered = principal_actor(vault, principal).and_then(|actor| {
+            let mut answerer: Option<A> = None;
+            refresh_with(
+                vault,
+                actor,
+                principal,
+                question,
+                trigger,
+                now,
+                &mut |record, unit, kind, body| {
+                    if answerer.is_none() {
+                        answerer = Some(answerer_for(record, actor)?);
+                    }
+                    let answerer = answerer.as_mut().expect("made above");
+                    graph_proposal(vault, record, answerer, unit, kind, body)
+                },
+            )
+        });
+        match answered {
+            Ok(answers) => batch.answers.extend(answers),
+            Err(error) => batch.failures.push(RefreshFailure {
+                question,
+                trigger,
+                error,
+            }),
+        }
+    }
+    Ok(batch)
+}
+
+/// One unit's answer from a graph answerer, read under `record`'s principal.
+fn graph_proposal(
+    vault: &Vault,
+    record: &QuestionRecord,
+    answerer: &mut impl GraphAnswerer,
+    unit: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Result<Option<Proposed>> {
+    let context = GraphUnitContext {
+        unit,
+        sources: vec![GraphContextSource {
+            id: unit,
+            entity_type: kind,
+            hash: *blake3::hash(body).as_bytes(),
+            body: body.to_vec(),
+        }],
+    };
+    let images = if answerer.reads_images() && kind == crate::registry::ENTITY_TYPE_ASSET {
+        let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+        graph_ask::unit_images(&lane, &context)?
+    } else {
+        Vec::new()
+    };
+    let question = &record.definition.question;
+    Ok(match answerer.decide(question, &context, &images)? {
+        None => None,
+        Some(GraphDecision::Prediction(prediction)) => {
+            graph_ask::validate_prediction(question, &prediction)?;
+            let paired = prediction
+                .paired
+                .map(|reading| reading.bind(prediction.provider.clone()))
+                .into_iter()
+                .collect();
+            Some(Proposed::Proposal(AnswerProposal {
+                answer: prediction.answer,
+                probability: Some(prediction.probability),
+                providers: vec![prediction.provider],
+                paired,
+            }))
+        }
+        Some(GraphDecision::Decision(decision)) => {
+            graph_ask::validate_decision(question, record.principal, &decision)?;
+            Some(Proposed::Decision(Box::new(graph_ask::decided(
+                &context, &images, *decision,
+            ))))
+        }
+    })
+}
+
+/// The principal as the writer of its own question's answers.
+fn principal_actor(vault: &Vault, principal: EntityId) -> Result<WriteActor> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &principal)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("question principal header"))?;
+    let class = match header.entity_type {
+        crate::registry::ENTITY_TYPE_PERSON => crate::EdgeActorClass::Human,
+        crate::registry::ENTITY_TYPE_AGENT_DEF => crate::EdgeActorClass::Agent,
+        crate::registry::ENTITY_TYPE_MACHINE => crate::EdgeActorClass::System,
+        _ => return Err(Error::EntityNotFound),
+    };
+    Ok(WriteActor::new(principal, class))
+}
+
+/// The scheduled and materialized-arrival work due at `now`, with each
+/// question's principal.
+fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshTrigger)>> {
     let work = {
         let txn = vault.store.env.read_txn()?;
         let mut work = Vec::new();
@@ -297,26 +473,7 @@ pub fn refresh_due_questions(
         }
         work
     };
-    let mut batch = RefreshBatch::default();
-    for (principal, question, trigger) in work {
-        match refresh_question(
-            vault,
-            actor,
-            principal,
-            question,
-            trigger,
-            now,
-            &mut answerer,
-        ) {
-            Ok(answers) => batch.answers.extend(answers),
-            Err(error) => batch.failures.push(RefreshFailure {
-                question,
-                trigger,
-                error,
-            }),
-        }
-    }
-    Ok(batch)
+    Ok(work)
 }
 
 /// Scoped receipt read; past versions remain available after edits and switches.
@@ -330,6 +487,24 @@ pub fn answer_records(
     QUESTION_ANSWER
         .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))
         .map(|rows| rows.into_iter().map(|(_, answer)| answer).collect())
+}
+
+/// A full decision answers this record's question for `principal`, from
+/// rungs inside the record's dial.
+fn validate_decided(
+    record: &QuestionRecord,
+    principal: EntityId,
+    decision: &TypedDecision,
+) -> Result<()> {
+    graph_ask::validate_decision(&record.definition.question, principal, decision)?;
+    if decision.receipt.providers.iter().any(|p| {
+        p.rung < record.definition.dial.first || p.rung > record.definition.dial.ceiling
+    }) {
+        return Err(Error::InvalidConfig(
+            "invalid standing question answer".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_proposal(record: &QuestionRecord, proposal: &AnswerProposal) -> Result<()> {

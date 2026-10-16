@@ -18,6 +18,10 @@
 //!   active centroids in the SAME embedding space. A cross-space comparison is
 //!   an error, never a low score, so a model/revision/preprocessing change
 //!   forces re-enrollment instead of silently reusing an old centroid.
+//! * **Render consent is apart.** A banked voice's refs reach a render target
+//!   only under the subject's render decision in the reference bank, whose
+//!   grant names the farthest locality they may reach. A recognition grant
+//!   never stands in for it, nor it for one.
 //! * **Naming never lowers the bar.** Invite elimination runs after residual
 //!   clustering, only on an unambiguous one-to-one remainder, and changes the
 //!   display/reference evidence — never a biometric score.

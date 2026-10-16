@@ -337,6 +337,9 @@ pub(crate) fn append_in_txn(
             input.conversation,
         )?;
     }
+    // OF-529: the writer passes the room's participation gate; a person new
+    // to an ordinary room joins it by this write.
+    let joined = super::participation::admit_append_in_txn(vault, txn, input, id, thread)?;
     batch.apply(txn)?;
     if let Some(project) = project_scope {
         crate::workspace_roster::settle_leader_chat_record(
@@ -355,6 +358,7 @@ pub(crate) fn append_in_txn(
         &id,
         input.session,
     )?;
+    joined.record_in_txn(vault, txn, vault.store.clock.now_recorded_at())?;
     if input.advance {
         HEAD.put(&vault.store, txn, &input.conversation, &id)?;
         if let Some(parent) = input.parent {

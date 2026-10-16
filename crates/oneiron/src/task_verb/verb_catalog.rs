@@ -8,6 +8,8 @@ pub enum AgentVerb {
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
+    SelfIdentityAnswer,
+    SelfIdentitySettle,
     VaultPeopleList,
     VaultPeopleGet,
     SelfMessage,
@@ -57,6 +59,8 @@ pub enum AgentVerb {
     VaultLensesDeactivate,
     VaultLensesList,
     VaultLensesDefault,
+    VaultDisclosureOffer,
+    VaultSharesCreate,
     VaultHooksReplay,
     VaultArtifactsView,
     VaultArtifactsExport,
@@ -78,6 +82,7 @@ pub enum AgentVerb {
     TasksOutcomes,
     VaultRoomsList,
     VaultRoomsMessages,
+    VaultRoomsParticipants,
     VaultRoomsRender,
     VaultRoomsFind,
     VaultRoomsGet,
@@ -100,6 +105,7 @@ pub enum AgentVerb {
     VaultRoomsHost,
     VaultRoomsSharing,
     VaultCompanionsSharingGet,
+    VaultCompanionsSharingSet,
     VaultWorkspaceWorkCompanionGet,
     VaultWorkspaceWorkCompanionSet,
     SelfSkillsSave,
@@ -163,6 +169,8 @@ impl AgentVerb {
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
+        Self::SelfIdentityAnswer,
+        Self::SelfIdentitySettle,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
         Self::SelfMessage,
@@ -212,6 +220,8 @@ impl AgentVerb {
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
         Self::VaultLensesDefault,
+        Self::VaultDisclosureOffer,
+        Self::VaultSharesCreate,
         Self::VaultHooksReplay,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
@@ -233,6 +243,7 @@ impl AgentVerb {
         Self::TasksOutcomes,
         Self::VaultRoomsList,
         Self::VaultRoomsMessages,
+        Self::VaultRoomsParticipants,
         Self::VaultRoomsRender,
         Self::VaultRoomsFind,
         Self::VaultRoomsGet,
@@ -255,6 +266,7 @@ impl AgentVerb {
         Self::VaultRoomsHost,
         Self::VaultRoomsSharing,
         Self::VaultCompanionsSharingGet,
+        Self::VaultCompanionsSharingSet,
         Self::VaultWorkspaceWorkCompanionGet,
         Self::VaultWorkspaceWorkCompanionSet,
         Self::SelfSkillsSave,
@@ -321,6 +333,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
+            Self::SelfIdentityAnswer => "self.identity.answer",
+            Self::SelfIdentitySettle => "self.identity.settle",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
             Self::SelfMessage => "self.message",
@@ -372,6 +386,8 @@ impl AgentVerb {
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
             Self::VaultLensesDefault => "vault.lenses.default",
+            Self::VaultDisclosureOffer => "vault.disclosure.offer",
+            Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
@@ -393,6 +409,7 @@ impl AgentVerb {
             Self::TasksOutcomes => "tasks.outcomes",
             Self::VaultRoomsList => "vault.rooms.list",
             Self::VaultRoomsMessages => "vault.rooms.messages",
+            Self::VaultRoomsParticipants => "vault.rooms.participants",
             Self::VaultRoomsRender => "vault.rooms.render",
             Self::VaultRoomsFind => "vault.rooms.find",
             Self::VaultRoomsGet => "vault.rooms.get",
@@ -415,6 +432,7 @@ impl AgentVerb {
             Self::VaultRoomsHost => "vault.rooms.host",
             Self::VaultRoomsSharing => "vault.rooms.sharing",
             Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
+            Self::VaultCompanionsSharingSet => "vault.companions.sharing.set",
             Self::VaultWorkspaceWorkCompanionGet => "vault.workspace.work_companion.get",
             Self::VaultWorkspaceWorkCompanionSet => "vault.workspace.work_companion.set",
             Self::SelfSkillsSave => "self.skills.save",
@@ -477,6 +495,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -526,6 +546,8 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
+                | Self::VaultDisclosureOffer
+                | Self::VaultSharesCreate
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -547,6 +569,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
@@ -569,6 +592,7 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -639,6 +663,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -688,6 +714,8 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
+                | Self::VaultDisclosureOffer
+                | Self::VaultSharesCreate
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -709,6 +737,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
@@ -731,6 +760,7 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -805,6 +835,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
@@ -841,6 +872,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -886,6 +919,8 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
+                | Self::VaultDisclosureOffer
+                | Self::VaultSharesCreate
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -907,6 +942,7 @@ impl AgentVerb {
                 | Self::TasksOutcomes
                 | Self::VaultRoomsList
                 | Self::VaultRoomsMessages
+                | Self::VaultRoomsParticipants
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsGet
@@ -929,6 +965,7 @@ impl AgentVerb {
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -984,6 +1021,8 @@ impl AgentVerb {
             self,
             Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfIdentityAnswer
+                | Self::SelfIdentitySettle
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1010,6 +1049,8 @@ impl AgentVerb {
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
+                | Self::VaultDisclosureOffer
+                | Self::VaultSharesCreate
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
@@ -1031,6 +1072,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
@@ -1068,6 +1110,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultLensesPropose
+                | Self::VaultDisclosureOffer
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -1082,6 +1125,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfIdentityAnswer => &["spec"],
+            Self::SelfIdentitySettle => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1131,6 +1176,8 @@ impl AgentVerb {
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
             Self::VaultLensesDefault => &["spec"],
+            Self::VaultDisclosureOffer => &["spec"],
+            Self::VaultSharesCreate => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -1152,6 +1199,7 @@ impl AgentVerb {
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref", "turn_ref"],
+            Self::VaultRoomsParticipants => &["spec", "room_ref"],
             Self::VaultRoomsRender => &["room_ref"],
             Self::VaultRoomsFind => &["room_ref", "turn_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
@@ -1174,6 +1222,7 @@ impl AgentVerb {
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultCompanionsSharingSet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],
@@ -1238,6 +1287,8 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfIdentityAnswer => &["spec"],
+            Self::SelfIdentitySettle => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1287,6 +1338,8 @@ impl AgentVerb {
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
             Self::VaultLensesDefault => &["spec"],
+            Self::VaultDisclosureOffer => &["spec"],
+            Self::VaultSharesCreate => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -1308,6 +1361,7 @@ impl AgentVerb {
             Self::TasksOutcomes => &["spec"],
             Self::VaultRoomsList => &[],
             Self::VaultRoomsMessages => &["room_ref"],
+            Self::VaultRoomsParticipants => &["spec", "room_ref"],
             Self::VaultRoomsRender => &["room_ref"],
             Self::VaultRoomsFind => &["room_ref"],
             Self::VaultRoomsGet => &["room_ref", "turn_ref"],
@@ -1330,6 +1384,7 @@ impl AgentVerb {
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultCompanionsSharingSet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],

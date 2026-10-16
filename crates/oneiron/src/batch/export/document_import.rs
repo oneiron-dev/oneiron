@@ -376,17 +376,23 @@ fn stage_run_results(
 ) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
     let mut staged = BTreeMap::new();
     for output in results.runs.iter().flat_map(|run| &run.outputs) {
-        let digest = parse_digest(&output.blake3)?;
+        let Some(blake3) = &output.blake3 else {
+            continue;
+        };
+        let digest = parse_digest(blake3)?;
         if staged.contains_key(&digest) {
             continue;
         }
-        let Some(body) = files.get(output.blake3.as_str()) else {
+        let Some(body) = files.get(blake3.as_str()) else {
             continue;
         };
         if body.len() as u64 != output.bytes || *blake3::hash(body).as_bytes() != digest {
             return Err(invalid("run result body does not match its digest"));
         }
-        staged.insert(digest, vault.stage_code_run_output(output.path.clone(), body)?);
+        staged.insert(
+            digest,
+            vault.stage_code_run_output(output.path.clone(), body)?,
+        );
     }
     Ok(staged)
 }
@@ -465,7 +471,11 @@ fn put_run_results_in_txn(
     for run in &results.runs {
         let run_id = parse_id(&run.run_id)?;
         for output in &run.outputs {
-            let Some(finished) = staged.get(&parse_digest(&output.blake3)?) else {
+            let Some(blake3) = &output.blake3 else {
+                withheld += 1;
+                continue;
+            };
+            let Some(finished) = staged.get(&parse_digest(blake3)?) else {
                 withheld += 1;
                 continue;
             };

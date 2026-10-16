@@ -570,15 +570,55 @@ impl Vault {
         WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)
     }
 
+    /// Every contact-disclosure offer settled with `verdict`, read in the
+    /// caller's `txn`, beside its proposal reference and in reference order.
+    /// There is no index by verdict, so this scans the table. A row that
+    /// fails validation is skipped: it settles nothing.
+    pub(super) fn settled_contact_disclosure_offers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        verdict: &str,
+    ) -> Result<Vec<(String, ContactDisclosureProposal)>> {
+        let mut offers = Vec::new();
+        for (reference, row) in WIDEN_PROPOSALS.scan(&self.store, txn)? {
+            if !row.resolved
+                || !row
+                    .settlement
+                    .as_ref()
+                    .is_some_and(|settlement| settlement.verdict == verdict)
+            {
+                continue;
+            }
+            let Ok(row) = validate_row(row, &reference) else {
+                continue;
+            };
+            if let Ok(WidenDelta::ContactDisclosure(offer)) =
+                decode_delta(&row.proposal.canonical_delta)
+            {
+                offers.push((reference, offer));
+            }
+        }
+        Ok(offers)
+    }
+
     /// The frozen contact-disclosure offer `reference` names, for the private
     /// owner surface that asks it. `None` when no such offer is filed.
     pub fn contact_disclosure_offer(
         &self,
         reference: &str,
     ) -> Result<Option<ContactDisclosureProposal>> {
-        validate_reference_shape(reference)?;
         let txn = self.store.env.read_txn()?;
-        let Some(row) = WIDEN_PROPOSALS.get(&self.store, &txn, &reference.to_owned())? else {
+        self.contact_disclosure_offer_in_txn(&txn, reference)
+    }
+
+    /// [`Self::contact_disclosure_offer`] in the caller's snapshot.
+    pub(crate) fn contact_disclosure_offer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reference: &str,
+    ) -> Result<Option<ContactDisclosureProposal>> {
+        validate_reference_shape(reference)?;
+        let Some(row) = WIDEN_PROPOSALS.get(&self.store, txn, &reference.to_owned())? else {
             return Ok(None);
         };
         match decode_delta(&validate_row(row, reference)?.proposal.canonical_delta)? {

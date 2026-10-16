@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::side_table::{self, HexId, Raw, SideTable};
 
@@ -113,7 +114,7 @@ impl Store {
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         let pending = MARKERS.scan(self, &*wtxn)?;
         for (HexId(id), marker) in pending {
-            let Some(record) = self.entities.get(&*wtxn, id.as_bytes())? else {
+            let Some(record) = self.port_entity_raw(&*wtxn, &id)? else {
                 continue;
             };
             let token = if is_turn_record(&record) {
@@ -163,7 +164,7 @@ impl Store {
         let Some(marker) = MARKERS.get(self, rtxn, &HexId(*id))? else {
             return Ok(None);
         };
-        let Some(record) = self.entities.get(rtxn, id.as_bytes())? else {
+        let Some(record) = self.port_entity_raw(rtxn, id)? else {
             return Ok(None);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
@@ -182,7 +183,7 @@ impl Store {
         let Some(marker) = MARKERS.get(self, wtxn, &HexId(*id))? else {
             return Ok(None);
         };
-        let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
+        let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(None);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
@@ -200,7 +201,7 @@ impl Store {
         let Some(marker) = MARKERS.get(self, wtxn, &HexId(*id))? else {
             return Ok(false);
         };
-        let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
+        let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(false);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
@@ -226,7 +227,7 @@ impl Store {
         if crate::ports::stale_in_txn(self, wtxn, id)? {
             return Ok(false);
         }
-        let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
+        let Some(record) = self.port_entity_raw(wtxn, id)? else {
             return Ok(false);
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
