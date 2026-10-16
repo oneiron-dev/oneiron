@@ -7,8 +7,11 @@
 //! a Claude Code Stop hook. Set `inbox = false` for immediate helper/pane
 //! delivery. Helpers take a JSON batch on stdin; exit zero acknowledges it.
 //! A boot command takes that same batch as its initial stdin, not shell text.
+//! Live helper/pane/boot delivery also carries coalesced STREAM frames; the
+//! offline inbox stores notices only, never frame replay.
 //! Nothing here selects policy for human notifications or lives in the engine.
 
+pub(crate) mod board_stream;
 mod delivery;
 mod inbox;
 
@@ -16,7 +19,7 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
-use oneiron::context_board::WakeEnvelope;
+use oneiron::context_board::{BoardStreamFrame, WakeEnvelope};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -48,6 +51,7 @@ struct AdapterCommand {
 struct WakeBatch<'a> {
     instance_key: &'a str,
     wakes: &'a [WakeEnvelope],
+    frames: &'a [BoardStreamFrame],
 }
 
 pub(crate) struct Instance {
@@ -107,6 +111,7 @@ pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
                         "reason": serde_json::to_string(&WakeBatch {
                             instance_key: &instance.key,
                             wakes: &wakes,
+                            frames: &[],
                         })?,
                     })
                 }
@@ -114,6 +119,7 @@ pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
                 serde_json::to_value(WakeBatch {
                     instance_key: &instance.key,
                     wakes: &wakes,
+                    frames: &[],
                 })?
             };
             let mut stdout = io::stdout().lock();
