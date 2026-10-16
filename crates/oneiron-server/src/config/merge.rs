@@ -291,6 +291,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(browser) = &config.browser {
         browser.validate()?;
     }
+    if let Some(gpu) = &config.gpu {
+        gpu.validate()?;
+    }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -498,6 +501,7 @@ struct FileServeConfig {
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     browser: Option<super::BrowserConfig>,
+    gpu: Option<crate::runtime::GpuPoolConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -551,6 +555,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             import: value.import,
             models: None,
             browser: value.browser,
+            gpu: value.gpu,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -607,6 +612,8 @@ struct PartialServeConfig {
     models: Option<ModelsConfig>,
     /// `[browser]` is file-only, as `[models]` is.
     browser: Option<super::BrowserConfig>,
+    /// `[gpu]` is file-only, as `[browser]` is.
+    gpu: Option<crate::runtime::GpuPoolConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -672,6 +679,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("import", &self.import)
             .field("models", &self.models)
             .field("browser", &self.browser)
+            .field("gpu", &self.gpu)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -828,6 +836,9 @@ impl PartialServeConfig {
         if let Some(value) = self.browser {
             resolved.browser = Some(value);
         }
+        if let Some(value) = self.gpu {
+            resolved.gpu = Some(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -903,6 +914,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             import: None,
             models: None,
             browser: None,
+            gpu: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

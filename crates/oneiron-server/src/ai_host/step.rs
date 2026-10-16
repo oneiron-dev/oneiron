@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use oneiron::agent_def::AgentDefinition;
-use oneiron::agent_dispatch::{AgentDispatchStatus, agent_dispatch_actor};
+use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
@@ -205,9 +205,27 @@ impl StepRunner {
             "workflow-step:{}",
             oneiron::EntityId::from_bytes(*attempt.id.as_bytes())?.to_hex()
         );
+        let charged = match carried {
+            Some(units) => units.div_ceil(reserve),
+            None => u64::from(earlier).saturating_mul(call.ladder.rungs() as u64),
+        };
+        // A step launched under a spend lease (OF-532) is bounded by it too:
+        // beside its policy rows, this try may spend no more than the lease
+        // has left. Replayed charges are already on the lease, so they sit
+        // on top of that bound, not inside it.
+        let dispatcher = AgentDispatcher::new(vault);
+        let lease = dispatcher.spend_scope_for_attempt(attempt.id)?;
+        let budget_units = match &lease {
+            Some(scope) => self.budget_units.min(
+                charged
+                    .saturating_mul(reserve)
+                    .saturating_add(dispatcher.guard_for_scope(scope)?.read().remaining_units),
+            ),
+            None => self.budget_units,
+        };
         let guard = vault.policy_budget_guard(
             run_id.clone(),
-            self.budget_units,
+            budget_units,
             reserve,
             BudgetExhaustionPolicy::Suspend,
             actor,
@@ -215,20 +233,23 @@ impl StepRunner {
         let budget = |denied: oneiron::llm::BudgetDenied| {
             Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
         };
-        let charged = match carried {
-            Some(units) => units.div_ceil(reserve),
-            None => u64::from(earlier).saturating_mul(call.ladder.rungs() as u64),
-        };
         for _ in 0..charged {
             let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
             guard.settle_reserved(&spent).map_err(budget)?;
         }
+        let replayed = guard.read().used_units;
         // The step is a run on that meter: each rung its call reaches is
         // admitted on its own permit, sent through the run's gate and
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
         let run = self.models.undeclared_run(run_id, guard);
-        let response = match runtime.block_on(call.ladder.generate(&run, request, None)) {
+        let generated = runtime.block_on(call.ladder.generate(&run, request, None));
+        // What this try spent goes on the lease whatever the call answered;
+        // the replayed tries recorded their own.
+        if let Some(scope) = &lease {
+            dispatcher.record_guard_spend(scope, run.read().used_units.saturating_sub(replayed))?;
+        }
+        let response = match generated {
             Ok(response) => response,
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied).into()),
             Err(error) => {
