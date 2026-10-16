@@ -91,7 +91,6 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             },
             "bm25": {"k1": bm25.k1, "formula": formula, "fields": fields},
             "ppr_vad_alpha": crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
-            "affect_retrieval": affect_retrieval,
             "ppr_community": {
                 "beta": builder.vault.config.ppr_community.beta,
                 "gamma": builder.vault.config.ppr_community.gamma,
@@ -171,6 +170,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     };
     // `json!` above is at its recursion limit, so these join after it.
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
+    inputs.config["affect_retrieval"] = affect_retrieval;
     inputs.config["context_pack_world_share"] = json!(builder.context_pack_world_share);
     inputs.config["fusion"] = json!({
         "list_length": crate::fusion::FUSION_LIST_LENGTH,
