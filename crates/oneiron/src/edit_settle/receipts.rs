@@ -176,8 +176,9 @@ fn insert_deck_fields(
     fields: &mut BTreeMap<String, String>,
     deck: &crate::edit_roundtrip::DeckSettleEvidence,
 ) -> Result<()> {
-    let report: oneiron_docedit::edit::DeckTransactionReport = serde_json::from_str(&deck.report)
-        .map_err(|_| Error::InvariantViolation("deck settle report decoding"))?;
+    let report: oneiron_docedit::edit::DeckTransactionReport =
+        serde_json::from_str(&deck.report)
+            .map_err(|_| Error::InvariantViolation("deck settle report decoding"))?;
     fields.insert(
         FIELD_DECK_HANDOFF.to_owned(),
         crate::receipt::hex_lower(&deck.handoff),

@@ -8,8 +8,8 @@ use super::ladder::{
 };
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
 use crate::Result;
+use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.

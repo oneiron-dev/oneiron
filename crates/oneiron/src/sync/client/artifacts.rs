@@ -47,7 +47,9 @@ impl SyncClient {
         entity: EntityId,
         payload: &[u8],
     ) -> crate::Result<()> {
-        if self.vault.accept_artifact_publication_receipt(entity, payload)?
+        if self
+            .vault
+            .accept_artifact_publication_receipt(entity, payload)?
             == ArtifactPublicationOutcome::Refused
         {
             let _ = self.event_tx.send(super::SyncEvent::Error(

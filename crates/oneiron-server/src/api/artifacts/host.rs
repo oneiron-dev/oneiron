@@ -111,9 +111,7 @@ impl ArtifactHosts {
             return unknown_artifact();
         };
         // The handlers parse the original URI, which the outer router recorded.
-        request
-            .extensions_mut()
-            .insert(OriginalUri(uri.clone()));
+        request.extensions_mut().insert(OriginalUri(uri.clone()));
         *request.uri_mut() = uri;
         request.extensions_mut().insert(VaultHostRoute);
         let response = answer(app, request).await;

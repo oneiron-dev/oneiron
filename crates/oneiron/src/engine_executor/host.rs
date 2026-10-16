@@ -1,8 +1,6 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
-use super::store::{
-    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path,
-};
+use super::store::{ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path};
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
 };

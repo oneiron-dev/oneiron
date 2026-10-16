@@ -41,8 +41,8 @@ pub use self::replay::{
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
     CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor,
-    CodeRunReplayGeneration,
-    CodeRunReplayRecord, CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
+    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
+    code_run_replay_abi_layout_checks,
 };
 pub use self::storage::CodeRunModelHealCount;
 pub(crate) use self::storage::code_run_body_file_of_row;

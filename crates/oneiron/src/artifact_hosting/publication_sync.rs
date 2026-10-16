@@ -336,7 +336,9 @@ impl Vault {
             return Ok(Staged);
         };
         if body.class != CodeArtifactClass::Artifact
-            || crate::codebase::RepoRef::parse(&body.repo_ref).ok().as_ref()
+            || crate::codebase::RepoRef::parse(&body.repo_ref)
+                .ok()
+                .as_ref()
                 != Some(&snapshot.repo_ref)
         {
             return Ok(Staged);
@@ -366,7 +368,10 @@ impl Vault {
         record: &[u8],
     ) -> Result<ArtifactPublicationOutcome> {
         use ArtifactPublicationOutcome::{Applied, Refused, Staged};
-        if !matches!(self.get_blob_artifact_in_txn(wtxn, artifact_id), Ok(Some(_))) {
+        if !matches!(
+            self.get_blob_artifact_in_txn(wtxn, artifact_id),
+            Ok(Some(_))
+        ) {
             return Ok(Staged);
         }
         let Ok(written) = self.put_synced_blob_artifact_version_in_txn(wtxn, artifact_id, record)

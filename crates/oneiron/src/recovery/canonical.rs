@@ -224,7 +224,10 @@ impl CanonicalEntityDocumentHistory {
             };
             let prefix = version.prefix as usize;
             let suffix = version.suffix as usize;
-            if prefix.checked_add(suffix).is_none_or(|kept| kept > base.len()) {
+            if prefix
+                .checked_add(suffix)
+                .is_none_or(|kept| kept > base.len())
+            {
                 return Err(invalid("entity document version splice"));
             }
             let mut text: String = base[..prefix].iter().collect();

@@ -1,10 +1,10 @@
 //! The code-run vault_meta row families: replay records, raw output, taint refs and heal counts.
 
+use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::secret_lease::SecretTaintRef;
 use crate::secret_rotation::{
     ArtifactTaintState, taint_state_for_refs_in_txn, validate_taint_refs,
 };
-use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::session_overlay::RouteTarget;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
@@ -175,8 +175,7 @@ impl Vault {
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
         Ok(BodySink::new(
             self.store.body_dir()?,
-            self.limit_watch()
-                .bound(EngineLimit::CodeResultInlineBytes),
+            self.limit_watch().bound(EngineLimit::CodeResultInlineBytes),
         ))
     }
 
@@ -430,7 +429,8 @@ pub(super) fn read_body_row_range(
 /// its rows raw, so this is how it finds the files beside them.
 pub(crate) fn code_run_body_file_of_row(key: &[u8], value: &[u8]) -> Option<([u8; 32], u64)> {
     let handle = key.strip_prefix(RAW_OUTPUTS.decl().prefix)?;
-    let hex = handle.strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
+    let hex =
+        handle.strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
     let StoredBody::File { len } = StoredBody::from_raw(value).ok()? else {
         return None;
     };

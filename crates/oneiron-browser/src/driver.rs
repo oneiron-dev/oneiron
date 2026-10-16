@@ -48,7 +48,12 @@ impl CdpDriver {
     /// Opens one blank page in the guest and attaches to it.
     pub(crate) fn attach(pipe: Pipe, wait_cap: Duration) -> Result<Self, BrowserError> {
         let deadline = Instant::now() + CALL;
-        let created = pipe.call(None, "Target.createTarget", json!({"url": "about:blank"}), deadline)?;
+        let created = pipe.call(
+            None,
+            "Target.createTarget",
+            json!({"url": "about:blank"}),
+            deadline,
+        )?;
         let target = str_field(&created, "targetId")?;
         let attached = pipe.call(
             None,
@@ -57,7 +62,15 @@ impl CdpDriver {
             deadline,
         )?;
         let session = str_field(&attached, "sessionId")?;
-        let driver = Self { pipe, session, target, seq: 0, history: VecDeque::new(), media: VecDeque::new(), wait_cap };
+        let driver = Self {
+            pipe,
+            session,
+            target,
+            seq: 0,
+            history: VecDeque::new(),
+            media: VecDeque::new(),
+            wait_cap,
+        };
         for (method, params) in [
             ("Accessibility.enable", json!({})),
             ("DOM.enable", json!({})),
@@ -72,19 +85,24 @@ impl CdpDriver {
     }
 
     fn page(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
-        self.pipe.call(Some(&self.session), method, params, Instant::now() + CALL)
+        self.pipe
+            .call(Some(&self.session), method, params, Instant::now() + CALL)
     }
 
     fn lines(&self) -> Result<Vec<Line>, BrowserError> {
         let tree = self.page("Accessibility.getFullAXTree", json!({}))?;
-        let nodes = tree.get("nodes").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+        let nodes = tree
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
         Ok(outline::lines(nodes))
     }
 
     fn fingerprint(&self) -> Result<blake3::Hash, BrowserError> {
         let mut hasher = blake3::Hasher::new();
         for line in self.lines()? {
-            let row = serde_json::to_vec(&line.row).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+            let row =
+                serde_json::to_vec(&line.row).map_err(|e| BrowserError::Protocol(e.to_string()))?;
             hasher.update(&row);
         }
         Ok(hasher.finalize())
@@ -114,16 +132,33 @@ impl CdpDriver {
 
     fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
         let rows: Vec<Row> = self.lines()?.into_iter().map(|line| line.row).collect();
-        let info = self.pipe.call(None, "Target.getTargetInfo", json!({"targetId": self.target}), Instant::now() + CALL)?;
+        let info = self.pipe.call(
+            None,
+            "Target.getTargetInfo",
+            json!({"targetId": self.target}),
+            Instant::now() + CALL,
+        )?;
         let info = info.get("targetInfo").unwrap_or(&Value::Null);
         self.seq += 1;
-        let current: HashMap<String, Row> = rows.iter().map(|row| (row.target.clone(), row.clone())).collect();
-        let before = since.and_then(|since| self.history.iter().find(|(seq, _)| *seq == since)).map(|(_, rows)| rows);
+        let current: HashMap<String, Row> = rows
+            .iter()
+            .map(|row| (row.target.clone(), row.clone()))
+            .collect();
+        let before = since
+            .and_then(|since| self.history.iter().find(|(seq, _)| *seq == since))
+            .map(|(_, rows)| rows);
         let (full, shown, removed) = match before {
             None => (true, rows, Vec::new()),
             Some(before) => {
-                let shown = rows.into_iter().filter(|row| before.get(&row.target) != Some(row)).collect();
-                let removed = before.keys().filter(|r| !current.contains_key(*r)).cloned().collect();
+                let shown = rows
+                    .into_iter()
+                    .filter(|row| before.get(&row.target) != Some(row))
+                    .collect();
+                let removed = before
+                    .keys()
+                    .filter(|r| !current.contains_key(*r))
+                    .cloned()
+                    .collect();
                 (false, shown, removed)
             }
         };
@@ -133,8 +168,16 @@ impl CdpDriver {
         }
         Ok(Observation {
             seq: self.seq,
-            url: info.get("url").and_then(Value::as_str).unwrap_or("").to_owned(),
-            title: info.get("title").and_then(Value::as_str).unwrap_or("").to_owned(),
+            url: info
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            title: info
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
             full,
             rows: shown,
             removed,
@@ -152,7 +195,10 @@ impl CdpDriver {
 
     /// The PNG bytes of a screenshot this driver took, while it holds them.
     pub(crate) fn image(&self, image: &str) -> Option<&[u8]> {
-        self.media.iter().find(|(id, _)| id == image).map(|(_, png)| png.as_slice())
+        self.media
+            .iter()
+            .find(|(id, _)| id == image)
+            .map(|(_, png)| png.as_slice())
     }
 
     /// The DOM node behind `target` on the page as it is now.
@@ -162,9 +208,14 @@ impl CdpDriver {
             .into_iter()
             .find(|line| line.row.target == target)
             .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
-        let node = line.backend_node.ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
+        let node = line
+            .backend_node
+            .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
         let resolved = self.page("DOM.resolveNode", json!({"backendNodeId": node}))?;
-        let object = resolved.pointer("/object/objectId").cloned().ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .cloned()
+            .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
         Ok((line.row, json!({"backendNodeId": node, "objectId": object})))
     }
 
@@ -174,13 +225,25 @@ impl CdpDriver {
             json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
         )?;
         if let Some(error) = result.get("exceptionDetails") {
-            return Err(BrowserError::Protocol(error.get("text").and_then(Value::as_str).unwrap_or("script error").to_owned()));
+            return Err(BrowserError::Protocol(
+                error
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("script error")
+                    .to_owned(),
+            ));
         }
-        Ok(result.pointer("/result/value").cloned().unwrap_or(Value::Null))
+        Ok(result
+            .pointer("/result/value")
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     /// Runs `act` on the page, then returns the settled page as a diff.
-    fn act(&mut self, act: impl FnOnce(&Self) -> Result<(), BrowserError>) -> Result<Observation, BrowserError> {
+    fn act(
+        &mut self,
+        act: impl FnOnce(&Self) -> Result<(), BrowserError>,
+    ) -> Result<Observation, BrowserError> {
         let since = self.seq;
         let before = self.fingerprint()?;
         let start = Instant::now();
@@ -190,7 +253,12 @@ impl CdpDriver {
     }
 
     fn matching(&self, find: &FindInput) -> Result<Vec<Row>, BrowserError> {
-        Ok(self.lines()?.into_iter().map(|line| line.row).filter(|row| find.matches(row)).collect())
+        Ok(self
+            .lines()?
+            .into_iter()
+            .map(|line| line.row)
+            .filter(|row| find.matches(row))
+            .collect())
     }
 }
 
@@ -202,7 +270,10 @@ impl BrowserDriver for CdpDriver {
         }
         let deadline = Instant::now() + LOAD;
         loop {
-            let state = self.page("Runtime.evaluate", json!({"expression": "document.readyState", "returnByValue": true}))?;
+            let state = self.page(
+                "Runtime.evaluate",
+                json!({"expression": "document.readyState", "returnByValue": true}),
+            )?;
             if state.pointer("/result/value").and_then(Value::as_str) == Some("complete") {
                 break;
             }
@@ -221,13 +292,21 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
-        Ok(FindOutput { rows: self.matching(&input)? })
+        Ok(FindOutput {
+            rows: self.matching(&input)?,
+        })
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
         let (_, node) = self.resolve(&input.target)?;
-        self.page("DOM.scrollIntoViewIfNeeded", json!({"backendNodeId": node["backendNodeId"]}))?;
-        let model = self.page("DOM.getBoxModel", json!({"backendNodeId": node["backendNodeId"]}))?;
+        self.page(
+            "DOM.scrollIntoViewIfNeeded",
+            json!({"backendNodeId": node["backendNodeId"]}),
+        )?;
+        let model = self.page(
+            "DOM.getBoxModel",
+            json!({"backendNodeId": node["backendNodeId"]}),
+        )?;
         let quad: Vec<f64> = model
             .pointer("/model/content")
             .and_then(Value::as_array)
@@ -296,7 +375,9 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
-        let wanted = input.timeout_ms.map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
+        let wanted = input
+            .timeout_ms
+            .map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
         let bound = wanted.min(self.wait_cap);
         let query = input.query();
         let start = Instant::now();
@@ -305,7 +386,11 @@ impl BrowserDriver for CdpDriver {
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
-                return Ok(WaitForOutput { rows, timed_out, waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX) });
+                return Ok(WaitForOutput {
+                    rows,
+                    timed_out,
+                    waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
+                });
             }
             std::thread::sleep(POLL * 2);
         }
@@ -321,7 +406,10 @@ impl BrowserDriver for CdpDriver {
         let met = match (&row, input.absent) {
             (None, absent) => absent,
             (Some(_), true) => false,
-            (Some(row), false) => input.value.as_ref().is_none_or(|want| row.value.as_ref() == Some(want)),
+            (Some(row), false) => input
+                .value
+                .as_ref()
+                .is_none_or(|want| row.value.as_ref() == Some(want)),
         };
         Ok(ExpectOutput { met, row })
     }
@@ -332,7 +420,11 @@ impl BrowserDriver for CdpDriver {
         let png = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|e| BrowserError::Protocol(e.to_string()))?;
-        let dimension = |at: usize| png.get(at..at + 4).and_then(|b| b.try_into().ok()).map(u32::from_be_bytes);
+        let dimension = |at: usize| {
+            png.get(at..at + 4)
+                .and_then(|b| b.try_into().ok())
+                .map(u32::from_be_bytes)
+        };
         let (Some(width), Some(height)) = (dimension(16), dimension(20)) else {
             return Err(BrowserError::Protocol("screenshot is not a PNG".to_owned()));
         };
@@ -342,7 +434,13 @@ impl BrowserDriver for CdpDriver {
         if self.media.len() > MEDIA {
             self.media.pop_front();
         }
-        Ok(ScreenshotOutput { image, media_type: "image/png".to_owned(), width, height, bytes })
+        Ok(ScreenshotOutput {
+            image,
+            media_type: "image/png".to_owned(),
+            width,
+            height,
+            bytes,
+        })
     }
 }
 

@@ -208,11 +208,20 @@ const WRONG_ROOTS: &[(&str, &str)] = &[
 
 /// The roots a canonical verb sits under, longest first. Stripping one gives
 /// the verb's leaf, which a wrong-root spelling of it shares.
-const VERB_ROOTS: &[&str] = &["self.memory.", "self.focus.", "self.", "vault.", "connector.", "ai."];
+const VERB_ROOTS: &[&str] = &[
+    "self.memory.",
+    "self.focus.",
+    "self.",
+    "vault.",
+    "connector.",
+    "ai.",
+];
 
 /// Prefixes with no meaning in the SDK that a model still writes in front of
 /// a verb (`memory.search`, `sdk.describe`).
-const STRAY_ROOTS: &[&str] = &["memory.", "shared.", "home.", "sdk.", "oneiron.", "board.", "tasks."];
+const STRAY_ROOTS: &[&str] = &[
+    "memory.", "shared.", "home.", "sdk.", "oneiron.", "board.", "tasks.",
+];
 
 /// Where a verb's schema lives: its row in the verb table, which every
 /// binding and the code-mode declarations are generated from.
@@ -235,7 +244,10 @@ pub fn wrong_root_in(
         return None;
     }
     for (wrong, root) in WRONG_ROOTS {
-        if let Some(rest) = attempted.strip_prefix(wrong).filter(|rest| !rest.is_empty()) {
+        if let Some(rest) = attempted
+            .strip_prefix(wrong)
+            .filter(|rest| !rest.is_empty())
+        {
             let replacement = format!("{root}{rest}");
             let schema_ref = verb_schema_ref(&replacement);
             return Some(MemoryError::wrong_root(attempted, replacement, schema_ref));
@@ -251,7 +263,11 @@ pub fn wrong_root_in(
     if meant.next().is_some() {
         return None;
     }
-    Some(MemoryError::wrong_root(attempted, replacement, verb_schema_ref(replacement)))
+    Some(MemoryError::wrong_root(
+        attempted,
+        replacement,
+        verb_schema_ref(replacement),
+    ))
 }
 
 /// [`wrong_root_in`] over every verb code mode serves.

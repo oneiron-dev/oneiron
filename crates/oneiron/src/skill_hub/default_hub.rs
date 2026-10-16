@@ -4,8 +4,8 @@ use super::{
     ForeignSkillPublisher, GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy, SkillHubKind,
     SkillHubRecord, SkillHubTrustTier, TrackedHubRef, encode_skill_hub_record,
     pack_catalog::{
-        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackInstallReceipt,
-        PackPermissions, PackSource,
+        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackPermissions,
+        PackSource,
     },
 };
 use crate::entity_id::derived_domains::FIRST_PARTY_SKILL_HUB;

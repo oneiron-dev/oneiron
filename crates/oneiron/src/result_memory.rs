@@ -123,7 +123,10 @@ pub(crate) struct ResultHold {
 impl Drop for ResultHold {
     fn drop(&mut self) {
         self.share.held.fetch_sub(self.bytes, Ordering::Relaxed);
-        self.share.pool.held.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.share
+            .pool
+            .held
+            .fetch_sub(self.bytes, Ordering::Relaxed);
     }
 }
 

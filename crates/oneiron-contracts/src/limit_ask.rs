@@ -94,10 +94,12 @@ fn memory_share(divisor: u64) -> u64 {
 /// `memory.limit_in_bytes`). Read once. `None` when neither can be read.
 pub fn machine_memory_bytes() -> Option<u64> {
     static MEMORY: OnceLock<Option<u64>> = OnceLock::new();
-    *MEMORY.get_or_init(|| match (physical_memory_bytes(), container_memory_bytes()) {
-        (Some(physical), Some(container)) => Some(physical.min(container)),
-        (physical, container) => physical.or(container),
-    })
+    *MEMORY.get_or_init(
+        || match (physical_memory_bytes(), container_memory_bytes()) {
+            (Some(physical), Some(container)) => Some(physical.min(container)),
+            (physical, container) => physical.or(container),
+        },
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

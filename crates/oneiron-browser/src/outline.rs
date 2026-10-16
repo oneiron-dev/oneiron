@@ -8,19 +8,61 @@ use std::collections::{HashMap, HashSet};
 
 /// Roles a program acts on.
 const CONTROLS: &[&str] = &[
-    "button", "link", "textbox", "searchbox", "combobox", "listbox", "option", "checkbox",
-    "radio", "switch", "slider", "spinbutton", "menuitem", "menuitemcheckbox",
-    "menuitemradio", "tab", "treeitem",
+    "button",
+    "link",
+    "textbox",
+    "searchbox",
+    "combobox",
+    "listbox",
+    "option",
+    "checkbox",
+    "radio",
+    "switch",
+    "slider",
+    "spinbutton",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "tab",
+    "treeitem",
 ];
 
 /// Roles a program reads but does not act on.
-const READS: &[&str] = &["heading", "dialog", "alertdialog", "alert", "status", "img", "StaticText"];
+const READS: &[&str] = &[
+    "heading",
+    "dialog",
+    "alertdialog",
+    "alert",
+    "status",
+    "img",
+    "StaticText",
+];
 
 /// Roles whose name, when they have one, joins the ref of every row inside.
 const SCOPES: &[&str] = &[
-    "dialog", "alertdialog", "form", "region", "navigation", "main", "banner", "contentinfo",
-    "complementary", "search", "list", "listitem", "row", "table", "grid", "group",
-    "radiogroup", "menu", "menubar", "tablist", "toolbar", "article", "tree",
+    "dialog",
+    "alertdialog",
+    "form",
+    "region",
+    "navigation",
+    "main",
+    "banner",
+    "contentinfo",
+    "complementary",
+    "search",
+    "list",
+    "listitem",
+    "row",
+    "table",
+    "grid",
+    "group",
+    "radiogroup",
+    "menu",
+    "menubar",
+    "tablist",
+    "toolbar",
+    "article",
+    "tree",
 ];
 
 const STATES: &[&str] = &[
@@ -44,10 +86,20 @@ struct Node<'a> {
 
 /// Reads `Accessibility.getFullAXTree`'s `nodes` into rows, in page order.
 pub(crate) fn lines(nodes: &[Value]) -> Vec<Line> {
-    let by_id: HashMap<&str, &Value> =
-        nodes.iter().filter_map(|n| Some((n.get("nodeId")?.as_str()?, n))).collect();
-    let Some(root) = nodes.iter().find(|n| n.get("parentId").is_none()) else { return Vec::new() };
-    let mut walk = Walk { by_id: &by_id, scope: Vec::new(), seen: HashMap::new(), out: Vec::new(), visited: HashSet::new() };
+    let by_id: HashMap<&str, &Value> = nodes
+        .iter()
+        .filter_map(|n| Some((n.get("nodeId")?.as_str()?, n)))
+        .collect();
+    let Some(root) = nodes.iter().find(|n| n.get("parentId").is_none()) else {
+        return Vec::new();
+    };
+    let mut walk = Walk {
+        by_id: &by_id,
+        scope: Vec::new(),
+        seen: HashMap::new(),
+        out: Vec::new(),
+        visited: HashSet::new(),
+    };
     walk.visit(root, false);
     walk.out
 }
@@ -68,7 +120,11 @@ impl<'a> Walk<'a> {
             return;
         }
         let ignored = raw.get("ignored").and_then(Value::as_bool).unwrap_or(false);
-        let node = Node { raw, role: field(raw, "role").unwrap_or(""), name: clip(field(raw, "name").unwrap_or("")) };
+        let node = Node {
+            raw,
+            role: field(raw, "role").unwrap_or(""),
+            name: clip(field(raw, "name").unwrap_or("")),
+        };
         let control = CONTROLS.contains(&node.role);
         let mut scoped = false;
         if !ignored {
@@ -86,7 +142,12 @@ impl<'a> Walk<'a> {
         }
         // A closed menu, list or tree shows its own row and none of its items.
         if state(raw, "expanded").as_deref() != Some("false") {
-            for child in raw.get("childIds").and_then(Value::as_array).into_iter().flatten() {
+            for child in raw
+                .get("childIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if let Some(child) = child.as_str().and_then(|id| self.by_id.get(id)) {
                     self.visit(child, in_control || control);
                 }
@@ -135,7 +196,11 @@ fn field<'v>(node: &'v Value, name: &str) -> Option<&'v str> {
 }
 
 fn state(node: &Value, name: &str) -> Option<String> {
-    let property = node.get("properties")?.as_array()?.iter().find(|p| p.get("name").and_then(Value::as_str) == Some(name))?;
+    let property = node
+        .get("properties")?
+        .as_array()?
+        .iter()
+        .find(|p| p.get("name").and_then(Value::as_str) == Some(name))?;
     match property.get("value")?.get("value")? {
         Value::String(text) => Some(text.clone()),
         other => Some(other.to_string()),

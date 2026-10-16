@@ -252,7 +252,9 @@ pub(crate) fn verify_deck_proposal(
         },
     ] = proposal.manifest.ops.as_slice()
     else {
-        return Err(invalid("deck proposal requires exactly one deck transaction"));
+        return Err(invalid(
+            "deck proposal requires exactly one deck transaction",
+        ));
     };
     validate_context(context)?;
     if proposal.format != OfficeFormat::Pptx
@@ -263,8 +265,8 @@ pub(crate) fn verify_deck_proposal(
     {
         return Err(invalid("deck proposal does not name its pinned base"));
     }
-    let parsed = DeckTransaction::parse(transaction)
-        .map_err(|_| invalid("deck transaction is invalid"))?;
+    let parsed =
+        DeckTransaction::parse(transaction).map_err(|_| invalid("deck transaction is invalid"))?;
     if parsed.canonical() != *transaction || !parsed.marks.covers(history) {
         return Err(invalid(
             "deck transaction is not canonical or its marks are below managed history",
@@ -382,7 +384,9 @@ impl crate::Vault {
         if let Some(thread) = context.thread {
             let open = self
                 .get_annotation_thread(artifact_id, &thread)?
-                .is_some_and(|thread| thread.state == crate::anchored_annotation::ThreadState::Open);
+                .is_some_and(|thread| {
+                    thread.state == crate::anchored_annotation::ThreadState::Open
+                });
             if !open {
                 return Err(Error::Artifact(ArtifactError::AnnotationThreadNotFound));
             }

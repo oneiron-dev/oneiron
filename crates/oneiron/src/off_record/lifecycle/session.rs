@@ -691,7 +691,9 @@ impl OffRecordSession<'_> {
                 .vault
                 .store
                 .session_body_dir(&self.session_ref, true)?
-                .ok_or(Error::InvariantViolation("off-record body directory missing")),
+                .ok_or(Error::InvariantViolation(
+                    "off-record body directory missing",
+                )),
             RouteTarget::Base => self.vault.store.body_dir(),
             RouteTarget::Discard => Err(Error::InvariantViolation(
                 "anonymous routes write no result bodies",
@@ -703,7 +705,11 @@ impl OffRecordSession<'_> {
     /// directory, then the vault's.
     pub(crate) fn body_dirs(&self) -> Result<Vec<crate::store::BodyDir>> {
         let mut dirs = Vec::with_capacity(2);
-        if let Some(dir) = self.vault.store.session_body_dir(&self.session_ref, false)? {
+        if let Some(dir) = self
+            .vault
+            .store
+            .session_body_dir(&self.session_ref, false)?
+        {
             dirs.push(dir);
         }
         dirs.push(self.vault.store.body_dir()?);

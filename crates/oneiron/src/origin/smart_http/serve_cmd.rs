@@ -54,7 +54,8 @@ impl ServeRequest {
     #[must_use]
     pub fn is_push(&self) -> bool {
         self.is_receive_pack()
-            || (self.is_ref_advertisement() && self.advertised_service() == Some("git-receive-pack"))
+            || (self.is_ref_advertisement()
+                && self.advertised_service() == Some("git-receive-pack"))
     }
 
     /// Whether this request is the smart-HTTP ref advertisement.

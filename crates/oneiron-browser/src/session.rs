@@ -12,16 +12,39 @@ use crate::{
     Observation, ObserveInput, OpenInput, ScreenshotInput, ScreenshotOutput, SelectInput,
     TypeInput, WaitForInput, WaitForOutput,
 };
-use oneiron_container::{ContainerRuntime, GuestLimits, GuestSeccomp, GuestSession, GuestSpec, ImageRef, SessionManifest};
+use oneiron_container::{
+    ContainerRuntime, GuestLimits, GuestSeccomp, GuestSession, GuestSpec, ImageRef, SessionManifest,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 
 /// Words in a control's name that mark an effect a person presses for.
 const PRESS_PHRASES: &[&[&str]] = &[
-    &["send"], &["submit"], &["pay"], &["buy"], &["purchase"], &["order"], &["checkout"],
-    &["connect"], &["delete"], &["remove"], &["sign", "in"], &["log", "in"], &["login"],
-    &["sign", "up"], &["register"], &["confirm"], &["publish"], &["post"], &["invite"],
-    &["accept"], &["transfer"], &["donate"], &["subscribe"], &["book"], &["reserve"],
+    &["send"],
+    &["submit"],
+    &["pay"],
+    &["buy"],
+    &["purchase"],
+    &["order"],
+    &["checkout"],
+    &["connect"],
+    &["delete"],
+    &["remove"],
+    &["sign", "in"],
+    &["log", "in"],
+    &["login"],
+    &["sign", "up"],
+    &["register"],
+    &["confirm"],
+    &["publish"],
+    &["post"],
+    &["invite"],
+    &["accept"],
+    &["transfer"],
+    &["donate"],
+    &["subscribe"],
+    &["book"],
+    &["reserve"],
 ];
 
 /// The guest user the browser image declares.
@@ -54,13 +77,20 @@ impl BrowserSession {
             user: GUEST_USER,
             limits: config.limits,
             seccomp: GuestSeccomp::GuestSandbox,
-            read_only_mounts: config.fixture.iter().map(|dir| (dir.clone(), PathBuf::from("/srv/fixture"))).collect(),
+            read_only_mounts: config
+                .fixture
+                .iter()
+                .map(|dir| (dir.clone(), PathBuf::from("/srv/fixture")))
+                .collect(),
         };
         let mut guest = runtime.start(&spec).map_err(unavailable)?;
         let (stdin, stdout) = guest.take_stdio().ok_or(BrowserError::GuestLost)?;
         match CdpDriver::attach(Pipe::new(stdout, stdin), config.wait_cap) {
             Ok(driver) => Ok(Self { driver, guest }),
-            Err(error) => Err(BrowserError::Unavailable(format!("{error}; guest said: {}", guest.stderr_tail()))),
+            Err(error) => Err(BrowserError::Unavailable(format!(
+                "{error}; guest said: {}",
+                guest.stderr_tail()
+            ))),
         }
     }
 
@@ -77,7 +107,11 @@ impl BrowserSession {
     }
 
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
-        if self.guest.is_running() { Ok(&mut self.driver) } else { Err(BrowserError::GuestLost) }
+        if self.guest.is_running() {
+            Ok(&mut self.driver)
+        } else {
+            Err(BrowserError::GuestLost)
+        }
     }
 }
 
@@ -87,12 +121,19 @@ fn needs_press(name: &str) -> bool {
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
         .collect();
-    PRESS_PHRASES.iter().any(|phrase| words.windows(phrase.len()).any(|w| w.iter().zip(*phrase).all(|(a, b)| a == b)))
+    PRESS_PHRASES.iter().any(|phrase| {
+        words
+            .windows(phrase.len())
+            .any(|w| w.iter().zip(*phrase).all(|(a, b)| a == b))
+    })
 }
 
 impl BrowserDriver for BrowserSession {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
-        let scheme = input.url.split_once("://").map(|(scheme, _)| scheme.to_ascii_lowercase());
+        let scheme = input
+            .url
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_ascii_lowercase());
         if !matches!(scheme.as_deref(), Some("http" | "https")) {
             return Err(BrowserError::Url(input.url));
         }
@@ -111,7 +152,10 @@ impl BrowserDriver for BrowserSession {
         let driver = self.live()?;
         let row = driver.row(&input.target)?;
         if needs_press(&row.name) {
-            return Err(BrowserError::NeedsPress(format!("{} \"{}\"", row.role, row.name)));
+            return Err(BrowserError::NeedsPress(format!(
+                "{} \"{}\"",
+                row.role, row.name
+            )));
         }
         driver.click(input)
     }

@@ -51,17 +51,15 @@ impl Vault {
         // when it rides a standing grant; the owner's own consent needs none.
         let deck = crate::edit_roundtrip::deck_op(proposal);
         if let (Some((_, _, context)), SettleConsent::StandingGrant { brief_ref }) = (deck, consent)
-            && context
-                .thread
-                .is_some_and(|thread| crate::anchored_annotation::thread_brief_ref(&thread) != *brief_ref)
+            && context.thread.is_some_and(|thread| {
+                crate::anchored_annotation::thread_brief_ref(&thread) != *brief_ref
+            })
         {
             return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
                 "a deck proposal answering a thread settles only under that thread's brief",
             )));
         }
-        let deck_limits = deck
-            .map(|_| self.docedit_package_limits())
-            .transpose()?;
+        let deck_limits = deck.map(|_| self.docedit_package_limits()).transpose()?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
@@ -655,11 +653,12 @@ impl Vault {
         }
         if proposal.format != proposal.manifest.format
             || match proposal.format {
-                OfficeFormat::Xlsx => proposal
-                    .manifest
-                    .ops
-                    .iter()
-                    .any(|op| matches!(op, EditOp::DocxRevision { .. } | EditOp::DeckTransaction { .. })),
+                OfficeFormat::Xlsx => proposal.manifest.ops.iter().any(|op| {
+                    matches!(
+                        op,
+                        EditOp::DocxRevision { .. } | EditOp::DeckTransaction { .. }
+                    )
+                }),
                 OfficeFormat::Docx => !matches!(
                     proposal.manifest.ops.as_slice(),
                     [EditOp::DocxRevision { transaction }]

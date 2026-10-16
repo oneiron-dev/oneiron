@@ -24,8 +24,8 @@ pub(crate) mod xml;
 
 pub use structure::{NewShape, Preset, StructureEdit, StructureReport, structure_patch};
 pub use transaction::{
-    AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks,
-    NoAssets, PartChange, StepRefusal, TransactionError, run_transaction,
+    AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
+    PartChange, StepRefusal, TransactionError, run_transaction,
 };
 
 use crate::deck::{DeckError, DeckView, ShapeView};

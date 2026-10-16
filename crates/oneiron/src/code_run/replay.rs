@@ -14,8 +14,7 @@ use super::payload::{
 };
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, code_run_layout_hash,
-    expect_map, invalid_code_run_replay, map_get, str_value, validate_label,
-    validate_text,
+    expect_map, invalid_code_run_replay, map_get, str_value, validate_label, validate_text,
 };
 use super::types::{
     SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfEffect, SelfSpeechCall, SelfSpeechResult,
