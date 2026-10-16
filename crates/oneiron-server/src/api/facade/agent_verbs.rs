@@ -55,6 +55,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.trunk", post(vault_rooms_trunk))
         .route("/vault.rooms.claim", post(vault_rooms_claim))
         .route("/vault.rooms.speak", post(vault_rooms_speak))
+        .route(
+            "/vault.conversations.turn.continue",
+            post(vault_conversations_turn_continue),
+        )
+        .route(
+            "/vault.conversations.turn.retry",
+            post(vault_conversations_turn_retry),
+        )
         .route("/vault.rooms.host", post(vault_rooms_host))
         .route("/vault.rooms.sharing", post(vault_rooms_sharing))
         .route(
@@ -929,6 +937,46 @@ async fn vault_rooms_speak(
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(Json(output))
+}
+async fn vault_conversations_turn_continue(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.conversations.turn.continue",
+        value,
+    )?))
+}
+async fn vault_conversations_turn_retry(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.conversations.turn.retry",
+        value,
+    )?))
 }
 async fn vault_rooms_host(
     auth: CoreAuth,

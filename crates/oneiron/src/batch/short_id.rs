@@ -113,7 +113,7 @@ pub(super) fn apply_short_id_plan(
     Ok(())
 }
 
-pub(super) fn delete_short_id_rows_for_id(
+pub(crate) fn delete_short_id_rows_for_id(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,

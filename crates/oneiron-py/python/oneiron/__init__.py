@@ -311,6 +311,9 @@ class Oneiron:
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
         @property
+        def conversations(self) -> "Oneiron._VaultConversationsVerbs":
+            return Oneiron._VaultConversationsVerbs(self._client)
+        @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs":
             return Oneiron._VaultCompanionsVerbs(self._client)
         @property
@@ -404,6 +407,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultConversationsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def turn(self) -> "Oneiron._VaultConversationsTurnVerbs":
+            return Oneiron._VaultConversationsTurnVerbs(self._client)
+    class _VaultConversationsTurnVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def continue_(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_continue(json.dumps(spec))))
+        def retry(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_retry(json.dumps(spec))))
     class _VaultCompanionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
