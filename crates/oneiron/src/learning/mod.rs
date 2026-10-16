@@ -26,6 +26,7 @@ pub mod cell;
 pub mod coordination;
 pub mod estimate;
 pub mod evidence;
+pub mod honesty;
 pub mod judge;
 pub mod prior;
 pub mod project;

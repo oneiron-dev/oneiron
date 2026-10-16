@@ -6,6 +6,7 @@
 pub mod coach;
 mod curator;
 mod evaluation;
+pub mod honesty;
 pub(crate) mod optimize;
 pub use optimize::CoachSkillOptimizer;
 mod proposals;
@@ -141,6 +142,9 @@ pub(crate) fn execute(
                 .vault
                 .store
                 .tune_retrieval_blend_weights_when_ready(Default::default())?;
+        }
+        honesty::HONESTY_AUDIT_FACET => {
+            let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
         }
         coach::COACH_READ_HARDENING_FACET => {
             coach::run_read_hardening(ctx.vault, ctx.now_ms / 1000)?;
