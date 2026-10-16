@@ -168,6 +168,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/history_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner… |
 | `src/api/owner_routes/pack_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
+| `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
+| `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
 | `src/api/pairing.rs` | src | m | 12 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
@@ -456,9 +458,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | L | 1 struct · 7 fn · 6 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/media.rs` | src | m | 3 struct · 9 fn · 6 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
-| `src/models/mod.rs` | src | m | 2 struct · 15 fn · 12 re-export · 3 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
+| `src/models/mod.rs` | src | m | 2 struct · 15 fn · 12 re-export · 4 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/offer.rs` | src | s | 1 struct · 2 crate-vis | ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
 | `src/models/openai.rs` | src | s | 3 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
+| `src/models/outbound_wait.rs` | src | s | 1 crate-vis | — | Server policy for shedding during a long journaled model wait |
 | `src/models/output_cap.rs` | src | s | 2 crate-vis | — | A provider's output ceiling on the wire |
 | `src/models/raw.rs` | src | s | 8 crate-vis | — | The raw `/v1/llm` routes' models and their own meter |
 | `src/models/receipts.rs` | src | s | 1 struct · 1 const · 2 crate-vis | LoggedReceipts | Where the server's run receipts go by default: one structured log line per row |
