@@ -1854,9 +1854,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "AuthorityHandoffAlarm",
+      "AuthorityHandoffAlarmAck",
       "AuthorityHandoffEquivocation"
      ],
      "path": "src/authority/handoff_equivocation.rs",
@@ -1864,8 +1866,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 2,
-      "struct": 1
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -2272,7 +2274,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 24,
       "struct": 1
      }
@@ -19011,7 +19013,7 @@
      "surface": {
       "crate-vis": 17,
       "mod": 2,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -19043,7 +19045,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ActExecution",
@@ -19055,7 +19057,7 @@
      "path": "src/federation/pending_act.rs",
      "purpose": "Row-driven shared-vault objection windows",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 9,
       "struct": 4
@@ -19157,6 +19159,42 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/membership.rs",
+     "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeleteVaultPlan",
+      "RemoveOwnerPlan",
+      "SharedActExecution",
+      "SharedActExecutionReceipt",
+      "SharedActExport",
+      "SharedActKind",
+      "SharedActOutcome",
+      "SharedVaultChange",
+      "SharedVaultDeletion",
+      "TransferOwnershipPlan"
+     ],
+     "path": "src/federation/shared_act/mod.rs",
+     "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 9,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -19167,7 +19205,7 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -23829,9 +23867,10 @@
      "notable": [
       "AutoCheckCandidate",
       "AutoCheckCandidateOwned",
+      "AutoCheckDecisions",
+      "AutoCheckNotes",
       "AutoCheckOutcome",
       "AutoCheckSignals",
-      "AutoChecker",
       "BoundedAutoChecker"
      ],
      "path": "src/llm/autocheck.rs",
@@ -23840,8 +23879,8 @@
       "const": 2,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 4,
-      "struct": 4,
+      "fn": 5,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -23885,7 +23924,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 6,
+      "const": 9,
       "fn": 1,
       "struct": 1
      }
@@ -23898,6 +23937,20 @@
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldLadder"
+     ],
+     "path": "src/llm/decision/held.rs",
+     "purpose": "What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -23953,8 +24006,9 @@
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
+      "crate-vis": 1,
       "mod": 2,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -24404,8 +24458,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "DescriptionJudge",
-      "DescriptionJudgment",
       "DescriptionPolicy",
       "DescriptionReask",
       "MeasuredDescription",
@@ -24424,7 +24476,22 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 13,
-      "struct": 11,
+      "re-export": 1,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescriptionDecisions",
+      "DescriptionNotes"
+     ],
+     "path": "src/llm/routing/decisions.rs",
+     "purpose": "The route's fitness grades as typed decisions through the host's ladder, and the note seam beside a routed…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -24685,8 +24752,6 @@
       "PurposeEffort",
       "SeatCandidate",
       "SeatChoiceReceipt",
-      "SeatJudge",
-      "SeatJudgment",
       "SeatKind",
       "SeatPool",
       "SeatTask"
@@ -24696,8 +24761,22 @@
      "surface": {
       "enum": 3,
       "fn": 18,
-      "re-export": 1,
-      "struct": 8,
+      "re-export": 2,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatDecisions",
+      "SeatNotes"
+     ],
+     "path": "src/llm/seat/decisions.rs",
+     "purpose": "The seat pick as typed decisions through the host's ladder, and the note seam beside it",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -43783,7 +43862,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43972,7 +44051,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 77,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44595,9 +44674,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 62,
+   "over_bar": 63,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2675,
+   "source_files": 2680,
    "test_files": 903
   },
   "oneiron-android": {
