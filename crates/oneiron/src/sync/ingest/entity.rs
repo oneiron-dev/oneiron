@@ -5,7 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
     ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD,
     ENTITY_TYPE_REDACTION_AUDIT,
 };
@@ -427,6 +427,20 @@ fn admit(
             );
             return Ok(EntityStep::Skip);
         }
+    }
+    // A federation peer may not turn an agent definition back on (Docs Q04). Window admission
+    // judged the row in a read txn; a local revocation may have committed since, so the writer
+    // txn judges it again.
+    if header.entity_type == ENTITY_TYPE_AGENT_DEF
+        && crate::sync::ingest::in_peer_import(vault)
+        && crate::agent_def::agent_definition_put_widens_in_txn(&vault.store, wtxn, &id, data)?
+    {
+        return Ok(refuse(
+            Some(id),
+            Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(
+                "a federation peer cannot turn an agent definition back on",
+            )),
+        ));
     }
     // Pack remote preflight: a malformed REMOTE envelope is refused here, before the name-based
     // remap reads the local map. `InvalidPackByteMap` stays unclassified, so a later one from

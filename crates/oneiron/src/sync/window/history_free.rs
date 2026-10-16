@@ -136,6 +136,21 @@ impl HistoryCheck {
                 pad_worlds.insert(world);
             }
         }
+        // A shallow doc's own root holds state no retained operation carries:
+        // a pad only there still names its world (Docs Q27).
+        let shallow_root = doc.shallow_since_frontiers();
+        if !shallow_root.is_empty() {
+            let at_root = doc.fork();
+            if at_root.checkout(&shallow_root).is_ok() {
+                map_for_each_value_bytes(&at_root.get_map("entities"), |_, blob| {
+                    if let Some(Ok(world)) = blob.and_then(crate::world_keys::pad_body_world) {
+                        pad_worlds.insert(world);
+                    }
+                });
+            } else {
+                tracing::warn!(window = %key, "history check: shallow root unreadable");
+            }
+        }
         let mut late_pad_worlds = BTreeSet::new();
         for world in pad_worlds {
             if crate::world_keys::world_keys_destroyed_in_txn(&vault.store, &rtxn, world)? {
