@@ -47,6 +47,11 @@ impl AppError {
         Self::new(oneiron::memory::MEMORY_CODE_FORBIDDEN, message, suggestions)
     }
 
+    /// The refusal's engine or transport code, as a call receipt records it.
+    pub(super) fn code(&self) -> &str {
+        &self.code
+    }
+
     pub(super) fn invalid_params() -> Self {
         Self::new(
             oneiron::memory::MEMORY_CODE_BAD_REQUEST,

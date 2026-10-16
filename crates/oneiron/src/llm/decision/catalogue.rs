@@ -125,6 +125,22 @@ pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// The paired yes/no question every decision read asks beside the labels: does this need
+/// more thinking? Keyed by its wording alone.
+pub const THINK_MORE: QuestionFamily = QuestionFamily {
+    name: "decision.think_more",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// The host's person question, asked beside the call's questions when the dial reaches the
+/// person: ask up to the next authorised role? Keyed by its wording alone.
+pub const ASK_UP: QuestionFamily = QuestionFamily {
+    name: "decision.ask_up",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Does this candidate violate one owner-authored policy row? Keyed by the
 /// document hash, row reference and action; wording comes from the row.
 pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
@@ -149,6 +165,31 @@ pub const CONFLICT_SETTLE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which capability setting one connector grant-slate row drafts (auto, always ask or
+/// never allow; always allow too on an owner-asked re-draft). Keyed by door and tool.
+pub const CONNECTOR_SLATE_DRAFT: QuestionFamily = QuestionFamily {
+    name: "connector.grant_slate.draft",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How a conflicting claim set the Dreamer extracted resolves (merge, supersede, accumulate
+/// or escalate), and which listed candidate's identity a merge keeps. Keyed by `resolution`,
+/// or by `identity` and the option group.
+pub const CONFLICT_RESOLUTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.conflict_resolution",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Which listed claim, if any, a candidate the Dreamer extracted corrects. Keyed by the
+/// candidate's position and the option group.
+pub const CORRECTION: QuestionFamily = QuestionFamily {
+    name: "dreamer.correction",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -162,7 +203,12 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
+    THINK_MORE,
+    ASK_UP,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
+    CONNECTOR_SLATE_DRAFT,
+    CONFLICT_RESOLUTION,
+    CORRECTION,
 ];
