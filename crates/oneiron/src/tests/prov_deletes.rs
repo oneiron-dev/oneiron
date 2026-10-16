@@ -530,6 +530,70 @@ fn deleting_a_provenance_claim_whose_subject_edge_is_gone_refreshes_nothing() ->
     Ok(())
 }
 
+/// F25 H10: a purge refused after the SoftErase commit still queues the refs
+/// the delete captured. Its retry finds the Claim body already empty; before,
+/// it queued the sweep without them.
+#[cfg(feature = "sync")]
+#[test]
+fn purge_retried_after_soft_erase_keeps_the_captured_sweep_refs() -> Result<()> {
+    for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
+        let fx = lifecycle_fixture()?;
+        let vault = &fx.vault;
+        let claim_id = EntityId::now();
+        let mut body = EdgeProvenanceClaimBody::new(fx.person, 0.8, SupersessionStatus::Confirmed);
+        body.source_revision_ref = Some([0x5A; 16]);
+        body.body_snapshot_ref = Some([0x5B; 16]);
+        vault.put_edge_provenance(&claim_id, &fx.subject, &body, EdgeActorClass::Human, 1_000)?;
+
+        let refused = run_raced_delete_at(
+            vault,
+            crate::deletion::DeleteRendezvous::BeforeHardPurge,
+            &claim_id,
+            reason,
+            |txn| {
+                let mut key = b"gate_decision:partition_hold:v1:".to_vec();
+                key.push(1);
+                key.extend_from_slice(claim_id.as_bytes());
+                vault.store.vault_meta.put(txn, &key, &[1])?;
+                Ok(())
+            },
+        );
+        assert!(
+            matches!(refused, Err(Error::InvalidConfig(_))),
+            "{reason:?}: the hold refuses the purge"
+        );
+        let txn = vault.store.env.read_txn()?;
+        let shell = vault
+            .store
+            .entities
+            .get(&txn, claim_id.as_bytes())?
+            .expect("the SoftErase shell stays");
+        assert_eq!(
+            shell.len(),
+            ENTITY_METADATA_HEADER_LEN,
+            "{reason:?}: the SoftErase committed before the purge"
+        );
+        drop(txn);
+        vault.set_gate_decision_partition_hold(Some(*claim_id.as_bytes()), false)?;
+        assert!(vault.delete_entity_with_reason(&claim_id, reason)?.existed);
+
+        let rows = hard_erase_sweep_rows(vault)?;
+        assert_eq!(rows.len(), 1, "{reason:?}");
+        let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
+        assert_eq!(
+            job["scope"]["body_snapshot_refs"],
+            serde_json::json!(["5b".repeat(16)]),
+            "{reason:?}"
+        );
+        assert_eq!(
+            job["scope"]["revision_ids"],
+            serde_json::json!(["5a".repeat(16)]),
+            "{reason:?}"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Result<()> {
