@@ -16409,7 +16409,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -16733,6 +16733,20 @@
      "surface": {
       "const": 12,
       "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskRealizeModel"
+     ],
+     "path": "src/dreamer_consolidation/task_realize.rs",
+     "purpose": "A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -17140,7 +17154,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 19
+      "fn": 20
      }
     },
     {
@@ -17271,7 +17285,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 22,
+      "const": 23,
       "crate-vis": 34
      }
     },
@@ -25862,7 +25876,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 29,
+      "const": 31,
       "fn": 1,
       "struct": 1
      }
@@ -43146,7 +43160,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -48233,7 +48247,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49243,7 +49257,7 @@
    },
    "over_bar": 100,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2969,
+   "source_files": 2970,
    "test_files": 903
   },
   "oneiron-android": {
