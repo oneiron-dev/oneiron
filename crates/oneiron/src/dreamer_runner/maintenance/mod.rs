@@ -8,7 +8,7 @@ mod curator;
 mod evaluation;
 pub mod honesty;
 pub(crate) mod optimize;
-pub use optimize::CoachSkillOptimizer;
+pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod proposals;
 pub mod representation;
 mod retrieval_policy;

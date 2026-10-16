@@ -19,7 +19,8 @@ use super::{
 
 /// The Coach uses the host's existing provider slots, policy and one clock.
 /// Wording keys are score, structural, contrastive, preference, task_success,
-/// honesty, tradeoff, and axis.<name>. No prompt or model is selected by the engine.
+/// honesty, tradeoff, live_axis, and axis.<name>. No prompt or model is
+/// selected by the engine.
 pub struct SkillOptimizeDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -245,6 +246,33 @@ impl dyn HeldOutReplayNotes + '_ {
                 )
             })
             .collect()
+    }
+
+    /// Whether one live run met a goal axis: `criterion` names the axis, and
+    /// for a project goal its measure and bound, beside the run's replay under
+    /// the arm's instructions. Only a decided yes is a success; an abstained or
+    /// escalated finding fails the pull rather than counting either way.
+    /// # Errors
+    /// An abstained or escalated finding, or the host's replay and journal errors.
+    pub fn live_axis_met(&self, case: &HeldOutReplayCase<'_>, criterion: &Value) -> Result<bool> {
+        let decision = ask(
+            self,
+            "live_axis",
+            &[case.skill],
+            &json!({"case": case_state(self, case)?, "axis": criterion}),
+            AnswerContract::Noul,
+        )?;
+        match decision.answer {
+            DecisionAnswer::Noul(met)
+                if decision.human_ask.is_none()
+                    && decision
+                        .probability
+                        .is_some_and(|p| p >= decision.receipt.band.high) =>
+            {
+                Ok(met)
+            }
+            _ => Err(invalid("live axis finding abstained")),
+        }
     }
 
     /// Every objective of every held-out replay, put to the hidden-flaw
