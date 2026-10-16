@@ -75,6 +75,11 @@ impl LocalVisionModel {
         }))
     }
 
+    /// Whether a `[models.roles.local_vision]` seat is bound.
+    pub(crate) fn bound(ai: &AiHandle) -> bool {
+        ai.seat(ROLE).is_some()
+    }
+
     /// This seat at the Local rung, its pin naming the seat's model and
     /// revision.
     pub(crate) fn rung(self: &Arc<Self>) -> oneiron::Result<ModelDecisionProvider> {
@@ -308,7 +313,8 @@ fn noul_answer(text: &str) -> Option<ProviderDecision> {
 
 /// The answer's shape: System One's Box answer without its `type`.
 fn box_schema() -> Value {
-    let edge = |what: &str| json!({"type": "number", "minimum": 0, "maximum": 1, "description": what});
+    let edge =
+        |what: &str| json!({"type": "number", "minimum": 0, "maximum": 1, "description": what});
     json!({
         "type": "object",
         "properties": {

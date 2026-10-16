@@ -194,7 +194,13 @@ fn bind_health_answer_in_txn(
     );
     vault
         .batch_in()
-        .claim_candidate(&answer.claim, candidate, &envelope, at(input.now), input.now)
+        .claim_candidate(
+            &answer.claim,
+            candidate,
+            &envelope,
+            at(input.now),
+            input.now,
+        )
         .apply(txn)?;
     secret_scan_before_put(&record)?;
     QUESTION_VERSION.put(

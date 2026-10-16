@@ -743,6 +743,40 @@ to trust a backup on, and a backup's own head is never trusted. Where no vault i
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
 install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
 
+## Contact disclosure
+
+A contact sees only what you cleared it for. An agent or the companion can only offer you a
+clearance (the `vault.disclosure.offer` verb, under an agent credential that carries
+`propose_disclosure_widen`). Only you settle it, here. The generic widen accept refuses a
+contact offer.
+
+- `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>` shows one frozen offer: the contact,
+  the Scope, the purpose, the channel, the one party it reaches, and its `canonical_delta`.
+- `POST /v1/owner/disclosure/confirm` with
+  `{"proposal_ref": "...", "expected_delta": "<canonical_delta>", "outcome": "once"}` answers it.
+  `once` discloses this once and keeps nothing. `standing` clears the contact for that Scope
+  until you narrow or revoke it. `deny` refuses. An offer settles once. It is refused when it
+  expired, when the delta differs from what you were shown, when the contact's clearance changed
+  since it was filed, or when the credential line that filed it tries to settle it.
+- `POST /v1/owner/disclosure/narrow` with `{"contact": "<hex>", "scope": {...}}` narrows a
+  standing clearance to a Scope inside the current one.
+- `POST /v1/owner/disclosure/revoke` with `{"contact": "<hex>"}` is
+  `consent.revoke_contact_disclosure`. The row stays, revoked, and admits nothing.
+- `POST /v1/owner/disclosure/preclear` with `{"set_name": "...", "contacts": [...], "scope": {...}}`
+  clears a named trusted set in advance, 1 to 256 contacts, one receipt each.
+- `GET` and `PUT /v1/owner/disclosure/mode` read and set the mode: `always_ask` (the companion
+  never offers), `auto` (the default) or `always_yes` (pre-clear trusted sets; offers stay
+  allowed). No mode clears anyone by itself.
+- `POST /v1/owner/disclosure/attendee` with
+  `{"ask_ref": "<hex>", "roster_revision": 4, "choice": "<contact hex>" | "unknown"}` answers a
+  "who is this?" ask once. It names the speaker for that roster revision only. It clears nothing
+  and enrolls no voice, so an unknown speaker stays public-only.
+
+Each clearance answer returns its Gate receipt: `receipt_ref`, the act, the contact, the
+registry row `contact_clearance:<contact hex>`, its revoke command, and the clearance digests
+before and after. A `once` answer also returns the one-time digest the disclosure spends. There
+is no dedicated CLI command; use `oneiron api raw`, as in the last section.
+
 ## Saved queries after a pack update
 
 When a new source of an installed pack is activated, the saved queries that read a predicate it

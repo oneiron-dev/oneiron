@@ -102,11 +102,11 @@ async fn answer_quota(
             "quota questions are the owner's",
         );
     }
-    match server
-        .ai
-        .model_runtime()
-        .answer_quota(&question, answer.choice, answer.fallback.as_deref())
-    {
+    match server.ai.model_runtime().answer_quota(
+        &question,
+        answer.choice,
+        answer.fallback.as_deref(),
+    ) {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => refusal(
             StatusCode::NOT_FOUND,

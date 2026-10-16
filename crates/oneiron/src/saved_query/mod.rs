@@ -70,6 +70,7 @@ mod support;
 #[cfg(test)]
 mod tests;
 
+pub use self::decisions::MembershipDecisions;
 pub use self::definition::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, QueryScope, SAVED_QUERY_SCHEMA_VERSION,
     SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord,
@@ -79,7 +80,6 @@ pub use self::evaluator::{
     EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
     SavedQueryEvaluator, SavedQueryJudgeBinding,
 };
-pub use self::decisions::MembershipDecisions;
 pub use self::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,
     SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,

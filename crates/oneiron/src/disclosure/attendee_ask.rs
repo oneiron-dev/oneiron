@@ -122,8 +122,14 @@ pub(super) struct AttendeeAskRecord {
 impl AttendeeAskRecord {
     fn to_value(&self) -> Value {
         Value::Map(vec![
-            (Value::from("session"), Value::from(self.session_key.as_str())),
-            (Value::from("speaker"), Value::from(self.speaker_key.as_str())),
+            (
+                Value::from("session"),
+                Value::from(self.session_key.as_str()),
+            ),
+            (
+                Value::from("speaker"),
+                Value::from(self.speaker_key.as_str()),
+            ),
             (Value::from("revision"), Value::from(self.roster_revision)),
             (
                 Value::from("turn"),
@@ -169,10 +175,16 @@ pub(super) fn decode_attendee_ask_value(value: &Value) -> Result<AttendeeAskReco
     else {
         return Err(invalid_ask());
     };
-    if [session_key, speaker_key, revision_key, turn_key, candidates_key]
-        .iter()
-        .map(|key| key.as_str())
-        .ne(["session", "speaker", "revision", "turn", "candidates"].map(Some))
+    if [
+        session_key,
+        speaker_key,
+        revision_key,
+        turn_key,
+        candidates_key,
+    ]
+    .iter()
+    .map(|key| key.as_str())
+    .ne(["session", "speaker", "revision", "turn", "candidates"].map(Some))
     {
         return Err(invalid_ask());
     }
@@ -320,10 +332,8 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("attendee ask has no vault owner"));
         }
         let ask_claim = ConsultPayloadRef::Claim(ask_ref);
-        let mut question = TaskAskQuestion::new(
-            ask.trigger_turn
-                .map_or(ask_claim, ConsultPayloadRef::Turn),
-        );
+        let mut question =
+            TaskAskQuestion::new(ask.trigger_turn.map_or(ask_claim, ConsultPayloadRef::Turn));
         if ask.trigger_turn.is_some() {
             question.context_refs.push(ask_claim);
         }
@@ -390,7 +400,11 @@ impl Vault {
             // The first owner answer is the only one. A claim already at the
             // id without the slot is not an answer, and is overwritten.
             let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
-            self.take_decision_slot_in_txn(txn, &attendee_identity_slot(&identity_ref), decision_id)?;
+            self.take_decision_slot_in_txn(
+                txn,
+                &attendee_identity_slot(&identity_ref),
+                decision_id,
+            )?;
             let claim = ClaimBody::new(
                 PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
                 ClaimSubject::Entity(*ask_ref),
