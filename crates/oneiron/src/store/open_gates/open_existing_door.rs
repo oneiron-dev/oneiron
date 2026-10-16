@@ -409,9 +409,8 @@ impl Store {
         // it first.  Collect before writing to avoid mutating a DB while its
         // iterator is live.
         let mut attempts = Vec::new();
-        for row in self.attempt_records.iter(&wtxn)? {
-            let (key, raw) = row?;
-            let id = crate::attempt_queue::AttemptId::from_bytes(&key)?;
+        for row in crate::ports::JobQueueRead::port_job_rows(self, &wtxn, None)? {
+            let (id, raw) = row?;
             attempts.push(crate::attempt_queue::decode_record(&raw, id)?);
         }
         for attempt in &attempts {

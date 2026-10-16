@@ -267,6 +267,34 @@ impl EdgeStoreRead for Memory {
             .map(|value| Ok(crate::edge::parse_strict_edge_record(&key, value)?.into_edge_info()))
             .transpose()
     }
+    fn port_edge_present(
+        &self,
+        txn: &Snapshot,
+        center: &EntityId,
+        direction: EdgeDirection,
+        kind: EdgeKind,
+        peer: &EntityId,
+    ) -> Result<bool> {
+        let out = direction != EdgeDirection::In
+            && txn.edges.contains_key(&(*center, kind as u8, *peer));
+        let incoming = direction != EdgeDirection::Out
+            && txn.edges.contains_key(&(*peer, kind as u8, *center));
+        Ok(out || incoming)
+    }
+    fn port_edge_get_incoming(
+        &self,
+        txn: &Snapshot,
+        center: &EntityId,
+        kind: EdgeKind,
+        peer: &EntityId,
+    ) -> Result<Option<EdgeInfo>> {
+        // One table holds each edge once; the reverse key names the center first.
+        let key = crate::store::Store::encode_edge_key(center, kind, peer);
+        txn.edges
+            .get(&(*peer, kind as u8, *center))
+            .map(|value| Ok(crate::edge::parse_strict_edge_record(&key, value)?.into_edge_info()))
+            .transpose()
+    }
 }
 
 impl TombstoneStoreRead for Memory {

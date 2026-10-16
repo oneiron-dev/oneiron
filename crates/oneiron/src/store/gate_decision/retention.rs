@@ -218,10 +218,7 @@ impl Vault {
         // Read the effective trusted row in the SAME transaction that writes
         // the owner replacement; no policy override gets lost between reads.
         let (current, id) = crate::gate::retention_edit_target(&self.store, &txn)?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, id.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
             .ok_or(Error::CorruptedIndex("default policy manifest"))?;
         let manifest_body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
