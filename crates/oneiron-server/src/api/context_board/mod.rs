@@ -4,6 +4,7 @@
 
 mod board;
 mod cursor;
+mod explain;
 mod history;
 mod memories;
 mod prefix;
@@ -16,6 +17,7 @@ pub(crate) use board::{
     ContextBoardRoomControls,
 };
 pub(crate) use cursor::*;
+pub(crate) use explain::*;
 pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
@@ -555,6 +557,15 @@ pub(crate) async fn context_board_hydrate(
         reads
             .observe_rows(&read, &delivered)
             .map_err(|error| super::core_engine_error("board read set failed", error))?;
+        // The tier each MEMORIES row rode, for an explain read.
+        for row in response.memories.iter().flat_map(|memories| &memories.rows) {
+            let tier = match row.tier {
+                oneiron::context_board::MemoryTier::Pinned => "pinned",
+                oneiron::context_board::MemoryTier::Snippet => "snippet",
+                oneiron::context_board::MemoryTier::IndexOnly => "index_only",
+            };
+            reads.served_on_board(&row.id, tier, None);
+        }
         reads.observe_pack_inventory(&installed_packs);
         // The response is final: the rider it carries is delivered, and a
         // committed prefix now holds the current connector state.

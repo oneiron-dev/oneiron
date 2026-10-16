@@ -8,6 +8,8 @@ mod children;
 pub use children::{
     ChildState, ForkState, child_states_for_actor, fork_states_for_actor, render_you_line,
 };
+mod explain;
+pub use explain::{GateExplanation, MemoryExplanation};
 mod people;
 pub(crate) use people::ensure_agent_person;
 pub use people::{
@@ -28,7 +30,7 @@ mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{
     ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
-    ProposalReason, ServedLifecycle, SessionReadSet,
+    ProposalReason, ServedLifecycle, ServedWhy, SessionReadSet,
 };
 pub(crate) use room::scope_worlds;
 pub use room::{

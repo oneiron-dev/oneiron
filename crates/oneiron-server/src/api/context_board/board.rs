@@ -309,7 +309,11 @@ pub(super) fn board_parts(
                 .map_err(|error| core_engine_error("board inbox failed", error))?;
             for item in slice {
                 let mut readable = false;
-                for participant in item.participants.iter().filter(|row| row.actor_ref == actor) {
+                for participant in item
+                    .participants
+                    .iter()
+                    .filter(|row| row.actor_ref == actor)
+                {
                     readable |= read
                         .is_ref_readable(&participant.identity_ref)
                         .map_err(|error| core_engine_error("board inbox failed", error))?;

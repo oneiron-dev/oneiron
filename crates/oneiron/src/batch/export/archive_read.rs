@@ -107,7 +107,9 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
             serde_json::from_value(row).map_err(|_| invalid("invalid archive custody record"))
         })
         .collect::<Result<Vec<ArchiveSecretCustody>>>()?;
-    let mut entities = sections.remove(&ArchiveRecordKind::Entity).unwrap_or_default();
+    let mut entities = sections
+        .remove(&ArchiveRecordKind::Entity)
+        .unwrap_or_default();
     let mut take = |kind| Value::Array(sections.remove(&kind).unwrap_or_default());
     // Store order: entity ids ascend, as the snapshot enumerated them.
     entities.sort_by(|a, b| {
@@ -206,7 +208,10 @@ fn attach_result_bodies(
         if !fields.get("content").is_none_or(Value::is_null) {
             return Err(invalid("archive result body carries inline content"));
         }
-        if fields.get("withheld").is_some_and(|reason| !reason.is_null()) {
+        if fields
+            .get("withheld")
+            .is_some_and(|reason| !reason.is_null())
+        {
             continue;
         }
         let blake3 = fields

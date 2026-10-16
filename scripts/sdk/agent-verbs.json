@@ -72,6 +72,24 @@
       "section": false
     },
     {
+      "name": "self.memory.diary.reads",
+      "input": "crate::memory::DiaryReadsRequest",
+      "output": "crate::memory::DiaryReadsView",
+      "call": "memory.diary_reads(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.memory.diary.review",
+      "input": "crate::memory::DiaryReviewAnswer",
+      "output": "crate::memory::DiaryReadRequest",
+      "call": "memory.answer_diary_read(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",

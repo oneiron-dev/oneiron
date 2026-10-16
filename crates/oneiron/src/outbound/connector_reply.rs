@@ -9,12 +9,12 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::surface_event::{SurfaceConnectorPayload, SurfaceCounterpartyStamp};
 
+use super::OutboundDeliveryWindowDecision;
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchRequest,
     OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::intent::{OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger};
-use super::OutboundDeliveryWindowDecision;
 
 /// One agent reply the host validated against the run that wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]

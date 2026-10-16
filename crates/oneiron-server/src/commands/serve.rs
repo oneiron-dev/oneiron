@@ -185,6 +185,8 @@ pub(super) async fn serve_with_config(
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
     let sync_server = Arc::new(sync_server);
+    // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
+    crate::replay_judge::register(&sync_server);
     // The vault's first oversight receipts, before the host's own workers
     // start: a vault that cannot sign them never reports ready.
     let oversight = sync_server
@@ -194,6 +196,12 @@ pub(super) async fn serve_with_config(
     // A wake pass keeps a plugged-in laptop awake until it ends; on battery
     // normal idle sleep holds (ruled 2026-10-08).
     let awake = host.keep_awake(AwakePolicy::default());
+    // A live model run holds the same assertion through each admitted call,
+    // not only a wake pass (Docs Q18).
+    oneiron_vault_contract::host_adapters::hold_awake_for_runs({
+        let awake = awake.clone();
+        move || Box::new(awake.hold()) as Box<dyn Send>
+    });
     let admit = crate::server::admit_every_pass();
     let lifecycle = sync_server.spawn_lifecycle_scheduler(Arc::new(move || {
         let pass = admit()?;

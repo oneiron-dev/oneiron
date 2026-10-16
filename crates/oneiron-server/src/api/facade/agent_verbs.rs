@@ -4,6 +4,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/report", post(report))
         .route("/self.memory.diary", post(self_memory_diary))
+        .route("/self.memory.diary.reads", post(self_memory_diary_reads))
+        .route("/self.memory.diary.review", post(self_memory_diary_review))
         .route("/cancel", post(cancel))
         .route("/steer", post(steer))
         .route("/describe", post(describe))
@@ -159,6 +161,46 @@ async fn self_memory_diary(
         actor,
         class,
         "self.memory.diary",
+        value,
+    )?))
+}
+async fn self_memory_diary_reads(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.memory.diary.reads",
+        value,
+    )?))
+}
+async fn self_memory_diary_review(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.memory.diary.review",
         value,
     )?))
 }
