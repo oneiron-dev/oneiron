@@ -221,8 +221,15 @@ pub(crate) fn fold_cell_in_txn(
         if let Some(label) = &ev.outcome_label {
             *outcome_counts.entry(label.clone()).or_insert(0.0) += w;
         }
-        if cited.len() < MAX_CITED_RECEIPTS {
-            cited.push(receipt.clone());
+        let mut references = vec![receipt.as_str()];
+        if let Some(pack) = &ev.pack_attribution {
+            references.push(&pack.attempt_receipt);
+            references.push(&pack.outcome_receipt);
+        }
+        for reference in references {
+            if cited.len() < MAX_CITED_RECEIPTS && !cited.iter().any(|r| r == reference) {
+                cited.push(reference.to_owned());
+            }
         }
     }
     if !outcome_counts.is_empty() {
@@ -357,6 +364,7 @@ pub(crate) fn project_cell_in_txn(
 ///
 /// Storage errors; the first failing cell aborts the sweep.
 pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
+    crate::critic::review::project_all_review_dissent(vault, now)?;
     let digests: Vec<[u8; 32]> = {
         let rtxn = vault.store.env.read_txn()?;
         CELL.scan_keys(&vault.store, &rtxn, &[])?

@@ -191,6 +191,8 @@ side_tables! {
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
+    SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
     /// The highest attribution evidence sequence the positive lane has read. Key: ().
     SKILL_ATTRIBUTION_POSITIVE_CURSOR: VaultMeta b"skill_attribution:positive_cursor:v1" Named;
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill.
@@ -443,6 +445,16 @@ side_tables! {
     TRUSTED_CONTACT_RELATION: VaultMeta b"trusted_contact.relation.v1:" Named;
     /// The trusted-contact tier the owner gave one `RouteToHelp` policy row. Key: string (row ref).
     TRUSTED_CONTACT_TIER: VaultMeta b"trusted_contact.tier.v1:" Named;
+    /// A typed body's Loro snapshot at its head. Key: id16 (entity).
+    TYPED_BODY_DOC: VaultMeta b"typed_body:doc:v1:" Raw;
+    /// Work on a typed body away from its head: opener, base frontier and state. Key: id16
+    /// (entity) + id16 (fork).
+    TYPED_BODY_FORK: VaultMeta b"typed_body:fork:v1:" Named;
+    /// An open typed-body fork's Loro snapshot. Key: id16 (entity) + id16 (fork).
+    TYPED_BODY_FORK_DOC: VaultMeta b"typed_body:fork_doc:v1:" Raw;
+    /// An entity's typed body: its schema tag, birth and head frontiers and commit count. Key:
+    /// id16 (entity).
+    TYPED_BODY_HEAD: VaultMeta b"typed_body:head:v1:" Named;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;

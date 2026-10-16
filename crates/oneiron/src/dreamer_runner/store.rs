@@ -761,6 +761,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
+        || kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
