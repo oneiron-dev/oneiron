@@ -232,9 +232,8 @@ impl Memory<'_> {
             window = window.saturating_mul(2).min(PAGE_LIMIT * 16);
         };
         // A full page continues when an admitted turn lies past it. Rows this
-        // page already decoded say so themselves; past them the index keys
-        // and each turn's own record do, so a body is decoded only to be
-        // returned.
+        // page already decoded say so themselves; past them `room_continues`
+        // reads each turn's key and own record before its body.
         let has_more = rows.len() > limit
             || (rows.len() == limit && !exhausted && self.room_continues(room, start, read)?);
         rows.truncate(limit);
@@ -303,9 +302,11 @@ impl Memory<'_> {
             .collect()
     }
 
-    /// Whether a turn past `start` is one this reader may read, from the
-    /// history keys and each turn's own record alone: no turn body is
-    /// decoded. `read` counts toward the page's scan ceiling.
+    /// Whether an admitted turn lies past `start`. Each turn's history key
+    /// and own record are read first; a body is decoded only once its own
+    /// record is admitted, to admit the turns it answers. A body that does not
+    /// decode continues this page, and the page that would return it reports
+    /// it. `read` counts toward the page's scan ceiling.
     fn room_continues(
         &self,
         room: EntityId,
@@ -322,8 +323,25 @@ impl Memory<'_> {
                 .iter()
                 .map(|(_, turn_id)| crate::claim::PointRead::id(*turn_id))
                 .collect();
-            if lane.read(&reads, None)?.value.iter().any(Option::is_some) {
-                return Ok(true);
+            let records = lane.read(&reads, None)?.value;
+            for ((_, turn_id), record) in keys.iter().zip(records) {
+                if record.is_none() {
+                    continue;
+                }
+                let body = {
+                    let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+                    require_member(self.vault(), &txn, room, self.actor())?;
+                    TURNS.get(&self.vault().store, &txn, turn_id)
+                };
+                match body {
+                    Err(_) => return Ok(true),
+                    Ok(None) => {}
+                    Ok(Some(turn)) => {
+                        if !self.admitted_turns(vec![turn])?.is_empty() {
+                            return Ok(true);
+                        }
+                    }
+                }
             }
             if keys.len() < 128 {
                 return Ok(false);
