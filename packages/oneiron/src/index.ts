@@ -176,6 +176,26 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    artifacts: {
+      /** One artifact's kind, head and versions, each with its made_by and born-from. */
+      view: (request: ArtifactRefRequest): ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as ArtifactView | null; return result === null ? null : result }),
+      /** One version's export file (base64), with its pinned name and media type. */
+      export: (request: ArtifactExportRequest): ArtifactExportFile | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsExport(keyedJson(request))) as ArtifactExportFile | null; return result === null ? null : result }),
+      /** The artifacts and versions a task, ask, run, skill or agent run produced. */
+      born_from: (request: BornFromRequest): BornFromView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBornFrom(keyedJson(request))) as BornFromView; return result }),
+      /** The proposals waiting beside one artifact for Keep or Discard. */
+      proposals: (request: ArtifactRefRequest): PendingProposalView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposals(keyedJson(request))) as PendingProposalView[]; return result.map(item => item) }),
+      /** Runs one native deck transaction over the head and holds the proposal for Keep. */
+      propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
+      /** Offers one native organ result as the artifact's next version, held for Keep. */
+      propose_output: (request: NativeOutputRequest): PendingProposalView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeOutput(keyedJson(request))) as PendingProposalView; return result }),
+      /** Keeps one waiting proposal as a new version, once, with its receipt. */
+      keep: (request: ProposalSettleRequest): KeptProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsKeep(keyedJson(request))) as KeptProposal; return result }),
+      /** Discards one waiting proposal, once, with its receipt. */
+      discard: (request: ProposalSettleRequest): DiscardedProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsDiscard(keyedJson(request))) as DiscardedProposal; return result }),
+      /** Undoes one Keep with a new version; the settle stays consumed. */
+      undo: (request: ProposalSettleRequest): UndoneKeep => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsUndo(keyedJson(request))) as UndoneKeep; return result }),
+    },
     rooms: {
       list: (): unknown[] => this.#call(() => this.#client.vaultRoomsList({}) as unknown[]),
       messages: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),

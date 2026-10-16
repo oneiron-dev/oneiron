@@ -6,6 +6,8 @@
 pub mod coach;
 mod curator;
 mod evaluation;
+pub(crate) mod optimize;
+pub use optimize::CoachSkillOptimizer;
 mod proposals;
 pub mod representation;
 #[cfg(test)]

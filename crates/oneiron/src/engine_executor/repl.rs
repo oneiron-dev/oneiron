@@ -835,6 +835,7 @@ impl EngineNativeExecutor<'_> {
             self.admit_compaction_read()?;
         }
         for (seq, view) in views.iter().enumerate() {
+            messages.extend(self.fold_tail(&epochs, record, seq)?);
             match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
                 Some(Some(frame)) => {
                     messages.push(frame);
@@ -872,6 +873,7 @@ impl EngineNativeExecutor<'_> {
                 }],
             });
         }
+        messages.extend(self.fold_tail(&epochs, record, views.len())?);
 
         if let Some(note) = memory_note {
             messages.push(LlmMessage {
