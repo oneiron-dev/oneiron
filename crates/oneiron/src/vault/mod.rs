@@ -134,6 +134,10 @@ pub struct Vault {
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
     pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    /// The room a host lends the origin for reading whole LFS manifests
+    /// ([`Vault::set_lfs_read_room`]); none until it lends one.
+    pub(crate) lfs_read_room:
+        std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

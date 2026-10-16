@@ -94,6 +94,8 @@ pub(super) async fn bind(
         models,
         &prompt_package,
         guard.clone(),
+        Arc::clone(server.wire_telemetry.limit_questions()),
+        server.config.limits.queue_wait(),
     );
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
@@ -123,13 +125,11 @@ pub(super) async fn bind(
         Some(shadow) => provider.with_code_check(shadow),
         None => provider,
     };
-    server.with_mcp_quickjs_provider(
-        compaction.attach(provider, status),
-        crate::mcp::CodeRunLimits {
-            total: models.code_mode.max_runs,
-            per_credential: models.code_mode.max_runs_per_credential,
-        },
-    )
+    let runs = crate::mcp::CodeRunLimits {
+        total: models.code_mode.max_runs,
+        wait: server.config.limits.queue_wait(),
+    };
+    server.with_mcp_quickjs_provider(compaction.attach(provider, status), runs)
 }
 
 /// Shadow mode's checker, per `[models.code_mode.check]`; none when the mode

@@ -824,14 +824,7 @@ fn install_native_agent_pack(
             })
         }
     }
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        time(),
-        131,
-        b"native owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:native-pack",
