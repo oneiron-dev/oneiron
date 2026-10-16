@@ -38645,7 +38645,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 5,
       "re-export": 1,
       "struct": 18
      }
@@ -46545,14 +46545,15 @@
       "MemoryError",
       "MemoryGateDenial",
       "MemoryPolicyDenial",
-      "MemoryPolicyExceptionProposal"
+      "MemoryPolicyExceptionProposal",
+      "MemoryWrongRoot"
      ],
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 11,
-      "fn": 6,
-      "struct": 4,
+      "const": 12,
+      "fn": 7,
+      "struct": 5,
       "type": 1
      }
     },
