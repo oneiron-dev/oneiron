@@ -14524,7 +14524,7 @@
      "surface": {
       "crate-vis": 17,
       "mod": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -14535,6 +14535,34 @@
      "purpose": "Actor-bound write-policy preflight for the append operation",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/quote.rs",
+     "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuoteReplyGroup",
+      "QuoteReplyStrip",
+      "QuoteStripStatus",
+      "ReplyStripsPage",
+      "ReplyStripsRequest"
+     ],
+     "path": "src/conversation_dag/quote_strips.rs",
+     "purpose": "Reply strips by quoted MESSAGE over one selected thread chain",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -14639,6 +14667,7 @@
       "AppendedRecord",
       "DagPage",
       "DagPageRequest",
+      "QuoteSpan",
       "ResolvedScope",
       "ScopePath",
       "ScopeSelector"
@@ -14647,7 +14676,7 @@
      "purpose": "Door inputs and snapshot results",
      "surface": {
       "enum": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -19506,7 +19535,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -37491,7 +37520,26 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 6,
-      "re-export": 13
+      "re-export": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackOrgan",
+      "PackOrganBinary",
+      "PackOrganBuild",
+      "PackOrganEntry",
+      "PackTree"
+     ],
+     "path": "src/skill_hub/pack_catalog/organs.rs",
+     "purpose": "Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 5
      }
     },
     {
@@ -37597,7 +37645,7 @@
      "path": "src/skill_hub/pack_catalog/source.rs",
      "purpose": "Validated exact source trees",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -42405,7 +42453,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 102
+      "fn": 103
      }
     },
     {
@@ -46895,7 +46943,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47714,7 +47762,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47968,7 +48016,7 @@
    },
    "over_bar": 86,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2892,
+   "source_files": 2895,
    "test_files": 903
   },
   "oneiron-android": {
@@ -55477,7 +55525,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 84
+      "fn": 85
      }
     },
     {
@@ -56326,7 +56374,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 85
+      "fn": 86
      }
     },
     {
@@ -58489,7 +58537,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
