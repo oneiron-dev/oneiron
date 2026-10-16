@@ -40,6 +40,8 @@ mod embedder;
 pub mod error;
 pub mod feedback_delivery;
 mod handler;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod hook_verdict;
 mod http_listener;
 mod idempotency;
 mod linear_host;

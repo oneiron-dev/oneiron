@@ -26,7 +26,7 @@ mod store;
 pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
-pub use body::{HookBodyRun, HookBodyRuntime};
+pub use body::{HookBodyRun, HookBodyRuntime, HookVerdict, HookVerdictCall};
 pub use grant::HookGrant;
 pub use lineage::{HookCheck, HookCheckReason, LineageLink};
 pub use outcome::{
