@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::EntityId;
-use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, TypedBody};
+use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, Hash32, TypedBody};
 use serde::{Deserialize, Serialize};
 
 use crate::budget::BudgetConfig;
@@ -27,6 +27,11 @@ pub struct OrganSpec {
     pub tier: OrganTier,
     /// The organ version the install pinned; `None` accepts any.
     pub version_pin: Option<String>,
+    /// blake3 of the program file the install pinned, as a hub pack names
+    /// it. The host hashes the file before each start and refuses a binary
+    /// that differs, as a handshake refusal: incompatible until reinstall.
+    /// `None` runs whatever file is at `program`.
+    pub program_hash: Option<Hash32>,
     /// The verbs the grant names. The handshake must offer every one.
     pub verbs: Vec<String>,
     /// The input media types the grant names.
@@ -117,6 +122,7 @@ impl OrganSpec {
             args: Vec::new(),
             tier: OrganTier::FirstParty,
             version_pin: None,
+            program_hash: None,
             verbs: Vec::new(),
             media_types: Vec::new(),
             threads: 2,
