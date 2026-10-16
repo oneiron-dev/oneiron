@@ -487,6 +487,24 @@ impl Vault {
         bindings_in_txn(&self.store, &txn)
     }
 
+    /// The body a binding names, read from its exact pack source and checked
+    /// against the binding's hash.
+    pub fn pack_hook_body(&self, binding: &PackHookBinding) -> Result<Vec<u8>> {
+        let source = self
+            .get_pack_source(&binding.source)?
+            .ok_or_else(|| invalid("pack source missing"))?;
+        let path = format!("{HOOK_DIR}{}/{HOOK_BODY}", binding.hook);
+        let body = source
+            .files()
+            .iter()
+            .find(|file| file.path == path)
+            .ok_or_else(|| invalid("hook body missing"))?;
+        if blake3::hash(&body.content).to_hex().as_str() != binding.body_hash {
+            return Err(invalid("hook body does not match its binding"));
+        }
+        Ok(body.content.clone())
+    }
+
     /// Owner consent binds an installed pack's hooks. A hub install lands
     /// the bytes; content never installs a hook by itself (ARCH-0080 §8).
     pub fn bind_pack_hooks(

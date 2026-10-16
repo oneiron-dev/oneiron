@@ -30,6 +30,7 @@ const MAX_FOLDER_BYTES: u64 = 64 * 1024 * 1024;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/packs", get(installed).post(put))
+        .route("/packs/install", post(install_from_hub))
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
@@ -97,26 +98,73 @@ async fn put(
                 ));
             }
         };
-        Ok(match server.vault().put_pack(&owner, files)? {
-            PackInstallDisposition::Installed(receipt) => PackPut {
+        Ok(PackPut::from(server.vault().put_pack(&owner, files)?))
+    })
+    .await?;
+    Ok(Json(put))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallFromHub {
+    /// A configured hub, as 32 hex.
+    hub: String,
+    /// The pack's folder in the hub.
+    folder: String,
+    /// `semver`, `tag`, `commit` or `content_hash`.
+    pin_type: String,
+    pin_value: String,
+    /// The publisher admitted as a foreign actor for this hub.
+    publisher: String,
+}
+
+/// `POST /v1/owner/packs/install`: fetch a pack from a configured hub at a
+/// pin and install it. Code lands Candidate; hooks wait for
+/// `/packs/hooks/bind`.
+async fn install_from_hub(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<InstallFromHub>, JsonRejection>,
+) -> OwnerReply<PackPut> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let put = blocking(move || {
+        let hub = oneiron::EntityId::from_hex(&request.hub)
+            .map_err(|_| OwnerError::Invalid("hub is not an entity id".to_owned()))?;
+        let pin = oneiron::skill_hub::pack_catalog::hub_pin(&request.pin_type, &request.pin_value)?;
+        let disposition = server.vault().install_pack_from_hub(
+            &owner,
+            hub,
+            &request.folder,
+            pin,
+            &request.publisher,
+        )?;
+        Ok(PackPut::from(disposition))
+    })
+    .await?;
+    Ok(Json(put))
+}
+
+impl From<PackInstallDisposition> for PackPut {
+    fn from(disposition: PackInstallDisposition) -> Self {
+        match disposition {
+            PackInstallDisposition::Installed(receipt) => Self {
                 outcome: "installed",
                 reason: None,
                 receipt: Some(receipt),
             },
-            PackInstallDisposition::Candidate(receipt) => PackPut {
+            PackInstallDisposition::Candidate(receipt) => Self {
                 outcome: "candidate",
                 reason: None,
                 receipt: Some(receipt),
             },
-            PackInstallDisposition::Blocked { reason } => PackPut {
+            PackInstallDisposition::Blocked { reason } => Self {
                 outcome: "blocked",
                 reason: Some(reason),
                 receipt: None,
             },
-        })
-    })
-    .await?;
-    Ok(Json(put))
+        }
+    }
 }
 
 /// A pack folder's files, relative and `/`-separated. Dot entries such as

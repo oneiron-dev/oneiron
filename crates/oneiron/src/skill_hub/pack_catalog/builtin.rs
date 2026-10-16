@@ -123,5 +123,30 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+impl Vault {
+    /// A built-in channel runs as its engine pack (OF-519): once the vault
+    /// is seeded, a send on it needs `oneiron.<channel>` installed Active
+    /// with the built-in adapter. An owner who removed or replaced the pack
+    /// has no such channel. A channel no built-in pack names passes.
+    pub fn require_builtin_channel_pack(&self, channel: &str) -> Result<()> {
+        let Some((name, _)) = PACKS.iter().find(|(name, _)| *name == channel) else {
+            return Ok(());
+        };
+        let txn = self.store.env.read_txn()?;
+        if !SEEDED.contains(&self.store, &txn, &())? {
+            return Ok(());
+        }
+        match admission::PACK_INSTALL.get(&self.store, &txn, &format!("oneiron.{name}"))? {
+            Some(receipt)
+                if receipt.status == PackInstallStatus::Active
+                    && receipt.adapter == Some(PackAdapter::Builtin((*name).to_owned())) =>
+            {
+                Ok(())
+            }
+            _ => Err(super::invalid("the channel's built-in pack is not installed")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
