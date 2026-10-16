@@ -33,7 +33,7 @@ impl RecallDoor<'_> {
     }
 }
 
-/// `recall` with a host's query vector. Every SDK door lands here: the
+/// `vault.recall` with a host's query vector. Every SDK door lands here: the
 /// generated [`vault.recall`](super::sdk::vault_recall) embeds nothing, and a server
 /// whose embedder is serving embeds the query. `embed` runs only once the
 /// request is admitted: a request recall refuses (a paid effort, an unknown
