@@ -207,6 +207,22 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub(in crate::context_pack) fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
+        if self.skip_optional_recall {
+            return Ok(ContextPackRun {
+                vector_completed: false,
+                temporal_hints: Vec::new(),
+                cited_messages: std::collections::HashMap::new(),
+                pack: super::super::empty_pack::skipped_by_profile_pack(),
+                telemetry_run_id: None,
+                telemetry: match self.session {
+                    Some(session) => ContextPackTelemetry::Session(session),
+                    None => ContextPackTelemetry::Base(&self.vault.store),
+                },
+                total_in_scope: 0,
+                clamped: Vec::new(),
+                replay_config: None,
+            });
+        }
         let started = Instant::now();
         let retrieval_budget = self.retrieval_budget.unwrap_or_else(|| {
             ContextPackRetrievalBudget::from_limit(

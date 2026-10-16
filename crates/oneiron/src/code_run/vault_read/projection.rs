@@ -168,6 +168,7 @@ fn project_empty_context(empty: &EmptyContext) -> CoreContextPackEmpty {
             EmptyReason::NoData => CoreContextPackEmptyReason::NoData,
             EmptyReason::AllActivated => CoreContextPackEmptyReason::AllActivated,
             EmptyReason::BelowThreshold => CoreContextPackEmptyReason::BelowThreshold,
+            EmptyReason::SkippedByProfile => CoreContextPackEmptyReason::SkippedByProfile,
         },
         total_in_scope: empty.total_in_scope,
         hint: empty.hint.clone(),

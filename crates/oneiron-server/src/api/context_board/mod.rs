@@ -260,10 +260,10 @@ pub(crate) async fn context_board_hydrate(
         },
     );
 
-    let named_contacts = req
+    let named_refs = req
         .retrieval
         .as_ref()
-        .map(CoreContextPackRequest::named_contacts)
+        .map(CoreContextPackRequest::named_refs)
         .unwrap_or_default();
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
@@ -470,7 +470,8 @@ pub(crate) async fn context_board_hydrate(
     // The rows this board was derived from, kept beside a keyed replay of it.
     // A replay re-admits each row it named beyond its documents: every
     // notification, rider row (those its overflow counts too), pack source,
-    // named or stamped contact and discovered capability.
+    // named or stamped contact, named reader definition and discovered
+    // capability.
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -478,7 +479,7 @@ pub(crate) async fn context_board_hydrate(
         .collect();
     admit.extend(rider_admits(&changed_line));
     admit.extend(pack_sources);
-    admit.extend(named_contacts);
+    admit.extend(named_refs);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
     }

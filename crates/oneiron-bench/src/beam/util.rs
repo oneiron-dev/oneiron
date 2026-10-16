@@ -164,5 +164,6 @@ pub(super) fn empty_reason_label(reason: EmptyReason) -> &'static str {
         EmptyReason::NoData => "no_data",
         EmptyReason::AllActivated => "all_activated",
         EmptyReason::BelowThreshold => "below_threshold",
+        EmptyReason::SkippedByProfile => "skipped_by_profile",
     }
 }

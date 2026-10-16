@@ -4,11 +4,13 @@
 mod companion_assembly;
 mod controls;
 mod interlocutor;
+mod reader;
 mod resolve;
 mod response;
 
 pub(crate) use self::companion_assembly::*;
 pub(crate) use self::controls::*;
 pub(crate) use self::interlocutor::*;
+pub(crate) use self::reader::*;
 pub(crate) use self::resolve::*;
 pub(crate) use self::response::*;
