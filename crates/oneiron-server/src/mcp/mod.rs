@@ -58,8 +58,9 @@ pub use self::exec_host::{
     mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub use self::paging::{
-    MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageSource, McpResultEnd,
-    McpRetrievalHealth, clamp_foreign_cache_ttl_ms, mcp_canonical_json, mcp_page_argument_digest,
+    MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource,
+    McpResultEnd, McpRetrievalHealth, clamp_foreign_cache_ttl_ms, mcp_canonical_json,
+    mcp_page_argument_digest,
 };
 pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot};
 pub use self::registry::McpConnectorActorRegistry;

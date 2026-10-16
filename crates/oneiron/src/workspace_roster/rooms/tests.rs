@@ -391,6 +391,53 @@ fn a_removed_member_loads_no_later_history() -> Result<()> {
     Ok(())
 }
 
+/// The turn past a full page is learnt from its index key and its own
+/// record: a damaged body there leaves the page whole and continuable.
+#[test]
+fn room_page_lookahead_row_is_not_decoded() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let record = ProjectRecord::new(project, Some(root), root, owner)?;
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner])?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    vault.bind_room_handle(room, "@owner", owner)?;
+    let mut turns = Vec::new();
+    for n in 0..257 {
+        let id = EntityId::now();
+        memory
+            .rooms_speak(&turn(
+                room,
+                id,
+                WitnessAuthor::User,
+                serde_json::json!({}),
+                2 + n,
+            ))
+            .expect("speak");
+        turns.push(id);
+    }
+    vault.with_write_txn(|txn| {
+        TURNS.put_undecodable(&vault.store, txn, &turns[256], b"not a turn")
+    })?;
+    let page = memory
+        .rooms_messages_page(room, None, 256)
+        .expect("a damaged turn past the page is never decoded");
+    assert_eq!(page.rows.len(), 256);
+    assert_eq!(page.next_after, Some(turns[255].to_hex()));
+    Ok(())
+}
+
 #[test]
 fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let dir = tempfile::tempdir()?;

@@ -215,23 +215,28 @@ impl Memory<'_> {
             None => None,
         };
         let mut rows = Vec::new();
-        let mut window = limit + 1;
+        let mut window = limit;
         let mut read = 0;
-        loop {
+        let exhausted = loop {
             let scanned = self.history_after(room, start, window)?;
             let exhausted = scanned.len() < window;
             read += scanned.len();
             start = scanned.last().map(|(key, _)| *key).or(start);
             rows.extend(self.admitted_turns(scanned.into_iter().map(|(_, turn)| turn).collect())?);
-            if rows.len() > limit || exhausted {
-                break;
+            if rows.len() >= limit || exhausted {
+                break exhausted;
             }
             if read >= HISTORY_SCAN_CEILING {
                 return Err(Error::IndexOverflow("room history page").into());
             }
             window = window.saturating_mul(2).min(PAGE_LIMIT * 16);
-        }
-        let has_more = rows.len() > limit;
+        };
+        // A full page continues when an admitted turn lies past it. Rows this
+        // page already decoded say so themselves; past them the index keys
+        // and each turn's own record do, so a body is decoded only to be
+        // returned.
+        let has_more = rows.len() > limit
+            || (rows.len() == limit && !exhausted && self.room_continues(room, start, read)?);
         rows.truncate(limit);
         let next_after = if has_more {
             rows.last().map(|turn| turn.turn_id.clone())
@@ -254,6 +259,21 @@ impl Memory<'_> {
         start: Option<(u64, EntityId)>,
         window: usize,
     ) -> MemoryResult<Vec<((u64, EntityId), RoomTurn)>> {
+        self.history_rows(room, start, window, |txn, key, turn_id| {
+            Ok((key, turn_in(self.vault(), txn, turn_id)?))
+        })
+    }
+
+    /// Up to `window` history rows after `start`, each mapped by `row` from
+    /// its index key and turn id inside one snapshot in which the reader still
+    /// belongs to the room.
+    fn history_rows<T>(
+        &self,
+        room: EntityId,
+        start: Option<(u64, EntityId)>,
+        window: usize,
+        row: impl Fn(&heed::RoTxn<'_>, (u64, EntityId), EntityId) -> MemoryResult<T>,
+    ) -> MemoryResult<Vec<T>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
         let store = &self.vault().store;
@@ -274,14 +294,46 @@ impl Memory<'_> {
             ),
             None => Box::new(HISTORY.iter_from(store, &txn, room.as_bytes())?),
         };
-        let rows = history
+        history
             .take(window)
-            .map(|row| {
-                let ((_, at, id), turn_id) = row?;
-                Ok(((at, id), turn_in(self.vault(), &txn, turn_id)?))
+            .map(|entry| {
+                let ((_, at, id), turn_id) = entry?;
+                row(&txn, (at, id), turn_id)
             })
-            .collect::<MemoryResult<Vec<_>>>()?;
-        Ok(rows)
+            .collect()
+    }
+
+    /// Whether a turn past `start` is one this reader may read, from the
+    /// history keys and each turn's own record alone: no turn body is
+    /// decoded. `read` counts toward the page's scan ceiling.
+    fn room_continues(
+        &self,
+        room: EntityId,
+        mut start: Option<(u64, EntityId)>,
+        mut read: usize,
+    ) -> MemoryResult<bool> {
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        loop {
+            let keys = self.history_rows(room, start, 128, |_, key, turn_id| Ok((key, turn_id)))?;
+            if keys.is_empty() {
+                return Ok(false);
+            }
+            let reads: Vec<_> = keys
+                .iter()
+                .map(|(_, turn_id)| crate::claim::PointRead::id(*turn_id))
+                .collect();
+            if lane.read(&reads, None)?.value.iter().any(Option::is_some) {
+                return Ok(true);
+            }
+            if keys.len() < 128 {
+                return Ok(false);
+            }
+            read += keys.len();
+            if read >= HISTORY_SCAN_CEILING {
+                return Err(Error::IndexOverflow("room history page").into());
+            }
+            start = keys.last().map(|(key, _)| *key);
+        }
     }
 
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
