@@ -609,10 +609,10 @@ fn a_stop_on_a_chain_keeps_a_merged_links_own_stop() -> CommResult<()> {
     let middle = mint_comm_person(&vault, "middle@example.com")?;
     let last = mint_comm_person(&vault, "last@example.com")?;
     point_party_index(&vault, "middle@example.com", middle)?;
-    email_contact(&vault, entity(0x91), entity(0xA1), "middle@example.com")?;
+    email_contact(&vault, entity(0x91), entity(0x8A), "middle@example.com")?;
     put_stop_naming(&vault, entity(0x70), middle, "email", 0, 30)?;
     run_comm_projector(&vault)?;
-    assert!(contact_cache_opted_out(&vault, entity(0xA1))?);
+    assert!(contact_cache_opted_out(&vault, entity(0x8A))?);
     merge_read_through(&vault, first, middle)?;
     merge_read_through(&vault, middle, last)?;
 
@@ -620,7 +620,7 @@ fn a_stop_on_a_chain_keeps_a_merged_links_own_stop() -> CommResult<()> {
     run_comm_projector(&vault)?;
     assert!(comm_event_is_projected(&vault, entity(0x71))?);
     assert!(
-        contact_cache_opted_out(&vault, entity(0xA1))?,
+        contact_cache_opted_out(&vault, entity(0x8A))?,
         "the middle link's contact keeps the STOP it said before its merge"
     );
     Ok(())
