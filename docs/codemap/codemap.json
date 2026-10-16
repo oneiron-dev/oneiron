@@ -1008,6 +1008,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/anchored_annotation/anchor_text.rs",
+     "purpose": "What an anchor says: the text under a locator in one version's bytes, the exact places those words occur in…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/anchored_annotation/codec.rs",
      "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
      "surface": {
@@ -1037,7 +1047,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -1103,6 +1113,21 @@
      "surface": {
       "crate-vis": 3,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReattachOffer",
+      "UnattachedThread"
+     ],
+     "path": "src/anchored_annotation/recovery.rs",
+     "purpose": "Lost-anchor recovery (OF-368, owner ruling 2026-10-17)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -4796,7 +4821,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -4849,6 +4874,30 @@
      "path": "src/blob_artifact/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactExportFile",
+      "ArtifactExportRequest",
+      "ArtifactRefRequest",
+      "BornFromRequest",
+      "BornFromView",
+      "DeckProposeOutcome",
+      "DeckProposeRequest",
+      "DiscardedProposal",
+      "KeptProposal",
+      "NativeOutputRequest",
+      "ProposalSettleRequest",
+      "UndoneKeep"
+     ],
+     "path": "src/blob_artifact/verbs.rs",
+     "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
+     "surface": {
+      "fn": 9,
+      "struct": 12
+     }
     },
     {
      "bucket": "s",
@@ -9776,6 +9825,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/fold_verbs.rs",
+     "purpose": "The fold verbs (ARCH-0067 §2.2): `self.fold`, `self.compact`, `self.unfold`, `self.folds` and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/human_speech.rs",
      "purpose": "Ask-human durable waits and executor speech witnessing",
      "surface": {
@@ -9901,6 +9960,16 @@
      "path": "src/code_run/storage/compaction/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/folds.rs",
+     "purpose": "One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -11354,7 +11423,7 @@
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -11376,8 +11445,8 @@
      "path": "src/compaction/driver/log.rs",
      "purpose": "The driver's entries for a host that numbers its own log: an executor run, whose watermark is its own step…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 1
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -11421,6 +11490,29 @@
       "crate-vis": 19,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FoldCompactAsk",
+      "FoldCompactInput",
+      "FoldLedger",
+      "FoldMark",
+      "FoldMarkInput",
+      "FoldRecord",
+      "FoldUnfold",
+      "FoldUnfoldInput",
+      "FoldsInput",
+      "SelfFoldCall"
+     ],
+     "path": "src/compaction/folds.rs",
+     "purpose": "Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every…",
+     "surface": {
+      "enum": 1,
+      "fn": 11,
+      "struct": 9
      }
     },
     {
@@ -17654,7 +17746,7 @@
      "path": "src/edit_roundtrip/judgment_cells.rs",
      "purpose": "Independent OOXML reads for typed sheet answers",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -18039,7 +18131,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/edit_settle/settle.rs",
@@ -18081,7 +18173,7 @@
      "path": "src/edit_settle/undo.rs",
      "purpose": "Undo after Keep (ARCH-0077 \"Post-settle undo\"): a new operation, never a reversal",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -18257,7 +18349,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CompactionReport",
@@ -18268,7 +18360,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 29,
       "enum": 1,
       "fn": 4,
       "struct": 2,
@@ -18282,7 +18374,7 @@
      "path": "src/engine_executor/compaction_host.rs",
      "purpose": "The executor's side of the compaction host: landing a finished pass, the token feed, and sealing a window…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -39963,7 +40055,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 46
+      "fn": 55
      }
     },
     {
@@ -43826,7 +43918,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 11,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43868,7 +43960,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44015,7 +44107,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 45,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44092,7 +44184,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -44318,7 +44410,7 @@
     "edit_settle": {
      "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
@@ -45212,9 +45304,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 65,
+   "over_bar": 67,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2711,
+   "source_files": 2717,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52474,7 +52566,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 28
+      "fn": 37
      }
     },
     {
@@ -53323,7 +53415,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 29
+      "fn": 38
      }
     },
     {
@@ -54866,7 +54958,7 @@
      "path": "src/api/blob_artifacts.rs",
      "purpose": "The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 25
      }
     },
     {
@@ -55588,7 +55680,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",
@@ -60894,7 +60986,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 16,
+   "over_bar": 17,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 395,
    "test_files": 182
