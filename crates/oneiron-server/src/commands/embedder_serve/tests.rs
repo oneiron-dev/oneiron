@@ -34,7 +34,7 @@ fn on_cpu() -> EmbedderArgs {
 /// model's width (1,024).
 #[test]
 fn with_no_config_file_the_default_model_is_served_at_its_width() {
-    let served = served_config_from(
+    let (served, _) = served_config_from(
         &serve_args(None, on_cpu(), None),
         &EnvConfig::default(),
         None,
@@ -53,7 +53,8 @@ fn widths_the_environment_names_are_served() {
         ("ONEIRON_EMBEDDER_DIMENSIONS", "2560"),
     ])
     .expect("environment");
-    let served = served_config_from(&serve_args(None, on_cpu(), None), &env, None).expect("served");
+    let (served, _) =
+        served_config_from(&serve_args(None, on_cpu(), None), &env, None).expect("served");
     assert_eq!(served.dimensions, 2560);
 }
 
@@ -64,7 +65,7 @@ fn a_config_file_that_names_no_width_serves_the_model_s() {
     let dir = tempfile::tempdir().expect("config dir");
     let path = dir.path().join("oneiron.toml");
     std::fs::write(&path, "[embedder]\nprovider = \"local\"\n").expect("write config");
-    let served = served_config_from(
+    let (served, _) = served_config_from(
         &serve_args(Some(path), on_cpu(), None),
         &EnvConfig::default(),
         None,
@@ -87,7 +88,7 @@ fn a_section_with_a_remote_rung_is_served_at_its_width() {
         ),
         ..on_cpu()
     };
-    let served = served_config_from(
+    let (served, _) = served_config_from(
         &serve_args(None, embedder, None),
         &EnvConfig::default(),
         None,
