@@ -11,8 +11,8 @@ pub use hook_args::{
     HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
 };
 pub use owner_args::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
+    ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
     RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
     SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
@@ -88,6 +88,9 @@ pub enum Command {
     /// Agent runs waiting for consent: list, review, approve or decline whole.
     #[command(subcommand)]
     Runs(RunsCommand),
+    /// Fork alarms a held root handoff left: list them, or acknowledge one.
+    #[command(subcommand)]
+    HandoffAlarms(HandoffAlarmsCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -741,6 +744,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Secrets(command) => commands::secrets(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
+        Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
             crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?

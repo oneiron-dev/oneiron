@@ -30,6 +30,7 @@ pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
+pub mod result_body;
 pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
@@ -338,8 +339,9 @@ pub use crate::compaction::{
 };
 pub use crate::companion::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKind,
-    EnqueueCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
+    EnqueueCompanionTaskOutcome,
 };
+pub use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 pub use crate::config::{
     HnswConfig, HostingPrivacyPosture, PprCommunityConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
