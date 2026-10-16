@@ -80,7 +80,6 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
-mod tier_floor;
 mod vault_api;
 mod world_key_fold;
 mod world_key_support;
@@ -106,14 +105,14 @@ pub use oneiron_authority::authority::{
     AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
     CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
     CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
-    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FEDERATION_PACT_DOMAIN,
+    DeviceAuthority, FEDERATION_PACT_DOMAIN,
     FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
     GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MACHINE_SEEN_WORLD_EDITS_MAX, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
-    MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, MachineEncryptionKey, MachineOwnership, MachineProfile,
-    MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover, OwnerHandoverCause, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES, MachineEncryptionKey, MachineOwnership,
+    MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover,
+    OwnerHandoverCause, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
     ROLE_RECOVERY, ReadLocation, RecoveryRootId, SealedCopies, SlipClaims, SlipMintAction,
     WORLD_MODEL_ROUTE_MAX_BYTES, WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy,
     WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
@@ -211,7 +210,6 @@ use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
-use tier_floor::*;
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{
     next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,

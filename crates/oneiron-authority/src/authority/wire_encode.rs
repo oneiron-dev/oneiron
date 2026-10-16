@@ -14,14 +14,6 @@ use crate::federation::{federation_direction_scope_value, federation_pact_scope_
 use super::*;
 
 pub fn entry_value(entry: &AuthorityLogEntry, include_signatures: bool) -> Value {
-    entry_value_with_genesis_delay(entry, include_signatures, true)
-}
-
-pub fn entry_value_with_genesis_delay(
-    entry: &AuthorityLogEntry,
-    include_signatures: bool,
-    include_genesis_delay: bool,
-) -> Value {
     let mut fields = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -38,10 +30,7 @@ pub fn entry_value_with_genesis_delay(
                     .collect(),
             ),
         ),
-        (
-            Value::from(KEY_OP),
-            op_value_with_genesis_delay(&entry.op, include_genesis_delay),
-        ),
+        (Value::from(KEY_OP), op_value(&entry.op)),
     ];
     if include_signatures {
         fields.push((Value::from(KEY_SIGNER), signature_value(&entry.signer)));
@@ -54,7 +43,7 @@ pub fn entry_value_with_genesis_delay(
     Value::Map(fields)
 }
 
-pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) -> Value {
+pub fn op_value(op: &AuthorityOp) -> Value {
     match op {
         AuthorityOp::SlipMint(action) => super::slip_wire::slip_mint_value(action),
         AuthorityOp::SlipRevoke { slip_id } => Value::Map(vec![
@@ -69,40 +58,28 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
             device,
             genesis_nonce,
             recovery,
-            tier_floor,
-            pending_widen_delay_secs,
-        } => {
-            let mut fields = vec![
-                (Value::from(OP_KEY_KIND), Value::from(OP_KIND_GENESIS)),
-                (Value::from("device"), device_value(device)),
-                (Value::from("genesis_nonce"), binary_value(*genesis_nonce)),
-                (
-                    Value::from("recovery_secret_step"),
-                    Value::Map(vec![
-                        (
-                            Value::from("commitment"),
-                            binary_value(recovery.commitment()),
-                        ),
-                        (
-                            Value::from("outcome"),
-                            Value::from(if recovery.dismissed() {
-                                "dismissed"
-                            } else {
-                                "saved"
-                            }),
-                        ),
-                    ]),
-                ),
-                (Value::from("tier_floor"), Value::from(tier_floor.as_str())),
-            ];
-            if include_genesis_delay {
-                fields.push((
-                    Value::from("pending_widen_delay_secs"),
-                    Value::from(*pending_widen_delay_secs),
-                ));
-            }
-            Value::Map(fields)
-        }
+        } => Value::Map(vec![
+            (Value::from(OP_KEY_KIND), Value::from(OP_KIND_GENESIS)),
+            (Value::from("device"), device_value(device)),
+            (Value::from("genesis_nonce"), binary_value(*genesis_nonce)),
+            (
+                Value::from("recovery_secret_step"),
+                Value::Map(vec![
+                    (
+                        Value::from("commitment"),
+                        binary_value(recovery.commitment()),
+                    ),
+                    (
+                        Value::from("outcome"),
+                        Value::from(if recovery.dismissed() {
+                            "dismissed"
+                        } else {
+                            "saved"
+                        }),
+                    ),
+                ]),
+            ),
+        ]),
         AuthorityOp::EnrollDevice { device } => Value::Map(vec![
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_ENROLL_DEVICE)),
             (Value::from("device"), device_value(device)),
@@ -118,13 +95,6 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_ROTATE_KEY)),
             (Value::from("old_key"), key_value(old_key)),
             (Value::from("new_device"), device_value(new_device)),
-        ]),
-        AuthorityOp::SetTierFloor { tier_floor } => Value::Map(vec![
-            (
-                Value::from(OP_KEY_KIND),
-                Value::from(OP_KIND_SET_TIER_FLOOR),
-            ),
-            (Value::from("tier_floor"), Value::from(tier_floor.as_str())),
         ]),
         AuthorityOp::ReRoot { new_device } => Value::Map(vec![
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_RE_ROOT)),
@@ -180,16 +150,6 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
             ),
             (Value::from("epoch"), Value::from(action.epoch)),
             (Value::from("nonce"), binary_value_16(action.nonce)),
-        ]),
-        AuthorityOp::VetoPendingWiden { pending_widen_hash } => Value::Map(vec![
-            (
-                Value::from(OP_KEY_KIND),
-                Value::from(OP_KIND_VETO_PENDING_WIDEN),
-            ),
-            (
-                Value::from("pending_widen_hash"),
-                binary_value(*pending_widen_hash),
-            ),
         ]),
         AuthorityOp::FederationLifecycle(action) => {
             let mut fields = vec![
@@ -310,24 +270,6 @@ fn gesture_value(gesture: &FederationPactGesture) -> Value {
             Value::Binary(gesture.signature.clone()),
         ),
     ])
-}
-
-pub fn legacy_genesis_encoding_candidate(entry: &AuthorityLogEntry) -> bool {
-    matches!(
-        &entry.op,
-        AuthorityOp::Genesis {
-            pending_widen_delay_secs,
-            ..
-        } if *pending_widen_delay_secs == DEFAULT_PENDING_WIDEN_DELAY_SECS
-    )
-}
-
-pub fn legacy_genesis_signed_entry_bytes(entry: &AuthorityLogEntry) -> Result<Option<Vec<u8>>> {
-    if legacy_genesis_encoding_candidate(entry) {
-        encode_value(&entry_value_with_genesis_delay(entry, true, false)).map(Some)
-    } else {
-        Ok(None)
-    }
 }
 
 fn device_value(device: &DeviceAuthority) -> Value {
