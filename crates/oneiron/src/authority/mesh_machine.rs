@@ -244,6 +244,31 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_grant_permits_in_txn(&txn, machine, endpoint_key, alpn)
     }
+    /// This install's MACHINE id and the seed of its mesh transport key, or
+    /// `None` before it has a machine id (OF-535). The seed is derived from the
+    /// machine key, the key a mesh binding pairs and a machine proof signs
+    /// with, under the transport domain `oneiron-mesh-transport` derives
+    /// with (`oneiron/mesh-transport-ed25519/v1`); the machine key never
+    /// leaves the engine.
+    pub fn mesh_transport_seed(
+        &self,
+    ) -> Result<Option<(EntityId, zeroize::Zeroizing<[u8; 32]>)>> {
+        self.load_install_signing_if_minted()?;
+        let txn = self.store.env.read_txn()?;
+        let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
+            return Ok(None);
+        };
+        let Some(key) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
+            return Ok(None);
+        };
+        Ok(Some((
+            machine,
+            zeroize::Zeroizing::new(blake3::derive_key(
+                "oneiron/mesh-transport-ed25519/v1",
+                key.as_bytes(),
+            )),
+        )))
+    }
     /// The physical machine behind an authenticated mesh endpoint, in one
     /// snapshot: the endpoint names the MACHINE, the host-signed binding and
     /// grant admit it, and the key the machine stands on here is the very key

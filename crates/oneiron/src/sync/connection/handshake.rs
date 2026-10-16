@@ -182,12 +182,7 @@ impl SyncConnection {
         &self,
         client: &mut SyncClient,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
-    ) -> Result<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        String,
-    > {
+    ) -> Result<crate::sync::carrier::SyncSocket, String> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
         // Sync pulls the full root snapshot. The upgrade therefore proves an
@@ -214,9 +209,12 @@ impl SyncConnection {
                 .map_err(|_| "Auth token is not a valid header value".to_string())?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
         }
-        let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| format!("WS connect failed: {e}"))?;
+        let ws_stream = crate::sync::carrier::connect_sync_socket(
+            request,
+            self.config.client_config.mesh_dialer.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("WS connect failed: {e}"))?;
 
         let (mut write, mut read) = ws_stream.split();
 
