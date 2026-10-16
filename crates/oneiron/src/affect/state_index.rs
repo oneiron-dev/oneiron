@@ -66,6 +66,18 @@ impl Vault {
         evidence: &StateIndexEvidence,
         at: u64,
     ) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| {
+            self.derive_state_index_in_txn(txn, subject, evidence, at)
+        })
+    }
+
+    pub(super) fn derive_state_index_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        subject: &EntityId,
+        evidence: &StateIndexEvidence,
+        at: u64,
+    ) -> Result<EntityId> {
         if evidence.vad_turns.is_empty() || evidence.vad_turns.len() > 256 {
             return Err(Error::InvalidClaimBody(
                 "state index needs 1..=256 VAD turns",
@@ -74,136 +86,145 @@ impl Vault {
         let mut turns = evidence.vad_turns.clone();
         turns.sort();
         turns.dedup();
-        self.with_write_txn_grouped(|txn| {
-            let mut mean = Vad::NEUTRAL;
-            let mut count = 0.0_f32;
-            for turn in &turns {
-                let annotation = self
-                    .turn_vad_annotation_in_txn(txn, turn)?
-                    .ok_or(Error::EntityNotFound)?;
-                annotation.vad.validate()?;
-                if annotation.annotated_at > at {
-                    return Err(Error::InvalidClaimBody(
-                        "state index cannot cite future signals",
-                    ));
-                }
-                count += 1.0;
-                mean.valence += (annotation.vad.valence - mean.valence) / count;
-                mean.arousal += (annotation.vad.arousal - mean.arousal) / count;
-                mean.dominance += (annotation.vad.dominance - mean.dominance) / count;
-            }
-            let signal = |id: &EntityId, predicate: &str| -> Result<f32> {
-                let body = self
-                    .get_claim_in_txn(txn, id)?
-                    .ok_or(Error::EntityNotFound)?;
-                if body.subject != ClaimSubject::Entity(*subject)
-                    || body.predicate != predicate
-                    || body.lifecycle != ClaimLifecycleStatus::Active
-                    || body.stale
-                    || !matches!(
-                        body.approval,
-                        ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
-                    )
-                    || body.valid_from.is_some_and(|start| start > at)
-                    || body.valid_to.is_some_and(|end| end <= at)
-                    || !crate::gate::claim_consolidation_eligible_in_txn(
-                        &self.store,
-                        txn,
-                        id,
-                        crate::gate::ConsolidationReader::StateIndexSignal,
-                    )?
-                {
-                    return Err(Error::InvalidClaimBody("state index signal does not apply"));
-                }
-                match body.value {
-                    Value::F32(value) if value.is_finite() && (0.0..=1.0).contains(&value) => {
-                        Ok(value)
-                    }
-                    Value::F64(value) if value.is_finite() && (0.0..=1.0).contains(&value) => {
-                        Ok(value as f32)
-                    }
-                    _ => Err(Error::InvalidClaimBody(
-                        "state index signal must be a unit float",
-                    )),
-                }
-            };
-            let inputs = ModeGateInputs {
-                affect: ((mean.valence + 1.0) / 2.0 + mean.arousal + mean.dominance) / 3.0,
-                goal_velocity: signal(&evidence.goal_velocity, GOAL_VELOCITY)?,
-                engagement: signal(&evidence.engagement, ENGAGEMENT)?,
-            };
-            let value = Value::Map(vec![
-                (
-                    Value::from("value"),
-                    Value::F32((inputs.affect + inputs.goal_velocity + inputs.engagement) / 3.0),
-                ),
-                (Value::from("affect"), Value::F32(inputs.affect)),
-                (
-                    Value::from("goal_velocity"),
-                    Value::F32(inputs.goal_velocity),
-                ),
-                (Value::from("engagement"), Value::F32(inputs.engagement)),
-            ]);
-            let refs = Value::Array(
-                turns
-                    .iter()
-                    .chain([&evidence.goal_velocity, &evidence.engagement])
-                    .map(|id| Value::from(id.to_hex()))
-                    .collect(),
-            );
-            let mut previous = Vec::new();
-            let mut matching = None;
-            for id in self.claims_for_subject_in_txn(txn, subject)? {
-                let Some(body) = self.get_claim_in_txn(txn, &id)? else {
-                    continue;
-                };
-                if body.predicate != COMPOSITE_INDEX
-                    || body.lifecycle != ClaimLifecycleStatus::Active
-                    || body.stale
-                    || !matches!(
-                        body.approval,
-                        ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
-                    )
-                    || !producer_bound(self, txn, &id, &body)?
-                {
-                    continue;
-                }
-                if body.valid_from.is_some_and(|start| start > at) {
-                    return Err(Error::InvalidClaimBody(
-                        "state index refuses a stale projection",
-                    ));
-                }
-                if body.value == value && body.evidence.as_ref() == Some(&refs) {
-                    matching = Some(id);
-                }
-                previous.push(id);
-            }
-            if let Some(id) = matching {
-                return Ok(id);
-            }
-            let id = EntityId::now();
-            let mut body = ClaimBody::new(
-                COMPOSITE_INDEX,
-                ClaimSubject::Entity(*subject),
-                value,
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )?;
-            body.source = Some(ClaimSource::Observed);
-            body.valid_from = Some(at);
-            body.evidence = Some(refs);
-            self.put_claim_in_txn(txn, &id, &body, TimeRange { start: at, end: at }, at)?;
-            let stored = self
-                .get_claim_in_txn(txn, &id)?
+        let mut mean = Vad::NEUTRAL;
+        let mut count = 0.0_f32;
+        for turn in &turns {
+            let annotation = self
+                .turn_vad_annotation_in_txn(txn, turn)?
                 .ok_or(Error::EntityNotFound)?;
-            let digest = *blake3::hash(&crate::claim::encode_claim_body(&stored)?).as_bytes();
-            STATE_COMPOSITE_PRODUCER.put(&self.store, txn, &id, &digest)?;
-            for old in previous {
-                self.supersede_claim_in_txn(txn, &id, &old, at)?;
+            annotation.vad.validate()?;
+            if annotation.annotated_at > at {
+                return Err(Error::InvalidClaimBody(
+                    "state index cannot cite future signals",
+                ));
             }
-            Ok(id)
-        })
+            count += 1.0;
+            mean.valence += (annotation.vad.valence - mean.valence) / count;
+            mean.arousal += (annotation.vad.arousal - mean.arousal) / count;
+            mean.dominance += (annotation.vad.dominance - mean.dominance) / count;
+        }
+        let (goal_velocity, goal_valid_to) = state_signal_in_txn(
+            self,
+            txn,
+            subject,
+            &evidence.goal_velocity,
+            GOAL_VELOCITY,
+            at,
+        )?
+        .ok_or(Error::InvalidClaimBody("state index signal does not apply"))?;
+        let (engagement, engagement_valid_to) =
+            state_signal_in_txn(self, txn, subject, &evidence.engagement, ENGAGEMENT, at)?
+                .ok_or(Error::InvalidClaimBody("state index signal does not apply"))?;
+        let valid_to = goal_valid_to.into_iter().chain(engagement_valid_to).min();
+        let inputs = ModeGateInputs {
+            affect: ((mean.valence + 1.0) / 2.0 + mean.arousal + mean.dominance) / 3.0,
+            goal_velocity,
+            engagement,
+        };
+        let value = Value::Map(vec![
+            (
+                Value::from("value"),
+                Value::F32((inputs.affect + inputs.goal_velocity + inputs.engagement) / 3.0),
+            ),
+            (Value::from("affect"), Value::F32(inputs.affect)),
+            (
+                Value::from("goal_velocity"),
+                Value::F32(inputs.goal_velocity),
+            ),
+            (Value::from("engagement"), Value::F32(inputs.engagement)),
+        ]);
+        let refs = Value::Array(
+            turns
+                .iter()
+                .chain([&evidence.goal_velocity, &evidence.engagement])
+                .map(|id| Value::from(id.to_hex()))
+                .collect(),
+        );
+        let mut previous = Vec::new();
+        let mut matching = None;
+        for id in self.claims_for_subject_in_txn(txn, subject)? {
+            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
+                continue;
+            };
+            if body.predicate != COMPOSITE_INDEX
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.stale
+                || !matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+                )
+                || !producer_bound(self, txn, &id, &body)?
+            {
+                continue;
+            }
+            if body.valid_from.is_some_and(|start| start > at) {
+                return Err(Error::InvalidClaimBody(
+                    "state index refuses a stale projection",
+                ));
+            }
+            if body.value == value
+                && body.evidence.as_ref() == Some(&refs)
+                && body.valid_to == valid_to
+            {
+                matching = Some(id);
+            }
+            previous.push(id);
+        }
+        if let Some(id) = matching {
+            return Ok(id);
+        }
+        let id = EntityId::now();
+        let mut body = ClaimBody::new(
+            COMPOSITE_INDEX,
+            ClaimSubject::Entity(*subject),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::Observed);
+        body.valid_from = Some(at);
+        body.valid_to = valid_to;
+        body.evidence = Some(refs);
+        self.put_claim_in_txn(txn, &id, &body, TimeRange { start: at, end: at }, at)?;
+        let stored = self
+            .get_claim_in_txn(txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        let digest = *blake3::hash(&crate::claim::encode_claim_body(&stored)?).as_bytes();
+        STATE_COMPOSITE_PRODUCER.put(&self.store, txn, &id, &digest)?;
+        for old in previous {
+            self.supersede_claim_in_txn(txn, &id, &old, at)?;
+        }
+        Ok(id)
+    }
+
+    pub(super) fn clear_state_index_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        subject: &EntityId,
+        at: u64,
+    ) -> Result<()> {
+        for id in self.claims_for_subject_in_txn(txn, subject)? {
+            let Some(mut body) = self.get_claim_in_txn(txn, &id)? else {
+                continue;
+            };
+            if body.predicate != COMPOSITE_INDEX
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || !producer_bound(self, txn, &id, &body)?
+            {
+                continue;
+            }
+            let start = body.valid_from.unwrap_or(0);
+            if start > at {
+                return Err(Error::InvalidClaimBody(
+                    "state index refuses a stale projection",
+                ));
+            }
+            body.lifecycle = ClaimLifecycleStatus::Superseded;
+            body.valid_to = Some(at);
+            self.put_claim_in_txn(txn, &id, &body, TimeRange { start, end: at }, at)?;
+        }
+        Ok(())
     }
 
     /// Latest scalar and its mode-gate inputs. Unknown subjects have a neutral, explicitly absent default.
@@ -214,9 +235,18 @@ impl Vault {
     /// Read the current projection at an explicit clock without treating future rows as current.
     pub fn state_index_at(&self, subject: &EntityId, now: u64) -> Result<StateIndex> {
         let txn = self.store.env.read_txn()?;
+        self.state_index_in_txn(&txn, subject, now)
+    }
+
+    pub(crate) fn state_index_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        now: u64,
+    ) -> Result<StateIndex> {
         let mut latest = None;
-        for id in self.claims_for_subject_in_txn(&txn, subject)? {
-            let Some(body) = self.get_claim_for_effect_in_txn(&txn, &id)? else {
+        for id in self.claims_for_subject_in_txn(txn, subject)? {
+            let Some(body) = self.get_claim_for_effect_in_txn(txn, &id)? else {
                 continue;
             };
             if body.predicate != COMPOSITE_INDEX
@@ -228,8 +258,47 @@ impl Vault {
                     body.approval,
                     ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
                 )
-                || !producer_bound(self, &txn, &id, &body)?
+                || !producer_bound(self, txn, &id, &body)?
             {
+                continue;
+            }
+            // An index never outlives the admission of its measured signals.
+            let Some(Value::Array(refs)) = &body.evidence else {
+                continue;
+            };
+            if refs.len() < 3 {
+                continue;
+            }
+            let mut admitted = true;
+            for (reference, predicate) in refs[refs.len() - 2..]
+                .iter()
+                .zip([GOAL_VELOCITY, ENGAGEMENT])
+            {
+                let signal = reference
+                    .as_str()
+                    .ok_or(Error::InvalidClaimBody("invalid state index evidence"))?;
+                let signal = EntityId::from_hex(signal)?;
+                let current = state_signal_in_txn(self, txn, subject, &signal, predicate, now)?;
+                let component = if predicate == GOAL_VELOCITY {
+                    "goal_velocity"
+                } else {
+                    "engagement"
+                };
+                let stored = body
+                    .value
+                    .as_map()
+                    .and_then(|fields| {
+                        fields
+                            .iter()
+                            .find(|(key, _)| key.as_str() == Some(component))
+                    })
+                    .and_then(|(_, value)| value.as_f64());
+                if current.is_none_or(|(value, _)| stored != Some(f64::from(value))) {
+                    admitted = false;
+                    break;
+                }
+            }
+            if !admitted {
                 continue;
             }
             let key = (body.valid_from.unwrap_or(0), id);
@@ -266,6 +335,48 @@ impl Vault {
             observed_at: Some(at),
         })
     }
+}
+
+fn state_signal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    id: &EntityId,
+    predicate: &str,
+    at: u64,
+) -> Result<Option<(f32, Option<u64>)>> {
+    let Some(body) = vault.get_claim_in_txn(txn, id)? else {
+        return Ok(None);
+    };
+    if body.subject != ClaimSubject::Entity(*subject)
+        || body.predicate != predicate
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.stale
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+        )
+        || body.valid_from.is_some_and(|start| start > at)
+        || body.valid_to.is_some_and(|end| end <= at)
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            txn,
+            id,
+            crate::gate::ConsolidationReader::StateIndexSignal,
+        )?
+    {
+        return Ok(None);
+    }
+    let value = match body.value {
+        Value::F32(value) if value.is_finite() && (0.0..=1.0).contains(&value) => value,
+        Value::F64(value) if value.is_finite() && (0.0..=1.0).contains(&value) => value as f32,
+        _ => {
+            return Err(Error::InvalidClaimBody(
+                "state index signal must be a unit float",
+            ));
+        }
+    };
+    Ok(Some((value, body.valid_to)))
 }
 
 // Derived heads are local cache state, not authority asserted by a raw or

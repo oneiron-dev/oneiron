@@ -1,5 +1,6 @@
 //! Scheduled curator and harness-evaluation facets on one gated Dreamer
 //! authority, and the Coach's nightly retrieval tune on the same lane.
+pub mod action_mode;
 mod curator;
 mod evaluation;
 mod proposals;
@@ -117,6 +118,9 @@ pub(crate) fn execute(
         }
         HARNESS_FACET => {
             evaluation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
+        action_mode::ACTION_MODE_FACET => {
+            action_mode::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
