@@ -1,4 +1,5 @@
 //! RC42 observation-only wire counters. Thresholds ask questions; they never deny service.
+use oneiron::limit_ask::{EngineLimit, LimitAsk};
 use oneiron::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -88,13 +89,18 @@ pub enum LimitRow {
     EmbedderAnswerBytes,
     /// Windows and documents one sync socket keeps state for.
     WindowsPerConnection,
+    /// Decision reads the owner's probe route holds at once.
+    DecisionReads,
     /// Booking requests per minute under the owner's slot-list, hold and book
     /// rules: an authenticated caller past one waits for it to open.
     BookingWindows,
+    /// An engine row on this server's vault (`oneiron::limit_ask`), measured
+    /// where the engine serves the work, which carries on past it.
+    Engine(EngineLimit),
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14 + EngineLimit::ALL.len()] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -107,7 +113,9 @@ impl LimitRow {
         Self::EmbedderBodyBytes,
         Self::EmbedderAnswerBytes,
         Self::WindowsPerConnection,
+        Self::DecisionReads,
         Self::BookingWindows,
+        Self::Engine(EngineLimit::KeyedFilterJsonBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -126,7 +134,9 @@ impl LimitRow {
             Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
             Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
             Self::WindowsPerConnection => "max_windows_per_connection",
+            Self::DecisionReads => "limits.decision_reads",
             Self::BookingWindows => "booking.anti_abuse:per_minute",
+            Self::Engine(row) => row.key(),
         }
     }
 }
@@ -270,6 +280,13 @@ impl LimitQuestions {
             at += 1;
             !open.kept || at > latest
         });
+    }
+}
+/// The engine's rows on this server's vault ask here too (`SyncServer::new`
+/// installs it).
+impl LimitAsk for LimitQuestions {
+    fn crossed(&self, row: EngineLimit, bound: u64, measured: u64) {
+        self.ask(LimitRow::Engine(row), bound, measured);
     }
 }
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

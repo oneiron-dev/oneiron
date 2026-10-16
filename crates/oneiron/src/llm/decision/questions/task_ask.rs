@@ -100,6 +100,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 evidence_versions: Vec::new(),
                 cost_per_thousand: None,
                 paired: Vec::new(),
+                person: Vec::new(),
             },
             human_ask: None,
         },

@@ -296,6 +296,7 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
             b"subject",
         )
         .expect("subject");
+    crate::test_util::bind_test_owner(&vault, owner);
     let body = ClaimBody::new(
         "profile.city",
         ClaimSubject::Entity(subject),
@@ -430,4 +431,82 @@ fn a_saved_query_row_answers_only_for_its_own_id() {
             .expect("the victim's query survives"),
         victim
     );
+}
+
+/// A held claim may only exclude. Read as absent, a held `opted_out = true`
+/// would satisfy `NotEq` and enroll the entity; a held fit must not enroll it
+/// by presence either.
+#[test]
+fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
+    use crate::{TimeRange, VaultConfig};
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
+        .expect("open vault");
+    let subject = id(0xD1);
+    vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .expect("subject");
+    for (claim, predicate) in [(id(0xD2), "profile.opted_out"), (id(0xD3), "profile.fit")] {
+        let body = ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(subject),
+            rmpv::Value::Boolean(true),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("body");
+        vault
+            .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
+            .expect("claim");
+    }
+    let owner_grants = QueryScope::default();
+    let evaluator = SavedQueryEvaluator {
+        vault: &vault,
+        owner_grants: &owner_grants,
+        judge: None,
+    };
+    let verdict = |query: u8, predicate: &str, cmp: ClaimComparison| {
+        let definition = SavedQueryDefinition {
+            filter: FilterAst::Claim {
+                predicate: predicate.to_owned(),
+                cmp,
+                value: json!(true),
+            },
+            ..sample_definition()
+        };
+        let request = EvaluationRequest {
+            query_ref: id(query),
+            campaign_ref: id(query),
+            entity_ref: subject,
+            definition: &definition,
+            cause: MembershipCause::DataChange,
+            valid_at: 10,
+            detected_at: 10,
+        };
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let evaluation = std::pin::pin!(evaluator.evaluate_entity(&request));
+        match evaluation.poll(&mut cx) {
+            std::task::Poll::Ready(outcome) => outcome.expect("evaluate").decision.verdict,
+            std::task::Poll::Pending => panic!("a hard matcher never waits"),
+        }
+    };
+    let not_opted_out = |query| verdict(query, "profile.opted_out", ClaimComparison::NotEq);
+    let fit = |query| verdict(query, "profile.fit", ClaimComparison::Eq);
+    assert_eq!(not_opted_out(0xD4), MatchVerdict::NoMatch);
+    assert_eq!(fit(0xD5), MatchVerdict::Match);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, id(0xD2), 0xE2);
+    crate::test_util::hold_claim_for_critical_confirm(&vault, id(0xD3), 0xE3);
+    assert_eq!(
+        not_opted_out(0xD4),
+        MatchVerdict::NoMatch,
+        "a held opt-out still excludes"
+    );
+    assert_eq!(fit(0xD5), MatchVerdict::NoMatch, "a held fit never enrolls");
 }

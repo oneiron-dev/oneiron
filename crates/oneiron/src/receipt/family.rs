@@ -27,7 +27,7 @@ use super::projection::{
     finalize_receipt_scan, project_receipts_by_brief,
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
-use super::record::scan_suppression_receipts;
+use super::record::{scan_suppression_receipts, served_form_receipts};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -351,6 +351,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     // bound as every other projector here.
     if query.includes_kind(ReceiptKind::CommitmentLifecycle) {
         records.extend(commitment_lifecycle_receipts(vault, &rtxn, query)?);
+    }
+    // OF-329: the form each read served of an asset. Its own kind and its own
+    // RECEIPT_RECORDs, read through the type index in the shared txn. No
+    // completeness is claimed for them (`Vault::scan_receipts` is
+    // outbound-only).
+    if query.includes_kind(ReceiptKind::ServedForm) {
+        records.extend(served_form_receipts(vault, &rtxn, query)?);
     }
 
     // ED-01 (ONE-1757): the reserved Δ slot is filled from its own side-ledger

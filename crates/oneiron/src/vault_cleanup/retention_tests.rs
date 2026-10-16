@@ -118,6 +118,7 @@ fn archive_purge_previews_bytes_requires_owner_and_returns_erase_receipts() -> c
         1,
         b"owner",
     )?;
+    crate::test_util::bind_test_owner(&vault, owner);
     let ids = [EntityId::now(), EntityId::now()];
     for id in ids {
         vault.put_entity(

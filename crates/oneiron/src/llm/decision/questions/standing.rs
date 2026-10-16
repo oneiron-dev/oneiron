@@ -155,8 +155,16 @@ fn sources_in_txn(
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("standing source header"))?;
+        // A claim awaiting its owner's answer is a missing required source.
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
             || raw.len() == ENTITY_METADATA_HEADER_LEN
+            || (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && !crate::gate::claim_consolidation_eligible_in_txn(
+                    &vault.store,
+                    txn,
+                    id,
+                    crate::gate::ConsolidationReader::StandingAnswerSource,
+                )?)
         {
             return Err(Error::EntityNotFound);
         }
@@ -365,6 +373,7 @@ pub fn backfill_standing_answer(
                     evidence_versions: Vec::new(),
                     cost_per_thousand: None,
                     paired: input.paired,
+                    person: Vec::new(),
                 },
                 human_ask: None,
             },

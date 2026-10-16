@@ -215,7 +215,20 @@ fn confirmed_booking_binding_in_txn(
         {
             continue;
         }
+        // Nor may a critical write its owner has not confirmed: a held page,
+        // booker or type binds nobody, and no older head stands in for it. A
+        // held Confirmed never confirms, and a Cancelled unbinds, held or not.
+        let settled =
+            crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)
+                .map_err(|error| engine_failure("booking claim confirm", error))?;
         match body.predicate.as_str() {
+            BOOKING_SOURCE_PAGE_PREDICATE
+            | BOOKING_BOOKER_CONTACT_PREDICATE
+            | BOOKING_EVENT_TYPE_REF_PREDICATE
+                if !settled =>
+            {
+                return Ok(None);
+            }
             BOOKING_SOURCE_PAGE_PREDICATE => {
                 page_ref = Some(
                     decode_claim_value::<BookingSourcePageValue>(&body.value, "source page")?
@@ -223,8 +236,11 @@ fn confirmed_booking_binding_in_txn(
                 );
             }
             BOOKING_STATUS_PREDICATE => {
-                status =
-                    Some(decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status);
+                match decode_claim_value::<BookingStatusValue>(&body.value, "status")?.status {
+                    BookingStatus::Cancelled => return Ok(None),
+                    BookingStatus::Confirmed if settled => status = Some(BookingStatus::Confirmed),
+                    BookingStatus::Confirmed => {}
+                }
             }
             BOOKING_BOOKER_CONTACT_PREDICATE => {
                 booker_contact = Some(

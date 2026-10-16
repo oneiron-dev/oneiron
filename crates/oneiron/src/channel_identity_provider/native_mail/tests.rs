@@ -68,7 +68,15 @@ fn set_holder_mail_policy(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
-    )
+    )?;
+    declare_reputation_normal(vault)
+}
+
+/// The fixture's provider reputation is the owner's own evidence: with no rule
+/// naming it, each head resolves critical, waits for the owner's confirmation,
+/// and never earns autonomy.
+fn declare_reputation_normal(vault: &Vault) -> Result<()> {
+    crate::test_util::declare_predicates_normal(vault, &["channel_identity.reputation."])
 }
 
 #[test]
@@ -255,6 +263,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     assert!(!vault.graduation_offers()?.contains(&scope));
     assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
 
+    declare_reputation_normal(&vault)?;
     let reputation = IdentityReputation {
         complaint_rate: 0.0015,
         bounce_rate: 0.0,
@@ -500,6 +509,102 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     Ok(())
 }
 
+/// A head awaiting its owner's critical confirm vetoes the ramp when its value
+/// is unsafe, and never earns it when its value is safe.
+#[test]
+fn held_reputation_vetoes_the_ramp_but_never_earns_it() -> Result<()> {
+    use crate::identity_reputation::{
+        IdentityAttestationTier, IdentityReputation, IdentityWarmupStage,
+        PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
+    };
+    use crate::ports::RetrievalIndex;
+    use crate::temporal::TimeRange;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let (id, actor) = (EntityId::now(), EntityId::now());
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"mail actor",
+    )?;
+    let adapter = NativeMailAdapter::new(
+        "side.example.test",
+        NativeMailRunMode::SelfRun,
+        Host {
+            inbound: EmailProviderInbound::new("event", "unused", "unused", 1),
+        },
+    )?;
+    let requested = adapter.requested_identity(id, actor, 1);
+    vault.create_channel_identity(&id, &requested)?;
+    vault.step_channel_identity(
+        &id,
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        2,
+    )?;
+    let provision = adapter.provision(
+        &ProvisionIntent {
+            identity_id: id,
+            identity: requested,
+            fulfillment_mode: ChannelIdentityFulfillment::Api,
+        },
+        3,
+    )?;
+    vault.fulfill_channel_identity(
+        provision.fulfillment_input(ChannelIdentityLifecycleActor::agent(actor)),
+    )?;
+    declare_reputation_normal(&vault)?;
+    let earned = || -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        native_mail_reputation_earned(&vault, &rtxn, id)
+    };
+    let put = |body: &crate::claim::ClaimBody, at: u64| -> Result<EntityId> {
+        let claim = EntityId::now();
+        vault.put_claim(&claim, body, TimeRange { start: at, end: at }, at)?;
+        Ok(claim)
+    };
+    let heads = IdentityReputation {
+        complaint_rate: 0.0,
+        bounce_rate: 0.0,
+        spam_label_observations: 0,
+        attestation_tier: IdentityAttestationTier::A,
+        warmup_stage: IdentityWarmupStage::Established,
+        updated_at: 10,
+    }
+    .claim_bodies(id)?;
+    let head = |predicate: &str| {
+        heads
+            .iter()
+            .find(|body| body.predicate == predicate)
+            .cloned()
+            .expect("reputation head")
+    };
+    let mut warmup = None;
+    for (n, body) in heads.iter().enumerate() {
+        let claim = put(body, n as u64 + 1)?;
+        if body.predicate == PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE {
+            warmup = Some(claim);
+        }
+    }
+    assert!(earned()?, "settled safe heads earn the ramp");
+
+    let stale = warmup.expect("warmup head");
+    vault.with_write_txn(|txn| vault.port_retrieval_mark_stale(txn, &stale))?;
+    let held_warmup = put(&head(PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE), 12)?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held_warmup, 0x31);
+    assert!(!earned()?, "a held safe head earns nothing");
+    put(&head(PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE), 13)?;
+    assert!(earned()?, "a settled safe head earns again");
+
+    let mut complaint = head(PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE);
+    complaint.value = rmpv::Value::F64(0.5);
+    let held_complaint = put(&complaint, 14)?;
+    crate::test_util::hold_claim_for_critical_confirm(&vault, held_complaint, 0x32);
+    assert!(!earned()?, "a held over-cap complaint still vetoes");
+    Ok(())
+}
+
 #[test]
 fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     use crate::outbound::{
@@ -525,16 +630,16 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
     let actor = EntityId::now();
-    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
-    for id in [actor, owner_id] {
-        vault.put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"mail principal",
-        )?;
-    }
+    let owner_id = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"mail principal",
+    )?;
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",

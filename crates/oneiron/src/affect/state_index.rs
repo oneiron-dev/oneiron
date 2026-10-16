@@ -106,6 +106,12 @@ impl Vault {
                     )
                     || body.valid_from.is_some_and(|start| start > at)
                     || body.valid_to.is_some_and(|end| end <= at)
+                    || !crate::gate::claim_consolidation_eligible_in_txn(
+                        &self.store,
+                        txn,
+                        id,
+                        crate::gate::ConsolidationReader::StateIndexSignal,
+                    )?
                 {
                     return Err(Error::InvalidClaimBody("state index signal does not apply"));
                 }
@@ -210,7 +216,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut latest = None;
         for id in self.claims_for_subject_in_txn(&txn, subject)? {
-            let Some(body) = self.get_claim_in_txn(&txn, &id)? else {
+            let Some(body) = self.get_claim_for_effect_in_txn(&txn, &id)? else {
                 continue;
             };
             if body.predicate != COMPOSITE_INDEX

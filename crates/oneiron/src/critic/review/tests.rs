@@ -38,15 +38,20 @@ fn catalog() -> Result<LensCatalog> {
 fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let time = TimeRange { start: 10, end: 10 };
-    let actor_id = EntityId::now();
+    let actor_id = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
+    let actor = WriteActor::new(actor_id, crate::EdgeActorClass::Human);
+    // A PERSON that names itself human is not the owner (H149).
+    let delegate_id = EntityId::now();
     vault.put_entity(
-        &actor_id,
+        &delegate_id,
         crate::registry::ENTITY_TYPE_PERSON,
         time,
         10,
-        b"owner",
+        b"delegate",
     )?;
-    let actor = WriteActor::new(actor_id, crate::EdgeActorClass::Human);
+    let delegate = WriteActor::new(delegate_id, crate::EdgeActorClass::Human);
     let session = EntityId::now();
     vault.put_entity(&session, ENTITY_TYPE_SESSION, time, 10, b"session")?;
     let document = EntityId::now();
@@ -92,6 +97,19 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
                 CritiqueArtifactStore::new(&vault)
                     .get(request.branch_attempt, &artifact.artifact_id)?,
                 Some(artifact.clone())
+            );
+            assert!(
+                record_review_outcome(
+                    &vault,
+                    &result,
+                    delegate,
+                    &artifact.artifact_id,
+                    ReliabilityOutcomeSource::OwnerVerdict,
+                    false,
+                    11 + round as u64,
+                )
+                .is_err(),
+                "only the owner records an owner verdict"
             );
             let outcome = record_review_outcome(
                 &vault,
@@ -143,5 +161,94 @@ struct NoSecondCall;
 impl ReviewHost for NoSecondCall {
     fn fan_out(&self, _: &[CriticReviewInput]) -> Result<Vec<CritiqueArtifact>> {
         panic!("a durable retry must not call critics again")
+    }
+}
+
+/// A reviewed session whose lens `a` the owner has calibrated, for the
+/// consolidation reader table (`gate::tests::consolidation_readers`).
+pub(crate) struct CalibratedSession {
+    session: EntityId,
+    actor: WriteActor,
+    catalog: LensCatalog,
+    rounds: usize,
+}
+
+impl CalibratedSession {
+    pub(crate) fn new(vault: &Vault) -> Result<Self> {
+        let time = TimeRange { start: 10, end: 10 };
+        let actor = EntityId::now();
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time,
+            10,
+            b"owner",
+        )?;
+        let session = EntityId::now();
+        vault.put_entity(&session, ENTITY_TYPE_SESSION, time, 10, b"session")?;
+        let mut calibrated = Self {
+            session,
+            actor: WriteActor::new(actor, crate::EdgeActorClass::Human),
+            catalog: catalog()?,
+            rounds: 0,
+        };
+        calibrated.train(vault)?;
+        Ok(calibrated)
+    }
+
+    /// Reviews a fresh document and records the owner's dismissal of lens
+    /// `a`'s critique: one anchored outcome, folded into lens `a`'s next
+    /// calibration.
+    pub(crate) fn train(&mut self, vault: &Vault) -> Result<()> {
+        let document = EntityId::now();
+        let time = TimeRange { start: 10, end: 10 };
+        vault.put_entity(&document, ENTITY_TYPE_TURN, time, 10, b"doc")?;
+        let request = ReviewRequest {
+            actor: self.actor,
+            target: document,
+            kind: ReviewArtifactKind::Document,
+            session: self.session,
+            run_id: format!("table_{}", self.rounds),
+            branch_attempt: AttemptId::now(),
+            auto_resolve_threshold: 0.9,
+            at: 10,
+        };
+        self.rounds += 1;
+        let result = review_artifact(vault, &request, &self.catalog, &Critics)?;
+        let artifact = result
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.lens_id == "a")
+            .ok_or(Error::EntityNotFound)?;
+        record_review_outcome(
+            vault,
+            &result,
+            self.actor,
+            &artifact.artifact_id,
+            ReliabilityOutcomeSource::OwnerVerdict,
+            false,
+            11,
+        )?;
+        Ok(())
+    }
+
+    /// Lens `a`'s calibration heads, in any lifecycle.
+    pub(crate) fn calibrations(&self, vault: &Vault) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let predicate = critic_reliability_predicate("docs", "a")?;
+        let txn = vault.store.env.read_txn()?;
+        let mut heads = Vec::new();
+        for id in vault.claims_for_subject_in_txn(&txn, &self.session)? {
+            if let Some(body) = vault.get_claim_in_txn(&txn, &id)?
+                && body.predicate == predicate
+            {
+                heads.push((id, body));
+            }
+        }
+        Ok(heads)
+    }
+
+    /// The calibrations a review of this session is weighted by.
+    pub(crate) fn reliabilities(&self, vault: &Vault) -> Result<Vec<CriticReliability>> {
+        read_reliabilities(vault, &self.session, &self.catalog)
     }
 }

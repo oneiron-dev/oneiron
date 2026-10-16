@@ -1,5 +1,24 @@
 use super::*;
 
+/// The rows a bounded search's plan refused that its key's own ceiling
+/// admits: rows the request excluded, which its receipt counts (B7). A row
+/// the key cannot read is never among them. A text scan checks every
+/// matching posting; a vector walk checks only the nodes it visits.
+pub(super) struct RequestExclusions {
+    ceiling: Option<ResolvedRetrievalFilter>,
+    ids: Mutex<HashSet<EntityId>>,
+}
+
+impl RequestExclusions {
+    pub(super) fn count(&self) -> Result<usize> {
+        Ok(self
+            .ids
+            .lock()
+            .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
+            .len())
+    }
+}
+
 impl ScopedRead<'_> {
     /// Resolve a bounded query's actor/proof ceiling once. The terminal read
     /// checks fresh authority again, so this snapshot can never widen it.
@@ -23,6 +42,59 @@ impl ScopedRead<'_> {
             .lock()
             .map_err(|_| Error::InvariantViolation("recall authority lock"))? = None;
         Ok(())
+    }
+
+    /// The exclusions a search under `requested` counts. With no request
+    /// the plan is the key's own ceiling, so it refuses none the key reads.
+    pub(super) fn request_exclusions(
+        &self,
+        policy: &PolicyManifestResolution,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RequestExclusions> {
+        Ok(RequestExclusions {
+            ceiling: requested
+                .map(|_| self.filter_under(policy, None))
+                .transpose()?,
+            ids: Mutex::default(),
+        })
+    }
+
+    /// The plan admission a bounded search runs inside its retrieval: a
+    /// candidate the plan's authority refuses takes no place in any channel,
+    /// so the search needs no fetch past what it was asked for. A refused
+    /// row the key's own ceiling admits lands in `excluded`.
+    pub(super) fn plan_admits<'p>(
+        &'p self,
+        filter: &'p ResolvedRetrievalFilter,
+        policy: &'p PolicyManifestResolution,
+        excluded: &'p RequestExclusions,
+    ) -> impl Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> Result<bool>
+    + Send
+    + Sync
+    + 'p {
+        move |store, txn, id| {
+            // A CLAIM whose body does not decode is no candidate, as the D19
+            // gate holds; it does not end the search.
+            if let Some(row) = crate::ports::EntityStoreRead::port_entity_record(store, txn, id)?
+                && row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && crate::claim::decode_claim_body(&row.body, true).is_err()
+            {
+                return Ok(false);
+            }
+            if self.recall_candidate_in(txn, policy, filter, id)? {
+                return Ok(true);
+            }
+            if let Some(ceiling) = &excluded.ceiling
+                && self.recall_candidate_in(txn, policy, ceiling, id)?
+            {
+                excluded
+                    .ids
+                    .lock()
+                    .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
+                    .insert(*id);
+            }
+            Ok(false)
+        }
     }
 
     /// Admit one candidate in the retrieval transaction under the query plan.
@@ -51,16 +123,16 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit =
-            self.vault
-                .scoped_read_search_candidate_limit(&self.store_read(), limit, true, true)?;
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let results = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .search(query, vector, None, fetch_limit)
+            .filter_candidates(&admitted)
+            .search(query, vector, None, limit)
             .run_for_pack()?;
         self.filter_search_results(
             results.scores,
@@ -68,7 +140,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )
     }
@@ -131,12 +203,22 @@ impl ScopedRead<'_> {
         }
         self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
-        let filter = crate::gate::narrow_retrieval_filter(
+        let filter = self.filter_under(&policy, requested)?;
+        Ok((filter, policy))
+    }
+
+    /// This key's read filter under `policy`, narrowed by `requested`; with
+    /// no request, the key's own ceiling.
+    fn filter_under(
+        &self,
+        policy: &PolicyManifestResolution,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ResolvedRetrievalFilter> {
+        Ok(crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             requested,
         )?
-        .under_credential_of(&self.actor_key);
-        Ok((filter, policy))
+        .under_credential_of(&self.actor_key))
     }
 
     #[expect(
@@ -229,12 +311,13 @@ impl ScopedRead<'_> {
         crate::retrieval_depth::execute(self, request)
     }
 
-    pub fn search_candidate_limit(
-        &self,
-        requested: usize,
-        include_text: bool,
-        include_vector: bool,
-    ) -> Result<usize> {
+    /// How many candidates a caller that filters this reader's rows after
+    /// its own read fetches for `requested`: the request when no grant,
+    /// audience or peer read narrows the reader, otherwise the whole
+    /// [`crate::memory::caps::MAX_SEARCH_LIMIT`] window. Never past it,
+    /// however many rows the vault holds; the page is short when the window
+    /// holds fewer readable rows.
+    pub fn search_candidate_limit(&self, requested: usize) -> Result<usize> {
         if requested == 0 {
             return Ok(0);
         }
@@ -247,16 +330,9 @@ impl ScopedRead<'_> {
             && !diagnostics.loaded_manifest_forces_fail_closed()
             && !policy.has_scoped_read_grants()
         {
-            return Ok(requested);
+            return Ok(requested.min(crate::memory::caps::MAX_SEARCH_LIMIT));
         }
-        drop(rtxn);
-
-        self.vault.scoped_read_search_candidate_limit(
-            &self.store_read(),
-            requested,
-            include_text,
-            include_vector,
-        )
+        Ok(crate::memory::caps::narrowed_candidate_window(requested))
     }
 
     pub fn filter_scored_entities(

@@ -547,8 +547,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
     provision_host_authority(&vault, &issuer, &config.keystore, &managed.data_dir)?;
+    // Managed mode reads no environment, so the destination carries no
+    // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
-        .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
+        .with_feedback(config.feedback.delivery().map(|delivery| {
+            crate::feedback_delivery::FeedbackHost {
+                config: delivery,
+                bearer: None,
+            }
+        }));
     sync_server.managed_issuer = Some(issuer);
     let sync_server = Arc::new(sync_server);
 

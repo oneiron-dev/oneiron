@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use oneiron::limit_ask::{EngineLimit, EngineLimits};
 use oneiron::origin::smart_http::ScanBounds;
 use serde::Deserialize;
 
@@ -61,6 +62,11 @@ pub struct LimitsConfig {
     /// keeps it until it is delivered. Past it, requests queue. A memory
     /// bound sized for the endpoint's machine, not a count.
     pub embedder_answer_bytes: u64,
+    /// Decision reads `POST /v1/llm/decision_read` holds at once, from the
+    /// owner check until the model's read ends. Past it, reads queue. The
+    /// model server reads one at a time whatever this is; the rest wait their
+    /// turn.
+    pub decision_reads: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
     /// when it declares none. Past it, an upload still lands and the row asks.
@@ -96,6 +102,13 @@ pub struct LimitsConfig {
     /// claims nothing, so writes asking at once can each pass it by their own
     /// bytes.
     pub disk_reserve_bytes: u64,
+    /// Bytes one note to the open feedback inbox may carry: a POST body, or
+    /// a GET link's query. A memory floor: a longer note is refused with 413
+    /// before it is stored. Room for any v1 feedback bundle.
+    pub feedback_inbox_bytes: u64,
+    /// The engine's rows (`oneiron::limit_ask`), which the vault opens with:
+    /// work past one is served whole, and the row asks.
+    pub engine: EngineLimits,
 }
 
 impl Default for LimitsConfig {
@@ -110,6 +123,7 @@ impl Default for LimitsConfig {
             lfs_memory_bytes: memory_floor(),
             embedder_requests: 2_048,
             embedder_answer_bytes: 256 * 1024 * 1024,
+            decision_reads: 2_048,
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
@@ -122,6 +136,8 @@ impl Default for LimitsConfig {
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
+            feedback_inbox_bytes: 128 * 1024,
+            engine: EngineLimits::default(),
         }
     }
 }
@@ -170,6 +186,7 @@ impl LimitsConfig {
             lfs_memory_bytes,
             embedder_requests,
             embedder_answer_bytes,
+            decision_reads,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
@@ -178,6 +195,8 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
             disk_reserve_bytes,
+            feedback_inbox_bytes,
+            keyed_filter_json_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -191,6 +210,7 @@ impl LimitsConfig {
         set(&mut self.lfs_memory_bytes, lfs_memory_bytes);
         set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
+        set(&mut self.decision_reads, decision_reads);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
@@ -202,6 +222,10 @@ impl LimitsConfig {
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
+        set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        if let Some(bound) = keyed_filter_json_bytes {
+            self.engine.set(EngineLimit::KeyedFilterJsonBytes, bound);
+        }
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -221,6 +245,7 @@ impl LimitsConfig {
             ("lfs_memory_bytes", self.lfs_memory_bytes),
             ("embedder_requests", self.embedder_requests as u64),
             ("embedder_answer_bytes", self.embedder_answer_bytes),
+            ("decision_reads", self.decision_reads as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
@@ -228,9 +253,15 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
+            }
+        }
+        for row in EngineLimit::ALL {
+            if self.engine.bound(row) == 0 {
+                anyhow::bail!("{} must be at least 1", row.key());
             }
         }
         for (key, value) in [
@@ -277,6 +308,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) lfs_memory_bytes: Option<u64>,
     pub(super) embedder_requests: Option<usize>,
     pub(super) embedder_answer_bytes: Option<u64>,
+    pub(super) decision_reads: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
     pub(super) retrieval_query_bytes: Option<usize>,
@@ -285,4 +317,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) git_scan_disk_floor_bytes: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,
     pub(super) disk_reserve_bytes: Option<u64>,
+    pub(super) feedback_inbox_bytes: Option<u64>,
+    pub(super) keyed_filter_json_bytes: Option<u64>,
 }

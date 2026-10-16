@@ -14,7 +14,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
     };
 
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x51);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x52);
     let facade = facade_for(&vault, actor);
 
@@ -234,7 +234,7 @@ fn enqueue_consolidation_requires_a_verified_actor() {
 #[test]
 fn seed_claims_force_proposed_with_per_element_receipts() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x54);
+    let actor = put_owner(&vault);
     let subject = put_person(&vault, 0x55);
     let facade = facade_for(&vault, actor);
 

@@ -1,9 +1,6 @@
 //! Draft-v1 `.jjconflict`-shape export. Typed open claims remain authoritative.
 use super::export::{write_commit, write_tree_files};
-use super::publication::{
-    OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRequest,
-    origin_publication_intent_claim,
-};
+use super::publication::{OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRequest};
 use super::residence::OriginAuthorityLease;
 use super::tree::{OriginTreeFile, read_tree_files};
 use crate::Vault;
@@ -132,12 +129,7 @@ impl Vault {
             },
             learned_at: request.now,
         };
-        self.put_claim(
-            &intent,
-            &origin_publication_intent_claim(&publication)?,
-            publication.occurred,
-            publication.learned_at,
-        )?;
+        self.put_origin_publication_intent(&publication)?;
         match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),

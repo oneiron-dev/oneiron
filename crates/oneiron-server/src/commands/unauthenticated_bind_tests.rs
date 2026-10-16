@@ -20,7 +20,7 @@ async fn start_against_held_vault(host: &str, auth_secret: Option<String>) -> an
     };
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        serve_with_config(config),
+        serve_with_config(config, None),
     )
     .await
     .expect("a held vault stops serve before it serves")
