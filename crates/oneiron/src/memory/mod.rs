@@ -29,6 +29,7 @@ mod authorship;
 mod birth_position;
 mod booking;
 mod claim_conflict;
+mod conflict_settle;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -50,6 +51,7 @@ mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
+mod owner_door;
 mod read_lane;
 mod reads;
 mod recall;
@@ -126,7 +128,7 @@ pub use recall::{
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
-pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;
+pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,

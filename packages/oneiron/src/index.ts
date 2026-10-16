@@ -127,8 +127,19 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  readonly self = {
+    memory: {
+      diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),
+    },
+    skills: {
+      save: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsSave(input) as unknown),
+      fork: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsFork(input) as unknown),
+      callables: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsCallables(input) as unknown),
+    },
+  }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
+  steer(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.steer(input) as unknown) }
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   readonly tasks = {
@@ -180,6 +191,9 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    packs: {
+      put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+    },
     artifacts: {
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
       view: (request: ArtifactRefRequest): ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as ArtifactView | null; return result === null ? null : result }),
@@ -209,6 +223,19 @@ export class Oneiron {
       trunk: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsTrunk({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
+      host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
+      sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
+    },
+    companions: {
+      sharing: {
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as unknown),
+      },
+    },
+    workspace: {
+      work_companion: {
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as unknown),
+        set: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as unknown),
+      },
     },
   }
   /** Read-only ask routing or attributed partial answers. */
@@ -217,6 +244,24 @@ export class Oneiron {
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
   ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as TaskAskWait) }
+  readonly ai = {
+    options: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiOptions(input) as unknown),
+    image: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiImage(input) as unknown),
+    speech: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiSpeech(input) as unknown),
+    transcribe: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiTranscribe(input) as unknown),
+    embed: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiEmbed(input) as unknown),
+    video: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideo(input) as unknown), {
+      poll: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoPoll(input) as unknown),
+      cancel: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoCancel(input) as unknown),
+    }),
+  }
+  readonly connector = {
+    list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorList(input) as unknown),
+    status: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorStatus(input) as unknown),
+    outbound: {
+      schedule: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorOutboundSchedule(input) as unknown),
+    },
+  }
 
 // END GENERATED FACADE VERBS
 
