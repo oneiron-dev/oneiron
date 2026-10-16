@@ -68,6 +68,9 @@ pub(super) const FIELD_MODEL: &str = "model";
 pub(super) const FIELD_REASONING_EFFORT: &str = "reasoning_effort";
 pub(super) const FIELD_PROMPT_INPUT_REF: &str = "prompt_input_ref";
 pub(super) const FIELD_DISCLOSURE_STAMP: &str = "disclosure_stamp";
+/// The ASSET a served-form receipt names, lower hex: what
+/// [`ReceiptQuery::with_asset_ref`] matches.
+pub(super) const FIELD_ASSET_REF: &str = "asset_ref";
 
 /// ARCH-0055 r7 proposal-outcome receipt fields (ONE-1747).
 ///
@@ -295,6 +298,13 @@ pub enum ReceiptKind {
     ///
     /// Not emit-adjacent: nothing leaves the vault when a turn is screened.
     Extraction,
+    /// Served-form receipt (OF-329): which form of an ASSET one read served,
+    /// its image bytes or its text in place of its body, and to which
+    /// holder. The read writes it before it answers, as its own
+    /// RECEIPT_RECORD, so it is a floor receipt.
+    ///
+    /// Not emit-adjacent: the read answers its own caller.
+    ServedForm,
 }
 
 impl ReceiptKind {
@@ -311,6 +321,7 @@ impl ReceiptKind {
             Self::ProposalOutcome => "proposal_outcome",
             Self::CommitmentLifecycle => "commitment_lifecycle",
             Self::Extraction => "extraction",
+            Self::ServedForm => "served_form",
         }
     }
 
@@ -327,6 +338,7 @@ impl ReceiptKind {
             "proposal_outcome" => Some(Self::ProposalOutcome),
             "commitment_lifecycle" => Some(Self::CommitmentLifecycle),
             "extraction" => Some(Self::Extraction),
+            "served_form" => Some(Self::ServedForm),
             _ => None,
         }
     }
@@ -360,6 +372,10 @@ pub struct ReceiptQuery {
     pub start_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_at: Option<u64>,
+    /// Only receipts naming this ASSET (lower hex) in their `asset_ref`
+    /// field: the served-form receipts of one asset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_ref: Option<String>,
     #[serde(default = "default_receipt_query_limit")]
     pub limit: usize,
 }
@@ -373,6 +389,7 @@ impl Default for ReceiptQuery {
             job_ref: None,
             start_at: None,
             end_at: None,
+            asset_ref: None,
             limit: DEFAULT_RECEIPT_QUERY_LIMIT,
         }
     }
@@ -416,6 +433,14 @@ impl ReceiptQuery {
         self
     }
 
+    /// Adds an asset filter: receipts whose `asset_ref` field names
+    /// `asset_ref`, such as the served-form receipts of one ASSET.
+    #[must_use]
+    pub fn with_asset_ref(mut self, asset_ref: impl Into<String>) -> Self {
+        self.asset_ref = Some(asset_ref.into());
+        self
+    }
+
     /// Adds inclusive Unix-second time bounds.
     #[must_use]
     pub const fn with_time_bounds(mut self, start_at: Option<u64>, end_at: Option<u64>) -> Self {
@@ -450,6 +475,11 @@ impl ReceiptQuery {
         }
         if let Some(end_at) = self.end_at
             && receipt.occurred_at > end_at
+        {
+            return false;
+        }
+        if let Some(asset_ref) = self.asset_ref.as_deref()
+            && receipt.fields.get(FIELD_ASSET_REF).map(String::as_str) != Some(asset_ref)
         {
             return false;
         }

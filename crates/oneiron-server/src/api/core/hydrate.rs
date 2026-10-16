@@ -248,6 +248,7 @@ pub(crate) async fn core_hydrate(
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
+    let mut served = Vec::new();
     let read = hydrate_short_id_response_with_mode(
         &scoped_read,
         short_id.clone(),
@@ -255,7 +256,14 @@ pub(crate) async fn core_hydrate(
         view,
         mode,
         observations.as_deref_mut(),
+        &mut served,
     )?;
+    // The observation guard is the server's: release it before the read
+    // waits on the write that records the text it served.
+    drop(observations);
+    scoped_read
+        .commit_served_forms(&served)
+        .map_err(|error| core_engine_error("core short hydrate failed", error))?;
     let Some(response) = read.value else {
         return Err(EnvelopedApiError::from(ApiError::not_found(
             "short_id",
@@ -327,6 +335,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
         projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
     let mut values = hydrated.value.into_iter();
     let mut results = Vec::with_capacity(req.refs.len());
+    let mut served = Vec::new();
     for (reference, parsed) in req.refs.into_iter().zip(parsed) {
         let item = match parsed {
             Ok((short_id, content_hash, mode)) => {
@@ -341,6 +350,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
                     ItemReceipts {
                         start: narrowing.clone(),
                         response: &mut batch_narrowing,
+                        served: &mut served,
                     },
                     Some(&mut bodies),
                 )? {
@@ -385,12 +395,20 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
         *target = staged;
     }
+    // Every text the batch served is recorded in one write, once the
+    // server's observation guard is released.
+    drop(observations);
+    scoped_read
+        .commit_served_forms(&served)
+        .map_err(|error| core_engine_error("batch hydrate failed", error))?;
     Ok(Json(CoreBatchShortIdHydrateResponse {
         narrowing: batch_narrowing,
         results,
     }))
 }
 
+/// One short ref hydrated. A text form it serves joins `served`, for the
+/// caller to record before it answers.
 pub(crate) fn hydrate_short_id_response_with_mode(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
@@ -398,6 +416,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     view: View,
     mode: oneiron::memory::ReadMode,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
+    served: &mut Vec<oneiron::receipt::ServedForm>,
 ) -> Result<oneiron::claim::ScopedReadResult<Option<CoreHydrateResponse>>, ApiError> {
     // A live read keeps deletion metadata. A pinned read preserves the pin.
     let read = scoped_read
@@ -419,17 +438,20 @@ pub(crate) fn hydrate_short_id_response_with_mode(
         ItemReceipts {
             start: receipt.clone(),
             response: &mut receipt,
+            served,
         },
         None,
     )?;
     Ok(oneiron::claim::ScopedReadResult { value, receipt })
 }
 
-/// The receipt one hydrated item starts from, and the response receipt that
-/// also takes any successor the item's observation reads.
+/// The receipt one hydrated item starts from, the response receipt that
+/// also takes any successor the item's observation reads, and the text forms
+/// the response serves, which its door records before it answers.
 pub(crate) struct ItemReceipts<'a> {
     pub(crate) start: oneiron::claim::ScopedReadReceipt,
     pub(crate) response: &'a mut oneiron::claim::ScopedReadReceipt,
+    pub(crate) served: &'a mut Vec<oneiron::receipt::ServedForm>,
 }
 
 #[expect(
@@ -450,6 +472,7 @@ pub(crate) fn project_hydrated_short_id(
     let ItemReceipts {
         start: mut narrowing,
         response,
+        served: served_forms,
     } = receipts;
     let content_hash_hex = format!("{content_hash:02x}");
     let Some(oneiron::claim::ReadRow {
@@ -526,6 +549,12 @@ pub(crate) fn project_hydrated_short_id(
             view,
         ),
     };
+    // A Summary item carries the image's label alone, so it serves no text.
+    if let oneiron::memory::HydratedAsset::Text { asset_text, .. } = served
+        && !matches!(view, View::Summary)
+    {
+        served_forms.push(oneiron::receipt::ServedForm::text(id, asset_text));
+    }
     Ok(Some(CoreHydrateResponse {
         narrowing,
         status: CoreHydrateStatus::Live,

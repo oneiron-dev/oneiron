@@ -168,7 +168,9 @@ impl Memory<'_> {
     /// OF-329's resolve verb: the form of `asset_ref` this consumer is
     /// served under `budget`, read through the bound actor's lane. An asset
     /// that is absent, withheld, not an ASSET, or has no form for this
-    /// consumer is `NOT_FOUND` under the read's receipt.
+    /// consumer is `NOT_FOUND` under the read's receipt. Every form served
+    /// is first recorded as a served-form receipt naming the lane's holder
+    /// ([`ScopedRead::commit_served_forms`]); a failed record fails the read.
     pub fn resolve_asset(
         &self,
         asset_ref: &str,
@@ -180,14 +182,18 @@ impl Memory<'_> {
         let ScopedReadResult { value, receipt } =
             asset_forms_in_lane(&lane, asset, consumer, false, &mut |_| true)?;
         match value.and_then(|forms| forms.serve(consumer, budget)) {
-            Some(value) => Ok(ScopedReadResult { value, receipt }),
+            Some(value) => {
+                lane.commit_served_forms(&[served_form(asset, &value)?])?;
+                Ok(ScopedReadResult { value, receipt })
+            }
             None => Err(no_form(asset_ref).with_read_receipt(receipt)),
         }
     }
 
     /// Hydrate's half of OF-329: each live image ASSET among `views` with a
     /// text this reader admits is served as [`hydrated_asset`] serves it.
-    /// Every other view keeps its body.
+    /// Every other view keeps its body. The texts served are recorded, in
+    /// one write, before the hydrate answers.
     pub(super) fn serve_hydrated_assets(
         &self,
         lane: &ScopedRead<'_>,
@@ -196,6 +202,7 @@ impl Memory<'_> {
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<()> {
         let asset_kind = kind_string_for_type(ENTITY_TYPE_ASSET);
+        let mut served_forms = Vec::new();
         for (target, view) in targets.iter().zip(views) {
             let Some((asset, ReadMode::Live)) = target else {
                 continue;
@@ -205,10 +212,12 @@ impl Memory<'_> {
             }
             let served = hydrated_asset(lane, *asset, &mut |_| true)?;
             receipt.restrict_with(&served.receipt);
-            if let HydratedAsset::Text { body, .. } = served.value {
+            if let HydratedAsset::Text { body, asset_text } = served.value {
                 view.body = decode_body_json(&body);
+                served_forms.push(crate::receipt::ServedForm::text(*asset, asset_text));
             }
         }
+        lane.commit_served_forms(&served_forms)?;
         Ok(())
     }
 }
@@ -217,6 +226,19 @@ fn no_form(asset_ref: &str) -> MemoryError {
     MemoryError::not_found(format!(
         "asset {asset_ref:?} has no form this consumer reads"
     ))
+}
+
+/// What `resolved`, read from `asset`, served: its image, or its text form.
+fn served_form(
+    asset: EntityId,
+    resolved: &ResolvedAsset,
+) -> MemoryResult<crate::receipt::ServedForm> {
+    Ok(match resolved.asset_text_ref.as_deref() {
+        Some(asset_text) if resolved.form == ServedAssetForm::AssetText => {
+            crate::receipt::ServedForm::text(asset, EntityId::from_hex(asset_text)?)
+        }
+        _ => crate::receipt::ServedForm::image(asset),
+    })
 }
 
 /// What a hydrate serves, for one ASSET its lane admitted live, to a reader
