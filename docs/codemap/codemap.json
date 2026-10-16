@@ -39002,7 +39002,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/vault/transactions/sync_scan_tests.rs",
-     "purpose": "Host scans refuse undeclared sync-state rows even under a broad prefix",
+     "purpose": "Host sync-state doors: scans refuse undeclared rows even under a broad prefix, and writes refuse the…",
      "surface": {}
     },
     {
