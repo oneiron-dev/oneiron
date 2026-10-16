@@ -103,6 +103,7 @@ pub enum AgentVerb {
     VaultWritesPending,
     VaultHydrate,
     VaultGet,
+    VaultRefsResolve,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -220,6 +221,7 @@ impl AgentVerb {
         Self::VaultWritesPending,
         Self::VaultHydrate,
         Self::VaultGet,
+        Self::VaultRefsResolve,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -340,6 +342,7 @@ impl AgentVerb {
             Self::VaultWritesPending => "vault.writes.pending",
             Self::VaultHydrate => "vault.hydrate",
             Self::VaultGet => "vault.get",
+            Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -447,6 +450,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
+                | Self::VaultRefsResolve
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -571,6 +575,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
+                | Self::VaultRefsResolve
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -638,6 +643,7 @@ impl AgentVerb {
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
                 | Self::VaultGet
+                | Self::VaultRefsResolve
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
         )
@@ -927,6 +933,7 @@ impl AgentVerb {
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
+            Self::VaultRefsResolve => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -1045,6 +1052,7 @@ impl AgentVerb {
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
+            Self::VaultRefsResolve => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],

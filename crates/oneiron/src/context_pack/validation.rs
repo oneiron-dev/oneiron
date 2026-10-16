@@ -47,7 +47,8 @@ pub(super) fn disclosure_admits_candidate(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    ctx.admits(
+    super::retained_copies::clamp_admits(
+        ctx,
         store.base(),
         rtxn,
         id,
@@ -78,7 +79,7 @@ pub(super) fn disclosure_admits_target(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    ctx.admits(store.base(), rtxn, id, header.entity_type, None)
+    super::retained_copies::clamp_admits(ctx, store.base(), rtxn, id, header.entity_type, None)
 }
 
 /// OF-365 enforcement point 4 — the final fail-closed sweep: re-checks every
@@ -97,7 +98,14 @@ pub(super) fn validate_pack_disclosure(
         return Ok(());
     }
     for entity in results.iter().chain(neighbors.iter()) {
-        if !ctx.admits(store.base(), rtxn, &entity.id, entity.entity_type, None)? {
+        if !super::retained_copies::clamp_admits(
+            ctx,
+            store.base(),
+            rtxn,
+            &entity.id,
+            entity.entity_type,
+            None,
+        )? {
             return Err(Error::Gate(GateError::DisclosureClampViolation(
                 "non-admitted entity survived pack assembly",
             )));

@@ -360,8 +360,19 @@ impl Vault {
         artifact_id: &EntityId,
         thread_id: &EntityId,
     ) -> Result<Option<TaskBrief>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.annotation_brief_for_thread_in_txn(&rtxn, artifact_id, thread_id)
+    }
+
+    /// [`Self::annotation_brief_for_thread`], read through the caller's transaction.
+    pub(crate) fn annotation_brief_for_thread_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        thread_id: &EntityId,
+    ) -> Result<Option<TaskBrief>> {
         let mut best: Option<(EntityId, TaskBrief)> = None;
-        for (claim_id, body) in self.active_annotation_claims(artifact_id)? {
+        for (claim_id, body) in self.active_annotation_claims_in_txn(rtxn, artifact_id)? {
             if body.predicate != ANNOTATION_BRIEF_PREDICATE {
                 continue;
             }

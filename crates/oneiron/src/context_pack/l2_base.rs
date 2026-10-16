@@ -272,7 +272,8 @@ fn admitted_l2_evidence(
             continue;
         }
         if let Some(clamp) = clamp
-            && !clamp.admits(
+            && !super::retained_copies::clamp_admits(
+                clamp,
                 &vault.store,
                 txn,
                 &id,
