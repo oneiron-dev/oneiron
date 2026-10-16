@@ -1,16 +1,20 @@
 //! One-off graph judgment: scoped context, injected answerer, and proposed claims.
 
+use super::super::held::{cut_text, fit_state};
 use super::super::types::paired_valid;
 use super::{records::AnswerRecord, store::encode};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey};
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBand, DecisionQuestion, DecisionReceipt, DecisionRung, EvidenceVersion,
-    PairedAnswer, ProviderPin, TypedDecision,
+    DecisionAnswer, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt, DecisionRung,
+    EvidenceVersion, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES, MAX_DECISION_IMAGES_BYTES,
+    PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
+use crate::receipt::{PixelPull, ServedForm};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
+use serde_json::{Value, json};
 use std::collections::HashSet;
 
 const MAX_UNITS: usize = 4096;
@@ -45,6 +49,17 @@ pub struct GraphPrediction {
     pub paired: Option<PairedAnswer>,
 }
 
+/// What an answerer returns for one unit: a bare prediction the engine wraps
+/// in its own receipt, or a full decision from the decision ladder. The engine
+/// keeps a decision's providers, band, paired and person readings, clock and
+/// owner-ask reason, and sets its evidence to the sources and images it was
+/// shown.
+#[derive(Debug, Clone)]
+pub enum GraphDecision {
+    Prediction(GraphPrediction),
+    Decision(Box<TypedDecision>),
+}
+
 /// Host-injected answerer. The agent/provider layer chooses the rung and enforces
 /// its own model locality and egress policy; this callback cannot grant reads or
 /// writes. `None` means missing input or refusal, never a negative prediction.
@@ -54,6 +69,81 @@ pub trait GraphAnswerer {
         question: &DecisionQuestion,
         context: &GraphUnitContext,
     ) -> Result<Option<GraphPrediction>>;
+
+    /// Whether it reads images. When it does, the engine reads the image each
+    /// ASSET source holds, under the asker's own read, and passes it to
+    /// [`Self::decide`].
+    fn reads_images(&self) -> bool {
+        false
+    }
+
+    /// The unit's answer over its sources and `images`, each named in
+    /// [`GraphUnitContext::state`]. The default answers through
+    /// [`Self::answer`] and reads no image.
+    fn decide(
+        &mut self,
+        question: &DecisionQuestion,
+        context: &GraphUnitContext,
+        images: &[DecisionImage],
+    ) -> Result<Option<GraphDecision>> {
+        let _ = images;
+        Ok(self
+            .answer(question, context)?
+            .map(GraphDecision::Prediction))
+    }
+}
+
+impl GraphUnitContext {
+    /// The unit and its sources as a decision's state: each body as the JSON
+    /// a reader is served, all cut evenly to fit the ladder's state bound. A
+    /// source an image was read from names that image.
+    #[must_use]
+    pub fn state(&self, images: &[DecisionImage]) -> Value {
+        let texts: Vec<String> = self.sources.iter().map(|s| body_text(&s.body)).collect();
+        let longest = texts.iter().map(String::len).max().unwrap_or(0);
+        fit_state(longest, |cut| {
+            json!({
+                "unit": self.unit.to_hex(),
+                "sources": self
+                    .sources
+                    .iter()
+                    .zip(&texts)
+                    .map(|(source, text)| {
+                        let mut view = json!({
+                            "ref": source.id.to_hex(),
+                            "kind": kind_name(source.entity_type),
+                            "body": cut_text(text, cut),
+                        });
+                        if let Some(image) =
+                            images.iter().find(|image| image.evidence.id == source.id)
+                        {
+                            view["image"] = json!(image.name);
+                        }
+                        view
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        })
+    }
+}
+
+/// A stored body as the served JSON text a reader sees; a body that is not
+/// one MessagePack value shows nothing.
+fn body_text(body: &[u8]) -> String {
+    let mut cursor = body;
+    match rmpv::decode::read_value(&mut cursor) {
+        Ok(value) if cursor.is_empty() => {
+            crate::batch::export::served_stored_messagepack_json(body, value).to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+fn kind_name(entity_type: u8) -> String {
+    crate::registry::entity_type_registry_entry(entity_type).map_or_else(
+        || format!("TYPE_{entity_type}"),
+        |entry| entry.kind.to_owned(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +152,15 @@ pub struct GraphAskResult {
     pub answers: Vec<AnswerRecord>,
     /// Only visible units with missing input or an abstaining answerer appear here.
     pub abstained: Vec<EntityId>,
+}
+
+/// A run's result, with the receipt of each unit whose answerer declined
+/// through a full decision: its providers, clock and owner-ask reason.
+#[derive(Debug, Clone)]
+pub struct GraphAskReceipts {
+    pub result: GraphAskResult,
+    /// Each declined unit and its abstention, in `result.abstained` order.
+    pub declined: Vec<(EntityId, TypedDecision)>,
 }
 
 /// A failed run can already have committed earlier per-unit answers. Callers
@@ -153,7 +252,7 @@ pub fn run_graph_ask_by_type(
 
 // A NOTE's author-only read requires an identity-checked actor class. The
 // asker is the reader even when a distinct agent performs the write.
-fn asker_reader(vault: &Vault, principal: EntityId) -> Result<ScopedReadActorKey> {
+pub(super) fn asker_reader(vault: &Vault, principal: EntityId) -> Result<ScopedReadActorKey> {
     let txn = vault.store.env.read_txn()?;
     asker_reader_in_txn(vault, &txn, principal)
 }
@@ -198,6 +297,21 @@ pub fn run_graph_ask(
     answerer: &mut impl GraphAnswerer,
     now: u64,
 ) -> std::result::Result<GraphAskResult, GraphAskFailure> {
+    run_graph_ask_receipted(vault, principal, actor, question, units, answerer, now)
+        .map(|receipts| receipts.result)
+}
+
+/// [`run_graph_ask`], keeping the receipt of each unit its answerer declined
+/// through a full decision.
+pub fn run_graph_ask_receipted(
+    vault: &Vault,
+    principal: EntityId,
+    actor: WriteActor,
+    question: DecisionQuestion,
+    units: &[EntityId],
+    answerer: &mut impl GraphAnswerer,
+    now: u64,
+) -> std::result::Result<GraphAskReceipts, GraphAskFailure> {
     question.validate().map_err(GraphAskFailure::before_units)?;
     if units.len() > MAX_UNITS || units.iter().copied().collect::<HashSet<_>>().len() != units.len()
     {
@@ -211,10 +325,15 @@ pub fn run_graph_ask(
         answers: Vec::new(),
         abstained: Vec::new(),
     };
+    let mut declined = Vec::new();
     for &unit in units {
         match answer_unit(&scoped, principal, actor, &question, unit, answerer, now) {
             Ok(UnitOutcome::Hidden) => {}
             Ok(UnitOutcome::Abstain) => completed.abstained.push(unit),
+            Ok(UnitOutcome::Declined(decision)) => {
+                completed.abstained.push(unit);
+                declined.push((unit, *decision));
+            }
             Ok(UnitOutcome::Answered(answer)) => completed.answers.push(*answer),
             Err(error) => {
                 return Err(GraphAskFailure {
@@ -225,12 +344,17 @@ pub fn run_graph_ask(
             }
         }
     }
-    Ok(completed)
+    Ok(GraphAskReceipts {
+        result: completed,
+        declined,
+    })
 }
 
 enum UnitOutcome {
     Hidden,
     Abstain,
+    /// The answerer's own receipted abstention.
+    Declined(Box<TypedDecision>),
     Answered(Box<AnswerRecord>),
 }
 
@@ -304,13 +428,30 @@ fn answer_unit(
         return Ok(UnitOutcome::Abstain);
     }
     let context = GraphUnitContext { unit, sources };
-    let Some(prediction) = answerer.answer(question, &context)? else {
-        return Ok(UnitOutcome::Abstain);
+    let images = if answerer.reads_images() {
+        unit_images(scoped, &context)?
+    } else {
+        Vec::new()
     };
-    if prediction.answer == DecisionAnswer::Abstain {
-        return Ok(UnitOutcome::Abstain);
-    }
-    validate_prediction(question, &prediction)?;
+    let decision = match answerer.decide(question, &context, &images)? {
+        None => return Ok(UnitOutcome::Abstain),
+        Some(GraphDecision::Prediction(prediction)) => {
+            if prediction.answer == DecisionAnswer::Abstain {
+                return Ok(UnitOutcome::Abstain);
+            }
+            validate_prediction(question, &prediction)?;
+            predicted(question, principal, &context, prediction)
+        }
+        Some(GraphDecision::Decision(decision)) => {
+            validate_decision(question, principal, &decision)?;
+            let decision = decided(&context, &images, *decision);
+            if decision.answer == DecisionAnswer::Abstain {
+                return Ok(UnitOutcome::Declined(Box::new(decision)));
+            }
+            decision
+        }
+    };
+    let confidence = decision.probability.unwrap_or_default() as f32;
     // A callback can take arbitrarily long. A cheap preflight avoids waiting
     // for the writer when authority or source bytes have already changed.
     let fresh = vault.scoped_read(asker_reader(vault, principal)?);
@@ -367,41 +508,10 @@ fn answer_unit(
             };
             taint = crate::dreamer_consolidation::source_meet(taint, observed);
         }
-        let band = DecisionBand::default();
         let answer = AnswerRecord {
             claim: EntityId::now(),
             unit,
-            decision: TypedDecision {
-                answer: prediction.answer.clone(),
-                probability: Some(prediction.probability),
-                evidence: context.sources.iter().map(|s| s.id).collect(),
-                in_band: band.contains(prediction.probability),
-                receipt: DecisionReceipt {
-                    question: question.id,
-                    question_version: question.version,
-                    principal,
-                    providers: vec![prediction.provider.clone()],
-                    band,
-                    band_version: 0,
-                    evidence_versions: context
-                        .sources
-                        .iter()
-                        .map(|s| EvidenceVersion {
-                            id: s.id,
-                            body_hash: s.hash,
-                        })
-                        .collect(),
-                    cost_per_thousand: Some(prediction.cost_per_thousand),
-                    paired: prediction
-                        .paired
-                        .map(|reading| reading.bind(prediction.provider.clone()))
-                        .into_iter()
-                        .collect(),
-                    person: Vec::new(),
-                    time: None,
-                },
-                human_ask: None,
-            },
+            decision: decision.clone(),
             frontier: context.sources[0].hash,
             source_kind: context.sources[0].entity_type,
             answered_at: now,
@@ -413,7 +523,7 @@ fn answer_unit(
             "judgment.answer",
             ClaimSubject::Entity(unit),
             value.clone(),
-            prediction.probability as f32,
+            confidence,
         );
         if context.sources[0].entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(&context.sources[0].body, true)?;
@@ -467,6 +577,163 @@ fn source(id: EntityId, entity_type: u8, body: Vec<u8>) -> GraphContextSource {
         hash: *blake3::hash(&body).as_bytes(),
         body,
     }
+}
+
+/// A bare prediction in the engine's receipt: the default band, every
+/// source at the version read, and the provider's own cost and pairing.
+fn predicted(
+    question: &DecisionQuestion,
+    principal: EntityId,
+    context: &GraphUnitContext,
+    prediction: GraphPrediction,
+) -> TypedDecision {
+    let band = DecisionBand::default();
+    let paired = prediction
+        .paired
+        .map(|reading| reading.bind(prediction.provider.clone()))
+        .into_iter()
+        .collect();
+    TypedDecision {
+        answer: prediction.answer,
+        probability: Some(prediction.probability),
+        evidence: context.sources.iter().map(|s| s.id).collect(),
+        in_band: band.contains(prediction.probability),
+        receipt: DecisionReceipt {
+            question: question.id,
+            question_version: question.version,
+            principal,
+            providers: vec![prediction.provider],
+            band,
+            band_version: 0,
+            evidence_versions: source_versions(context),
+            cost_per_thousand: Some(prediction.cost_per_thousand),
+            paired,
+            person: Vec::new(),
+            time: None,
+        },
+        human_ask: None,
+    }
+}
+
+/// A ladder decision with the engine's own evidence: every source it was
+/// shown at the version read, then each image at its pixels' hash.
+pub(super) fn decided(
+    context: &GraphUnitContext,
+    images: &[DecisionImage],
+    mut decision: TypedDecision,
+) -> TypedDecision {
+    decision.evidence = context.sources.iter().map(|s| s.id).collect();
+    decision.receipt.evidence_versions = source_versions(context)
+        .into_iter()
+        .chain(images.iter().map(|image| image.evidence.clone()))
+        .collect();
+    decision
+}
+
+fn source_versions(context: &GraphUnitContext) -> Vec<EvidenceVersion> {
+    context
+        .sources
+        .iter()
+        .map(|s| EvidenceVersion {
+            id: s.id,
+            body_hash: s.hash,
+        })
+        .collect()
+}
+
+/// The images the context's ASSET sources hold, read through `lane` (the
+/// asker's own read) for an answerer that reads them: PNG or JPEG only,
+/// inside a call's count and byte bounds, each named `image_<n>` and pinned
+/// at its pixels' hash. The pull is recorded as an ask-image served form
+/// before any model reads it. An asset the lane withholds, or one past a
+/// bound, is read as text alone.
+pub(super) fn unit_images(
+    lane: &ScopedRead<'_>,
+    context: &GraphUnitContext,
+) -> Result<Vec<DecisionImage>> {
+    let mut images: Vec<DecisionImage> = Vec::new();
+    let mut total = 0usize;
+    for source in &context.sources {
+        if images.len() == MAX_DECISION_IMAGES {
+            break;
+        }
+        if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            continue;
+        }
+        let Some(pixels) = crate::memory::asset_image_in_lane(lane, source.id)
+            .map_err(|_| Error::CorruptedIndex("graph ask image"))?
+        else {
+            continue;
+        };
+        let image = DecisionImage {
+            name: format!("image_{}", images.len()),
+            evidence: EvidenceVersion {
+                id: source.id,
+                body_hash: *blake3::hash(&pixels.bytes).as_bytes(),
+            },
+            image: pixels,
+        };
+        let bytes = image.image.bytes.len();
+        if image.format().is_none()
+            || bytes > MAX_DECISION_IMAGE_BYTES
+            || total.saturating_add(bytes) > MAX_DECISION_IMAGES_BYTES
+        {
+            continue;
+        }
+        total += bytes;
+        images.push(image);
+    }
+    if !images.is_empty() {
+        let pulls: Vec<_> = images
+            .iter()
+            .map(|image| ServedForm::pulled(image.evidence.id, PixelPull::AskImage))
+            .collect();
+        lane.commit_served_forms(&pulls)?;
+    }
+    Ok(images)
+}
+
+/// A full decision is for this question, asker and contract; an answer
+/// carries a probability; no person answered it; and its readings are
+/// well formed.
+pub(super) fn validate_decision(
+    question: &DecisionQuestion,
+    principal: EntityId,
+    decision: &TypedDecision,
+) -> Result<()> {
+    let receipt = &decision.receipt;
+    let answered = decision.answer != DecisionAnswer::Abstain;
+    if receipt.question != question.id
+        || receipt.question_version != question.version
+        || receipt.principal != principal
+        || !question.contract.accepts(&decision.answer)
+        || (answered && (decision.probability.is_none() || receipt.providers.is_empty()))
+        || decision
+            .probability
+            .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
+        || receipt.band.validate().is_err()
+        || receipt.providers.len() > 64
+        || receipt.providers.iter().any(|pin| {
+            pin.rung == DecisionRung::Human
+                || crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
+        })
+        || receipt
+            .time
+            .as_ref()
+            .is_some_and(|time| time.answered == Some(DecisionRung::Human))
+        || receipt
+            .cost_per_thousand
+            .is_some_and(|cost| !cost.is_finite() || cost < 0.0)
+        || !PairedReading::readings_valid(
+            &receipt.paired,
+            &receipt.person,
+            question.id,
+            &receipt.providers,
+        )
+    {
+        return Err(Error::InvalidConfig("invalid graph ask decision".into()));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_prediction(
