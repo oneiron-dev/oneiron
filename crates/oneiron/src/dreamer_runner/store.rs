@@ -16,9 +16,9 @@ use super::codec::{
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
-    DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
-    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_TASK_REALIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
@@ -842,6 +842,19 @@ impl<'a> DreamerRunnerStore<'a> {
 }
 
 pub(super) fn decode_dreamer_attempt_status(record: AttemptRecord) -> Result<DreamerAttemptStatus> {
+    // A TASK's realization carries the TASK's bare spec, not the runner
+    // envelope: its status reads that spec as its input, with no parent.
+    if record.kind == DREAMER_TASK_REALIZE_ATTEMPT_KIND {
+        let input = super::codec::decode_value(&record.payload)?;
+        return Ok(DreamerAttemptStatus {
+            attempt: record,
+            payload: DreamerAttemptPayload {
+                attempt_type: DREAMER_TASK_REALIZE_ATTEMPT_KIND.to_owned(),
+                input,
+                parent_attempt: None,
+            },
+        });
+    }
     if !is_dreamer_queue_kind(&record.kind) {
         return Err(invalid_dreamer_runner(
             "attempt is not a Dreamer runner attempt",

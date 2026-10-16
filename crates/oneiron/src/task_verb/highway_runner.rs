@@ -330,3 +330,24 @@ pub(crate) fn report_leased_task_in_txn(
     .map_err(runner_refusal)?;
     Ok(())
 }
+
+/// The queue kind of the one try that realizes a Dreamer-lane TASK, for the
+/// Dreamer runner that executes it.
+pub(crate) const REALIZE_ATTEMPT_KIND: &str = TASK_REALIZE_ATTEMPT_KIND;
+
+/// What a runner realizes its leased row's TASK from: the TASK and its
+/// current typed brief, while it is one the runner may move. `None` when the
+/// row realizes no TASK, or one that is missing, terminal or cancelled.
+pub(crate) fn runner_task_brief(
+    vault: &Vault,
+    record: &AttemptRecord,
+) -> Result<Option<(EntityId, Option<super::brief::QueueTaskBrief>)>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(task_ref) = runner_task_in(vault, &txn, record).map_err(runner_refusal)? else {
+        return Ok(None);
+    };
+    let brief = task_verb_body_in(vault, &txn, task_ref)?
+        .and_then(|body| body.brief)
+        .map(|stored| stored.brief);
+    Ok(Some((task_ref, brief)))
+}
