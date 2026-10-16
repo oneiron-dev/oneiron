@@ -31,6 +31,7 @@ mod compaction;
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod harness;
+mod local_vision;
 mod policy;
 mod status;
 mod step;
@@ -46,6 +47,7 @@ mod turns;
 pub(crate) mod waves;
 mod workflows;
 
+pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,

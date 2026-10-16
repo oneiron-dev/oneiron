@@ -691,8 +691,9 @@ nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 
 The decision read takes yes/no and choice questions over text. A Box question
 ("where is `mug` in `camera`?"), and any question over images, goes only to a
-rung that reads images: a host `DecisionModel` whose `reads_images` is true,
-or the opt-in System One seat (`decide_at_remote_seat`). The ladder skips
+rung that reads images: a host `DecisionModel` whose `reads_images` is true
+(the Local-vision seat at the Local rung, below), or the opt-in System One
+seat (`decide_at_remote_seat`). The ladder skips
 every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
 answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
 top-left corner, edges in order, with its confidence; it is `null` when the
@@ -793,7 +794,20 @@ rungs = ["local:qwen3-vl-4b"]
 ```
 
 Its provider needs `image_input` among its capabilities. The answer is
-`{"asset_ref", "text", "receipt"}`. Each rung served and each pull (view,
+`{"asset_ref", "text", "receipt"}`.
+
+Add `"contract": {"kind": "box"}` to ask where something is instead
+("where is the mug in `image`?"). The same seat then answers as the decision
+ladder's Local rung (`LocalVisionModel`, a `DecisionModel` that reads
+images): it reads the whole image (a Box ask takes no `region`) and answers
+with a JSON schema shaped like System One's box answer. The answer is
+`{"asset_ref", "typed", "receipt"}`, where `typed` is the typed decision:
+`{"kind": "box", "value": {top, bottom, left, right}}` in 0–1 fractions of
+the image, or `"value": null` when the target is absent, with its
+confidence as `probability` and the decision's receipt (the Local rung's
+pin and the image's evidence version). The ask runs at the Local rung alone,
+on a 60-second clock, and queues no person. Only a Box contract is answered
+here. Each rung served and each pull (view,
 crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
 which rung each image got and whether the pixels were pulled afterwards.
 
