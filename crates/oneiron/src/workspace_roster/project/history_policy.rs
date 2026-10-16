@@ -8,7 +8,6 @@
 //! threshold raises a typed state, never a quiet limit.
 use super::fold::{
     ProjectDisposition, ProjectEffective, ProjectFrontier, ProjectWitness, parent_bounds, reason,
-    seal_tips,
 };
 use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
@@ -238,6 +237,11 @@ pub(super) fn frozen_frontier(
         }
         verified = alone.verdict(*hash)? == ProjectVerdict::Visible;
     }
+    // A seal a later owner seal retired roots nothing, so a record frozen
+    // under it no longer verifies; its evidence stays held (ruling (c)).
+    if let (true, Some(seal)) = (verified, &record.dependencies.seal) {
+        verified = !cx.seal_status()?.retired.contains(seal);
+    }
     if let (true, true, Some(effective)) = (verified, parents, &record.effective) {
         verified = parent_bounds(reader, id, effective)?.is_ok();
     }
@@ -363,16 +367,17 @@ pub(super) fn budget_count(cx: &FoldCx<'_, '_, '_>) -> Result<u64> {
 /// What the budget counts (point H): authenticated signed revisions reachable
 /// through the child index from the root, every boundary and every birth,
 /// plus the authenticated envelopes at reachable nodes, read from the index.
-/// Under one standing seal the fold restarts at its revision, so only the
-/// seal and what descends from it count. A row nothing reachable names, such
-/// as an envelope over an anchor this replica lacks, spends nothing.
+/// Under the one seal no seal retires the fold restarts at its revision, so
+/// only the seal and what descends from it count. A row nothing reachable
+/// names, such as an envelope over an anchor this replica lacks, spends
+/// nothing.
 pub(super) fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
     let authenticated = |hash: &ProjectRevisionHash| {
         cx.held
             .get(hash)
             .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
     };
-    let tips = seal_tips(cx)?;
+    let tips = cx.seal_status()?.tips.clone();
     let mut only = tips.iter();
     let mut counted = BTreeSet::new();
     let roots: Vec<ProjectRevisionHash> = match (only.next(), only.next()) {

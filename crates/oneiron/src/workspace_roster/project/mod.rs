@@ -53,7 +53,8 @@ pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
 pub use fold::{
-    ProjectDisposition, ProjectEffective, ProjectFrontier, ProjectRank, ProjectWitness,
+    ProjectDisposition, ProjectEffective, ProjectForkConflict, ProjectFrontier, ProjectRank,
+    ProjectWitness,
 };
 pub(crate) use fork_evidence::ProjectForks;
 pub use fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
