@@ -41,6 +41,12 @@ impl OneironClient {
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
+                "self.memory.diary.reads" => remote_agent_verb_output::<
+                    oneiron::memory::DiaryReadsView,
+                >(client, verb, &input),
+                "self.memory.diary.review" => remote_agent_verb_output::<
+                    oneiron::memory::DiaryReadRequest,
+                >(client, verb, &input),
                 "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
                     client, verb, &input,
                 ),
@@ -76,6 +82,9 @@ impl OneironClient {
                     remote_agent_verb_output::<Vec<oneiron::memory::MemoryReceipt>>(
                         client, verb, &input,
                     )
+                }
+                "vault.images.view" => {
+                    remote_agent_verb_output::<oneiron::memory::PulledImage>(client, verb, &input)
                 }
                 "vault.receipts.get" => remote_agent_verb_output::<
                     Option<oneiron::receipt::CallReceipt>,
@@ -361,6 +370,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("self.memory.diary", value)
     }
+    pub fn self_memory_diary_reads(
+        &self,
+        input: &oneiron::memory::DiaryReadsRequest,
+    ) -> Result<oneiron::memory::DiaryReadsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.diary.reads", value)
+    }
+    pub fn self_memory_diary_review(
+        &self,
+        input: &oneiron::memory::DiaryReviewAnswer,
+    ) -> Result<oneiron::memory::DiaryReadRequest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.diary.review", value)
+    }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.
     pub fn cancel(
@@ -546,6 +579,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.
+    pub fn vault_images_view(
+        &self,
+        input: &oneiron::memory::ImageViewRequest,
+    ) -> Result<oneiron::memory::PulledImage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.images.view", value)
     }
     pub fn vault_receipts_get(
         &self,
