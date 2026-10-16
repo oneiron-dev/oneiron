@@ -31,6 +31,8 @@ report(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+selfIdentityAnswer(input: unknown): unknown
+selfIdentitySettle(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
 selfMessage(input: unknown): unknown
@@ -126,6 +128,7 @@ vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
+vaultCompanionsSharingSet(input: unknown): unknown
 vaultWorkspaceWorkCompanionGet(input: unknown): unknown
 vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown

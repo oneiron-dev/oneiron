@@ -607,9 +607,18 @@ impl Vault {
         &self,
         reference: &str,
     ) -> Result<Option<ContactDisclosureProposal>> {
-        validate_reference_shape(reference)?;
         let txn = self.store.env.read_txn()?;
-        let Some(row) = WIDEN_PROPOSALS.get(&self.store, &txn, &reference.to_owned())? else {
+        self.contact_disclosure_offer_in_txn(&txn, reference)
+    }
+
+    /// [`Self::contact_disclosure_offer`] in the caller's snapshot.
+    pub(crate) fn contact_disclosure_offer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reference: &str,
+    ) -> Result<Option<ContactDisclosureProposal>> {
+        validate_reference_shape(reference)?;
+        let Some(row) = WIDEN_PROPOSALS.get(&self.store, txn, &reference.to_owned())? else {
             return Ok(None);
         };
         match decode_delta(&validate_row(row, reference)?.proposal.canonical_delta)? {
