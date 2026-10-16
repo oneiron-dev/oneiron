@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
 };
+use crate::disclosure::AttendeeIdentityChoice;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
@@ -629,6 +630,10 @@ impl Vault {
             .voice_session_roster_in_txn(rtxn, voice_session_ref)?
             .ok_or(Error::EntityNotFound)?;
 
+        // The owner names a residual speaker against this roster: the ask's
+        // session is the roster ref, its speaker the dedupe key below, and
+        // its revision the roster's first resolution (OF-365 P5).
+        let revision = roster.created_at.max(1);
         let mut parties = Vec::new();
         let mut seen_speakers: HashSet<String> = HashSet::new();
         for segment in &roster.segments {
@@ -643,10 +648,19 @@ impl Vault {
                     format!("residual:{cluster_ref}")
                 }
             };
-            if !seen_speakers.insert(speaker_key) {
+            if !seen_speakers.insert(speaker_key.clone()) {
                 continue;
             }
-            parties.push(self.voice_roster_party(rtxn, segment)?);
+            let answer = match &segment.evidence {
+                VoiceAttributionEvidence::ResidualCluster { .. } => self.attendee_identity_in_txn(
+                    rtxn,
+                    voice_session_ref,
+                    &speaker_key,
+                    revision,
+                )?,
+                _ => None,
+            };
+            parties.push(self.voice_roster_party(rtxn, segment, answer)?);
         }
         Ok(parties)
     }
@@ -657,12 +671,15 @@ impl Vault {
     /// `owner_print_matched`; an enrolled CONTACT print keeps the
     /// `EnrolledVoicePrint` rung; an invite-eliminated attendee is resolved as
     /// an ordinary known contact, because elimination is a NON-biometric
-    /// naming step and must not borrow the enrolled-print rung. A contact that
-    /// is missing or revoked degrades to an anonymous `Unknown`.
+    /// naming step and must not borrow the enrolled-print rung. A residual
+    /// speaker the owner named (`answer`) resolves the same way, for the same
+    /// reason; unnamed, it stays `Unknown`. A contact that is missing or
+    /// revoked degrades to an anonymous `Unknown`.
     fn voice_roster_party(
         &self,
         rtxn: &heed::RoTxn<'_>,
         segment: &VoiceResolvedSegment,
+        answer: Option<AttendeeIdentityChoice>,
     ) -> Result<Interlocutor> {
         let anonymous = || Interlocutor::unknown(segment.speaker_label.clone(), false);
         match &segment.evidence {
@@ -693,7 +710,19 @@ impl Vault {
                     None => Ok(anonymous()),
                 }
             }
-            VoiceAttributionEvidence::ResidualCluster { .. } => Ok(anonymous()),
+            VoiceAttributionEvidence::ResidualCluster { .. } => {
+                let Some(AttendeeIdentityChoice::Contact(contact_ref)) = answer else {
+                    return Ok(anonymous());
+                };
+                match self.active_counterparty_contact(rtxn, &contact_ref)? {
+                    Some(record) => self.known_contact_interlocutor(
+                        contact_ref,
+                        &record.counterparty,
+                        record.first_touch,
+                    ),
+                    None => Ok(anonymous()),
+                }
+            }
         }
     }
 
