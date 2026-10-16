@@ -48,7 +48,7 @@ pub enum ModelRole {
     /// OF-329), through the LLM slot. No model is chosen for it.
     LocalVision,
 }
-pub const MODEL_ROLES: [ModelRole; 15] = [
+pub const MODEL_ROLES: [ModelRole; 16] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
