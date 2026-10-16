@@ -633,7 +633,10 @@ impl<'a> ExecutorStorage<'a> {
     /// count before each 64 KiB block), from the first body directory the
     /// run reads that holds one. `None` for an inline body, or for an index
     /// lost and not rebuilt.
-    pub(crate) fn code_run_line_index(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u64>>> {
+    pub(crate) fn code_run_line_index(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<Vec<u64>>> {
         let dirs = match self {
             Self::Canonical(vault) => vec![vault.store.body_dir()?],
             Self::Session(binding) => binding.answered(|| binding.session.body_dirs())?,

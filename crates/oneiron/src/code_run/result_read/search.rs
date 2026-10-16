@@ -104,13 +104,13 @@ pub(super) fn search(
         }
     };
     let limit = input.limit.unwrap_or(DEFAULT_LIMIT).max(1);
-    let context = input
-        .context
-        .unwrap_or(DEFAULT_CONTEXT)
-        .min(MAX_CONTEXT);
+    let context = input.context.unwrap_or(DEFAULT_CONTEXT).min(MAX_CONTEXT);
     let budget = bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES);
     let len = body.len();
-    let begin = input.cursor.as_ref().map_or(0, |cursor| cursor.offset.min(len));
+    let begin = input
+        .cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.offset.min(len));
     let mut line = LinePos {
         offset: begin,
         lfs: input.cursor.as_ref().map_or(0, |cursor| cursor.line),
@@ -170,7 +170,15 @@ pub(super) fn search(
             }
             line.lfs += count_lf(&hay[at(line.offset)..found.start()]);
             line.offset = s;
-            let entry = match_entry(&hay, hay_start, found.range(), line.lfs, context, text, truncated);
+            let entry = match_entry(
+                &hay,
+                hay_start,
+                found.range(),
+                line.lfs,
+                context,
+                text,
+                truncated,
+            );
             let entry_size = encoded_len(&entry) + 1;
             if size + entry_size > budget {
                 stopped = Some((line, false));

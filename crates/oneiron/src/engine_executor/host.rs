@@ -14,8 +14,7 @@ use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
     CodeRunResultBinding, ExecutorCallSite, ExecutorStorage, GatedActorWrite, ResultFacet,
     ResultRead, ResultReply, RunCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfEffect, SelfFailedResult, agent_verb_rows_of, result_card,
-    result_refusal,
+    SelfDurableWait, SelfEffect, SelfFailedResult, agent_verb_rows_of, result_card, result_refusal,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,

@@ -12,8 +12,8 @@
 //! gave one (a code run binds it as a result); without one it pages.
 
 use super::{
-    READ_PIECE_BYTES, ReadBounds, Reply, ResultBody, SHAPE_HEAD_BYTES, Scan, decode,
-    invalid_input, refusal, scan_limit, shape,
+    READ_PIECE_BYTES, ReadBounds, Reply, ResultBody, SHAPE_HEAD_BYTES, Scan, decode, invalid_input,
+    refusal, scan_limit, shape,
 };
 use crate::limit_ask::EngineLimit;
 use crate::store::BodySink;
@@ -221,9 +221,9 @@ impl Filter {
     }
 
     fn keeps(&self, row: &Value) -> bool {
-        self.conditions.iter().all(|(column, op, want)| {
-            compare(row.get(column).unwrap_or(&Value::Null), *op, want)
-        })
+        self.conditions
+            .iter()
+            .all(|(column, op, want)| compare(row.get(column).unwrap_or(&Value::Null), *op, want))
     }
 
     fn project(&self, row: Value) -> Value {
@@ -272,7 +272,9 @@ fn compare(have: &Value, op: Op, want: &Value) -> bool {
         },
         Op::Lt | Op::Le | Op::Gt | Op::Ge => {
             let order = match (have, want) {
-                (Value::String(have), Value::String(want)) => Some(have.as_str().cmp(want.as_str())),
+                (Value::String(have), Value::String(want)) => {
+                    Some(have.as_str().cmp(want.as_str()))
+                }
                 _ => number(have)
                     .zip(number(want))
                     .and_then(|(have, want)| have.partial_cmp(&want)),
@@ -591,7 +593,10 @@ struct Pick<'a, 's> {
 impl<'de> DeserializeSeed<'de> for Pick<'_, '_> {
     type Value = ();
 
-    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> std::result::Result<(), D::Error> {
+    fn deserialize<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> std::result::Result<(), D::Error> {
         let Some((step, rest)) = self.steps.split_first() else {
             self.picked.seen += 1;
             if self.picked.seen <= self.picked.skip {
@@ -825,7 +830,8 @@ fn table_rows(
             }
             Line::End => return picked.finish(reference, true, None),
             Line::Limit => {
-                let mut reply = picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
+                let mut reply =
+                    picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
                 if let Reply::Output(reply) = &mut reply {
                     reply["limit"] = scan_limit();
                 }

@@ -88,9 +88,17 @@ pub(super) fn chunks(
     let mut scan = Scan::new(bounds.scan_bytes());
     let mut page = Vec::new();
     let (next, limited) = match (input.bytes, input.lines) {
-        (Some(size), None) if size > 0 && overlap < size => {
-            by_bytes(body, parent, size, overlap, align, text, from.offset, &mut scan, &mut page)?
-        }
+        (Some(size), None) if size > 0 && overlap < size => by_bytes(
+            body,
+            parent,
+            size,
+            overlap,
+            align,
+            text,
+            from.offset,
+            &mut scan,
+            &mut page,
+        )?,
         (None, Some(count)) if count > 0 && overlap < count => {
             if !text {
                 return Ok(Reply::Denied(refusal("lines_on_binary")));
@@ -150,7 +158,10 @@ fn by_bytes(
             let want = usize::try_from(ALIGN_BYTES).unwrap_or(usize::MAX) + ahead;
             let piece = scan.read(body, lead, want)?;
             let reached = lead + piece.len() as u64;
-            match piece.get(ahead..).and_then(|rest| rest.iter().position(|byte| *byte == b'\n')) {
+            match piece
+                .get(ahead..)
+                .and_then(|rest| rest.iter().position(|byte| *byte == b'\n'))
+            {
                 Some(newline) => (lead + (ahead + newline) as u64 + 1, false),
                 None if reached >= len => (len, false),
                 None if piece.len() < want => return Ok((Some(json!({"offset": s})), true)),
@@ -225,7 +236,10 @@ fn by_lines(
                 (reached, false, true)
             }
             Seek::Limit(_) => {
-                return Ok((Some(json!({"offset": start.offset, "line": start.lfs})), true));
+                return Ok((
+                    Some(json!({"offset": start.offset, "line": start.lfs})),
+                    true,
+                ));
             }
         };
         // The last line the chunk touches: the one before its end, when it

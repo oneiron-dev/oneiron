@@ -147,10 +147,7 @@ impl ResultBody for RunBody<'_, '_> {
     }
 
     fn line_index(&self) -> Option<Vec<u64>> {
-        self.storage
-            .code_run_line_index(self.output)
-            .ok()
-            .flatten()
+        self.storage.code_run_line_index(self.output).ok().flatten()
     }
 
     fn base(&self) -> u64 {
@@ -538,7 +535,9 @@ fn seek_line(
     let mut at = from;
     if let Some(index) = index {
         // The last block whose count is below `lfs`: that newline is in it.
-        let block = index.partition_point(|count| *count < lfs).saturating_sub(1);
+        let block = index
+            .partition_point(|count| *count < lfs)
+            .saturating_sub(1);
         if let Some(&count) = index.get(block) {
             let start = block as u64 * LINE_INDEX_BLOCK_BYTES;
             if start > at.offset {
@@ -607,11 +606,9 @@ impl Vault {
         let storage = ExecutorStorage::Canonical(self);
         let mut cards = Vec::new();
         for binding in record.bindings.iter().rev().take(limit) {
-            let Some(output) = record
-                .outputs
-                .iter()
-                .find(|output| output.handle == binding.handle && is_result_output_path(&output.path))
-            else {
+            let Some(output) = record.outputs.iter().find(|output| {
+                output.handle == binding.handle && is_result_output_path(&output.path)
+            }) else {
                 continue;
             };
             let mut card = card(&storage, output, Some(binding.name.as_str()))?;
