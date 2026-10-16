@@ -11,8 +11,12 @@ side_tables! {
     /// Rotation cursor (last session id served) for the bounded session-end distill drain pump, so
     /// one budget-limited pass cannot starve later jobs. Key: ().
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
+    /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
+    AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson;
+    /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
+    AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
     AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson;
@@ -49,6 +53,13 @@ side_tables! {
     /// Legacy pre-1890 per-vault system-agent enable toggle (single byte 0x00/0x01), consumed once
     /// and deleted by the manifest seeder. Key: string.
     AGENT_DEF_SYSTEM_TOGGLE_LEGACY: VaultMeta b"agent_def:system_toggle:v1:" Raw;
+    /// The anchor a thread held before one re-anchor sweep moved it onto a version, so a restore
+    /// of that earlier version reattaches it by exact stored identity. Key: id16 (artifact) +
+    /// id16 (thread) + u64be (the version it moved to).
+    ANNOTATION_PRIOR_ANCHOR: VaultMeta b"anchored_annotation:prior:v1:" Named;
+    /// A detached comment's snapshot of the text it was anchored on, for the Unattached list and
+    /// the exact-words reattach offer. Key: id16 (artifact) + id16 (thread).
+    ANNOTATION_UNATTACHED: VaultMeta b"anchored_annotation:unattached:v1:" Named;
     /// Channel pointer (published/preview) naming the fork hash a codebase artifact currently serves.
     /// Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
@@ -74,8 +85,15 @@ side_tables! {
     /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
     /// content hash. Key: hash32.
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
+    /// it. Key: string (signer suite ":" key hex).
+    AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
+    /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or
+    /// whose provenance names an agent run, read backwards from the source. Key: bytes17 (source
+    /// kind byte + id16 or the run ref's blake3 prefix) + id16 (artifact) + u64be (version).
+    BLOB_ARTIFACT_BORN_FROM: VaultMeta b"blob_artifact:born_from:v1:" Named;
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
@@ -290,8 +308,14 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// Node-local fold ledger of one executor run: its marks, compact ask, folds and unfold
+    /// appends (JSON). Key: id16(run).
+    CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw;
+    /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
+    /// content handle; absent for a body it found nothing in. Key: string.
+    CODE_RUN_RAW_OUTPUT_SECRET: VaultMeta b"code_run:raw_output:secret:v1:" Raw;
     /// The taint refs beside one raw-output row, keyed by the same content handle, in the same
     /// transaction. Key: string.
     CODE_RUN_RAW_OUTPUT_TAINT: VaultMeta b"code_run:raw_output:taint:v1:" Raw;

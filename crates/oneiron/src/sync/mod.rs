@@ -51,6 +51,7 @@ pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
 pub mod residence_operation_budgets;
+pub(crate) mod row_birth;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
@@ -63,10 +64,13 @@ pub mod window;
 pub(crate) mod window_rows;
 
 pub use client::{
-    EphemeralChangeOrigin, ResidenceHit, ResidenceSearch, SearchSource, SyncClient,
-    SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
+    EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
+    ResidenceSearch, SearchSource, SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode,
+    SyncStatus, SyncTransportCredential, ThinItem,
 };
-pub use connection::{ConnectionConfig, HomeNodeTopology, LocalUpdate, SyncConnection};
+pub use connection::{
+    ConnectionConfig, HomeNodeTopology, LocalUpdate, ResidenceModeChange, SyncConnection,
+};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
@@ -90,14 +94,18 @@ pub use quota::{
     MaintenanceIngestQuotaSnapshot, maintenance_ingest_quota_config,
     maintenance_ingest_quota_snapshots, set_maintenance_ingest_quota_config,
 };
-pub use residence::discover_local_window_keys;
+pub use residence::{
+    DeviceSyncPreference, discover_local_window_keys, effective_residence_mode,
+    load_device_sync_preference, prune_thin_items, record_item_touch, set_device_sync_preference,
+};
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
-    DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest,
-    SyncSelector, SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
-    decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
-    encode_sync_selector, filtered_window_doc,
+    DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
+    SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
+    admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
+    decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
+    filtered_window_doc_for,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

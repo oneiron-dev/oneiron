@@ -27,6 +27,20 @@ pub(crate) struct ExportSnapshot {
     pub(crate) pack_sources: BTreeMap<EntityId, crate::skill_hub::pack_catalog::PackSource>,
     pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
     pub(crate) archived_receipts: BTreeMap<EntityId, BTreeMap<String, super::ExportReceiptSource>>,
+    pub(crate) run_results: Vec<ExportSnapshotRun>,
+    pub(crate) result_bodies: BTreeMap<[u8; 32], ExportSnapshotBody>,
+}
+
+/// One run's result manifests, as its replay record names them.
+pub(crate) struct ExportSnapshotRun {
+    pub(crate) run_id: EntityId,
+    pub(crate) outputs: Vec<crate::code_run::CodeRunRawOutput>,
+}
+
+/// One result body: its bytes, or why the egress door withholds them.
+pub(crate) struct ExportSnapshotBody {
+    pub(crate) bytes: u64,
+    pub(crate) body: std::result::Result<Vec<u8>, &'static str>,
 }
 
 pub(crate) struct ExportSnapshotEntity {
@@ -64,6 +78,13 @@ impl Vault {
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
+        // A run names no world, so a caller off this device gets no run's
+        // results: none of a device-local world's may leave it (DEC-0005).
+        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice {
+            self.export_run_results_in_txn(&rtxn)?
+        } else {
+            (Vec::new(), BTreeMap::new())
+        };
         let device_only = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
         let mut entities = Vec::new();
         let mut included = BTreeSet::new();
@@ -248,9 +269,47 @@ impl Vault {
                 pack_sources,
                 task_receipts,
                 archived_receipts,
+                run_results,
+                result_bodies,
             },
             format,
         )
         .map_err(E::from)
+    }
+
+    /// The run result closure (OF-190 B++): every run's manifests, and each
+    /// body they name once, through the egress door. A body no row holds
+    /// any longer is withheld as absent.
+    fn export_run_results_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<(
+        Vec<ExportSnapshotRun>,
+        BTreeMap<[u8; 32], ExportSnapshotBody>,
+    )> {
+        let mut runs = Vec::new();
+        let mut bodies = BTreeMap::new();
+        for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
+            for output in &outputs {
+                if bodies.contains_key(&output.raw_blake3) {
+                    continue;
+                }
+                let body = match super::whole_vault_export_withholds_result(self, rtxn, output)? {
+                    Some(reason) => Err(reason),
+                    None => self
+                        .code_run_result_body_in_txn(rtxn, output)?
+                        .ok_or("absent"),
+                };
+                bodies.insert(
+                    output.raw_blake3,
+                    ExportSnapshotBody {
+                        bytes: output.raw_len,
+                        body,
+                    },
+                );
+            }
+            runs.push(ExportSnapshotRun { run_id, outputs });
+        }
+        Ok((runs, bodies))
     }
 }

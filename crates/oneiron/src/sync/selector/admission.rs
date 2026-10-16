@@ -297,6 +297,9 @@ fn admit_window_update(
     )?;
 
     crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+    // Rule A: the sender's birth envelope crosses whole, beside each row this
+    // admission kept.
+    crate::sync::row_birth::copy_births_for_entities(&remote, &admitted)?;
     let births = match &lane {
         Some(lane) => pending_births(
             vault,
@@ -656,8 +659,7 @@ fn restamp_federated_transcript(blob: &[u8]) -> Result<Vec<u8>> {
     }
     let mut encoded = Vec::with_capacity(blob.len() + 32);
     encoded.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
-    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries))
-        .map_err(|_| refused())?;
+    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).map_err(|_| refused())?;
     Ok(encoded)
 }
 

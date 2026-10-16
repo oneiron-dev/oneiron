@@ -39,6 +39,9 @@ pub struct SyncClientConfig {
     /// Host-owned MACRO candidate feed. Its updates, not WebSocket liveness,
     /// cause the connection to persist a new home-node designation.
     pub home_node_topology: Option<crate::sync::connection::HomeNodeTopology>,
+    /// Host-owned endpoint of the elected home for residence reads (index,
+    /// first touch, promotion, search). Absent, `server_url` is the home.
+    pub residence_home_route: Option<ResidenceHomeRoute>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
     /// Debounce interval for rapid edits before sending. Default: 50ms.
@@ -64,12 +67,54 @@ impl Default for SyncClientConfig {
             note_session: None,
             followed_worlds: Some(Vec::new()),
             home_node_topology: None,
+            residence_home_route: None,
             default_window_count: 2,
             sync_debounce_ms: 50,
             reconnect_backoff_max_ms: 60_000,
             reconnect_initial_ms: 1_000,
             ephemeral_timeout_ms: 30_000,
         }
+    }
+}
+
+/// Where residence reads go: the elected home's WebSocket endpoint, which
+/// the host that owns the topology resolves and republishes on a change.
+/// Socket loss never moves it; nothing here broadcasts to other machines.
+#[derive(Debug, Clone)]
+pub struct ResidenceHomeRoute {
+    endpoint: std::sync::Arc<tokio::sync::watch::Sender<Option<String>>>,
+}
+
+impl ResidenceHomeRoute {
+    #[must_use]
+    pub fn new(endpoint: Option<String>) -> Self {
+        Self {
+            endpoint: std::sync::Arc::new(tokio::sync::watch::channel(endpoint).0),
+        }
+    }
+
+    /// Publish the elected home's endpoint, or `None` to fall back to the
+    /// configured sync server.
+    pub fn publish(&self, endpoint: Option<String>) {
+        self.endpoint.send_replace(endpoint);
+    }
+
+    /// The endpoint residence reads use now.
+    #[must_use]
+    pub fn current(&self) -> Option<String> {
+        self.endpoint.borrow().clone()
+    }
+}
+
+impl SyncClientConfig {
+    /// The endpoint residence RPCs dial: the elected home when the host
+    /// routes one, else the configured sync server.
+    #[must_use]
+    pub fn residence_url(&self) -> String {
+        self.residence_home_route
+            .as_ref()
+            .and_then(ResidenceHomeRoute::current)
+            .unwrap_or_else(|| self.server_url.clone())
     }
 }
 

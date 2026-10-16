@@ -20,6 +20,7 @@ pub mod retrieval_loop;
 mod scoped_channels;
 pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
+mod media_channel;
 mod support;
 mod temporal_bound;
 mod trace;
