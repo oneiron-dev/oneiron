@@ -34,7 +34,7 @@ pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 pub(crate) use document::{materialize_window_documents, validate_window_documents};
 pub use ladder::*;
 #[cfg(feature = "sync")]
-pub use maintenance::WindowRecoveryReport;
+pub use maintenance::{WindowRebootstrapReport, WindowRecoveryReport};
 use quarantine::quarantine_invalid_artifact;
 pub use snapshot_writer::write_canonical_window_snapshot;
 

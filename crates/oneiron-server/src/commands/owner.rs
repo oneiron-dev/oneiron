@@ -272,6 +272,10 @@ struct RecoveredWindow {
     quarantined: Option<std::path::PathBuf>,
     /// The chunks this recovery rebuilt.
     rebuilt: Vec<String>,
+    /// With `--rebootstrap`: the window's CRDT state now holds no history,
+    /// and this many of its keys took their rebuilt value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rebootstrap_rewritten_keys: Option<usize>,
 }
 
 /// Recovers one window of the stopped vault from a canonical snapshot of its
@@ -285,14 +289,17 @@ pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
     )?;
     let owner = local_owner(&vault)?;
     let dir = config.vault_path.join("recovery");
-    let report = vault
-        .recover_window_from_canonical_snapshot(
-            &owner,
-            &args.window,
-            &dir,
-            oneiron::recovery::RecoveryBudget::default(),
-        )
-        .map_err(|error| anyhow::anyhow!("recover window {}: {error}", args.window))?;
+    let budget = oneiron::recovery::RecoveryBudget::default();
+    let (report, rewritten) = if args.rebootstrap {
+        vault
+            .rebootstrap_window_from_canonical_snapshot(&owner, &args.window, &dir, budget)
+            .map(|done| (done.recovery, Some(done.rewritten_keys)))
+    } else {
+        vault
+            .recover_window_from_canonical_snapshot(&owner, &args.window, &dir, budget)
+            .map(|report| (report, None))
+    }
+    .map_err(|error| anyhow::anyhow!("recover window {}: {error}", args.window))?;
     emit(&RecoveredWindow {
         window: report.window,
         tier: match report.tier {
@@ -303,6 +310,7 @@ pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
         manifest: report.manifest_path,
         quarantined: report.quarantine_path,
         rebuilt: report.obligations,
+        rebootstrap_rewritten_keys: rewritten,
     })
 }
 
