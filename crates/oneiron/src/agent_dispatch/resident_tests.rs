@@ -177,10 +177,7 @@ fn a_held_resident_binding_never_wakes_the_inbox_but_still_conflicts() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::config::VaultConfig::default());
     let at = TimeRange { start: 1, end: 1 };
-    let owner = EntityId::now();
-    vault
-        .put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")
-        .expect("owner");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let (lead, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")
         .expect("seeded definitions")
