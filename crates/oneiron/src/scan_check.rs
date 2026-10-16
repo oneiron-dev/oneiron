@@ -68,6 +68,30 @@ pub enum EngineScan {
     MachineRows,
     /// The access grants a companion persona list walks.
     AccessGrantRows,
+    /// One seed's inbound mentions a specificity weight counts.
+    MentionRows,
+    /// The PPR cache's dependency rows a replaced or dead entry's walk reads.
+    PprCacheDepRows,
+    /// The sync rematerialization markers and quarantine rows a pack's
+    /// exclusion index reads.
+    PackQuarantineRows,
+    /// The legacy lexical-hint claims a target's hint lookup walks.
+    LexicalHintRows,
+    /// The graduation answer log a gate receipt query projects.
+    AnswerReceiptRows,
+    /// The proposal artifacts a substitution-mining pass indexes.
+    MinerArtifactRows,
+    /// The synced edge map's entries an unseated child's parent arbitration
+    /// walks.
+    ChildOfMapEntries,
+    /// The long-interval index a temporal window's spanner scan reads.
+    TemporalSpannerRows,
+    /// The timeline rows an occurred-range query reads, both halves.
+    OccurredRangeRows,
+    /// The retrieval run ledger a blend-weight tuning pass walks.
+    BlendTuningRuns,
+    /// One conversation's peers a Dreamer selection retry reads.
+    DreamerRetryPeers,
     /// The pending gate-consent tray a consent list walks.
     PendingGateConsentRows,
     /// The tasks an omitted ask target or task context is resolved from, for
@@ -89,7 +113,7 @@ pub enum EngineScan {
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 32] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -103,6 +127,17 @@ impl EngineScan {
         Self::ScopedEdgeRows,
         Self::MachineRows,
         Self::AccessGrantRows,
+        Self::MentionRows,
+        Self::PprCacheDepRows,
+        Self::PackQuarantineRows,
+        Self::LexicalHintRows,
+        Self::AnswerReceiptRows,
+        Self::MinerArtifactRows,
+        Self::ChildOfMapEntries,
+        Self::TemporalSpannerRows,
+        Self::OccurredRangeRows,
+        Self::BlendTuningRuns,
+        Self::DreamerRetryPeers,
         Self::PendingGateConsentRows,
         Self::TaskCensusRows,
         Self::AskWordRows,
@@ -138,6 +173,17 @@ impl EngineScan {
             Self::ScopedEdgeRows => "scoped_edge_rows",
             Self::MachineRows => "machine_rows",
             Self::AccessGrantRows => "access_grant_rows",
+            Self::MentionRows => "mention_rows",
+            Self::PprCacheDepRows => "ppr_cache_dep_rows",
+            Self::PackQuarantineRows => "pack_quarantine_rows",
+            Self::LexicalHintRows => "lexical_hint_rows",
+            Self::AnswerReceiptRows => "answer_receipt_rows",
+            Self::MinerArtifactRows => "miner_artifact_rows",
+            Self::ChildOfMapEntries => "child_of_map_entries",
+            Self::TemporalSpannerRows => "temporal_spanner_rows",
+            Self::OccurredRangeRows => "occurred_range_rows",
+            Self::BlendTuningRuns => "blend_tuning_runs",
+            Self::DreamerRetryPeers => "dreamer_retry_peers",
             Self::PendingGateConsentRows => "pending_gate_consent_rows",
             Self::TaskCensusRows => "task_census_rows",
             Self::AskWordRows => "ask_word_rows",
@@ -164,6 +210,17 @@ impl EngineScan {
             Self::ScopedEdgeRows => 22,
             Self::MachineRows => 23,
             Self::AccessGrantRows => 24,
+            Self::MentionRows => 48,
+            Self::PprCacheDepRows => 49,
+            Self::PackQuarantineRows => 50,
+            Self::LexicalHintRows => 51,
+            Self::AnswerReceiptRows => 52,
+            Self::MinerArtifactRows => 53,
+            Self::ChildOfMapEntries => 54,
+            Self::TemporalSpannerRows => 55,
+            Self::OccurredRangeRows => 56,
+            Self::BlendTuningRuns => 57,
+            Self::DreamerRetryPeers => 58,
             Self::PendingGateConsentRows => 25,
             Self::TaskCensusRows => 32,
             Self::AskWordRows => 33,
