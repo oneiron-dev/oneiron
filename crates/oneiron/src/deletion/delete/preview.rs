@@ -1,17 +1,21 @@
 //! Snapshot-bound impact preview for the one-action, confirmed delete door.
 
+use super::impact::{HeldBytes, LfsChunkImpact, bytes_impact_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// Explicit brief grant recipients, plus the warning that delivered foreign
-/// copies cannot be recalled. No raw content is retained in this preview.
+/// copies cannot be recalled, and which bytes the record shares with others.
+/// No raw content is retained in this preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteEntityPreview {
     entity: EntityId,
     fingerprint: [u8; 32],
     note_fingerprint: Option<[u8; 32]>,
     shared_with: Vec<(EntityId, EntityId)>,
+    held_bytes: Vec<HeldBytes>,
+    lfs_chunks: Vec<LfsChunkImpact>,
 }
 
 impl DeleteEntityPreview {
@@ -30,7 +34,34 @@ impl DeleteEntityPreview {
         true
     }
 
-    /// The preview cannot name a different body or an added/removed grant.
+    /// Each content hash this blob record holds, with the other records in
+    /// this vault holding the same bytes. Empty for a record that holds none.
+    pub fn held_bytes(&self) -> &[HeldBytes] {
+        &self.held_bytes
+    }
+
+    /// One row per distinct chunk when this record is an LFS object's
+    /// manifest; empty otherwise.
+    pub fn lfs_chunks(&self) -> &[LfsChunkImpact] {
+        &self.lfs_chunks
+    }
+
+    /// Every other record holding any of this record's blob bytes, sorted:
+    /// what an erase with the same-bytes flag also takes. LFS chunks are never
+    /// in it: an object sharing a chunk holds different contents.
+    pub fn same_bytes_matches(&self) -> Vec<EntityId> {
+        let mut matches: Vec<EntityId> = self
+            .held_bytes
+            .iter()
+            .flat_map(|row| row.other_holders().iter().copied())
+            .collect();
+        matches.sort_unstable();
+        matches.dedup();
+        matches
+    }
+
+    /// The preview cannot name a different body, an added/removed grant, or
+    /// a changed set of records sharing its bytes.
     pub(crate) fn check_before_unshare(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         self.check_body(vault, txn)?;
         if crate::share::active_brief_shares_for(
@@ -46,7 +77,8 @@ impl DeleteEntityPreview {
     }
 
     /// Repeated in every destructive transaction by the owner-gated delete
-    /// rail; a new active grant or a changed body refuses before publication.
+    /// rail; a new active grant, a changed body, or a changed set of records
+    /// sharing its bytes refuses before publication.
     pub(crate) fn check_after_unshare(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         self.check_body(vault, txn)?;
         if !crate::share::active_brief_shares_for(
@@ -71,6 +103,10 @@ impl DeleteEntityPreview {
         {
             return Err(Error::ConcurrentWrite("delete preview stale"));
         }
+        let (held_bytes, lfs_chunks) = bytes_impact_in_txn(vault, txn, &self.entity, &raw)?;
+        if held_bytes != self.held_bytes || lfs_chunks != self.lfs_chunks {
+            return Err(Error::ConcurrentWrite("delete preview stale"));
+        }
         Ok(())
     }
 }
@@ -90,6 +126,7 @@ impl Vault {
             id,
             self.store.clock.now_recorded_at(),
         )?;
+        let (held_bytes, lfs_chunks) = bytes_impact_in_txn(self, txn, id, &raw)?;
         Ok(DeleteEntityPreview {
             entity: *id,
             fingerprint: *blake3::hash(&raw).as_bytes(),
@@ -97,6 +134,8 @@ impl Vault {
                 self, txn, *id, &raw,
             )?,
             shared_with,
+            held_bytes,
+            lfs_chunks,
         })
     }
 }

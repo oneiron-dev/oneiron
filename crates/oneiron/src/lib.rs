@@ -203,6 +203,7 @@ pub mod git_wire;
 pub mod merge_queue;
 pub mod origin;
 pub mod repo_mutation;
+pub mod scan_check;
 pub mod scope_summary;
 pub mod secret_custody;
 pub mod secret_lease;
