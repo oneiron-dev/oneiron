@@ -213,6 +213,9 @@ side_tables! {
     CHECKOUT_SETTLEMENT: VaultMeta b"checkout:settlement:v1:" Raw;
     /// Retired checkout epoch high-water mark. Key: hex32.
     CHECKOUT_TOMBSTONE: VaultMeta b"checkout:tombstone:v1:" Raw;
+    /// The vault's last sealed checkpoint: its sequence and signed commitment's
+    /// BLAKE3, which the next one names as predecessor (OF-570 (e)). Key: ().
+    CHECKPOINT_CHAIN_HEAD: VaultMeta b"checkpoint_chain:head:v1" Named;
     /// Two-slot channel assignment index: occupant id16 then predecessor id16, all-zero for an
     /// empty slot. Key: bytes32 (blake3 of the length-framed channel and address).
     CHANNEL_IDENTITY_ASSIGNMENT: VaultMeta b"cid_assign:v1:" Raw;

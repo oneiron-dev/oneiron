@@ -62,7 +62,8 @@ is written under a hidden partial name and renamed into place only once complete
 is sealed: the records and the result bodies they name are one file of encrypted chunks under a
 key derived from the vault's data key, and a restore checks the whole file before it makes
 anything. The first backup mints that data key, wrapped to this device's keystore, when the vault
-has none; a rehearsal or a restore on this device unlocks it from that wrap (see *Limits*).
+has none; a rehearsal or a restore on this device unlocks it from that wrap (see *Limits*). The
+install that takes a backup signs it, and a restore checks that signature first.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -638,5 +639,6 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - Backups open only on the device that took them for now: the CLI unlocks the backup's key with
   this device's keystore at its default location, and takes no password, passkey or escrow
   secret yet. A server with `[keystore] backend = "off"` cannot take a backup.
-- A backup is encrypted, not yet signed: anyone who holds the vault's data key could write one
-  that restores.
+- A backup is signed (Ed25519 and SLH-DSA) by the install that took it, and chained to the one
+  before it. A restore refuses a signer it does not trust: the CLI trusts only the signers this
+  device's keystore holds, so a backup another machine signed does not restore here yet.

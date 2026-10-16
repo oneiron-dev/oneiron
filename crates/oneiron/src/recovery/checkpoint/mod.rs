@@ -12,9 +12,12 @@
 //!
 //! Nothing leaves in the clear: the image and its bodies are one sealed
 //! artifact under a key derived from the vault data key (`artifact`), opened
-//! and checked whole before anything is decoded or made.
+//! and checked whole before anything is decoded or made. Each one is
+//! dual-signed by the install that took it and chained to the vault's last
+//! (`commitment`); a restore refuses a signer its key does not trust.
 mod artifact;
 mod authority_plane;
+mod commitment;
 mod decisions;
 mod rebuild;
 mod restore_class;
@@ -29,6 +32,7 @@ use std::{
     path::{Path, PathBuf},
 };
 pub use artifact::{ArtifactKind, CheckpointKey};
+pub use commitment::CheckpointSigner;
 pub use tiers::{StorageTier, storage_tier};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -276,13 +280,19 @@ impl Vault {
         kind: ArtifactKind,
     ) -> Result<String> {
         self.unlock_vault_key()?;
+        let keys = self.checkpoint_signing_keys()?;
         let _custody = self.store.gate_custody_read_guard()?;
         let txn = self.store.env.read_txn()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &txn)?;
         }
-        // The vault key's wraps the artifact carries are the rows' own.
+        // The vault key's wraps the artifact carries are the rows' own, and
+        // so is the chain it extends.
         let (carried, key) = self.checkpoint_seal_in_txn(&txn)?;
+        let link = commitment::Link {
+            keys,
+            head: self.checkpoint_chain_in_txn(&txn)?,
+        };
         // Refuse a checkpoint that cannot read CURRENT exterior custody; it
         // cannot package key bytes to paper over a missing/shredded key.
         self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
@@ -412,16 +422,22 @@ impl Vault {
             let _ = (digest, len);
             Err(Error::CorruptedIndex("code-run result body file missing"))
         };
-        let id = artifact::write_artifact(
+        let (id, head) = artifact::write_artifact(
             path,
             &key,
             kind,
             &carried,
+            &link,
             created_at,
             &bytes,
             &image.bodies,
             open_body,
         )?;
+        // A checkpoint the chain does not take is no checkpoint.
+        if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
+            let _ = std::fs::remove_file(path);
+            return Err(error);
+        }
         Ok(blake3::Hash::from(id).to_hex().to_string())
     }
     /// Restore, wake and migrate use the same fail-closed path, with no tail replay.
