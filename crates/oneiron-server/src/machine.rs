@@ -194,6 +194,14 @@ impl DiskFloor {
     }
 }
 
+/// What a git exchange holds past memory keeps the reserve uploads keep,
+/// counting the room they have claimed.
+impl oneiron::origin::smart_http::SpillFloor for DiskFloor {
+    fn has_room_for(&self, bytes: u64) -> bool {
+        DiskFloor::has_room_for(self, bytes)
+    }
+}
+
 impl Drop for DiskClaim {
     fn drop(&mut self) {
         let mut claimed = lock(&self.claimed);

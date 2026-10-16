@@ -489,6 +489,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ORIGIN_CAS_BACKFILL",
         "ORIGIN_LFS_GC_QUEUE",
         "ORIGIN_LFS_UPLOAD_JOURNAL",
+        "ORIGIN_RECEIVE_PACK_PROGRESS",
         "ORIGIN_SCAN_CHECK",
         "ORIGIN_SCAN_POLICY",
         "OUTBOUND_AUTHORIZED_RECOVERY_LEASE",

@@ -69,13 +69,14 @@ pub const DOOR_PRE_RECEIVE_HOOK_NAME: &str = "pre-receive";
 /// Longest repository name the origin will resolve.
 pub const ORIGIN_MAX_REPO_NAME_BYTES: usize = 100;
 
-/// The most ref moves one push may propose.
+/// The most refs one step of the landing handles at once.
 ///
-/// It mirrors GitWire's publication bound, because the landing publishes what
-/// the push moved through exactly one publication set: a batch the landing
-/// could not carry is refused BEFORE `git receive-pack` moves anything, rather
-/// than discovered after the refs are already elsewhere.
-pub const ORIGIN_MAX_REF_UPDATES: usize = 64;
+/// A push may move any number of refs. The landing publishes each through its
+/// own publication set, reads the refs a push named this many to a git
+/// command, and saves the push's journal once per this many refs, so neither
+/// a command it runs nor the journal writes per ref grow with the push. It
+/// matches GitWire's publication bound.
+pub const ORIGIN_REF_UPDATE_BATCH: usize = 64;
 
 /// The ref namespace this origin never lets a push write.
 ///
@@ -85,10 +86,10 @@ pub const ORIGIN_MAX_REF_UPDATES: usize = 64;
 /// bytes nobody is landing.
 pub const ORIGIN_REFUSED_REF_PREFIX: &str = "refs/replace/";
 
-/// Bound on a receive-pack's command section, read ahead of the backend to
-/// refuse a push certificate. [`ORIGIN_MAX_REF_UPDATES`] commands with their
-/// capabilities fit many times over.
-pub(super) const ORIGIN_MAX_COMMAND_SECTION_BYTES: usize = 1024 * 1024;
+/// How much of a receive-pack's command section, read ahead of the backend to
+/// refuse a push certificate, is held in memory. The rest is held in an
+/// unnamed file in the door root: a push may name any number of refs.
+pub(super) const ORIGIN_COMMAND_SECTION_MEMORY_BYTES: usize = 1024 * 1024;
 
 /// Bound on the CGI header block. This bounds a protocol preamble, not a body:
 /// request and response bodies stream unbounded and unbuffered.
@@ -210,7 +211,7 @@ pub fn origin_serving_root(vault: &Vault) -> Result<PathBuf> {
 
 /// The per-request door root. Never inside the serving root, so it is never
 /// addressable as a repository.
-pub(super) fn origin_door_root(vault: &Vault) -> Result<PathBuf> {
+pub fn origin_door_root(vault: &Vault) -> Result<PathBuf> {
     let root = vault.store.env.path().join(ORIGIN_DOOR_ROOT_NAME);
     fs::create_dir_all(&root)?;
     Ok(root.canonicalize()?)

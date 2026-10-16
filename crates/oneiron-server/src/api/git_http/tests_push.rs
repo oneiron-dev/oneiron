@@ -1,12 +1,15 @@
 //! Push round-trip and status-codec tests for Git smart-HTTP.
 
-use super::serve::{GIT_HTTP_MAX_HELD_BYTES, ResponseHead, landed_response, serve_failure};
-use super::status_codec::{append_status_packet, rewrite_receive_pack_status, status_packet};
-use axum::body::Bytes;
+use super::serve::{ResponseHead, landed_response, serve_failure};
+use super::status_codec::{
+    append_status_packet, rewrite_status_bytes as rewrite_receive_pack_status, status_packet,
+};
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::http::header::CONTENT_TYPE;
 use oneiron::origin::smart_http;
+use oneiron::origin::smart_http::HeldBytes;
+use std::io::Write;
 
 #[cfg(test)]
 mod tests {
@@ -24,11 +27,16 @@ mod tests {
         )
     }
 
+    /// `bytes`, held in memory as a push's report is.
+    fn held(bytes: &[u8]) -> HeldBytes {
+        let mut held = HeldBytes::new(usize::MAX, None);
+        held.write_all(bytes).expect("held in memory");
+        held
+    }
+
     /// The status report `git receive-pack` produces for a push it accepted.
-    fn receive_pack_report() -> Vec<Bytes> {
-        vec![Bytes::from_static(
-            b"000eunpack ok\n0019ok refs/heads/main\n0000",
-        )]
+    fn receive_pack_report() -> HeldBytes {
+        held(b"000eunpack ok\n0019ok refs/heads/main\n0000")
     }
 
     fn landed_report() -> smart_http::ServeReport {
@@ -76,7 +84,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn git_http_partial_push_keeps_each_ref_status_and_removes_stale_length() {
+    async fn git_http_partial_push_keeps_each_ref_status_and_replaces_stale_length() {
         let mut report = landed_report();
         report.ref_results = partial_ref_results();
         let body = status_body(&[
@@ -87,24 +95,25 @@ mod tests {
         ]);
         let (status, mut headers) = receive_pack_head();
         headers.push(("Content-Length".to_owned(), body.len().to_string()));
-        let response = landed_response(
-            Some((status, headers)),
-            vec![Bytes::from(body)],
-            Ok(Ok(report)),
-        );
+        let response = landed_response(Some((status, headers)), held(&body), Ok(Ok(report)));
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.headers().get(CONTENT_LENGTH).is_none());
-        let actual = axum::body::to_bytes(response.into_body(), GIT_HTTP_MAX_HELD_BYTES)
+        let rewritten = status_body(&[
+            "ok refs/heads/first\n",
+            "ng refs/heads/second publication pending; ref effects may exist\n",
+            "ng refs/heads/third ref was not applied\n",
+        ]);
+        assert_eq!(
+            response
+                .headers()
+                .get_all(CONTENT_LENGTH)
+                .iter()
+                .collect::<Vec<_>>(),
+            [rewritten.len().to_string().as_str()]
+        );
+        let actual = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body");
-        assert_eq!(
-            actual.as_ref(),
-            status_body(&[
-                "ok refs/heads/first\n",
-                "ng refs/heads/second publication pending; ref effects may exist\n",
-                "ng refs/heads/third ref was not applied\n",
-            ])
-        );
+        assert_eq!(actual.as_ref(), rewritten);
     }
 
     #[test]
@@ -177,13 +186,9 @@ mod tests {
             .expect("fatal");
         append_status_packet(&mut framed, &[]).expect("flush");
         assert!(rewrite_receive_pack_status(&framed, &report.ref_results).is_none());
-        let response = landed_response(
-            Some(receive_pack_head()),
-            vec![Bytes::from(framed)],
-            Ok(Ok(report)),
-        );
+        let response = landed_response(Some(receive_pack_head()), held(&framed), Ok(Ok(report)));
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = axum::body::to_bytes(response.into_body(), GIT_HTTP_MAX_HELD_BYTES)
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body");
         assert_eq!(
