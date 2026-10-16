@@ -335,6 +335,8 @@ side_tables! {
     ESIGN_CAPABILITY_TOKEN: VaultMeta b"esign.capability.v1/" LegacyJson;
     /// Esign outbound dispatch marker. Key: bytes32.
     ESIGN_DISPATCH_MARKER: VaultMeta b"esign.dispatch.v1/" Raw;
+    /// Held automated sign act, one per recipient. Key: hex32/string.
+    ESIGN_HELD_SIGNING: VaultMeta b"esign.held_signing.v1/" Named;
     /// Signature image byte budget. Key: id16.
     ESIGN_IMAGE_BYTES_BUDGET: VaultMeta b"esign.image_bytes.v1/" Raw;
     /// Signing principal set owner stamp. Key: ().
