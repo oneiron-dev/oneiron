@@ -376,7 +376,8 @@ fn stage_run_results(
         let Some(content) = contents.get(output.blake3.as_str()) else {
             continue;
         };
-        if content.len() as u64 != output.bytes || *blake3::hash(content.as_bytes()).as_bytes() != digest
+        if content.len() as u64 != output.bytes
+            || *blake3::hash(content.as_bytes()).as_bytes() != digest
         {
             return Err(invalid("run result body does not match its digest"));
         }

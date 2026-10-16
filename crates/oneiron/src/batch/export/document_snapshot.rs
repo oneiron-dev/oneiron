@@ -283,7 +283,10 @@ impl Vault {
     fn export_run_results_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
-    ) -> Result<(Vec<ExportSnapshotRun>, BTreeMap<[u8; 32], ExportSnapshotBody>)> {
+    ) -> Result<(
+        Vec<ExportSnapshotRun>,
+        BTreeMap<[u8; 32], ExportSnapshotBody>,
+    )> {
         let mut runs = Vec::new();
         let mut bodies = BTreeMap::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {

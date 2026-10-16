@@ -245,7 +245,11 @@ impl Vault {
 
     /// Writes `bytes` as a complete body at `path`: a file, past the inline
     /// bound, is whole on disk when this returns, and no row names it yet.
-    pub(crate) fn stage_code_run_output(&self, path: String, bytes: &[u8]) -> Result<FinishedOutput> {
+    pub(crate) fn stage_code_run_output(
+        &self,
+        path: String,
+        bytes: &[u8],
+    ) -> Result<FinishedOutput> {
         let mut sink = self.code_run_output_sink()?;
         sink.write(bytes)?;
         finish_output(path, sink, true, self.limit_watch())

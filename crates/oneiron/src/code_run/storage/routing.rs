@@ -12,8 +12,7 @@ use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunRep
 use super::super::support::invalid_code_run_replay;
 use super::records::{
     MODEL_HEAL_COUNTS, RAW_OUTPUT_SECRETS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output,
-    load_whole_body,
-    next_additive_heal_count, read_body_row_range, replay_generation_matches,
+    load_whole_body, next_additive_heal_count, read_body_row_range, replay_generation_matches,
 };
 use super::speech_identity::{
     canonical_witness_executor_turn, executor_speech_message_id_for_run, executor_speech_turn_id,
@@ -236,8 +235,7 @@ impl SessionBinding<'_> {
     fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let finished =
-            finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
+        let finished = finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
         if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",

@@ -303,7 +303,7 @@ impl CodeRunStepCheckpoint {
 }
 
 /// The preview text of a body the secret scan marked.
-pub const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
+pub(crate) const CODE_RUN_OUTPUT_PREVIEW_WITHHELD: &str =
     "[preview withheld: the secret scan found a secret in this result]";
 
 /// Compact preview stored in a replay record beside a raw output handle.

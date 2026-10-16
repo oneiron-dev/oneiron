@@ -12,8 +12,8 @@ use super::yaml_format::write_yaml_groups;
 use crate::batch::export::ExportSnapshot;
 use crate::batch::export::{
     ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportResultBody, ExportRun,
-    ExportRunOutput, ExportRunResults, ExportSourceVault,
-    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
+    ExportRunOutput, ExportRunResults, ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION,
+    WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
 };
 use crate::context_pack::PackFormat;
 use crate::error::{Error, Result};
@@ -190,7 +190,8 @@ fn export_run_results(
                     Ok(bytes) => match String::from_utf8(bytes) {
                         Err(_) => (None, Some("binary")),
                         Ok(text) => {
-                            match crate::batch::secret_scan::scan_file_content("", text.as_bytes()) {
+                            match crate::batch::secret_scan::scan_file_content("", text.as_bytes())
+                            {
                                 Some(_) => (None, Some("credential")),
                                 None => (Some(text), None),
                             }
