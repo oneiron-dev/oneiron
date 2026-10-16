@@ -496,14 +496,14 @@ pub(super) fn parent_bounds(
     Ok(Ok(()))
 }
 
-/// Picks the root (a seal tip, else the one birth) and walks to the head.
-/// `Err` carries a frontier with no signed root.
+/// Picks the root (the one seal no seal retires, else the one birth) and
+/// walks to the head. `Err` carries a frontier with no signed root.
 fn root_and_walk(
     cx: &FoldCx<'_, '_, '_>,
     stored: &ProjectRecord,
 ) -> Result<std::result::Result<Walk, ProjectFrontier>> {
     let held = cx.held;
-    let mut seals = BTreeSet::new();
+    let seals = cx.seal_status()?;
     let mut births = BTreeSet::new();
     // Without a root, the first reason in hash order a root candidate waits
     // or fails for: the same set gives the same reason.
@@ -512,15 +512,11 @@ fn root_and_walk(
     let mut signed_history = false;
     for (hash, row) in &held.rows {
         match &row.revision {
-            ProjectRevision::Seal { .. } => match cx.verdict(*hash)? {
-                ProjectVerdict::Visible => {
-                    seals.insert(*hash);
-                }
-                ProjectVerdict::Pending(why) => {
+            ProjectRevision::Seal { .. } => {
+                if let Some(ProjectVerdict::Pending(why)) = seals.envelope(hash) {
                     pending.get_or_insert(why);
                 }
-                ProjectVerdict::Quarantined(_) => {}
-            },
+            }
             ProjectRevision::Signed { parent, .. } => {
                 if cx.origin(*hash)? == RevisionOrigin::Authenticated {
                     signed_history = true;
@@ -561,18 +557,33 @@ fn root_and_walk(
             ProjectRevision::Resolution { .. } => {}
         }
     }
-    let (root, seal) = if !seals.is_empty() {
-        let tips = seal_tips(cx)?;
-        let mut only = tips.iter();
+    let (root, seal) = if !seals.tips.is_empty() {
+        let mut only = seals.tips.iter();
         match (only.next(), only.next()) {
-            (Some(tip), None) => match cx.row(tip) {
-                Some(ProjectRevision::Seal { seal, .. }) => (seal.next, Some(*tip)),
-                _ => return Ok(Err(no_root(cx.id, reason::SEAL_NEXT))),
+            // The one seal no seal retires roots the fold only where its
+            // target stands. Otherwise the project holds: it never falls back
+            // to a seal it retired, nor to the births it re-rooted (ruling (c)).
+            (Some(tip), None) => match (cx.verdict(*tip)?, cx.row(tip)) {
+                (ProjectVerdict::Visible, Some(ProjectRevision::Seal { seal, .. })) => {
+                    (seal.next, Some(*tip))
+                }
+                (ProjectVerdict::Pending(why), _) => {
+                    return Ok(Err(ProjectFrontier {
+                        id: cx.id,
+                        disposition: ProjectDisposition::pending(why),
+                        witness: None,
+                        effective: None,
+                    }));
+                }
+                (ProjectVerdict::Quarantined(why), _) => return Ok(Err(no_root(cx.id, why))),
+                (ProjectVerdict::Visible, _) => return Ok(Err(no_root(cx.id, reason::SEAL_NEXT))),
             },
             _ => {
                 return Ok(Err(ProjectFrontier {
                     id: cx.id,
-                    disposition: ProjectDisposition::ConflictingSeals { seals: tips },
+                    disposition: ProjectDisposition::ConflictingSeals {
+                        seals: seals.tips.clone(),
+                    },
                     witness: None,
                     effective: None,
                 }));
@@ -746,35 +757,4 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
     let counted = counted_set(cx)?;
     fold.evidence = ProjectEvidenceSet::of(walk.map(|walk| walk.root), &counted);
     Ok(())
-}
-
-/// The valid seals no valid seal supersedes. Seals are judged oldest first:
-/// a valid seal supersedes only older ones, so each link of a long chain is
-/// already judged when the next is, and the depth guard never cuts it.
-pub(super) fn seal_tips(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
-    let mut held: Vec<(u64, ProjectRevisionHash, &ProjectSeal)> = cx
-        .held
-        .seals
-        .iter()
-        .filter_map(|hash| match cx.row(hash) {
-            Some(ProjectRevision::Seal { seal, .. }) => Some((seal.signed_at, *hash, seal)),
-            _ => None,
-        })
-        .collect();
-    held.sort_by_key(|(signed_at, hash, _)| (*signed_at, *hash));
-    let mut seals = BTreeMap::new();
-    for (_, hash, seal) in held {
-        if cx.verdict(hash)? == ProjectVerdict::Visible {
-            seals.insert(hash, seal);
-        }
-    }
-    let superseded: BTreeSet<ProjectRevisionHash> = seals
-        .values()
-        .flat_map(|seal| seal.supersedes.iter().copied())
-        .collect();
-    Ok(seals
-        .keys()
-        .filter(|hash| !superseded.contains(hash))
-        .copied()
-        .collect())
 }

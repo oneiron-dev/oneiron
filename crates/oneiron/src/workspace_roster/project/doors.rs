@@ -142,10 +142,12 @@ impl Vault {
 
     /// The owner's seal (ruling F2 condition 2, decision 10). The door builds
     /// `next` with `authority` over the held revision `over`, stores it as the
-    /// PROJECT row (content kept), and seals it with `supersedes` = the
-    /// current seal tips. The owner-project signer signs both the state and
-    /// the seal (decision 3). A snapshot already held is never published
-    /// again, and seals move strictly forward in time.
+    /// PROJECT row (content kept), and seals it with `supersedes` = every
+    /// owner seal no seal retires yet, whether or not its target stands: an
+    /// undefined seal is retired, never made to look valid (ruling (c)). The
+    /// owner-project signer signs both the state and the seal (decision 3). A
+    /// snapshot already held is never published again, and seals move
+    /// strictly forward in time.
     pub fn seal_project(
         &self,
         owner: &AuthenticatedOwner,
@@ -175,7 +177,7 @@ impl Vault {
                 }
                 let anchor = revision::anchor_of(&held, over)
                     .ok_or_else(|| unresolved(id, "a seal builds on a held state"))?;
-                let supersedes = cx.seal_tips()?;
+                let supersedes = cx.seal_status()?.tips.clone();
                 for tip in &supersedes {
                     if let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip)
                         && seal.signed_at >= signed_at
@@ -243,7 +245,7 @@ impl Vault {
             let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?;
             let held = held_in_txn(&self.store, txn, id, kind)?;
-            let sealed = reader.door_cx(id, &held)?.seal_tips()?
+            let sealed = reader.door_cx(id, &held)?.seal_status()?.tips
                 == std::collections::BTreeSet::from([envelope_hash]);
             let installed = sealed
                 && reader.frontier(id)?.is_some_and(|frontier| {

@@ -38,6 +38,26 @@ pub(super) struct Settlement {
     pub(super) superseded: BTreeSet<ProjectRevisionHash>,
 }
 
+/// The owner's seals over one held set (ruling (c)). Retiring a seal is
+/// apart from rooting at one: neither set asks whether a seal's target stands.
+#[derive(Default)]
+pub(super) struct SealStatus {
+    /// Each held seal's envelope: signed by the owner, waiting, or of no effect.
+    envelopes: BTreeMap<ProjectRevisionHash, ProjectVerdict>,
+    /// The seals an authorized seal supersedes: never a root candidate.
+    pub(super) retired: BTreeSet<ProjectRevisionHash>,
+    /// The authorized seals none retires: one roots only where its target
+    /// stands, and two or more conflict.
+    pub(super) tips: BTreeSet<ProjectRevisionHash>,
+}
+
+impl SealStatus {
+    /// One held seal's envelope verdict.
+    pub(super) fn envelope(&self, hash: &ProjectRevisionHash) -> Option<ProjectVerdict> {
+        self.envelopes.get(hash).copied()
+    }
+}
+
 /// How a fold reads the parent projects a signed state must fit under.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Parents {
@@ -65,6 +85,8 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     /// whether its successor stands in this fold (ruling (b)).
     envelopes: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     signers: RefCell<BTreeMap<ProjectRevisionHash, String>>,
+    /// The owner's seals, judged once per fold.
+    seals: RefCell<Option<Rc<SealStatus>>>,
     /// Per tree root: its exclusions, and each node's fork.
     pub(super) exclusions: RefCell<BTreeMap<ProjectRevisionHash, Rc<Exclusion>>>,
     pub(super) forks: RefCell<BTreeMap<(ProjectRevisionHash, ProjectRevisionHash), Rc<Fork>>>,
@@ -92,6 +114,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             verdicts: RefCell::new(BTreeMap::new()),
             envelopes: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
+            seals: RefCell::new(None),
             exclusions: RefCell::new(BTreeMap::new()),
             forks: RefCell::new(BTreeMap::new()),
             depth: Cell::new(0),
@@ -580,7 +603,43 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         Ok(ProjectVerdict::Visible)
     }
 
+    /// A seal roots a fold when the owner signed it and its target is a
+    /// valid owner state here; whether a later seal retires it is the seal
+    /// status's question (ruling (c)).
     fn seal(&self, hash: ProjectRevisionHash, seal: &ProjectSeal) -> Result<ProjectVerdict> {
+        match self.seal_status()?.envelope(&hash) {
+            Some(ProjectVerdict::Visible) => {}
+            Some(verdict) => return Ok(verdict),
+            None => return Ok(ProjectVerdict::Pending(reason::NOT_HELD)),
+        }
+        Ok(match self.verdict(seal.next)? {
+            ProjectVerdict::Visible => ProjectVerdict::Visible,
+            pending @ ProjectVerdict::Pending(_) => pending,
+            ProjectVerdict::Quarantined(_) => ProjectVerdict::Quarantined(reason::SEAL_NEXT),
+        })
+    }
+
+    /// Whether the owner signed the seal `hash` (ruling (c)): held and
+    /// authenticated, the host's slip signing it in scope with its target's
+    /// slip, over held earlier seals strictly before it. No target's verdict
+    /// is asked, its own or an earlier seal's: a forward supersession retires
+    /// the seals it names whether or not their targets stand, and a missing
+    /// one waits.
+    fn seal_envelope(
+        &self,
+        hash: ProjectRevisionHash,
+        seal: &ProjectSeal,
+    ) -> Result<ProjectVerdict> {
+        match self.origin(hash)? {
+            RevisionOrigin::Authenticated => {}
+            RevisionOrigin::AwaitingParent => {
+                return Ok(ProjectVerdict::Pending(reason::AWAITING_PARENT));
+            }
+            RevisionOrigin::AwaitingMint => {
+                return Ok(ProjectVerdict::Pending(reason::AWAITING_MINT));
+            }
+            RevisionOrigin::Forged => return Ok(ProjectVerdict::Quarantined(reason::FORGED)),
+        }
         let Some(next) = self.row(&seal.next) else {
             return Ok(ProjectVerdict::Pending(reason::NOT_HELD));
         };
@@ -609,13 +668,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         if holder.actor != "host" {
             return Ok(ProjectVerdict::Quarantined(reason::SEAL_SIGNER));
         }
-        match self.verdict(seal.next)? {
-            ProjectVerdict::Visible => {}
-            pending @ ProjectVerdict::Pending(_) => return Ok(pending),
-            ProjectVerdict::Quarantined(_) => {
-                return Ok(ProjectVerdict::Quarantined(reason::SEAL_NEXT));
-            }
-        }
         for earlier in &seal.supersedes {
             let earlier_at = match self.row(earlier) {
                 None => return Ok(ProjectVerdict::Pending(reason::NOT_HELD)),
@@ -625,15 +677,36 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             if seal.signed_at <= earlier_at {
                 return Ok(ProjectVerdict::Quarantined(reason::SEAL_ORDER));
             }
-            match self.verdict(*earlier)? {
-                ProjectVerdict::Visible => {}
-                pending @ ProjectVerdict::Pending(_) => return Ok(pending),
-                ProjectVerdict::Quarantined(_) => {
-                    return Ok(ProjectVerdict::Quarantined(reason::SEAL_SUPERSEDES));
-                }
-            }
         }
         Ok(ProjectVerdict::Visible)
+    }
+
+    /// The owner's seals over this held set: the same in every world of a
+    /// component, since no target's verdict enters it (ruling (c)).
+    pub(super) fn seal_status(&self) -> Result<Rc<SealStatus>> {
+        if let Some(known) = self.seals.borrow().as_ref() {
+            return Ok(Rc::clone(known));
+        }
+        let mut status = SealStatus::default();
+        for hash in &self.held.seals {
+            let Some(ProjectRevision::Seal { seal, .. }) = self.row(hash) else {
+                continue;
+            };
+            let verdict = self.seal_envelope(*hash, seal)?;
+            if verdict == ProjectVerdict::Visible {
+                status.retired.extend(seal.supersedes.iter().copied());
+            }
+            status.envelopes.insert(*hash, verdict);
+        }
+        status.tips = (status.envelopes.iter())
+            .filter(|(hash, verdict)| {
+                **verdict == ProjectVerdict::Visible && !status.retired.contains(*hash)
+            })
+            .map(|(hash, _)| *hash)
+            .collect();
+        let status = Rc::new(status);
+        *self.seals.borrow_mut() = Some(Rc::clone(&status));
+        Ok(status)
     }
 
     /// The valid signed children of `node`.
@@ -741,11 +814,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             }
         }
         Ok(valid)
-    }
-
-    /// The valid seals no valid seal supersedes.
-    pub(super) fn seal_tips(&self) -> Result<BTreeSet<ProjectRevisionHash>> {
-        super::fold::seal_tips(self)
     }
 
     pub(super) fn authority_of(&self, hash: &ProjectRevisionHash) -> Option<&'r ProjectAuthority> {
