@@ -25,6 +25,7 @@ pub(super) fn http_transport_context(
         source_ip,
         authenticated_actor_ref: None,
         credential: Some(auth.principal().to_owned()),
+        owner_grade: auth.is_owner_grade(),
         transport: BookingTransport::PublicHttp,
     })
 }

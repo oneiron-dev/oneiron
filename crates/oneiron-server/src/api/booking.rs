@@ -129,6 +129,10 @@ pub(crate) struct BookingTransportContext {
     /// for an anonymous visitor. It keys its own budget, and past a window it
     /// waits for it to open.
     pub(crate) credential: Option<String>,
+    /// Whether that credential is owner-grade. Such a caller books for the
+    /// owner and is not held to the per-email cap on active bookings, which
+    /// sheds anonymous visitors.
+    pub(crate) owner_grade: bool,
     pub(crate) transport: BookingTransport,
 }
 

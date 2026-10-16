@@ -269,6 +269,7 @@ fn public_http_transport_context(
         source_ip,
         authenticated_actor_ref: None,
         credential: None,
+        owner_grade: false,
         transport: BookingTransport::AnonymousHttp,
     })
 }
