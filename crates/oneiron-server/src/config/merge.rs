@@ -85,6 +85,8 @@ impl EnvConfig {
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.artifact_domains = lookup_list(&mut lookup, "ONEIRON_ARTIFACT_DOMAINS");
+        values.artifact_vault_name = lookup("ONEIRON_ARTIFACT_VAULT_NAME");
         values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
@@ -286,6 +288,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.keystore.validate()?;
     config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
+    if let Some(browser) = &config.browser {
+        browser.validate()?;
+    }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -459,6 +464,8 @@ struct FileServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    artifact_domains: Option<Vec<String>>,
+    artifact_vault_name: Option<String>,
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
@@ -490,6 +497,7 @@ struct FileServeConfig {
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
+    browser: Option<super::BrowserConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -509,6 +517,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            artifact_domains: value.artifact_domains,
+            artifact_vault_name: value.artifact_vault_name,
             trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
@@ -540,6 +550,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             limits: value.limits,
             import: value.import,
             models: None,
+            browser: value.browser,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -560,6 +571,8 @@ struct PartialServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    artifact_domains: Option<Vec<String>>,
+    artifact_vault_name: Option<String>,
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
@@ -592,6 +605,8 @@ struct PartialServeConfig {
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
+    /// `[browser]` is file-only, as `[models]` is.
+    browser: Option<super::BrowserConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -611,6 +626,8 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("artifact_domains", &self.artifact_domains)
+            .field("artifact_vault_name", &self.artifact_vault_name)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
@@ -654,6 +671,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
+            .field("browser", &self.browser)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -694,6 +712,16 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.artifact_domains {
+            resolved.artifact_domains = normalize_list(value);
+        }
+        if let Some(value) = self.artifact_vault_name {
+            let value = value.trim().to_ascii_lowercase();
+            if !oneiron_vault_contract::valid_vault_name(&value) {
+                anyhow::bail!("artifact_vault_name must be a DNS label of [a-z0-9-]");
+            }
+            resolved.artifact_vault_name = Some(value);
         }
         if let Some(value) = self.trusted_proxies {
             resolved.trusted_proxies = parse_trusted_proxies(&normalize_list(value))?;
@@ -797,6 +825,9 @@ impl PartialServeConfig {
         if let Some(value) = self.models {
             resolved.models = Some(value);
         }
+        if let Some(value) = self.browser {
+            resolved.browser = Some(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -831,6 +862,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            artifact_domains: value.artifact_domains.clone(),
+            artifact_vault_name: value.artifact_vault_name.clone(),
             trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
@@ -869,6 +902,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             limits: None,
             import: None,
             models: None,
+            browser: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

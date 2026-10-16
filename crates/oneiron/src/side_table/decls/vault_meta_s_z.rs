@@ -227,6 +227,9 @@ side_tables! {
     /// Persisted hub package sidecar (custom MAGIC-framed binary envelope) for a skill entity. Key:
     /// id16.
     SKILL_HUB_PACKAGE: VaultMeta b"skill_hub/package/v1\0" Raw;
+    /// One hub ref's sync policy and its seen/trusted revisions (ARCH-0053 §7). Key: id16 +
+    /// string ref.
+    SKILL_HUB_REF_SYNC: VaultMeta b"skill_hub/ref-sync/v1\0" LegacyJson;
     /// Refinement-receipt carrier id to the holder (candidate id, 16 bytes) that owns it. Key: id16.
     SKILL_HUB_REFINEMENT_BINDING: VaultMeta b"skill_hub/refinement-binding/v1\0" Raw;
     /// Permanent claim-refinement origin: blake3 (32 bytes) of the first native Proposed bytes. Key:

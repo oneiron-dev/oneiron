@@ -5,6 +5,38 @@ use oneiron::memory::caps::{MAX_BATCH_ENTITIES, MAX_ENTITY_PAYLOAD_BYTES, MAX_QU
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// The route census: every facade verb of the one verb table has its POST
+/// route, and no other verb of the table has one. A GET of a POST-only route
+/// is refused by method, and a GET of an absent route is not found, so no
+/// handler runs.
+#[tokio::test]
+async fn every_facade_verb_has_its_http_post_route() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault"));
+    let server = Arc::new(
+        SyncServer::new(vault, crate::config::SyncServerConfig::default()).expect("server"),
+    );
+    let app = facade_routes().with_state(server);
+    for verb in oneiron::task_verb::sdk::AgentVerb::ALL {
+        let request = Request::get(format!("/{}", verb.as_str()))
+            .body(Body::empty())
+            .expect("request");
+        let status = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("response")
+            .status();
+        let expected = if verb.is_facade() {
+            axum::http::StatusCode::METHOD_NOT_ALLOWED
+        } else {
+            axum::http::StatusCode::NOT_FOUND
+        };
+        assert_eq!(status, expected, "{}", verb.as_str());
+    }
+}
+
 #[tokio::test]
 async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes() {
     const SECRET: &str = "facade-cap-regression-secret";
@@ -738,6 +770,81 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     assert_eq!(bodies[5], json!([["prefs"]]));
     assert_eq!(bodies[10]["existed"], true);
     assert_eq!(bodies[11], Value::Null);
+}
+
+/// Rule five at the keyed filter row: `callers` searches on one credential,
+/// each with a filter past the old 64 KiB ceiling and past a row set to 16
+/// bytes, are all answered, and the row asks.
+pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission::Crossing {
+    use crate::wire_telemetry::LimitRow;
+    use oneiron::limit_ask::EngineLimit;
+    const SECRET: &str = "keyed-row-test-secret";
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = oneiron::VaultConfig::default();
+    config.limits.set(EngineLimit::KeyedFilterJsonBytes, 16);
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let app = crate::build_app(Arc::clone(&server));
+    let token = format!(
+        "{}scope=core:read,core:write;principal_ref={};actor_class=human",
+        crate::test_credentials::RECIPE_PREFIX,
+        actor.to_hex()
+    );
+    let post = |verb: &str, payload: Value| {
+        app.clone().oneshot(crate::test_credentials::bind_request(
+            &server,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Authorization", &token)
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        ))
+    };
+    let put = json!({"namespace":["notes"],"key":"theme","value":{"name":"dark"},"request_id":"filter-row","source":"user_stated"});
+    assert_eq!(
+        post("key_value_put", put).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let mut refused = 0;
+    for n in 0..callers {
+        let filter =
+            json!({"name": "dark", "note": format!("{n}{}", "x".repeat(MAX_ENTITY_PAYLOAD_BYTES))});
+        let search = json!({"namespace_prefix":["notes"],"filter":filter,"limit":10});
+        let response = post("key_value_search", search).await.unwrap();
+        if response.status() != StatusCode::OK {
+            refused += 1;
+            continue;
+        }
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        // The stored value has no `note`, so the whole filter matches nothing.
+        assert_eq!(
+            body,
+            json!([]),
+            "search {n} is answered over its whole filter"
+        );
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: server
+            .wire_telemetry
+            .limit_questions()
+            .latest(LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes))
+            .is_some(),
+    }
 }
 
 #[tokio::test]

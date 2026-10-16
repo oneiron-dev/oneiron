@@ -35,6 +35,8 @@ mod cb_oracle_tasks;
 mod channel_identity_email_adapter_smoke;
 mod channel_identity_slack_adapter_smoke;
 mod code_consent;
+#[cfg(all(feature = "code-sandbox-wasmtime", target_os = "linux"))]
+mod code_mode_result_memory;
 mod collection_bounds;
 mod counterparty_opt_out_shipping_paths_oracle;
 mod decide_path_fitness;
@@ -54,6 +56,7 @@ mod outbound_intent_ledger;
 mod prompt_blocks;
 mod receipt_context;
 mod saved_query_oracle;
+mod self_heal_telemetry_decide;
 mod session_overlay_spec;
 mod skills_epic_oracle;
 mod snapshot_custody_binding;

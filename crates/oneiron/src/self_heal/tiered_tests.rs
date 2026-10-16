@@ -1,43 +1,87 @@
 //! Observable propose-only outputs and reviewed distillation.
 use super::distillation::ClosedFormPredicate;
-use super::tiered::{DetectorPolicy, ProposedTier, TelemetryJudge};
+use super::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
 use super::*;
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBandPolicy, DecisionLadder, DecisionProvider, DecisionQuestion,
+    DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
+};
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 
 struct Grade(bool);
-impl TelemetryJudge for Grade {
-    fn assess(
+impl DecisionProvider for Grade {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Local,
+            model: "test-grade".into(),
+            version: "1".into(),
+        }
+    }
+    fn decide(
         &self,
-        _: &str,
-        _: &str,
-        _: &[RetrievalRunRecord],
-        _: &[(Vec<RetrievalRunRecord>, bool)],
-    ) -> Result<bool> {
-        Ok(self.0)
+        _: &DecisionQuestion,
+        _: &[EntityId],
+        _: &RetrievalDeadline,
+    ) -> Result<ProviderDecision> {
+        Ok(noul(self.0))
     }
 }
+/// Raises only when asked with a minted T2's reviewed examples: two positive, one negative.
 struct LabeledGrade;
-impl TelemetryJudge for LabeledGrade {
-    fn assess(
-        &self,
-        _: &str,
-        _: &str,
-        _: &[RetrievalRunRecord],
-        examples: &[(Vec<RetrievalRunRecord>, bool)],
-    ) -> Result<bool> {
-        Ok(examples.len() == 3
-            && examples
-                .iter()
-                .filter(|(rows, positive)| rows.len() == 1 && *positive)
-                .count()
-                == 2
-            && examples
-                .iter()
-                .filter(|(rows, positive)| rows.len() == 1 && !*positive)
-                .count()
-                == 1)
+impl DecisionProvider for LabeledGrade {
+    fn pin(&self) -> ProviderPin {
+        Grade(true).pin()
     }
+    fn decide(
+        &self,
+        question: &DecisionQuestion,
+        evidence: &[EntityId],
+        _: &RetrievalDeadline,
+    ) -> Result<ProviderDecision> {
+        let reviewed = question
+            .text
+            .ends_with("2 positive and 1 negative reviewed findings.");
+        Ok(noul(reviewed && evidence.len() == 4))
+    }
+}
+fn noul(yes: bool) -> ProviderDecision {
+    ProviderDecision {
+        answer: DecisionAnswer::Noul(yes),
+        probability: Some(if yes { 0.9 } else { 0.1 }),
+        paired: None,
+    }
+}
+struct NoPerson;
+impl HumanDecisionQueue for NoPerson {
+    fn queue(&self, _: HumanDecisionRequest) -> Result<()> {
+        Err(Error::InvalidConfig("no person here".into()))
+    }
+}
+fn decisions(local: &'static dyn DecisionProvider) -> DetectorDecisions<'static> {
+    DetectorDecisions {
+        ladder: DecisionLadder {
+            rule: None,
+            local: Some(local),
+            system_one: None,
+            escalation: None,
+            big: None,
+            human: &NoPerson,
+            human_pin: ProviderPin {
+                rung: DecisionRung::Human,
+                model: "test-queue".into(),
+                version: "1".into(),
+            },
+        },
+        principal: EntityId::from_bytes([7; 16]).unwrap(),
+        dial: DETECTOR_DIAL,
+        bands: DecisionBandPolicy::default(),
+        budget: std::time::Duration::from_secs(3600),
+    }
+}
+fn grade(yes: bool) -> DetectorDecisions<'static> {
+    decisions(if yes { &Grade(true) } else { &Grade(false) })
 }
 fn policy(n: usize) -> DetectorPolicy {
     DetectorPolicy {
@@ -82,18 +126,18 @@ fn t2b_and_t3_persist_proposals_but_never_sign_t1() -> Result<()> {
     let (_d, v) = vault();
     let rows = vec![run(&v, 10, true), run(&v, 11, true)];
     assert!(
-        v.classify_prompt(&policy(2), &Grade(false), &rows)?
+        v.classify_prompt(&policy(2), &grade(false), &rows)?
             .is_none()
     );
-    assert!(v.classify_prompt(&policy(3), &Grade(true), &rows).is_err());
-    let t2 = v.classify_prompt(&policy(2), &Grade(true), &rows)?.unwrap();
+    assert!(v.classify_prompt(&policy(3), &grade(true), &rows).is_err());
+    let t2 = v.classify_prompt(&policy(2), &grade(true), &rows)?.unwrap();
     assert_eq!(t2.tier, ProposedTier::PromptClassifier);
     assert_eq!(
         decode_diagnostic_event_body(&v.get(&t2.event_id)?.unwrap())?,
         t2.event
     );
     let t3 = v
-        .judge_retrieval_trace(&policy(1), &Grade(true), &rows)?
+        .judge_retrieval_trace(&policy(1), &grade(true), &rows)?
         .unwrap();
     assert_eq!(t3.tier, ProposedTier::Judge);
     assert_ne!(t3.event_id, t2.event_id);
@@ -105,7 +149,7 @@ fn t2b_and_t3_persist_proposals_but_never_sign_t1() -> Result<()> {
     let mut forged = rows;
     forged[1].empty_reason = Some("forged".into());
     assert!(
-        v.judge_retrieval_trace(&policy(1), &Grade(true), &forged)
+        v.judge_retrieval_trace(&policy(1), &grade(true), &forged)
             .is_err()
     );
     Ok(())
@@ -117,7 +161,7 @@ fn session_judge_requires_one_telemetry_episode() -> Result<()> {
     let mut a = run(&v, 20, true);
     let mut b = run(&v, 21, true);
     assert!(
-        v.judge_session_quality(&policy(1), &Grade(true), &[a.clone()])
+        v.judge_session_quality(&policy(1), &grade(true), &[a.clone()])
             .is_err()
     );
     let turn = crate::store::RetrievalTurn {
@@ -135,11 +179,11 @@ fn session_judge_requires_one_telemetry_episode() -> Result<()> {
     v.store.delete_retrieval_run(b.run_id)?;
     v.store.record_retrieval_run(&b)?;
     assert!(
-        v.judge_session_quality(&policy(1), &Grade(false), &[a.clone(), b.clone()])?
+        v.judge_session_quality(&policy(1), &grade(false), &[a.clone(), b.clone()])?
             .is_none()
     );
     let judged = v
-        .judge_session_quality(&policy(1), &Grade(true), &[a.clone(), b.clone()])?
+        .judge_session_quality(&policy(1), &grade(true), &[a.clone(), b.clone()])?
         .unwrap();
     assert_eq!(judged.tier, ProposedTier::SessionJudge);
     b.turn = Some(crate::store::RetrievalTurn {
@@ -149,7 +193,7 @@ fn session_judge_requires_one_telemetry_episode() -> Result<()> {
     v.store.delete_retrieval_run(b.run_id)?;
     v.store.record_retrieval_run(&b)?;
     assert!(
-        v.judge_session_quality(&policy(1), &Grade(true), &[a, b])
+        v.judge_session_quality(&policy(1), &grade(true), &[a, b])
             .is_err()
     );
     Ok(())
@@ -173,13 +217,13 @@ fn reviewed_recurrence_mints_t2_and_closed_form_t1() -> Result<()> {
     let yes2 = run(&v, 32, true);
     let no = run(&v, 33, false);
     let a = v
-        .judge_retrieval_trace(&policy(1), &Grade(true), &[yes1])?
+        .judge_retrieval_trace(&policy(1), &grade(true), &[yes1])?
         .unwrap();
     let b = v
-        .judge_retrieval_trace(&policy(1), &Grade(true), &[yes2])?
+        .judge_retrieval_trace(&policy(1), &grade(true), &[yes2])?
         .unwrap();
     let c = v
-        .judge_retrieval_trace(&policy(1), &Grade(true), &[no])?
+        .judge_retrieval_trace(&policy(1), &grade(true), &[no])?
         .unwrap();
     // A model opinion by itself cannot mint or arm anything.
     assert!(v.mint_t2(p.clone())?.is_none());
@@ -196,7 +240,7 @@ fn reviewed_recurrence_mints_t2_and_closed_form_t1() -> Result<()> {
     assert_eq!(t2.positive_events.len(), 2);
     let new_runs = [run(&v, 34, false), run(&v, 35, false)];
     let minted = v
-        .classify_minted_t2(&t2, &LabeledGrade, &new_runs)?
+        .classify_minted_t2(&t2, &decisions(&LabeledGrade), &new_runs)?
         .unwrap();
     assert_eq!(minted.tier, ProposedTier::PromptClassifier);
     // ONE-2689#7: the distilled producer registers its evidence, so its
@@ -231,13 +275,13 @@ fn mismatched_labels_and_forged_centroid_input_fail_closed() -> Result<()> {
     let p = policy(1);
     let row = run(&v, 42, false);
     let t3 = v
-        .judge_retrieval_trace(&p, &Grade(true), std::slice::from_ref(&row))?
+        .judge_retrieval_trace(&p, &grade(true), std::slice::from_ref(&row))?
         .unwrap();
     assert!(v.review_t3_finding(&o, "other", t3.event_id, true).is_err());
     v.review_t3_finding(&o, &p.family, t3.event_id, true)?;
     let another = run(&v, 43, false);
     let negative = v
-        .judge_retrieval_trace(&p, &Grade(true), &[another])?
+        .judge_retrieval_trace(&p, &grade(true), &[another])?
         .unwrap();
     v.review_t3_finding(&o, &p.family, negative.event_id, false)?;
     let minted = v.mint_t2(p.clone())?.unwrap();
@@ -336,10 +380,10 @@ fn copied_t3_bodies_under_other_entity_kinds_cannot_mint_evidence() -> Result<()
     let (_d, vault) = vault();
     let owner = owner(&vault);
     let positive = vault
-        .judge_retrieval_trace(&policy(1), &Grade(true), &[run(&vault, 51, true)])?
+        .judge_retrieval_trace(&policy(1), &grade(true), &[run(&vault, 51, true)])?
         .unwrap();
     let negative = vault
-        .judge_retrieval_trace(&policy(1), &Grade(true), &[run(&vault, 52, false)])?
+        .judge_retrieval_trace(&policy(1), &grade(true), &[run(&vault, 52, false)])?
         .unwrap();
     let body = vault.get(&positive.event_id)?.unwrap();
     for _ in 0..2 {
@@ -402,7 +446,7 @@ fn failure_signals_accept_session_judge_window_and_revoke_changed_sources() -> R
         consecutive: 2,
     };
     let judged = vault
-        .judge_session_quality(&policy, &Grade(true), &[a, b.clone()])?
+        .judge_session_quality(&policy, &grade(true), &[a, b.clone()])?
         .expect("real model-judged window");
     let observation = vault
         .tier1_observation(judged.event_id)?

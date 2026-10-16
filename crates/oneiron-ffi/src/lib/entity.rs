@@ -120,6 +120,8 @@ pub unsafe extern "C" fn oneiron_vault_open(
                     // any vault opens (owner ruling 2026-10-14, fix 6).
                     oneiron::panic_report::install_panic_hook();
                     let vault = engine(Vault::open(&path, config))?;
+                    // Signing doors (delete receipts) need this install's keys from the keystore.
+                    vault.install_default_keystore(std::path::Path::new(&path));
                     let handle = Box::into_raw(Box::new(OneironVault {
                         vault: Arc::new(vault),
                         dimensions,

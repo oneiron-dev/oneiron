@@ -25,7 +25,7 @@ usage() {
     '  ONEIRON_FEATURELESS_RUNNER may be unset or libtest; other values are rejected.' \
     'The featureless libtest stage is mandatory; nextest is an inner-loop option only.' \
     'The rustdoc stage denies documentation warnings before runtime tests.' \
-    'Scoped iteration: see AGENTS.md. Extra narrow-sync policy gate: WORKFLOW.md section 3.'
+    'The merge bar and host rules are in AGENTS.md; this script is not the merge bar.'
 }
 
 LIST_ONLY=false

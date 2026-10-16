@@ -1,12 +1,17 @@
 # Build performance
 
-## Policy
+This page records the dev/test profile settings in the root `Cargo.toml`, the
+measurements behind them, the CI build helpers, and how to measure a profile
+candidate. Nothing here is a merge check: the merge bar is
+`cargo check --workspace --all-features` on the head (see `AGENTS.md`).
+
+## Profile settings
 
 The workspace uses limited debug information (`debug = 1`) in the `dev` profile.
 The `test` profile inherits it. This keeps file/line backtraces and module-level
 information, but omits type and local-variable debugger information. It does not
 by itself change optimization, assertions, overflow checks, panic behavior,
-features, or release profiles. Dependency-only optimization is described below.
+features, or release profiles.
 
 For a debugging session that needs locals, opt back into full debug information:
 
@@ -15,38 +20,34 @@ CARGO_PROFILE_DEV_DEBUG=2 cargo test -p oneiron --lib --all-features
 ```
 
 Use the same profile setting for repeated commands that should reuse artifacts.
-Changing the setting invalidates affected Cargo units once. Do not set `RUSTFLAGS`
-for the warning gate: use Clippy's existing `-- -D warnings`. Global flags also
-reach vendored path dependencies and split otherwise compatible caches.
-
-The profile settings work on the MacBook, Mac mini, and Arch Linux hosts, but
-portability is not a uniform speedup claim. The initial debug-info comparison
-below is from the MacBook; the repeated codegen-unit follow-up is from the Mini.
+Changing the setting invalidates affected Cargo units once. Do not set
+`RUSTFLAGS`: global flags also reach vendored path dependencies and split
+otherwise compatible caches.
 
 The core package also uses 256 codegen units for dev/test builds. This improves
 the measured non-incremental Mini core build while matching the ordinary
 incremental default count. It is not a measured incremental edit-loop gain.
 Other packages' codegen-unit settings and release/bench defaults are unchanged.
-Dependency optimization is a separate setting below. See the follow-up results
-and package-specific comparison override below.
 
-## Optimized dependencies in dev and test builds (2026-09-26)
+The settings work on the MacBook, Mac mini, and Arch Linux hosts, but the gains
+below are host-specific. The debug-info comparison is from the MacBook; the
+codegen-unit results are from the Mini.
+
+## Optimized dependencies in dev and test builds
 
 `[profile.dev.package."*"] opt-level = 2` optimizes dependencies, including
 non-member path packages (`heed`, `paste`, and the `pkix-chain` patch). Workspace
 member library, binary, and test units, including `oneiron`, `oneiron-bench`,
 and `oneiron-napi`, keep the dev optimization default (`0`); their build
-scripts follow the separate build override (`2`). The existing `oneiron`
-codegen-unit setting remains. The test profile inherits dev. Release, bench,
-and napi production builds using release retain their own profile defaults;
-no profile for them changes.
+scripts follow the separate build override (`2`). The test profile inherits
+dev. Release, bench, and napi release builds keep their own profile defaults.
 
-On a clean 16-core box at main `97bb7049` with rustc 1.96.1, featureless
-library nextest (7,474 tests; `--profile featureless --retries 0`) took **733 s**
-with dependencies at opt-level 0 and **430 s** at opt-level 2, a **41% runtime
-reduction**. The corresponding cold test-binary build rose from **276 s** to
-**329 s**. The build cost is paid once for cached dependencies; this is not a
-claim that every feature set or host sees the same test speedup.
+On a clean 16-core box at main `97bb7049` with rustc 1.96.1 (2026-09-26),
+featureless library nextest (7,474 tests; `--profile featureless --retries 0`)
+took **733 s** with dependencies at opt-level 0 and **430 s** at opt-level 2, a
+**41% runtime reduction**. The cold test-binary build rose from **276 s** to
+**329 s**. The build cost is paid once for cached dependencies; other feature
+sets and hosts may see a different test speedup.
 
 A single cold-build comparison on remote Ubuntu (8 Cargo jobs, rustc 1.96.1,
 separate fresh targets, identical featureless `cargo test -p oneiron --lib
@@ -58,16 +59,11 @@ changed only `profile.dev.build-override.opt-level`:
 | 0 (default) | 8m44s | 544 s |
 | 2 (adopted) | 7m36s | 894 s, including ~438 s host-capacity wait |
 
-Build-override 2 matches the normal-dependency setting and reduced the measured
+Build-override 2 matches the normal-dependency setting and cut the measured
 cold **build phase** by 68 s (13%) in this pair. The wrapper wall figures are
-not directly comparable because the second run queued before Cargo started.
-This does not prove all shared build/normal dependencies compile once: host
-and target units or different features may still require separate builds. It
-also does not predict edit-loop gains. With both settings, a separate featureless
-nextest run on the remote host passed 7,474 tests in **595 s wrapper wall time**
-(nextest reported 581.326 s); it reused the optimized cold-build target and is
-not a paired 0-versus-2 comparison. Both changes are dev/test-only; release,
-bench, and napi release builds use their unchanged profiles.
+not comparable because the second run queued before Cargo started. Host and
+target units, or different features, may still need separate builds of a
+shared dependency. The pair does not predict edit-loop gains.
 
 To opt out when stepping through dependency code in a debugger, use the
 package override for that session, not a workspace-wide optimization change:
@@ -80,70 +76,60 @@ cargo test --config 'profile.dev.package."*".opt-level=0' \
 This causes a separate one-time dependency rebuild. To inspect build
 scripts/build dependencies without optimization too, add
 `--config 'profile.dev.build-override.opt-level=0'`. For debugger locals,
-also use `CARGO_PROFILE_DEV_DEBUG=2` as described above. Keep override choices
-the same across commands when you want to reuse their artifacts.
+also use `CARGO_PROFILE_DEV_DEBUG=2`. Keep override choices the same across
+commands when you want to reuse their artifacts.
 
-## Scoped CI speedups (2026-09-26)
+## CI build settings
 
-The scope selector (`scripts/ci/ci_scope.py`) remains the authority for what a
-PR or main push tests. Within those selected packages, PR `Checks`, `Test` and
-`Test (featureless)` set `CARGO_PROFILE_DEV_INCREMENTAL=true` and
-`CARGO_PROFILE_TEST_INCREMENTAL=true`. Their scoped runner invocation uses
-`env -u CARGO_INCREMENTAL` to remove the runner's inherited
-`CARGO_INCREMENTAL=0`, which otherwise overrides the profile. Main pushes,
-nightly runs, and dispatch select both profiles as `false`: the full nightly
-and dispatch lanes remain non-incremental backstops. The persistent target
-retains dependency artifacts; sccache 0.15 remains `RUSTC_WRAPPER` and can
-cache non-incremental units, while incremental workspace units pass through.
-Do **not** set `CARGO_INCREMENTAL=1`: sccache rejects every compile, including
-Cargo's version probe, with "incremental compilation is prohibited".
+`.github/workflows/ci.yml` and the helpers in `scripts/ci/` set these:
 
-The scoped runner sets `RUSTC_WORKSPACE_WRAPPER` for each build/test command to
-`scripts/ci/rustc-threads.sh`. It gives only `oneiron` the parallel front end
-(`RUSTC_BOOTSTRAP=oneiron`, `-Zthreads=8`); it retries a compiler exit 101
-without the flag. `ONEIRON_PARALLEL_FRONTEND=0` opts out. Clippy supplies its
-own workspace wrapper; the scoped runner only sets this wrapper for rustdoc
-and the test commands, not Clippy. The macOS dispatch test job also uses the
-wrapper. On Linux, `scripts/ci/with-test-tmpdir.sh` checks `/dev/shm` before
-each test command. With at least 12 GiB free it makes a per-command
-`/dev/shm/ci-<runner>-*` directory and cleans it even on failure. It also executes a small probe in the new
-directory; a `noexec` mount falls back to disk so test-created hooks still run.
-If the space or execution check fails, it leaves the disk `TMPDIR` unchanged. The scope and test selection do not change.
+- PR jobs set `CARGO_PROFILE_DEV_INCREMENTAL=true` and
+  `CARGO_PROFILE_TEST_INCREMENTAL=true`, and run the scoped runner under
+  `env -u CARGO_INCREMENTAL` to remove the runner's inherited
+  `CARGO_INCREMENTAL=0`, which otherwise overrides the profile. Main pushes and
+  dispatch runs set both profiles to `false`. sccache 0.15 is `RUSTC_WRAPPER`;
+  it caches non-incremental units, and incremental workspace units pass
+  through. Do **not** set `CARGO_INCREMENTAL=1`: sccache rejects every compile,
+  including Cargo's version probe, with "incremental compilation is prohibited".
+- `scripts/ci/rustc-threads.sh` is the `RUSTC_WORKSPACE_WRAPPER` for build and
+  test commands. It gives only `oneiron` the parallel front end
+  (`RUSTC_BOOTSTRAP=oneiron`, `-Zthreads=8`) and retries a compiler exit 101
+  without the flag. `ONEIRON_PARALLEL_FRONTEND=0` opts out. Clippy supplies its
+  own workspace wrapper.
+- On Linux, `scripts/ci/with-test-tmpdir.sh` checks `/dev/shm` before each test
+  command. With at least 12 GiB free it makes a per-command
+  `/dev/shm/ci-<runner>-*` directory and cleans it even on failure. It runs a
+  small probe there first; a `noexec` mount falls back to disk so test-created
+  hooks still run. If the space or execution check fails, `TMPDIR` stays on disk.
 
-Clean 16-core Arch box, main `97bb7049`, rustc 1.96.1: core test edit rebuild
-**84 s incremental vs 236 s** under `CARGO_INCREMENTAL=0`. Core-only parallel
-front end: cold test build **334 s → 169–198 s**, edit rebuild **84 s → 76 s**.
-Featureless nextest runtime: **733 s** with test temp on disk vs **608 s** on
-`/dev/shm`. These are separate measurements, not a combined CI saving. The
-first PR #1003 CI run (before scoped CI landed) was cancelled after `Checks`
-passed. Its Linux `Test (featureless)` runner log showed `sccache`
-wrapping `rustc-threads.sh` on `--crate-name oneiron` with
-`-C incremental=.../debug/incremental`; the compile completed and libtests
-were running when the superseded run was cancelled. That is live coexistence
-evidence, not a passed test job. Scoped PR job times must be compared with a scoped run,
-not this older full-build run.
+Measurements on a clean 16-core Arch box, main `97bb7049`, rustc 1.96.1: core
+test edit rebuild **84 s incremental vs 236 s** under `CARGO_INCREMENTAL=0`.
+Core-only parallel front end: cold test build **334 s → 169–198 s**, edit
+rebuild **84 s → 76 s**. Featureless nextest runtime: **733 s** with test temp
+on disk vs **608 s** on `/dev/shm`. These are separate measurements, not a
+combined CI saving.
 
 ## Cache retention
 
-The CI jobs that run cache maintenance keep their existing 20 GiB cap: `Checks`
-(on Linux) runs it; the two Linux test jobs, `Test` and `Test (featureless)`, do not. `scripts/ci/cap-target-cache.sh` first asks Cargo
-1.96 to clean workspace-owned outputs in both the dev/test and release profiles,
-including old feature variants. It retains
-third-party dependencies, including excluded vendor packages, if that is enough
-to get under the cap. Only a successful cleanup and remeasurement that is still
-over the cap triggers a full reset.
+`scripts/ci/cap-target-cache.sh` keeps a target cache under a cap (default
+20 GiB); in CI the Linux `Checks` job and the dispatch-only `Test (macOS)` job
+run it. It first asks Cargo 1.96 to clean
+workspace-owned outputs in both the dev/test and release profiles, including old
+feature variants. It keeps third-party dependencies, including excluded vendor
+packages, if that is enough to get under the cap. Only a successful cleanup and
+remeasurement that is still over the cap triggers a full reset.
 
 This is **workspace-first retention**, not LRU eviction. First-party code rebuilds
-after cleanup. A dependency-heavy cache can still require a cold build after the
-fallback reset. No job-time reduction is guaranteed by this policy.
+after cleanup. A dependency-heavy cache can still need a cold build after the
+fallback reset. No job-time reduction is guaranteed.
 
 Maintenance requires a canonical absolute `.../ci/target` path. Before each Cargo
 clean pass, a Python 3 scan checks every descendant without following symlinks.
 Any symlink (including internal, file, or dangling links), file or directory on a
 different device from the root, or scan/stat/read failure keeps the remaining
 cache without a full-reset fallback. This deliberately skips cleanup for
-otherwise valid build outputs that contain symlinks. Under-cap caches remain a
-no-op and do not need the scan.
+otherwise valid build outputs that contain symlinks. Under-cap caches are a
+no-op and skip the scan.
 
 Each successful scan emits best-effort JSON diagnostics on stderr: available
 filesystem bytes (`f_bavail * f_frsize`) and apparent regular-file bytes grouped
@@ -159,8 +145,8 @@ Both clean passes pin Cargo's `build.build-dir` to the validated target with an
 explicit CLI config value and remove the inherited `CARGO_BUILD_BUILD_DIR` from
 the child environment. A separately configured build directory is not cleaned.
 Paths containing braces are refused because Cargo can expand build-dir templates
-even in quoted strings. Symlinked root paths, invalid caps, and measurement/cleanup
-failures also do not trigger a full reset.
+even in quoted strings. Symlinked root paths, invalid caps, and measurement or
+cleanup failures also do not trigger a full reset.
 
 Maintenance failures do not change a build's pass/fail result. The caller must own
 the target, prevent concurrent changes, and keep the filesystem namespace stable
@@ -170,31 +156,16 @@ does not detect same-device mounts or prove that this precondition holds. The
 preflight is not a lock and does not prevent path-swap races. Run the script only
 after the runner's build, never alongside a process that shares that target.
 
-The behavior tests use stub tools and disposable directories, not a live cache:
+## Featureless test process models
 
-```sh
-python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-```
+`cargo test -p oneiron --lib --no-default-features` runs tests as parallel
+threads in one process, so it exercises cross-test shared state and race
+behavior, including `#[cfg(test)]` statics. Nextest isolates tests in separate
+processes. Matching test IDs therefore does not mean the same coverage; see
+`AGENTS.md` and the #922/#923 cases. `scripts/verify.sh` rejects
+`ONEIRON_FEATURELESS_RUNNER=nextest-8`; unset or `libtest` keeps the libtest lane.
 
-## Featureless nextest process models
-
-Full verification always runs `cargo test -p oneiron --lib --no-default-features`.
-This mandatory libtest lane runs tests as parallel threads in one process, so it
-exercises cross-test shared state and race behavior, including `#[cfg(test)]`
-statics. Nextest isolates tests in separate processes. Matching test IDs therefore
-does not preserve that semantic coverage; see `AGENTS.md` and the #922/#923 cases.
-
-The obsolete `ONEIRON_FEATURELESS_RUNNER=nextest-8` full-script selector is rejected
-before any stage runs. Unset or `libtest` retains the same nine mandatory commands.
-Discover or run the full gate normally; the extra narrow-sync gate in `WORKFLOW.md`
-is still required:
-
-```sh
-scripts/verify.sh --list
-scripts/verify.sh
-```
-
-For a local **inner loop**, run the strict featureless profile directly:
+For a local inner loop, run the strict featureless nextest profile directly:
 
 ```sh
 env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
@@ -203,31 +174,15 @@ env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
 
 This includes all non-ignored featureless library tests, including the slow set.
 The CLI pin overrides inherited `NEXTEST_RETRIES`; user-config suppression applies
-only to this command. It is not full verification, does not emit `VERIFY-OK`, and
-must not replace the mandatory shared-process libtest lane.
+only to this command.
 
-CI is scoped (owner ruling 2026-09-26). A PR or main push runs
-`scripts/ci/ci_scope.py` on its diff: `Checks` lints the touched workspace
-packages and their transitive reverse dependents (including dev-dependencies)
-with `--all-targets`, so dependent test code compiles. `Test` still runs nextest
-only for the touched packages and, for `oneiron`, the lib tests of
-the touched top-level modules, and `Test (featureless)` runs the shared-process
-`cargo test` lane for those modules. The full gate runs nightly (03:00 JST), on
-manual dispatch, and when a build file changes: there `Test (featureless)` runs
-the shared-process `cargo test` lane and the per-test-process nextest lane, in
-that order, in parallel with `Test` (workspace nextest and doctests), and the
-featureless nextest step pins `--retries 0`. `Test (macOS)` and the mutation
-audit run on dispatch only.
-
-These **local inner-loop measurements** are a latency/compute choice, not
-equivalent gate coverage. On the **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
-featureless-library comparisons reduced wall time by **4.02%, 9.25%, and 6.90%**
-(median paired reduction **6.90%**). Median user CPU rose from **197.7 to 251.8 s**;
-median system CPU rose from **76.4 to 88.2 s**. These measurements establish no
-aggregate-RAM benefit and no full-script speedup. Two clean Arch pairs showed no
-improvement (nextest was slightly slower); a contaminated third pair was excluded.
-No precise pooled Linux effect is claimed. These results do not show a speedup for
-the CI recipes; the nightly full gate runs both process models.
+On the **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`,
+three paired featureless-library comparisons of nextest against libtest reduced
+wall time by **4.02%, 9.25%, and 6.90%** (median **6.90%**). Median user CPU
+rose from **197.7 to 251.8 s**; median system CPU rose from **76.4 to 88.2 s**.
+These show no aggregate-RAM benefit and no full-script speedup. Two clean Arch
+pairs showed no improvement (nextest was slightly slower); a contaminated third
+pair was excluded. No pooled Linux effect is claimed.
 
 ## Diagnosing macOS vault-open ENOSPC
 
@@ -251,32 +206,32 @@ uniquely named semaphore opened, but a second **simultaneously held** semaphore
 returned ENOSPC. Changing TMPDIR and reducing test threads did not fix vault open.
 Any diagnostic semaphore must have a fresh exclusive name and must be closed and
 unlinked by its creator. Never unlink another process's semaphores or change the
-host-wide limit as an uncoordinated ticket repair.
+host-wide limit as an uncoordinated repair.
 
-Use the next available, capacity-guarded test host when the preferred host cannot
-allocate the required pair. Keep the same feature set and tests, and record the
-actual host. A host failure is not a reason to disable vault tests, weaken storage
-errors, remove the macOS `posix-sem` selection or delete shared caches/snapshots.
+If the host cannot allocate the pair, use another capacity-guarded host with the
+same feature set, and record which host ran. A host failure is not a reason to
+weaken storage errors, remove the macOS `posix-sem` selection or delete shared
+caches/snapshots.
 
 ## Measure a candidate
 
-Use one heavy build per host. Check CPU load, active Rust/runner processes, and
-free disk first. Never clean a developer's or runner's existing target to produce
-a cold result. Give each configuration a fresh target **outside the checkout**.
-Keep enough disk space for both targets; serialize and remove only your own
-scratch targets if necessary. On macOS use a real `TMPDIR` under `/private/tmp`,
-not the symlinked system default.
+Run measurements on a fleet build host (the Mac mini or an Arch box), never on
+the owner's MacBook. Use one heavy build per host. Check CPU load, active
+Rust/runner processes, and free disk first. Never clean a developer's or
+runner's existing target to produce a cold result. Give each configuration a
+fresh target **outside the checkout**. Keep enough disk space for both targets;
+serialize and remove only your own scratch targets if necessary. On macOS use a
+real `TMPDIR` under `/private/tmp`, not the symlinked system default.
 
 Capture the host, toolchain, revision, exact command/environment, wall time, CPU
 time, peak RSS, target size, and Cargo's timing HTML for each stage. The examples
-below disable incremental compilation to match the non-incremental main/full CI contract;
-they are not a prediction for a developer's incremental edit loop.
+below disable incremental compilation, so they measure non-incremental builds,
+not a developer's incremental edit loop.
 
-The command below is a **macOS example**. On Linux, use a run-owned path under
-`/tmp` instead of `/private/tmp`, and GNU `/usr/bin/time -v` if it is installed.
-GNU time was absent in the Arch preflight for this session, so that experiment
-used a task-owned `wait4` recorder instead. Keep the remaining flags and
-environment the same.
+The command below is for the Mac mini (macOS). On Linux, use a run-owned path
+under `/tmp` instead of `/private/tmp`, and GNU `/usr/bin/time -v` if it is
+installed; if it is not, record wall time, CPU and peak RSS another way. Keep the
+remaining flags and environment the same.
 
 ```sh
 # Run from the worktree. These directories must be new and owned by this run.
@@ -316,20 +271,23 @@ generated workspace does **not** inherit the root profile table, while a
 environment-based whole-suite result as proof of an identical root-profile gain.
 The scoped `--lib --no-run` measurement above does not execute trybuild.
 
-A build benchmark is not the verification gate. Keep the all-target/all-feature,
-featureless, standalone-server, full nextest, sync, doctest, and rustdoc warning
-checks. Use `scripts/verify.sh` and the current `WORKFLOW.md` policy for gates,
-not a reduced performance command.
+For a controlled 16-unit core comparison, override the named package setting,
+not a less-specific global profile variable:
 
-## Initial resource comparison (2026-09-17)
+```sh
+cargo test --config 'profile.dev.package.oneiron.codegen-units=16' \
+  -p oneiron --lib --all-features --no-run --locked
+```
 
-Base: `ae13354be7bf8de6875de88272f0ca50ddb3c267`. Host: MacBook M4 Max
-(`Mac16,5`), 16 cores, 64 GiB RAM, macOS 27.0 arm64. Cargo/rustc 1.96.0,
-nextest 0.9.137. No linker, optimization, job-count, or feature changes.
-`CARGO_INCREMENTAL=0`; separate fresh targets; no global Rust flags. Each target
+## Measurements behind the settings (2026-09-17)
+
+### Limited debug information
+
+Base `ae13354be7bf8de6875de88272f0ca50ddb3c267`, MacBook M4 Max (`Mac16,5`, 16
+cores, 64 GiB, macOS 27.0 arm64), Cargo/rustc 1.96.0, nextest 0.9.137,
+`CARGO_INCREMENTAL=0`, separate fresh targets, no global Rust flags. Each target
 ran workspace/all-target/all-feature Clippy, then the all-feature core library
-test **build** (`--no-run`). Registries were already populated. This is a
-single-pair result on a live workstation, not an isolated-machine benchmark.
+test **build** (`--no-run`). One pair on a live workstation.
 
 | Stage / metric | Full debug (`2`) | Limited debug (`1`) |
 | --- | ---: | ---: |
@@ -345,62 +303,19 @@ single-pair result on a live workstation, not an isolated-machine benchmark.
 | Allocated core test executable | 270,156 KiB | 257,268 KiB |
 | Warm workspace Clippy wall | 3.12 s | 4.30 s |
 
-Limited debug reduced measured test-build user CPU by **12.4%**, peak RSS by
-**5.1%**, and the paired target footprint by **17.8%**. It did **not** demonstrate
-an elapsed-time improvement. Background desktop activity varied; unrelated
-`ffmpeg`/`node` work appeared during this window. The root profile change is a
-resource-efficiency choice, not a claim of faster Clippy or a percentage reduction
-in end-to-end CI time. Runtime test duration and full-workspace build size were
-not measured by this comparison.
+Limited debug cut test-build user CPU by **12.4%**, peak RSS by **5.1%**, and
+the target footprint by **17.8%**. It did **not** show an elapsed-time gain: it
+is a resource choice, not a speed claim. Cargo timings showed the core crate as
+the main bottleneck; limited debug cut its library codegen section from 11.72 s
+to 8.08 s but does not remove the large front-end workload.
 
-Cargo timings identified the core crate as the main bottleneck. In the baseline,
-its Clippy library-test unit took 55.41 s. The core test build's library unit took
-34.75 s and its test unit took 69.20 s. Limited debug reduced the library codegen
-section from 11.72 s to 8.08 s, but does not remove the large front-end workload.
-
-Raw evidence for this work session is outside the public repository at
-`/private/tmp/oneiron-build-speed-evidence/`: command files, `measurements.json`,
-preflight snapshots, `/usr/bin/time -l` logs, copied Cargo timing HTML, native
-cleanup evidence, and stub-test results. That scratch path is a local artifact,
-not a permanent published benchmark service. Use the recipe above to reproduce
-on a new host and retain its own evidence.
-
-### Initial codegen-unit probe
-
-One extra experiment set only `profile.dev.package.oneiron.codegen-units=256`.
-It reused the limited-debug dependency artifacts with incremental compilation
-off. A control followed `cargo clean -p oneiron` in that scratch target and
-rebuilt the same core command at the default 16 units. Native output contained
-256 and 16 codegen objects respectively.
-
-| Warm-dependency core rebuild | Default 16 units | Package-only 256 units |
-| --- | ---: | ---: |
-| Wall | 100.27 s | 95.16 s |
-| User CPU | 152.01 s | 150.61 s |
-| System CPU | 5.09 s | 5.22 s |
-| Maximum RSS | 8.75 GB | 7.80 GB |
-
-That single pair suggests a possible memory benefit and a small time benefit,
-but is not a repeated or cross-host result. The test-unit artifacts grew from
-686.9 MB to 700.4 MB (logical size), and the object count rose sixteenfold.
-This single pair was not sufficient for the initial adoption decision. The
-later repeated Mini measurements below support the package-only setting without
-turning this historical pair into a general or incremental-build speed claim.
-
-## Follow-up results (2026-09-17)
-
-The follow-up baseline was `11830e7c035cf0465e61dc27db66493f8e3de838`.
-Small repeatable gains count; these results are not a combined CI speedup figure.
-Existing feature sets, warning gates, ignored tests, and release settings remain.
-
-### Core codegen units: 256 adopted for dev/test
+### Core codegen units
 
 The Mac mini (`Oletymac`, M4, 16 GiB) ran package-only core library test builds
 with all features, `--no-run`, four Cargo jobs, `debug=1`, and incremental
-compilation disabled. Every accepted warm sample rebuilt zero non-core units.
-The initial 16-unit build rebuilt 205 dependency units and is excluded as warm-up.
-Interrupted/noisy attempts remain in the raw evidence, not as CGU correctness
-regressions or usable performance samples. Valid slower controls are retained.
+compilation disabled, from baseline `11830e7c035cf0465e61dc27db66493f8e3de838`.
+Every accepted warm sample rebuilt zero non-core units; the first 16-unit build
+is excluded as warm-up.
 
 | Core codegen units | Warm samples | Median wall | Median total CPU | Maximum-child RSS range |
 | --- | ---: | ---: | ---: | ---: |
@@ -408,78 +323,31 @@ regressions or usable performance samples. Valid slower controls are retained.
 | 64 | 3 | 88.695 s | 143.858 s | 4.91–5.21 GB |
 | 256 | 4 | 89.127 s | 144.118 s | 5.00–5.33 GB |
 
-Every accepted 256-unit build was faster than every accepted 16-unit build.
-The median reduction was **3.909 s / 4.20% wall time**, with **2.48% less total
-CPU**. The samples span recorded runtime-gap and build-only series; they are not
-three uninterrupted balanced blocks. The direction held in both series.
-RSS ranges overlap and their ordering changes by series: this establishes no
-universal RAM improvement or penalty. Maximum-child RSS is not aggregate
-process-tree memory. Median allocated core rebuild growth was about **9.6 MB
-larger** at 256 units; that is not a full-workspace footprint measurement.
+Every accepted 256-unit build was faster than every accepted 16-unit build: a
+median **3.909 s / 4.20% wall** and **2.48% total CPU** reduction. RSS ranges
+overlap, so there is no RAM claim either way; maximum-child RSS is not
+process-tree memory. Core rebuild output grew by about **9.6 MB**. The 64-unit
+median was about 0.43 s lower with overlapping ranges, but choosing 64 would
+change the ordinary incremental count from 256 to 64. There was no second-host
+reproduction, so no Linux or universal speedup is claimed.
 
-The root profile applies 256 only to `oneiron` dev/test code generation. Cargo's
-ordinary incremental default is already 256; this preserves that count, but
-**incremental edit-loop performance was not measured**. The 64-unit median was
-about 0.43 s lower, with overlapping ranges, and selecting it globally would
-change the ordinary incremental count from 256 to 64. Other packages' profile
-settings and release/bench profiles stay unchanged. A profile change can still
-rebuild dependent artifacts once.
-
-There was no complete second-host reproduction: Arch trials encountered other
-workloads, and MacBook admission failed its background-load rules before any
-build. The earlier MacBook single pair above is supporting context, not a new
-same-baseline reproduction. No Linux or universal speedup is claimed. Completed
-core runtime trials used nextest's default tier and recorded nextest LEAK labels;
-they are not a leak-free result and do not replace full verification and CI on
-the integrated candidate.
-
-For a controlled 16-unit comparison, override the named package setting, not a
-less-specific global profile variable:
-
-```sh
-cargo test --config 'profile.dev.package.oneiron.codegen-units=16' \
-  -p oneiron --lib --all-features --no-run --locked
-```
-
-### Other follow-ups
+### Other results
 
 - **Compile-fail harness consolidation adopted.** Three `trybuild::TestCases`
-  sessions became one, with the same ten explicit external-crate cases and all
-  twenty source/expected-error files byte-identical. On the Mini, three warm runs
-  per variant reduced median selected-set wall time from **3.371299 to
-  1.339431 s**: **2.031868 s saved**. Median user/system CPU changed from
-  **1.759024/1.427739 s** to **1.018909/0.771072 s**. Maximum-child RSS was
-  effectively unchanged (about 231 MB). Three outer test IDs become one; each
-  case still checks its expected diagnostic. Do not attribute the separate
-  cold/warm harness-build difference or a whole-CI percentage to this change.
-- **Workspace-first cache retention kept.** In a guarded, task-owned target,
-  workspace dev cleanup reduced allocated size from **21.923 to 11.011 GiB**.
-  Third-party dependencies, about 0.51 GiB of documentation, and about 1.72 GiB
-  of nested trybuild output remained. The release pass succeeded with no release
-  outputs to remove; there was no full reset. Separately, ready CI on the fixed
-  baseline retained about **19.52 GiB** after workspace cleanup. These observations
-  support keeping the current policy and diagnostics, not raising the 20 GiB cap
-  or introducing a Linux cap without longer-term evidence.
-- **Two duplicate Wire Cargo calls removed.** The helper remains the single
-  place for the separate locked server and provisioner builds. The SDK dev
-  build, NAPI release build, Python release build, and contract/parity tests
-  remain. Fixture compilation errors now surface later; standalone helper use
-  rejects stale lockfiles. Two fewer invocations are certain; elapsed-time
-  savings were not measured.
-- **Featureless nextest was initially retained for the local inner loop**, with the
-  scoped Mini latency/CPU tradeoff above. Wave 8 later added it alongside the
-  mandatory shared-process libtest lane in CI. Matching test IDs do not make
-  the two process models coverage-equivalent.
-- **No linker switch adopted.** Native probe output identified LLD 22.1.2, and
-  captured workspace link invocations already selected `-fuse-ld=lld`. External
-  Arch work interrupted the complete link-share/alternate-linker comparison.
-  Mold performance remains inconclusive; do not assume a GNU-ld bottleneck or
-  extrapolate a whole-workspace saving from the partial links.
+  sessions became one with the same ten cases. On the Mini, median selected-set
+  wall time fell from **3.371 to 1.339 s**; maximum-child RSS was unchanged
+  (about 231 MB).
+- **Workspace-first cache retention kept.** In a task-owned target, workspace
+  dev cleanup cut allocated size from **21.923 to 11.011 GiB** with no full
+  reset. Ready CI retained about **19.52 GiB** after cleanup. This supports the
+  20 GiB cap, not a higher one.
+- **Two duplicate Wire Cargo calls removed.** The helper is the single place for
+  the separate locked server and provisioner builds. Time savings were not
+  measured.
+- **No linker switch adopted.** Workspace links already use LLD 22.1.2
+  (`-fuse-ld=lld`). The mold comparison was interrupted and is inconclusive.
 
-The durable machine-local evidence archive is
-`/Users/olety/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`:
-`cgu-result-mini.json`, `cgu-independent-review/REVIEW.md`,
-`trybuild-result-mini.json`, cache/featureless reports, raw commands, and
-interruption records. It is outside the public repository, not a hosted
-benchmark service. Preserve the exact host, revision, flags, warm-up exclusions,
-and runtime/CI verdict separately when reproducing these results.
+The machine-local evidence archive is
+`/Users/olety/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
+(`cgu-result-mini.json`, `trybuild-result-mini.json`, cache/featureless
+reports, raw commands). It is outside the public repository.

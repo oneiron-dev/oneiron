@@ -5,7 +5,11 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands;
 use crate::config::ServeArgs;
 
+mod hook_args;
 mod owner_args;
+pub use hook_args::{
+    HookArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs,
+};
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
     ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
@@ -76,8 +80,9 @@ pub enum Command {
     #[command(subcommand)]
     Secrets(SecretsCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
-    /// exports, Claude Code and Codex sessions, a folder of markdown notes),
-    /// or preview, approve or decline one whole import batch.
+    /// exports, Claude Code and Codex sessions, a Copilot or Cursor hook
+    /// transcript, a folder of markdown notes), or preview, approve or decline
+    /// one whole import batch.
     #[command(subcommand)]
     Import(ImportCommand),
     /// Agent runs waiting for consent: list, review, approve or decline whole.
@@ -97,6 +102,11 @@ pub enum Command {
     /// Codex), forwarding each message to a running server with a paired
     /// credential and a fresh holder proof.
     Mcp(McpArgs),
+    /// Run one agent-harness hook: read the host's event on stdin, bind a
+    /// vault (a pin, a running local vault, else start one), recall for the
+    /// session or the prompt, or queue the session's log. Always exits 0
+    /// once parsed; a mistyped command exits 1, never 2.
+    Hook(HookArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
@@ -668,7 +678,17 @@ impl Cli {
 
 pub async fn run() -> anyhow::Result<()> {
     crate::logging::install_panic_hook();
-    run_cli(Cli::parse()).await
+    let cli = Cli::try_parse().unwrap_or_else(|error| {
+        // Exit 2 from a hook blocks a compaction or keeps a turn from
+        // ending, so a mistyped `oneiron hook` exits 1: the host shows it
+        // as a hook error and goes on.
+        if error.use_stderr() && std::env::args_os().nth(1).is_some_and(|arg| arg == "hook") {
+            let _ = error.print();
+            std::process::exit(1);
+        }
+        error.exit()
+    });
+    run_cli(cli).await
 }
 
 pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
@@ -703,6 +723,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
+        Command::Hook(args) => {
+            crate::logging::off_runtime("hook", move || commands::hook(args)).await
+        }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),

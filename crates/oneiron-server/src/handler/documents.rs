@@ -33,6 +33,9 @@ pub(super) fn handle_document(
             max: server.config.max_update_payload,
         });
     }
+    if kind == document_sub_tags::ARTIFACT_PUBLICATION {
+        return artifact_publication(server, state, entity, payload, direct);
+    }
     let principal = document_principal(server, state)?;
     if kind == document_sub_tags::REQUEST && payload.get(..4) == Some(&[0; 4]) {
         return owner_request(server, state, entity, &payload[4..], direct);
@@ -64,15 +67,17 @@ pub(super) fn handle_document(
             if is_note(server, entity)? {
                 require_note_auth(server, state, &request.selector, false)?;
             }
-            let frame = server
-                .reassert_manager
-                .export_document(
+            // An export opens the document: past the live-document row it
+            // waits its turn off the runtime worker (rule 5).
+            let frame = crate::server::blocking(|| {
+                server.reassert_manager.export_document(
                     entity,
                     selector_grant_scope(),
                     &request.selector,
                     &request.remote_vv,
                 )
-                .map_err(storage_error)?;
+            })
+            .map_err(storage_error)?;
             state.documents.insert(entity, request);
             let held = state.documents.len();
             ask_past_row(server, state, held);
@@ -148,20 +153,12 @@ pub(super) fn handle_document(
             // Cached subscription state is only the requested selector. The
             // committing engine writer re-reads its role, scope, expiry, pact
             // and live entity selection; an earlier export is not authority.
-            server
-                .reassert_manager
-                .documents()
-                .open(entity)
-                .map_err(storage_error)?
+            let document = open_for(server, entity, &request.selector.member_ref)?;
+            document
                 .import_from_peer(kind, payload, selector_grant_scope(), &request.selector)
                 .map_err(storage_error)?;
-            let vv = server
-                .reassert_manager
-                .documents()
-                .open(entity)
-                .map_err(storage_error)?
-                .version_vector()
-                .map_err(storage_error)?;
+            let vv = document.version_vector().map_err(storage_error)?;
+            drop(document);
             let ack = transport::encode_document(entity, document_sub_tags::ACK, &vv)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document ack"))?;
@@ -201,12 +198,35 @@ fn owner_request(
         .map_err(storage_error)?
         .is_some()
     {
-        let frame = server
-            .reassert_manager
-            .export_owner_document(entity, remote_vv)
-            .map_err(storage_error)?;
+        let frame = crate::server::blocking(|| {
+            server
+                .reassert_manager
+                .export_owner_document(entity, remote_vv)
+        })
+        .map_err(storage_error)?;
         let _ = direct.send(frame);
     }
+    Ok(())
+}
+
+/// An own device's pinned artifact pointer change, with the rows that serve
+/// it. Only the vault owner's bound session on an owner lane may carry one:
+/// a publication is the owner's, already gated where it was made. The vault
+/// applies it once window sync has delivered every row it names, and the
+/// receipt goes back on this socket alone.
+fn artifact_publication(
+    server: &SyncServer,
+    state: &mut ConnState,
+    entity: EntityId,
+    payload: &[u8],
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    owner_auth(server, state, true)?;
+    let receipt = server
+        .vault
+        .import_artifact_publication(entity, payload)
+        .map_err(storage_error)?;
+    let _ = direct.send(receipt);
     Ok(())
 }
 
@@ -316,10 +336,23 @@ fn owner_auth<'a>(
 
 /// Raw notices are not exports. Every recipient re-runs admission and the
 /// shallow-since check. Unsubscribed peers receive nothing, including legacy peers.
+#[cfg(test)]
 pub(super) fn document_delivery(
     server: &SyncServer,
     state: &ConnState,
     data: &[u8],
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    document_delivery_retrying(server, state, data, &mut Vec::new())
+}
+
+/// [`document_delivery`] that keeps, in `retry`, the notice of each document
+/// whose export waited for its turn past its deadline (rule 5): the caller
+/// queues it again rather than consume the only notice of a change.
+pub(super) fn document_delivery_retrying(
+    server: &SyncServer,
+    state: &ConnState,
+    data: &[u8],
+    retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
     let docs = match data.first() {
         Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
@@ -345,11 +378,14 @@ pub(super) fn document_delivery(
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
-            if let Ok(frame) = server
-                .reassert_manager
-                .export_owner_document(doc.entity, remote_vv)
-            {
-                out.push(frame);
+            match crate::server::blocking(|| {
+                server
+                    .reassert_manager
+                    .export_owner_document(doc.entity, remote_vv)
+            }) {
+                Ok(frame) => out.push(frame),
+                Err(error) if waited_out(&error) => retry.extend(notice(&doc)),
+                Err(_) => {}
             }
             continue;
         }
@@ -362,12 +398,20 @@ pub(super) fn document_delivery(
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
-            if let Ok(frame) = server.reassert_manager.export_document(
-                doc.entity,
-                selector_grant_scope(),
-                &request.selector,
-                &request.remote_vv,
-            ) {
+            let exported = crate::server::blocking(|| {
+                server.reassert_manager.export_document(
+                    doc.entity,
+                    selector_grant_scope(),
+                    &request.selector,
+                    &request.remote_vv,
+                )
+            });
+            if let Err(error) = &exported
+                && waited_out(error)
+            {
+                retry.extend(notice(&doc));
+            }
+            if let Ok(frame) = exported {
                 if doc.kind == document_sub_tags::NOTE_RECEIPT {
                     let receipt: oneiron::note::NoteOperationReceipt =
                         serde_json::from_slice(doc.payload)
@@ -387,13 +431,15 @@ pub(super) fn document_delivery(
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
-                    let vv = server
-                        .reassert_manager
-                        .documents()
-                        .open(doc.entity)
-                        .map_err(storage_error)?
-                        .version_vector()
-                        .map_err(storage_error)?;
+                    let document = match open_for(server, doc.entity, &request.selector.member_ref)
+                    {
+                        Err(ProtocolError::WaitedOut) => {
+                            retry.extend(notice(&doc));
+                            continue;
+                        }
+                        document => document?,
+                    };
+                    let vv = document.version_vector().map_err(storage_error)?;
                     out.push(
                         transport::encode_document(doc.entity, document_sub_tags::ACK, &vv)
                             .into_result()
@@ -406,6 +452,37 @@ pub(super) fn document_delivery(
         }
     }
     Ok(out)
+}
+
+/// Whether a document's open ended at its turn's deadline: a notice is tried
+/// again, and a peer's frame is answered [`ProtocolError::WaitedOut`].
+fn waited_out(error: &oneiron::Error) -> bool {
+    error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
+}
+
+/// Queues the notices whose export waited out its turn again after a pause,
+/// so a retried export never starves the socket's own input (rule 5).
+pub(super) fn retry_later(
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    notices: Vec<Vec<u8>>,
+) {
+    if notices.is_empty() {
+        return;
+    }
+    let direct = direct.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        for notice in notices {
+            let _ = direct.send(notice);
+        }
+    });
+}
+
+/// The notice of one document, to queue again.
+fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
+    transport::encode_document(doc.entity, doc.kind, doc.payload)
+        .into_result()
+        .ok()
 }
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {
@@ -423,7 +500,28 @@ fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId
     .map_err(|_| ProtocolError::RpcNoPrincipal)
 }
 
+/// Opens `entity` for `member`'s work. Past the vault's live-document row the
+/// open waits its turn, off the runtime worker; it is never refused for the
+/// count (rule 5), and a wait past its deadline ends the request with
+/// [`ProtocolError::WaitedOut`].
+fn open_for(
+    server: &SyncServer,
+    entity: EntityId,
+    member: &EntityId,
+) -> Result<std::sync::Arc<oneiron::sync::documents::EntityDocument>, ProtocolError> {
+    crate::server::blocking(|| {
+        server
+            .reassert_manager
+            .documents()
+            .open_for(entity, member.as_bytes())
+    })
+    .map_err(storage_error)
+}
+
 fn storage_error(error: oneiron::Error) -> ProtocolError {
+    if waited_out(&error) {
+        return ProtocolError::WaitedOut;
+    }
     ProtocolError::Persistence(error.to_string())
 }
 

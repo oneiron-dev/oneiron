@@ -86,10 +86,18 @@ pub struct SyncServer {
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The line app-tier state kept between frames is charged to, sized by
+    /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
+    pub(crate) retained: Arc<crate::byte_line::ByteLine>,
+    /// The presence hub's charge on `retained`.
+    pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `[browser]` guest each code run starts for its own browser verbs.
+    /// `None` answers every browser call `browser_unbound`.
+    pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -149,6 +157,30 @@ pub struct SyncServer {
     /// clock then moves with the runtime's (paused) time.
     #[cfg(test)]
     pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
+}
+
+/// Sets the vault's live rows from `[limits]` and points their crossings at
+/// this server's questions.
+fn live_rows(
+    vault: &oneiron::Vault,
+    limits: &crate::config::LimitsConfig,
+    questions: &Arc<crate::wire_telemetry::LimitQuestions>,
+) {
+    use crate::wire_telemetry::LimitRow;
+    use oneiron::live_rows::{LiveRow, LiveRows};
+    vault.set_live_rows(LiveRows {
+        message_streams: limits.message_streams,
+        live_documents: limits.live_documents,
+        wait: limits.queue_wait(),
+    });
+    let questions = Arc::clone(questions);
+    vault.set_live_row_crossing(Some(Arc::new(move |row, bound, observed| {
+        let row = match row {
+            LiveRow::MessageStreams => LimitRow::MessageStreams,
+            LiveRow::LiveDocuments => LimitRow::LiveDocuments,
+        };
+        questions.ask(row, bound, observed);
+    })));
 }
 
 impl SyncServer {
@@ -250,14 +282,28 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
+        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
+        let retained = Arc::new(crate::byte_line::ByteLine::new(
+            crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
+            usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),
+        ));
+        let presence = Arc::new(super::presence::PresenceCharge::new(
+            Arc::clone(&retained),
+            Arc::clone(wire_telemetry.limit_questions()),
+        ));
         let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
         super::message_stream::spawn_message_stream_producer(
             &vault,
             &ephemeral_store,
+            &presence,
             &broadcast_tx,
             &config,
         );
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        // The engine's `[limits]` rows on this vault ask where the server's do.
+        let questions: Arc<crate::wire_telemetry::LimitQuestions> =
+            Arc::clone(wire_telemetry.limit_questions());
+        vault.set_limit_ask(questions);
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),
@@ -270,6 +316,8 @@ impl SyncServer {
             std::time::Instant::now(),
         );
         Ok(Self {
+            retained,
+            presence,
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
                 &config.limits,
@@ -297,6 +345,7 @@ impl SyncServer {
             managed_issuer: None,
             mcp_registry,
             mcp_code_host: None,
+            browser_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
@@ -369,6 +418,17 @@ impl SyncServer {
             Arc::clone(self.wire_telemetry.limit_questions()),
         )));
         self
+    }
+
+    /// Gives code runs a browser guest, from the `[browser]` section.
+    #[must_use]
+    pub fn with_browser_guest(mut self, guest: Option<oneiron_browser::BrowserGuest>) -> Self {
+        self.browser_guest = guest;
+        self
+    }
+
+    pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
+        self.browser_guest.as_ref()
     }
 
     pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {

@@ -224,20 +224,26 @@ impl Memory<'_> {
             )?
         };
         let mut rows = Vec::new();
-        let mut window = limit + 1;
-        loop {
+        let mut window = limit;
+        let exhausted = loop {
             let scanned = self.history_after(room, start, window)?;
             let exhausted = scanned.len() < window;
             scanned.iter().for_each(|_| count.row());
             start = scanned.last().map(|(key, _)| *key).or(start);
             rows.extend(self.admitted_turns(scanned.into_iter().map(|(_, turn)| turn).collect())?);
-            if rows.len() > limit || exhausted {
-                break;
+            if rows.len() >= limit || exhausted {
+                break exhausted;
             }
             window = window.saturating_mul(2).min(PAGE_LIMIT * 16);
-        }
+        };
+        // A full page continues when an admitted turn lies past it. Rows this
+        // page already decoded say so themselves; past them `room_continues`
+        // reads each turn's key and own record before its body.
+        let has_more = rows.len() > limit
+            || (rows.len() == limit
+                && !exhausted
+                && self.room_continues(room, start, &mut count)?);
         count.finish(self.vault());
-        let has_more = rows.len() > limit;
         rows.truncate(limit);
         let next_after = if has_more {
             rows.last().map(|turn| turn.turn_id.clone())
@@ -260,6 +266,21 @@ impl Memory<'_> {
         start: Option<(u64, EntityId)>,
         window: usize,
     ) -> MemoryResult<Vec<((u64, EntityId), RoomTurn)>> {
+        self.history_rows(room, start, window, |txn, key, turn_id| {
+            Ok((key, turn_in(self.vault(), txn, turn_id)?))
+        })
+    }
+
+    /// Up to `window` history rows after `start`, each mapped by `row` from
+    /// its index key and turn id inside one snapshot in which the reader still
+    /// belongs to the room.
+    fn history_rows<T>(
+        &self,
+        room: EntityId,
+        start: Option<(u64, EntityId)>,
+        window: usize,
+        row: impl Fn(&heed::RoTxn<'_>, (u64, EntityId), EntityId) -> MemoryResult<T>,
+    ) -> MemoryResult<Vec<T>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
         let store = &self.vault().store;
@@ -280,14 +301,62 @@ impl Memory<'_> {
             ),
             None => Box::new(HISTORY.iter_from(store, &txn, room.as_bytes())?),
         };
-        let rows = history
+        history
             .take(window)
-            .map(|row| {
-                let ((_, at, id), turn_id) = row?;
-                Ok(((at, id), turn_in(self.vault(), &txn, turn_id)?))
+            .map(|entry| {
+                let ((_, at, id), turn_id) = entry?;
+                row(&txn, (at, id), turn_id)
             })
-            .collect::<MemoryResult<Vec<_>>>()?;
-        Ok(rows)
+            .collect()
+    }
+
+    /// Whether an admitted turn lies past `start`. Each turn's history key
+    /// and own record are read first; a body is decoded only once its own
+    /// record is admitted, to admit the turns it answers. A body that does not
+    /// decode continues this page, and the page that would return it reports
+    /// it. Its rows count toward the page's scan check.
+    fn room_continues(
+        &self,
+        room: EntityId,
+        mut start: Option<(u64, EntityId)>,
+        count: &mut crate::scan_check::ScanCount,
+    ) -> MemoryResult<bool> {
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        loop {
+            let keys = self.history_rows(room, start, 128, |_, key, turn_id| Ok((key, turn_id)))?;
+            count.rows(keys.len());
+            if keys.is_empty() {
+                return Ok(false);
+            }
+            let reads: Vec<_> = keys
+                .iter()
+                .map(|(_, turn_id)| crate::claim::PointRead::id(*turn_id))
+                .collect();
+            let records = lane.read(&reads, None)?.value;
+            for ((_, turn_id), record) in keys.iter().zip(records) {
+                if record.is_none() {
+                    continue;
+                }
+                let body = {
+                    let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+                    require_member(self.vault(), &txn, room, self.actor())?;
+                    TURNS.get(&self.vault().store, &txn, turn_id)
+                };
+                match body {
+                    Err(_) => return Ok(true),
+                    Ok(None) => {}
+                    Ok(Some(turn)) => {
+                        if !self.admitted_turns(vec![turn])?.is_empty() {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            if keys.len() < 128 {
+                return Ok(false);
+            }
+            start = keys.last().map(|(key, _)| *key);
+        }
     }
 
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.

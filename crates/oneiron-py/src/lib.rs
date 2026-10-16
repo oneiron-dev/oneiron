@@ -111,6 +111,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             gate_denial: None,
             read_receipt: None,
             policy_denial: None,
+            wrong_root: None,
         })
     })
 }
@@ -125,6 +126,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,
+        wrong_root: None,
     })
 }
 

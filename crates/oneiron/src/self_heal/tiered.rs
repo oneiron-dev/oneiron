@@ -3,8 +3,34 @@ use super::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, diagnostic_event_id, encode_diagnostic_event_body, validate_token,
 };
+use crate::entity_id::derived_domains::DECISION_QUESTION;
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
+    DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility,
+};
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use rmpv::Value;
+use std::time::{Duration, Instant};
+
+/// The registered question every detector asks: does this telemetry show the anomaly?
+const QUESTION: &str = "self_heal.telemetry_anomaly";
+const QUESTION_VERSION: u32 = 1;
+/// A decision question's text bound. A detector's holds its prompt, its rubric and up to
+/// `QUESTION_FRAMING` bytes of separators and evidence line.
+const QUESTION_TEXT_MAX: usize = 16_384;
+const QUESTION_FRAMING: usize = 256;
+
+/// The dial a detector's questions run under unless the host picks another. It ends below
+/// Human: a telemetry classifier never pages a person per run.
+pub const DETECTOR_DIAL: DecisionDial = DecisionDial {
+    first: DecisionRung::Local,
+    ceiling: DecisionRung::Big,
+    band: DecisionBand {
+        low: 0.35,
+        high: 0.65,
+    },
+};
 
 /// A non-deterministic detector has only the proposed diagnostic door.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,25 +71,94 @@ impl DetectorPolicy {
             || self.rubric.is_empty()
             || self.consecutive == 0
             || self.consecutive > 64
-            || self.prompt.len() > 16_384
-            || self.rubric.len() > 16_384
+            || self.prompt.len() + self.rubric.len() > QUESTION_TEXT_MAX - QUESTION_FRAMING
         {
             return Err(Error::InvalidConfig("invalid detector policy".into()));
         }
         Ok(())
     }
+
+    /// The noul this policy asks at `tier`. Its id derives from the tier, the family and the
+    /// exact wording, so a changed prompt or rubric is a new question with its own bands.
+    /// `examples` counts the reviewed positive and negative findings that follow the
+    /// assessed runs in the evidence.
+    pub fn question(
+        &self,
+        tier: ProposedTier,
+        examples: (usize, usize),
+    ) -> Result<DecisionQuestion> {
+        self.validate()?;
+        let evidence_line = if examples == (0, 0) {
+            String::new()
+        } else {
+            format!(
+                "\n\nEvidence: the runs, then {} positive and {} negative reviewed findings.",
+                examples.0, examples.1
+            )
+        };
+        let text = format!("{}\n\nRubric:\n{}{evidence_line}", self.prompt, self.rubric);
+        let id = EntityId::derive(
+            DECISION_QUESTION,
+            &[
+                QUESTION.as_bytes(),
+                tier.token().as_bytes(),
+                self.family.as_bytes(),
+                text.as_bytes(),
+            ],
+        )?;
+        Ok(DecisionQuestion {
+            id,
+            version: QUESTION_VERSION,
+            text,
+            class: DecisionClass::Triage,
+            contract: AnswerContract::Noul,
+            accept_type: false,
+        })
+    }
 }
 
-/// Model sees telemetry as untrusted data, not as instructions or authority.
-/// A returned verdict cannot choose its own detector id, event class or tier.
-pub trait TelemetryJudge {
-    fn assess(
+/// The shared decision path a detector's questions go through: the host's ladder, the
+/// principal the answers are for, the dial and learned bands they run under, and each
+/// question's anytime budget. Telemetry reaches a provider only as evidence ids, as untrusted
+/// data, never as instructions; an answer cannot choose its own detector id, event class or
+/// tier.
+pub struct DetectorDecisions<'a> {
+    pub ladder: DecisionLadder<'a>,
+    pub principal: EntityId,
+    pub dial: DecisionDial,
+    pub bands: DecisionBandPolicy,
+    /// Each question's one clock, from when it is asked.
+    pub budget: Duration,
+}
+
+impl DetectorDecisions<'_> {
+    /// Abstaining fails the whole call, as a failed judge call did. A person the host's dial
+    /// queues keeps that ask's own receipt; nothing here waits on them.
+    fn raised(
         &self,
-        prompt: &str,
-        rubric: &str,
-        runs: &[RetrievalRunRecord],
-        examples: &[(Vec<RetrievalRunRecord>, bool)],
-    ) -> Result<bool>;
+        question: &DecisionQuestion,
+        evidence: &[EntityId],
+    ) -> Result<(bool, DecisionReceipt)> {
+        let decision = self.ladder.run(
+            question,
+            self.principal,
+            evidence,
+            self.dial,
+            &self.bands,
+            Reversibility::ReversibleRead,
+            &RetrievalDeadline::hard(Instant::now(), self.budget),
+        )?;
+        match decision.answer {
+            DecisionAnswer::Noul(raised) => Ok((raised, decision.receipt)),
+            _ => Err(Error::InvalidConfig("detector question abstained".into())),
+        }
+    }
+}
+
+fn run_ids(runs: &[RetrievalRunRecord]) -> Result<Vec<EntityId>> {
+    runs.iter()
+        .map(|run| EntityId::from_bytes(run.run_id.as_bytes()))
+        .collect()
 }
 
 /// A proposed-only output. No conversion from this type to SignedDetectorRun exists.
@@ -72,6 +167,8 @@ pub struct ProposedDiagnostic {
     pub tier: ProposedTier,
     pub event_id: EntityId,
     pub event: DiagnosticEvent,
+    /// The receipts of the decisions that raised it; none for the centroid rung.
+    pub decisions: Vec<DecisionReceipt>,
 }
 
 pub(super) fn propose(
@@ -80,6 +177,7 @@ pub(super) fn propose(
     policy: &DetectorPolicy,
     runs: &[RetrievalRunRecord],
     centroid: Option<([u8; 32], Vec<EntityId>)>,
+    decisions: Vec<DecisionReceipt>,
 ) -> Result<Option<ProposedDiagnostic>> {
     let Some(last) = runs.last() else {
         return Ok(None);
@@ -127,6 +225,7 @@ pub(super) fn propose(
         tier,
         event_id: id,
         event,
+        decisions,
     }))
 }
 
@@ -163,43 +262,47 @@ impl Vault {
     pub fn classify_prompt(
         &self,
         policy: &DetectorPolicy,
-        judge: &impl TelemetryJudge,
+        decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
-        self.classify_prompt_with_examples(policy, judge, runs, &[])
+        self.classify_prompt_with_examples(policy, decisions, runs, (&[], &[]))
     }
 
+    /// `examples` are reviewed positive and negative diagnostic events, asked as evidence
+    /// after each run.
     pub(super) fn classify_prompt_with_examples(
         &self,
         policy: &DetectorPolicy,
-        judge: &impl TelemetryJudge,
+        decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
-        examples: &[(Vec<RetrievalRunRecord>, bool)],
+        examples: (&[EntityId], &[EntityId]),
     ) -> Result<Option<ProposedDiagnostic>> {
-        policy.validate()?;
+        let question = policy.question(
+            ProposedTier::PromptClassifier,
+            (examples.0.len(), examples.1.len()),
+        )?;
         valid_runs(self, runs, policy.consecutive)?;
-        let mut streak = 0;
+        let mut streak = Vec::new();
         for run in runs {
-            if judge.assess(
-                &policy.prompt,
-                &policy.rubric,
-                std::slice::from_ref(run),
-                examples,
-            )? {
-                streak += 1;
+            let mut evidence = run_ids(std::slice::from_ref(run))?;
+            evidence.extend(examples.0.iter().chain(examples.1));
+            let (raised, receipt) = decisions.raised(&question, &evidence)?;
+            if raised {
+                streak.push(receipt);
             } else {
-                streak = 0;
+                streak.clear();
             }
         }
-        if streak < policy.consecutive {
+        if streak.len() < policy.consecutive {
             return Ok(None);
         }
         propose(
             self,
             ProposedTier::PromptClassifier,
             policy,
-            &runs[runs.len() - streak..],
+            &runs[runs.len() - streak.len()..],
             None,
+            streak,
         )
     }
 
@@ -207,15 +310,16 @@ impl Vault {
     pub fn judge_retrieval_trace(
         &self,
         policy: &DetectorPolicy,
-        judge: &impl TelemetryJudge,
+        decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
-        policy.validate()?;
+        let question = policy.question(ProposedTier::Judge, (0, 0))?;
         valid_runs(self, runs, policy.consecutive)?;
-        if !judge.assess(&policy.prompt, &policy.rubric, runs, &[])? {
+        let (raised, receipt) = decisions.raised(&question, &run_ids(runs)?)?;
+        if !raised {
             return Ok(None);
         }
-        propose(self, ProposedTier::Judge, policy, runs, None)
+        propose(self, ProposedTier::Judge, policy, runs, None, vec![receipt])
     }
 
     /// Session quality is a T2/T3 model grade, never a BEAM score or auto arm.
@@ -223,10 +327,10 @@ impl Vault {
     pub fn judge_session_quality(
         &self,
         policy: &DetectorPolicy,
-        judge: &impl TelemetryJudge,
+        decisions: &DetectorDecisions<'_>,
         runs: &[RetrievalRunRecord],
     ) -> Result<Option<ProposedDiagnostic>> {
-        policy.validate()?;
+        let question = policy.question(ProposedTier::SessionJudge, (0, 0))?;
         valid_runs(self, runs, policy.consecutive)?;
         let Some(turn) = runs[0].turn else {
             return Err(Error::InvalidConfig("missing session identity".into()));
@@ -237,9 +341,17 @@ impl Vault {
         {
             return Err(Error::InvalidConfig("mixed sessions".into()));
         }
-        if !judge.assess(&policy.prompt, &policy.rubric, runs, &[])? {
+        let (raised, receipt) = decisions.raised(&question, &run_ids(runs)?)?;
+        if !raised {
             return Ok(None);
         }
-        propose(self, ProposedTier::SessionJudge, policy, runs, None)
+        propose(
+            self,
+            ProposedTier::SessionJudge,
+            policy,
+            runs,
+            None,
+            vec![receipt],
+        )
     }
 }

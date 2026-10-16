@@ -1,5 +1,6 @@
 //! Explicit read frontiers keep the scoped lane's current and historic gates.
 
+use super::access_gate::HeldAuthority;
 use super::*;
 use crate::vault::ReadMode;
 
@@ -31,20 +32,17 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
-            &self.store_read(),
-            limit,
-            false,
-            true,
-        )?;
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let results = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .search_vector(query, fetch_limit)
-            .limit(fetch_limit)
+            .filter_candidates(&admitted)
+            .search_vector(query, limit)
+            .limit(limit)
             .run_for_pack()?;
         let filtered = self.filter_search_results(
             results.scores,
@@ -52,7 +50,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -89,20 +87,17 @@ impl ScopedRead<'_> {
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
             });
         }
-        let fetch_limit = self.vault.scoped_read_search_candidate_limit(
-            &self.store_read(),
-            limit,
-            true,
-            false,
-        )?;
+        let excluded = self.request_exclusions(&policy, requested)?;
+        let admitted = self.plan_admits(&filter, &policy, &excluded);
         let mut pipeline = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .search_text(query, fetch_limit)
-            .limit(fetch_limit);
+            .filter_candidates(&admitted)
+            .search_text(query, limit)
+            .limit(limit);
         if let Some(as_of) = as_of {
             pipeline = pipeline.with_temporal_now(as_of);
         }
@@ -113,7 +108,7 @@ impl ScopedRead<'_> {
             requested,
             &filter,
             &policy,
-            results.read_suppressed,
+            results.read_suppressed.saturating_add(excluded.count()?),
             &results.revisions,
         )?;
         let mut revisions = results.revisions;
@@ -164,20 +159,26 @@ impl ScopedRead<'_> {
             )?,
         };
         let Some(mut raw) = raw else { return Ok(None) };
-        // ASSET_TEXT has a fixed intrinsic record scope for a given kind and
-        // entity id. A live body edit restamps the current digest while the
-        // indexed body deliberately remains behind; requiring that *current*
-        // stamp to match the retained bytes would delete an authorized
-        // subscription result during index lag. The current row was admitted
-        // above, and the revision reader selected only retained vault bytes.
-        // CLAIM and NOTE keep their per-body historical admission below.
+        // ASSET_TEXT has a fixed record scope for a given kind and entity id:
+        // its birth facet, or its substrate facet when born unplaced. A live
+        // body edit restamps the current digest while the indexed body
+        // deliberately remains behind; requiring that *current* stamp to
+        // match the retained bytes would delete an authorized subscription
+        // result during index lag. The current row was admitted above, and
+        // the revision reader selected only retained vault bytes. Its sources
+        // are judged again for the retained bytes: they are the text's, not
+        // a revision's, and are only ever narrowed or withdrawn (facet rule
+        // C). CLAIM and NOTE keep their per-body historical admission below.
         let stable_text_scope = mode != ReadMode::Live
             && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
                 header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
             });
-        if !stable_text_scope
-            && !self.is_entity_raw_readable_with_filter_in(txn, policy, id, &raw, filter)?
-        {
+        let admitted = if stable_text_scope {
+            self.text_sources_readable_in(txn, policy, id, &HeldAuthority::default())?
+        } else {
+            self.is_entity_raw_readable_with_filter_in(txn, policy, id, &raw, filter)?
+        };
+        if !admitted {
             return Ok(None);
         }
         // The short-reference hash names the stored revision, so it is taken

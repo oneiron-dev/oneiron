@@ -1,407 +1,153 @@
 # Agent guidance
 
-General doctrine (consumer boundary): `CLAUDE.md`. PR/verify workflow: `WORKFLOW.md`. Review
-posture: `REVIEW.md`. Storage-ABI decision history — not agent guidance, read only for "why does
-this format look like that": `MIGRATIONS.md`. HTTP API reference for `oneiron-server` (~55KB, over
-most agents' single-read truncation threshold — fetch by tier, don't load the whole file):
-`oneiron.skills.md` — locate a tier by its heading, not by line number: `## Tier-1: Endpoint
-Activation Index`, `## Tier-2: Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
-
 Oneiron is a general-purpose memory engine (Rust workspace; core crate `crates/oneiron`, server
-`crates/oneiron-server`, bindings `crates/oneiron-napi`). Consumer-agnostic, public repo.
+`crates/oneiron-server`, bindings `crates/oneiron-napi`). It is consumer-agnostic, and the repo is
+public.
 
-## Consumer boundary
+- Consumer boundary: `CLAUDE.md`. Products are built on top of the engine, never inside it: no
+  product names, prompt/persona text, or product-branded modules in engine code.
+- Review guidance: `REVIEW.md`.
+- HTTP API reference for `oneiron-server`: `oneiron.skills.md` (over 70KB, too big for one read). Fetch
+  it by tier heading, not by line number: `## Tier-1: Endpoint Activation Index`, `## Tier-2:
+  Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
 
-Products are built on top of the engine, never inside it: no product names, prompt/persona text,
-or product-branded modules in engine code. Full rule and its 4 consequences: `CLAUDE.md`.
+## The vibe build (owner decree, 2026-10-17)
 
-## Start a task
+These rules outrank every other process line in this repo.
 
-1. Read `CLAUDE.md`, this file, `WORKFLOW.md`, and `REVIEW.md`; then any closer instructions.
-2. Confirm the branch and working tree with `git status --short --branch`. Use one external
-   worktree per writer. `WORKFLOW.md` §1 covers target-directory ownership and host budgets.
-3. Read `docs/CODEMAP.md`, then search only the owning `docs/codemap/<crate>.md` and source
-   subtree. File paths in a crate map are relative to `crates/<crate>/`.
-4. Use a scoped dev loop below. The coordinator owns the full gate after integration;
-   a scoped pass is not a VERDICT.
+- **Merge bar.** A change merges as soon as `cargo check --workspace --all-features` passes on its
+  head. Nothing else blocks a merge. Add `--locked`, so a stale manifest fails instead of
+  rewriting `Cargo.lock`.
+- **No tests.** Do not write, compile or run tests. The existing tests stay in the repo, untouched.
+- **No backward compatibility.** No vault exists yet. Write no migrations, legacy paths, upgrade
+  code or old-format readers. Formats change freely.
+- **No review rounds.** No Sol, Astra, CodeRabbit or Greptile review blocks a merge, and bot
+  comments need no answer.
+- No security sweeps, perf work, A/B tests, build-speed work or test work.
+- **Fix list.** An issue you notice but do not fix goes on the owner's fix list,
+  `/Users/olety/Desktop/temp/vibe-build-20261017/FIX-LIST.md` on the coordinator Mac, one line
+  each: `- <MM-DD HH:MM> <lane>: <file:line or area> <issue>`.
 
-## Exact commands
+A later pass writes an end-to-end suite and straightens the code. The old tests get fixed or
+deleted in that pass.
 
-Discover the gate without compiling or running tests:
+## Git and hosts
 
-    scripts/verify.sh --help
-    scripts/verify.sh --list
+- One git worktree per writer, outside the repo checkout. Branch from the newest `origin/main`.
+- Sign every commit. No AI attribution lines (`Co-Authored-By`, "generated with") in commits or
+  PR bodies.
+- Squash-merge with an explicit body, so no branch commit trailer reaches `main`. Never
+  force-push.
+- Run Cargo on a fleet build host, never on the owner's MacBook. `rust-toolchain.toml` pins the
+  toolchain.
+- Never commit secrets.
 
-The generated code map is regenerated on `main` after every push; never regenerate or commit
-it in a branch. See *Code map*.
+## Commands
 
-`--list` prints the live stage names and commands from the same definitions used by execution.
-It does not run the code-map check or emit `VERIFY-OK`. Unknown arguments fail before any stage.
+The merge bar:
 
-Dev-loop examples for the core crate; replace the crate or test filter with the changed scope:
+    cargo check --locked --workspace --all-features
 
-    cargo fmt -p oneiron --check
-    cargo clippy -p oneiron --all-targets --all-features -- -D warnings
-    cargo nextest run -p oneiron --all-features -E 'test(gate::)'
+`scripts/verify.sh` is the full scripted check: fmt, clippy in three feature graphs, strict
+rustdoc, the whole nextest suite, featureless library tests and doctests. It is not a merge bar.
+`scripts/verify.sh --list` prints its eight stages and their commands without building;
+`CODEMAP_CHECK=1` adds the code-map check as a first stage.
 
-To apply formatting, use `cargo fmt -p oneiron` (or the owning crate), then inspect the diff.
-For the workspace use `cargo fmt --check`, never `--all`: that follows the path dependency into
-the ONE-218 heed vendor. Sync-lane iteration uses `--features sync,test-hooks` instead of
-`--all-features`; bare `sync` does not build the test targets. The plain featureless library
-and test targets also have gates; see *Landmines*. The default nextest profile skips slow tests
-and has no retries. A green dev loop is not a green gate.
-
-Full scripted gate — run at VERDICT time, not after every edit:
-
-    scripts/verify.sh
-
-The script is the source of truth. Its **nine stages** check the code-map pin, fmt,
-workspace clippy, featureless clippy, **server-production clippy** (`clippy-server`),
-**rustdoc with warnings denied** (`rustdoc`), full workspace nextest (excluding
-`oneiron-napi`), featureless library tests, and doctests (excluding `oneiron-bench`).
-Server clippy deliberately has no `--all-targets`: it checks the engine's production
-`sync` selection without test-only feature unification. Linux is the reference full-gate host;
-the macOS caveats below still apply to this script.
-
-`WORKFLOW.md` §3 lists the one additional policy command not wired into the script:
-narrow sync/test-hooks full nextest. The strict rustdoc stage runs before runtime tests:
-
-    env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-
-The child command clears inherited encoded flags, which otherwise override `RUSTDOCFLAGS`
-even when empty. Other stages keep their inherited environment.
-The distributed form (`scripts/verify-leg.sh`) still omits **five** commands (featureless clippy,
-server-production clippy, featureless lib tests, rustdoc, and narrow sync full nextest).
-Do not report a distributed-only pass as the full gate.
-
-## What to test
-
-Owner ruling, 2026-10-08: no test by default. Write a test only when it carries truth from
-outside the code you just wrote, and prefer the end-to-end form ("serve starts with no model and
-answers", "a backup restores", "the Dreamer survives a kill"). The five kinds:
-
-1. A bug that really happened: a repro that fails before the fix.
-2. Owner or canon "done means" acceptance criteria.
-3. An oracle comparison: the Excel corpus against real Excel, the NER dial, the eval ladder.
-4. A substrate invariant: storage ABI, write gates, provenance, secrets.
-5. A few end-to-end user flows.
-
-Do not write unit tests that restate the implementation (the same formula, trivial round
-trips, near-duplicate variants). A PR reports the checks it adds, each tied to one of the five
-kinds above, not a test count. The rule governs new tests. Keep existing tests and their required
-feature coverage running; a refactor must not remove them. Pruning the existing suite is a
-separate, explicit task, and it keeps coverage of the five kinds.
-
-## nextest tiers
-
-The dev-loop command runs the `default` profile, which skips the slow set pinned in
-`.config/nextest.toml`: `vault_open_drop_cycles_survive_pthread_key_limit`, the two
-`hnsw_recall_at_10_*` recall benches, and the whole `sync_convergence_props` suite in the
-`it_sync` binary. `--profile full` runs them with `retries = 2`; `default` is `retries = 0`.
-Run `--profile full` (or `scripts/verify.sh`) before claiming a VERDICT.
-
-## macOS test host
-
-Linux is the reference host. On macOS:
-
-- Prefer a real `TMPDIR`, e.g. `mkdir -p /private/tmp/oneiron-t && export
-  TMPDIR=/private/tmp/oneiron-t`. Secret lease/snapshot fixtures canonicalize their temp root
-  before creating test paths, so macOS's `/var` alias does not mask their intentional symlink
-  tests. Production secret-file policy still refuses symlink ancestors.
-- `oneiron-napi` links its test binary on macOS through `-undefined dynamic_lookup`.
-  Linux Rust tests enable napi-rs `dyn-symbols` through a Linux-only dev-dependency;
-  normal production builds still resolve Node-API symbols from the importing Node host.
-  Hostless Rust tests cover conversion/engine logic, not the JS ABI. Real Node-host tests
-  remain necessary. `scripts/verify.sh` includes the crate's hostless Rust tests.
-- 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
-  UnsupportedPlatform` and pass on Linux. Known; ticket pending.
-- Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
+To format, run `cargo fmt -p <crate>` and inspect the diff. Never pass `--all`: it follows the
+path dependency into the vendored `crates/heed`.
 
 ## Code map
 
 Read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules with layout,
 size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning module or type.
-These maps cover `crates/` only; the workspace's macOS app lives separately at
-`apps/macos/src-tauri/` and is linked from the overview. Both map levels
-are generated deterministically by `scripts/codemap/`, along with the machine-readable
-`docs/codemap/codemap.json`. Only `main` writes them (owner ruling 2026-09-27):
-`.github/workflows/codemap.yml` regenerates and commits the map after every push to `main`.
-PRs never touch `docs/CODEMAP.md` or `docs/codemap/`, and PR CI never checks them, so a branch's
-map can lag its own changes until they merge.
+File paths in a crate map are relative to `crates/<crate>/`. The maps cover `crates/` only; the
+macOS app lives at `apps/macos/src-tauri/` and is linked from the overview.
 
-To read a fresh map for your branch, run `python3 scripts/codemap/codemap.py` locally and do not
-commit its output (`git restore docs/CODEMAP.md docs/codemap` drops it). `scripts/codemap/check.sh`
-is read-only; `scripts/verify.sh` runs it only with `CODEMAP_CHECK=1`.
-`python3 scripts/codemap/codemap.py --sizes` prints live line counts without changing the maps.
-The index is a source summary, not a call graph or proof of which features compile.
+`scripts/codemap/` generates both map levels and the machine-readable `docs/codemap/codemap.json`.
+Only `main` writes them: `.github/workflows/codemap.yml` regenerates and commits the map after
+every push to `main`. Never hand-edit the map and never commit map output from a branch, so a
+branch's map can lag its own changes. To read a fresh map for your branch, run
+`python3 scripts/codemap/codemap.py`, then drop the output with
+`git restore docs/CODEMAP.md docs/codemap`. `python3 scripts/codemap/codemap.py --sizes` prints
+live line counts without changing the maps. The map is a source summary, not a call graph or
+proof of which features compile.
 
 For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.md`, then open the
-matching path under `crates/oneiron/`. Read only matching rows or a narrow line range;
-do not load large crate maps (especially `docs/codemap/oneiron.md`) whole.
+matching path under `crates/oneiron/`. Do not load a large crate map (especially
+`docs/codemap/oneiron.md`) whole.
 
-Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present):
+Size and dependency questions without `tokei` or `cargo-modules` (`rg` is present):
 
     rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files
     rg -l 'crate::pipeline\b' crates --type rust                                     # who names a module
     rg -oIN '\bcrate::[a-z_]+' crates/oneiron/src/pipeline | sort | uniq -c | sort -rn  # what a module names
 
-## Tools and hosts
+## Where code lives
 
-Arch Linux is the reference host; the Mac mini and MacBook also run development and macOS
-checks. Read `rust-toolchain.toml` for the Rust pin and components. Gate tools are `cargo`
-(with rustfmt, clippy, and nextest), `git`, `python3` ≥ 3.11, `bash`, and `rg`.
+The core is split into lower engine crates below `oneiron`. `crates/oneiron-contracts` is the
+lowest: shared value vocabulary that depends on nothing in `oneiron`. A moved module keeps its
+`oneiron::<module>` path through a facade file in `crates/oneiron/src/` that re-exports it; edit
+the definition in the lower crate. A `#[non_exhaustive]` enum that `oneiron` matches exhaustively
+stays in `oneiron`, because the attribute only allows exhaustive matches inside the defining
+crate.
 
-Check tools on the host you are using, not on the coordinator's host. `rtk` and `ast-grep` are
-useful when available, but optional wrappers are not gate requirements. Do not assume `just`,
-`tokei`, `cargo-modules`, or `cargo-public-api` are installed; the code map and `rg` work without
-them. Do not install global hooks, change shared Cargo configuration, or start a second full
-build to work around an occupied target directory.
+A substantial module is a directory module, `foo/mod.rs` plus children, with a `pub use` seam
+that keeps every `crate::foo::*` path unchanged (`crates/oneiron/src/pipeline/mod.rs` shows the
+shape). `scripts/refactor/tools/split_check.py <base-rev> <old-file> <new-dir>` checks that a
+split is move-only. `scripts/refactor/conformance.sh` is refactor-wave machinery: it needs a
+stage id, a base rev and a `moves/<stage>.tsv` manifest (`scripts/refactor/tools/README.md`).
 
-## Landmines
+The error type is defined in `crates/oneiron-contracts/src/error/`. `mod.rs` holds `Error` with
+its cross-cutting variants, the flat `ErrorKind` and `kind()`. Each domain's variants sit in their
+own enum, one file per domain, reached from `Error` through an `#[error(transparent)]` `#[from]`
+wrapper. `crates/oneiron/src/error.rs` re-exports them, so every `oneiron::error` path is
+unchanged.
 
-- `oneiron-napi` hostless Rust tests are not JS ABI tests: Linux test builds use napi-rs
-  dynamic symbols, and macOS uses `-undefined dynamic_lookup`. Production addons still need
-  a real Node host. Workspace nextest includes the crate on Linux and macOS;
-  the Rust tests do not replace real Node-host JS ABI tests.
-- Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
-  if you find a reference to it, that reference is stale.
-- Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
-  versions that have never shipped. `REVIEW.md`.
-- Don't review or touch `crates/*/vendor/**` (heed, paste, pkix-chain) unless the PR modifies it.
-- sudachi and formualizer (from `oneiron-xlsx-formula` on) are git dependencies on the `oneiron-dev`
-  forks pinned by `rev`, never vendored: a change to either is a fork commit plus a new `rev`
+## Ratchets
+
+`scripts/ratchet/check.sh` counts six metrics over non-test code against
+`scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
+process-global mutable statics, the keyspace census and raw core writes. It skips `tests/`
+directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. `scripts/ratchet/root-surface-check.sh`
+pins the `oneiron` crate root to the names in `scripts/ratchet/root-surface.txt`. Both run in
+`ratchet.yml` after a push to `main`; neither blocks a merge.
+
+## Vendored and forked code
+
+- `crates/heed` and `crates/paste` are vendored upstream crates outside the workspace, and
+  `crates/*/vendor/**` holds vendored third-party snapshots. `PROVENANCE.md` in `crates/heed`,
+  `crates/paste` and `crates/oneiron-docedit`, and `crates/oneiron-seal/vendor/README.md`, say
+  where each came from.
+- sudachi and formualizer (used from `oneiron-xlsx-formula` on) are git dependencies on the
+  `oneiron-dev` forks, pinned by `rev`. A change to either is a fork commit plus a new `rev`
   (`docs/ops/forked-dependencies.md`).
-- `scripts/refactor/conformance.sh` is GPS refactor-wave machinery — it needs a stage-id, a
-  base-rev, and a pre-registered `moves/<stage>.tsv` manifest. Not general-purpose tooling; see
-  `scripts/refactor/README.md`.
-- No force-push, no interactive rebase, no local merge into `main`, no skipped hooks. `WORKFLOW.md`
-  §5.
-- Doc/comment/naming findings are informational, never blocking. `REVIEW.md`.
-- Featureless builds: the crate declares NO default features. The library **and its test
-  targets** compile with no features, and must stay that way. These are Wave-6 acceptance gates;
-  `scripts/verify.sh` runs them as its `clippy-featureless` and `test-featureless` stages, in
-  addition to (never instead of) the all-features stages:
+- The `oneiron` crate declares no default features.
 
-      cargo test -p oneiron --lib --no-default-features
-      cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+## CI
 
-  Coverage is feature-independent on purpose: a test whose law is base-mode must RUN featureless.
-  When a featureless build reports an unresolved or unused name, gate the *import* to match its
-  consumers (`#[cfg(feature = "sync")]` / `#[cfg(all(feature = "sync", test))]`), or seed a local
-  fixture constant — never cfg-disable the test itself, which would silently delete base-mode
-  coverage. `BatchBuilder::put_replicated` is one door gated to exactly its consumers,
-  `cfg(any(feature = "sync", test))`: the sync production replay doors (applied in the caller's
-  transaction), the cross-crate seam `sync::selector::put_selector_test_federation_grant`, and
-  the in-crate fixtures, featureless ones included. OF-060 F1 pins it out of non-sync production
-  sources. Narrowing the gate to `sync` drops the featureless fixtures; widening it past its
-  consumers reintroduces a `-D dead-code` failure in the featureless library lane.
-
-## CI truth
-
-Every workflow except `codemap.yml` runs on our own runners since 2026-09-08 (HYG-06b) — hosts,
-labels and the cache contract are under *Self-hosted runners* below. All of them except
-`codemap.yml` honour `CI_PAUSED`.
-
-**Per-PR CI is off (owner ruling 2026-09-27).** The repository variable `CI_PAUSED` is `true`, so every PR
-check reports *skipped*, which counts as passing. Before you open or update a PR, run the touched tests (both
-tiers) and clippy yourself; never wait for CI or report it as a blocker. A PR merges when its review passes. The
-full gate runs on `main` after PRs merge (at most once an hour, and only when something new landed), and a red
-gate gets a fix PR. The workflows below describe what runs when the variable is `false`.
-
-- `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
-  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints the touched packages and their
-  transitive workspace reverse dependents with `--all-targets` (plus the featureless build when `oneiron`
-  changed), `Test` runs nextest for the touched packages and only the touched
-  top-level `oneiron` modules (integration tests only when `crates/oneiron/tests` changed; no doctests), and
-  `Test (featureless)` runs the shared-process `cargo test` lane for those modules. `cargo-deny` runs only
-  when `Cargo.lock` or `deny.toml` changed, the tooling tests only when `scripts/` or `.github/` changed.
-  The full gate (workspace clippy in three feature graphs, strict rustdoc, the whole nextest suite, doctests,
-  both featureless process models) runs nightly at 03:00 JST (`schedule`), on `workflow_dispatch`, and when a
-  build file changes (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, clippy/rustfmt/nextest
-  config). `Test (macOS)` and the mutation audit are dispatch-only. `Checks`, `Test` and `Test (featureless)`
-  are required contexts and always report. All three, and `Detect changed paths`, run on the self-hosted Linux
-  runners; the Macs take only the dispatch jobs.
-  `CI_PAUSED=true` pauses every job. `package` waits for a `v*` tag.
-- `codemap.yml` — `push` to `main` path-scoped to `crates/**`, `scripts/codemap/**` and the map
-  itself, plus `workflow_dispatch`; never on PR. The code map's only writer: it regenerates the
-  map on the newest `main` and commits `codemap: regenerate` as `oneiron-codemap`, retrying up to
-  three times when `main` moves. A GitHub-hosted runner with Python 3.12; not gated on
-  `CI_PAUSED`, because it writes rather than checks.
-- `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
-  file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
-  header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
-  agree. Runs on the macOS runners without a container: uv 0.12.1, CPython 3.12 and pyhanko
-  0.35.2 (`uv.lock`) are pinned in the job; `pdfsig` is the host's poppler.
-- `ratchet.yml` — `push` to `main` only, no PR trigger and no schedule; runs
-  `scripts/ratchet/check.sh` and `scripts/ratchet/root-surface-check.sh` with the host's
-  ripgrep. It is a post-merge reporter:
-  it cannot block a merge, it can only turn `main` red after one. Main-only on purpose: a
-  stacked wave's middle commits can sit transiently above baseline for a state that never lands.
-- `uniffi-stub.yml` — PR-triggered (non-draft), path-scoped to `crates/oneiron-uniffi` (plus the
-  workflow file and `Cargo.lock`), and `workflow_dispatch`; Swift-binding compile proof on the
-  macOS runners' Xcode toolchain.
-- `wire-quickstart.yml` — PR (non-draft) to `main` and `push` to `main`, both path-scoped to
-  `packages/oneiron`, `crates/oneiron{,-py,-remote,-napi,-server}`, the wire scripts
-  (`scripts/wire-test-server.sh`, `scripts/tests/test_wire_*.py`) and the Cargo/toolchain
-  files; plus `workflow_dispatch`. Installs the shipped SDK surface and proves four-verb parity.
+GitHub CI is paused: the repository variable `CI_PAUSED` is `true`, so every workflow except
+`codemap.yml` skips its jobs. The files under `.github/workflows/` describe what runs when CI is
+unpaused; they are not the merge bar. `codemap.yml` still runs, because it is the map's only
+writer.
 
 ## Self-hosted runners
 
-- Hosts and labels: MacBook `self-hosted,macos,arm64,mbp` (16 cores, the first and strongest);
-  the Mac mini joins with the same macOS labels; Arch box `self-hosted,linux,x64,arch` (16 cores,
-  the Wave host — both Linux test jobs and `package` can run on it). Workflows target
-  `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
+- Workflows target `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host
+  name. `uniffi-stub` targets the capability label `xcode`; add that label to a runner only
+  after a full Xcode (not Command Line Tools alone) is installed there.
+- Host contract: rustup resolving `rust-toolchain.toml` (1.96 with rustfmt and clippy),
+  `cargo-nextest`, `rg`, git and `python3` ≥ 3.11; macOS runners also need poppler's `pdfsig`
+  (`seal-oracle.yml`). Pinned CI-only tools (cargo-deny, typos-cli, nextest where a host lacks
+  it) go under `~/ci/tools`; the job installs them on first use.
 - Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
-  (persistent, outside the checkout, so `clean: true` checkouts never wipe it; on macOS it must
-  also stay outside `~/Desktop`, `~/Documents` and `~/Downloads` — the runner is a launchd agent
-  without those TCC grants, and its first `open()` there blocks on a consent prompt nobody sees),
-  `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
-  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR`. `ci.yml` compiler
-  steps use the pinned sccache action and GitHub Actions cache alongside the persistent host
-  target; other workflows do not use shared compilation caching. The toolchain is host rustup
-  resolving `rust-toolchain.toml`, not a toolchain action. No workflow sets `RUSTFLAGS`:
-  `-Dwarnings` there also reaches the vendored `crates/heed` path
-  dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
-  proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
-  flags let the runner caches share fingerprints with developer builds. Cargo does not evict stale
-  artifacts itself. Cache maintenance is opt-in per workflow: the Checks job, the macOS Test job and
-  the binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
-  has a cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
-  commands live in `docs/ops/build-performance.md`; the script is the behavior source of truth.
-  Never share a runner's target directory with concurrent developer jobs.
-- Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
-  `python3` ≥ 3.11; macOS runners also poppler's `pdfsig` (seal-oracle). `uniffi-stub` needs a
-  full Xcode, not Command Line Tools alone, so it targets the capability label `xcode`; add that
-  label to a runner only after Xcode is installed there (today: both Macs). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
-  lacks it) go under `~/ci/tools`, installed by the job on first use and reused after.
-- One runner runs one job at a time; a PR takes a `checks` slot and two Linux test slots.
-  With enough Linux runners the test jobs run in parallel. Every job has `timeout-minutes`
-  so a hang cannot hold the slot.
-- Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
-  in every workflow skips; flip it back when the wave closes.
-- Adding a runner: mint a registration token (repo Settings → Actions → Runners → New
-  self-hosted runner) and run it from the environment only, never from a file or a commit:
-  `RUNNER_TOKEN=… scripts/ci/install-runner.sh <name> <labels> <os-arch> <cargo-target-dir> [tmpdir]`,
-  e.g. `… install-runner.sh mac-mini self-hosted,macos,arm64,mini osx-arm64 ~/ci/target
-  /private/tmp/ci-t`; then `./run.sh` or `./svc.sh install && ./svc.sh start` in `~/actions-runner`.
-- Fork PRs from outside collaborators need approval before they run (repo setting, already set).
-
-## Where new code goes
-
-The core is being split into lower engine crates below `oneiron` (2026-10 crate split).
-`crates/oneiron-contracts` is the lowest: shared value vocabulary that depends on nothing in
-`oneiron`. A moved module keeps its `oneiron::<module>` path through a facade file in
-`crates/oneiron/src/` that re-exports it; edit the definition in the lower crate. A
-`#[non_exhaustive]` enum that `oneiron` matches exhaustively stays in `oneiron` (the attribute
-only allows exhaustive matches inside the defining crate).
-
-The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
-wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 106 more over-bar
-modules the same way, so a directory module is now the normal shape for anything substantial.
-Two files still sit over the bar and nothing is deferred any more — the `_attribution` block in
-`scripts/ratchet/baseline.json` gives the structural reason for each one:
-`voice_cascade/tts_spikes.rs` and `claim/lifecycle.rs` are reasoned indivisible. Do not use
-either as precedent for a new large file. (`error.rs` was the third until ONE-2001 split it;
-see *The error type* below.)
-
-Don't look for a static old→new map; `docs/CODEMAP.md` and `docs/codemap/<crate>.md` are
-regenerated deterministically and are the only current answer to "where does X live now".
-(`docs/ops/w6-module-split-map.md` covers the wave-6 fifteen only and is history, not a map of
-the tree today.) Don't grow an existing child file past the 800-line ratchet bar — a new concern
-gets its own file under the owning module directory:
-
-| New concern is about... | Goes in...                      |
-|--------------------------|-----------------------------------|
-| storage                  | its own file under `store/`       |
-| gate evaluation           | its own file under `gate/`        |
-| task-verb logic           | its own file under `task_verb/`   |
-| batch application          | its own file under `batch/`       |
-
-Never create `utils.rs` or `helpers.rs` — name a file for what it does.
-
-## The error type
-
-`crates/oneiron/src/error/` is a directory module (ONE-2001, `DESIGN-error-enum.md` option B).
-`error/mod.rs` holds `pub enum Error` with the 21 cross-cutting bag variants, `pub enum
-ErrorKind`, `kind()`, `is_retryable`, the two manual `From` impls and the two one-hop `From`
-delegations. The other 203 variants live in twelve per-domain enums, one file each —
-`artifact`, `claim`, `code`, `gate`, `maintenance`, `off_record`, `record`, `registry`, `relay`,
-`secret`, `store`, `sync` — reached from the root through an `#[error(transparent)]` `#[from]`
-wrapper, so Display and `source()` are still the leaf's.
-
-A new variant goes in the domain enum that owns the door it refuses, constructed as
-`Error::Domain(DomainError::Variant ..)`, with its `ErrorKind` twin and a `kind()` arm in that
-domain's `kind()`. It goes in the bag only when it is genuinely cross-cutting (storage, io,
-arithmetic, invariant). `ErrorKind` is the stable persisted surface — its Debug names are
-written to disk as quarantine reason codes and are the server's mapping key — so it stays flat
-and is never renamed or reordered. Each domain enum is `pub` and re-exported from `error`, never
-from the crate root: the root-surface pin does not move. `kind()` and the moved
-constructors are `pub(crate)`, with public forwarders on `Error`.
-
-`scripts/ratchet/check.sh` ratchets four counters over non-test code — files at or over 800
-lines, `#[allow(` attributes, `println!`/`eprintln!`/`dbg!` calls, and process-global mutable
-statics (baseline 2 / 98 / 91 / 33, `scripts/ratchet/baseline.json`) — and
-`scripts/ratchet/root-surface-check.sh` pins the crate root at exactly the 701 names in
-`scripts/ratchet/root-surface.txt`. A change may lower a
-counter; raising one, or moving the pin, is a reviewed decision stated in the PR, never a
-silent bump. Reason-carrying `#[allow(…)]` is the only legal form and it never hides a warning
-that a private item became dead — delete the item instead.
-
-Engine state belongs to a vault or to a thread, never to the process: a new `static` holding a
-`Mutex`, `RwLock`, `Atomic`, `OnceLock`/`OnceCell`, `LazyLock`/`Lazy` or `Cell`/`RefCell` is a
-stated decision in the PR, and a `thread_local!` or a field on the owning object is the default.
-A `#[cfg(test)]` static is the worst case, not an exemption: `cargo test --lib` runs the suite as
-parallel threads of ONE process, so a test-only global is shared by every sibling test — that is
-what #922 and #923 were. Test seams belong on the vault's `#[cfg(test)] StoreCore.test_hooks`,
-reached as `vault.test_hooks()`. `scripts/ratchet/process_globals.py --list` names every one it
-counts, resolving same-file `type` aliases and named wrapper structs so a name cannot hide one.
-
-## Module style
-
-Two file shapes are legal; never convert one to the other for style alone.
-
-- Under the giant-file bar (`scripts/ratchet/check.sh` fails a non-test file at or over 800
-  lines; `tests/` directories, `tests.rs` and `*_tests.rs` are excluded from the count): a module
-  stays `foo.rs` with its tests in `foo/tests.rs`.
-- Over the bar: the module becomes a directory module `foo/mod.rs` + children. Seam shape is
-  `crates/oneiron/src/pipeline/mod.rs` — `mod` declarations, a `pub use` seam that keeps every
-  `crate::foo::*` path unchanged, and a `#[cfg(test)] use self::{…}` shim so `tests.rs` resolves
-  as before. Children are `pub(super)`, never widened; the seam re-exports what the crate needs.
-- A split is move-only. Check it with
-  `scripts/refactor/tools/split_check.py <base-rev> <old-file> <new-dir>` (fails closed with
-  `SPLIT-CHECK-ERROR`). The manifest-driven `scripts/refactor/conformance.sh` is not needed for
-  the common case.
-
-- Reach: an item is declared at the narrowest visibility its callers need — private when
-  only its own file names it, `pub(super)` when only its parent directory does, `pub(in
-  crate::x)` when an ancestor directory does, `pub(crate)` only when another top-level directory
-  names it, and `pub` only through the `lib.rs` root surface. The 2026-09-10 census (#919)
-  narrowed 749 engine items this way. The compiler is the arbiter: when it names a caller outside
-  the boundary, widen to exactly that caller's scope and no further. Re-export seams follow the
-  same rule — a `pub(crate) use` that nothing outside the directory names is a plain `use`.
-
-## Test style
-
-A test asserts what a caller can observe: the returned value, the stored row, the typed error
-variant, the wire body. It does not assert a log line, an internal counter, a private field, the
-wording of a message, or a source scan of the file under test. When the outcome has no observable
-door, add the door in the same change — a typed `Error` variant, a reason code, or an accessor on
-the type that owns the fact (the 2026-09-10 pass rewrote 940 assertions to this shape and added 59
-such doors) — never widen a private item so a test can reach it. Shared fixtures live in the
-owning module's `tests/support.rs`; a helper one file uses stays in that file, and a helper with
-no remaining caller is deleted, not kept. Test files (`tests/**`, `tests.rs`, `*_tests.rs`) sit
-outside the giant-file ratchet and the visibility census, so length is not the concern there;
-duplication is — a test that only re-proves what a sibling proves is deleted.
-
-## Closest wins
-
-A crate-local `CLAUDE.md` or `AGENTS.md`, if one exists, overrides this file for that crate's
-scope. None exist today (checked 2026-08-19); this file is authoritative everywhere until one
-appears.
-
-## Review priority
-
-- Invariants missing at any door (admission / replay / rematerialization / export / batch).
-- Validator-vs-writer-promise gaps.
-- Hostile-peer-reachable paths, fail-open errors.
-- Regressions in code introduced by earlier review fixes.
+  (persistent and outside any checkout), a `PATH` with `~/.cargo/bin`, and on macOS the
+  real-path `TMPDIR=/private/tmp/ci-t`. On macOS the target dir must stay outside `~/Desktop`,
+  `~/Documents` and `~/Downloads`: the runner is a launchd agent without those privacy grants,
+  and its first `open()` there blocks on a consent prompt nobody sees. Workflows never set
+  `CARGO_TARGET_DIR` or `RUSTFLAGS` (`-Dwarnings` there would also reach the vendored
+  `crates/heed`). `scripts/ci/cap-target-cache.sh` trims a target cache; `docs/ops/build-performance.md`
+  covers safe maintenance. Never share a runner's target directory with other Cargo jobs.
+- To add a runner, mint a registration token (repo Settings → Actions → Runners → New
+  self-hosted runner) and pass it in the environment only, never in a file or a commit:
+  `RUNNER_TOKEN=… scripts/ci/install-runner.sh <name> <labels> <os-arch> <cargo-target-dir> [tmpdir]`.
+  Then run `./run.sh`, or `./svc.sh install && ./svc.sh start`, in `~/actions-runner`.

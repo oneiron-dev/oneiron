@@ -139,7 +139,11 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         anyhow::bail!("the import queue needs a unix host");
     }
     let started = Instant::now();
-    let (files, mut conversations) = decode(source, &path)?;
+    let (files, mut conversations) = if source == HistorySource::HookTranscript {
+        decode_hook_transcript(&config, &path)?
+    } else {
+        decode(source, &path)?
+    };
     earliest_first(&mut conversations);
     progress(&format!(
         "read {} file(s): {} conversation(s)",
@@ -411,6 +415,55 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         });
     }
     Ok((files, conversations))
+}
+
+/// A hook's transcript, read as the queue reads it: one log under a folder
+/// in `[import] hook_transcript_roots`, through no link below that folder. A
+/// log over [`MAX_LOG_BYTES`] is refused.
+#[cfg(unix)]
+fn decode_hook_transcript(
+    config: &ServeConfig,
+    path: &Path,
+) -> anyhow::Result<(Files, Vec<HistoryConversation>)> {
+    let source = HistorySource::HookTranscript;
+    let path = std::path::absolute(path)?;
+    let root = config
+        .import
+        .root_for_path(source, &path)
+        .ok_or_else(|| no_hook_root(&path))?;
+    let session = read_queued(source, &root, &path)?;
+    if let Some(ImportWarning::LogTooLarge { bytes, limit, .. }) = session.left_out.first() {
+        anyhow::bail!(
+            "{} is {bytes} bytes; one log is read up to {limit}, so nothing was imported",
+            path.display()
+        );
+    }
+    let files = Files {
+        read: 1,
+        ..Files::default()
+    };
+    Ok((files, session.conversations))
+}
+
+#[cfg(not(unix))]
+fn decode_hook_transcript(
+    _config: &ServeConfig,
+    path: &Path,
+) -> anyhow::Result<(Files, Vec<HistoryConversation>)> {
+    anyhow::bail!(
+        "reading a hook transcript ({}) needs a unix host",
+        path.display()
+    )
+}
+
+/// A hook transcript outside every folder the owner listed.
+#[cfg(unix)]
+fn no_hook_root(path: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} is under no folder in `[import] hook_transcript_roots`; list the folder your \
+         agent's hook transcripts sit under in the serve config",
+        path.display()
+    )
 }
 
 impl Files {
@@ -833,7 +886,9 @@ fn subagent_session(log: &Path) -> Option<String> {
 
 /// The names the tools give their session logs: a Claude Code session id or a
 /// subagent's `agent-<id>` (under `<session>/subagents/`, or beside the
-/// sessions in older releases), a Codex `rollout-<time>-<id>`.
+/// sessions in older releases), a Codex `rollout-<time>-<id>`. A hook
+/// transcript is any `<id>.jsonl` (VS Code's, Cursor's), or a Copilot CLI
+/// `events.jsonl` in its session's folder; its reader checks what it holds.
 fn session_log_name(source: HistorySource, log: &Path) -> bool {
     let Some(name) = log.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -844,20 +899,40 @@ fn session_log_name(source: HistorySource, log: &Path) -> bool {
             stem.starts_with("agent-")
                 || (stem.len() == 36 && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-'))
         }
+        HistorySource::HookTranscript => {
+            name.strip_suffix(".jsonl")
+                .is_some_and(|stem| !stem.is_empty())
+                && (name != "events.jsonl" || events_session(log).is_some())
+        }
         _ => name.starts_with("rollout-"),
     }
 }
 
 /// A Claude Code log under `<session>/subagents/` is that session's subagent.
+/// A Copilot CLI `events.jsonl` is named by its session's folder, so two
+/// sessions' logs are never one conversation.
 fn history_file(source: HistorySource, log: &Path) -> HistoryFile {
     let stem = log
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let stem = match events_session(log) {
+        Some(session) if source == HistorySource::HookTranscript && stem == "events" => session,
+        _ => stem,
+    };
     let parent = (source == HistorySource::ClaudeCode)
         .then(|| subagent_session(log))
         .flatten();
     HistoryFile { stem, parent }
+}
+
+/// The folder a Copilot CLI `events.jsonl` sits in, which is its session's
+/// id (`session-state/<session>/events.jsonl`).
+fn events_session(log: &Path) -> Option<String> {
+    log.parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
 }
 
 /// Opens the configured, existing vault; a running `serve` holds it.

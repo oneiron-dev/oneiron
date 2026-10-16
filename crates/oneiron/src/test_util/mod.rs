@@ -157,6 +157,16 @@ pub(crate) fn withhold_dreamer_read(vault: &Vault) -> crate::Result<()> {
 /// rule names takes the criticality floor, so a fixture that writes one through
 /// a gated door and expects a reader to act on it declares it here.
 pub(crate) fn declare_predicates_normal(vault: &Vault, prefixes: &[&str]) -> crate::Result<()> {
+    declare_predicates(vault, prefixes, "normal")
+}
+
+/// Sets each prefix's criticality in the stored default manifest: a rule
+/// that already names the prefix takes it, otherwise a new rule does.
+pub(crate) fn declare_predicates(
+    vault: &Vault,
+    prefixes: &[&str],
+    criticality: &str,
+) -> crate::Result<()> {
     use rmpv::Value;
     let id = crate::gate::default_policy_manifest_id()?;
     // A legacy test vault stores no manifest and reads the shipped one.
@@ -169,24 +179,49 @@ pub(crate) fn declare_predicates_normal(vault: &Vault, prefixes: &[&str]) -> cra
     else {
         unreachable!("default policy manifest is a map");
     };
-    let normal = prefixes.iter().map(|prefix| {
+    let axes = || {
         Value::Map(vec![
-            (Value::from("prefix"), Value::from(*prefix)),
-            (
-                Value::from("axes"),
-                Value::Map(vec![
-                    (Value::from("criticality"), Value::from("normal")),
-                    (Value::from("sensitivity"), Value::from("normal")),
-                ]),
-            ),
+            (Value::from("criticality"), Value::from(criticality)),
+            (Value::from("sensitivity"), Value::from("normal")),
         ])
-    });
-    match entries
+    };
+    let rules = match entries
         .iter_mut()
         .find(|(key, _)| key.as_str() == Some("rules"))
     {
-        Some((_, Value::Array(rules))) => rules.extend(normal),
-        _ => entries.push((Value::from("rules"), Value::Array(normal.collect()))),
+        Some((_, Value::Array(rules))) => rules,
+        _ => {
+            entries.push((Value::from("rules"), Value::Array(Vec::new())));
+            match entries.last_mut() {
+                Some((_, Value::Array(rules))) => rules,
+                _ => unreachable!("rules were just pushed"),
+            }
+        }
+    };
+    for prefix in prefixes {
+        let mut named = false;
+        for rule in rules.iter_mut() {
+            let Value::Map(fields) = rule else { continue };
+            if !fields.iter().any(|(key, value)| {
+                key.as_str() == Some("prefix") && value.as_str() == Some(*prefix)
+            }) {
+                continue;
+            }
+            named = true;
+            match fields
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("axes"))
+            {
+                Some((_, value)) => *value = axes(),
+                None => fields.push((Value::from("axes"), axes())),
+            }
+        }
+        if !named {
+            rules.push(Value::Map(vec![
+                (Value::from("prefix"), Value::from(*prefix)),
+                (Value::from("axes"), axes()),
+            ]));
+        }
     }
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode policy");
@@ -342,6 +377,10 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
     clear_default_policy_manifest_for_legacy_tests(&vault);
+    // Signing doors load this install's keys from a keystore (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     (dir, vault)
 }
 
@@ -641,4 +680,114 @@ pub(crate) fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
             Ok(())
         })
         .expect("clear default policy manifest for legacy test fixture");
+}
+
+/// Attaches an outstanding critical confirm to `claim`, as a critical Auto
+/// write leaves it: the claim is held until its owner answers.
+pub(crate) fn hold_claim_for_critical_confirm(vault: &Vault, claim: EntityId, seed: u8) {
+    let pending = crate::store::PendingGateConsentRecord {
+        version: 0,
+        claim_id: *claim.as_bytes(),
+        decision_id: crate::store::GateDecisionId::from_bytes([seed; 16]),
+        created_at: crate::unix_seconds_now(),
+        diff_handle: vec![seed, seed.wrapping_add(1)],
+        read_frontier_hash: [seed.wrapping_add(2); 32],
+        reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
+        dreamer_run_id: None,
+    };
+    vault
+        .with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &pending))
+        .expect("attach a critical confirm");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &claim)
+            .expect("confirm read"),
+        "the claim must read as held"
+    );
+}
+
+/// A genesis owner entry and its signed critical-confirm answer to `pending`,
+/// ready for `Vault::put_authority_log_entries`.
+pub(crate) fn critical_confirm_owner_entry(
+    pending: &crate::store::PendingGateConsentRecord,
+    disposition: crate::authority::CriticalWriteConfirmDisposition,
+    seed: u8,
+) -> (
+    crate::authority::AuthorityLogEntry,
+    crate::authority::AuthorityLogEntry,
+) {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        AuthorityTier, CriticalWriteConfirmAction, CriticalWriteConfirmMethod, DeviceAuthority,
+        ROLE_ADMIN, ROLE_OWNER,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let sign = |mut entry: AuthorityLogEntry| {
+        let transcript =
+            crate::authority::authority_transcript(&entry).expect("authority transcript");
+        entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+        entry
+    };
+    let genesis = sign(AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: None,
+        seq: 0,
+        parent_hashes: Vec::new(),
+        op: AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [seed.wrapping_add(1); 32],
+            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 1,
+    });
+    let binding =
+        crate::gate::critical_write_confirm_binding(pending).expect("critical pending binding");
+    let confirmation = sign(AuthorityLogEntry {
+        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(crate::authority::genesis_vault_id(&genesis).expect("vault id")),
+        seq: 1,
+        parent_hashes: vec![
+            crate::authority::authority_entry_hash(&genesis).expect("genesis hash"),
+        ],
+        op: AuthorityOp::CriticalWriteConfirm(CriticalWriteConfirmAction {
+            schema_version: crate::authority::CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION,
+            confirm_id: binding.confirm_id,
+            gate_decision_id: binding.gate_decision_id.as_bytes(),
+            claim_id: binding.claim_id,
+            effect_digest: binding.effect_digest,
+            read_frontier_hash: binding.read_frontier_hash,
+            nonce: binding.nonce,
+            expires_at: binding.expires_at,
+            disposition,
+            method: CriticalWriteConfirmMethod::TokenReauth,
+        }),
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 2,
+    });
+    (genesis, confirmation)
 }

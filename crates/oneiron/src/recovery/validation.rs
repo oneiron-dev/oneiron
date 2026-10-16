@@ -1,6 +1,8 @@
 //! Fail-closed whole-payload validation before a recovery mutation.
 
-use super::canonical::{CanonicalSnapshot, id, invalid};
+use super::canonical::{
+    CanonicalEntityDocument, CanonicalForkStatus, CanonicalSnapshot, id, invalid,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
@@ -391,6 +393,37 @@ fn pointer(body: &[u8]) -> Result<Option<String>> {
 
 pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
     strict(snapshot.entity_documents.iter().map(|row| row.entity_id))?;
+    // A proposal bundle may span documents: the snapshot carries every member
+    // or the bundle is not recoverable from it.
+    let mut proposals = BTreeMap::new();
+    let mut forks = BTreeSet::new();
+    for row in &snapshot.entity_documents {
+        validate_history(row)?;
+        for fork in row.history.iter().flat_map(|history| &history.forks) {
+            if !forks.insert(fork.fork) {
+                return Err(invalid("entity document fork duplicated"));
+            }
+            let (len, settled, actor, members) = proposals.entry(fork.proposal).or_insert((
+                fork.proposal_len,
+                fork.proposal_settled,
+                fork.actor,
+                BTreeSet::new(),
+            ));
+            if (*len, *settled, *actor) != (fork.proposal_len, fork.proposal_settled, fork.actor)
+                || !members.insert(fork.proposal_index)
+            {
+                return Err(invalid("entity document proposal bundle"));
+            }
+        }
+    }
+    if proposals
+        .values()
+        .any(|(len, _, _, members)| members.len() != usize::from(*len))
+    {
+        return Err(invalid(
+            "entity document proposal spans entities outside the snapshot",
+        ));
+    }
     let rows: BTreeMap<_, _> = snapshot
         .entity_documents
         .iter()
@@ -445,6 +478,107 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
         .any(|entity| !snapshot.entity_blobs.iter().any(|row| &row.id == entity))
     {
         return Err(invalid("entity document owner absent"));
+    }
+    Ok(())
+}
+
+/// A causal row binds inside itself: every version leads to the head, pins
+/// quote their version, and forks, receipts and purges name carried versions.
+fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
+    let Some(history) = &row.history else {
+        return Ok(());
+    };
+    if !history.shallow
+        && history.pins.is_empty()
+        && history.receipts.is_empty()
+        && history.forks.is_empty()
+        && history.purges.is_empty()
+    {
+        return Err(invalid("entity document history without causal state"));
+    }
+    if !history.purges.is_empty() && !history.shallow {
+        return Err(invalid("entity document purge without a purge floor"));
+    }
+    let texts = history.texts()?;
+    let head = texts
+        .len()
+        .checked_sub(1)
+        .ok_or(invalid("entity document history has no head"))?;
+    if texts[head] != row.text {
+        return Err(invalid("entity document head version"));
+    }
+    let mut reached = vec![false; texts.len()];
+    reached[head] = true;
+    for (index, version) in history.versions.iter().enumerate().rev() {
+        if !reached[index] {
+            return Err(invalid("entity document version is not before its head"));
+        }
+        if history.shallow && index > 0 && version.parents.is_empty() {
+            return Err(invalid("entity document version precedes its purge floor"));
+        }
+        strict(version.parents.iter().copied())?;
+        for &parent in &version.parents {
+            let parent = parent as usize;
+            if parent >= index {
+                return Err(invalid("entity document version parent"));
+            }
+            reached[parent] = true;
+        }
+    }
+    let version = |index: u32| (index as usize) < texts.len();
+    strict(history.pins.iter().map(|pin| pin.citation))?;
+    for pin in &history.pins {
+        for value in [pin.citation, pin.document, pin.actor] {
+            id(value)?;
+        }
+        let text = texts
+            .get(pin.version as usize)
+            .ok_or(invalid("entity document pin version"))?;
+        let (start, end) = (pin.start as usize, pin.end as usize);
+        let quote: String = text.chars().skip(start).take(end.saturating_sub(start)).collect();
+        if start > end
+            || end > text.chars().count()
+            || quote != pin.quote
+            || blake3::hash(quote.as_bytes()).as_bytes() != &pin.hash
+        {
+            return Err(invalid("entity document pin quote"));
+        }
+    }
+    strict(history.receipts.iter().map(|receipt| receipt.receipt))?;
+    for receipt in &history.receipts {
+        for value in [receipt.receipt, receipt.proposal, receipt.fork, receipt.actor] {
+            id(value)?;
+        }
+        if !version(receipt.before) || !version(receipt.after) {
+            return Err(invalid("entity document receipt version"));
+        }
+    }
+    strict(history.forks.iter().map(|fork| fork.fork))?;
+    for fork in &history.forks {
+        for value in [fork.fork, fork.proposal, fork.parent_document, fork.actor] {
+            id(value)?;
+        }
+        let pending = fork.status == CanonicalForkStatus::Pending;
+        match fork.base {
+            Some(base) if version(base) => {}
+            None if history.shallow && !pending => {}
+            _ => return Err(invalid("entity document fork base")),
+        }
+        if fork.output.is_some() != pending
+            || fork.proposal_index >= fork.proposal_len
+            || fork.proposal_len > 256
+        {
+            return Err(invalid("entity document fork state"));
+        }
+    }
+    strict(history.purges.iter().map(|purge| purge.receipt))?;
+    for purge in &history.purges {
+        for value in [purge.receipt, purge.document, purge.actor] {
+            id(value)?;
+        }
+        if !version(purge.requested) || !version(purge.applied) {
+            return Err(invalid("entity document purge version"));
+        }
     }
     Ok(())
 }

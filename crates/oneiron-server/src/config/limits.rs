@@ -12,6 +12,7 @@
 
 use std::time::Duration;
 
+use oneiron::limit_ask::{EngineLimit, EngineLimits};
 use oneiron::origin::smart_http::ScanBounds;
 use serde::Deserialize;
 
@@ -101,10 +102,34 @@ pub struct LimitsConfig {
     /// claims nothing, so writes asking at once can each pass it by their own
     /// bytes.
     pub disk_reserve_bytes: u64,
+    /// Live-query sessions held at once: one each socket attached to, and
+    /// the ones kept for a reconnect after their socket went. Past it, the
+    /// longest-kept detached session goes first (its reconnect gets a fresh
+    /// snapshot); while every session is attached, the next waits its turn.
+    pub live_sessions: usize,
+    /// Live-query subscriptions open at once, every session's together.
+    /// Past it, the next subscription waits its turn.
+    pub live_subscriptions: usize,
+    /// Message streams the vault holds open at once. Past it, the next
+    /// stream waits its turn.
+    pub message_streams: usize,
+    /// Text documents the vault keeps resident at once. Past it, the next
+    /// opener waits its turn.
+    pub live_documents: usize,
+    /// Bytes app-tier state kept between frames may hold at once: the
+    /// presence hub, each live-query subscription's retained pushes and each
+    /// socket's residence index projection. State larger than the whole of
+    /// it runs alone. A memory bound sized from the machine (an eighth of
+    /// its memory), not a count: past it, such state is the memory floor's
+    /// one refusal, and a retained ring falls back to a resync.
+    pub retained_memory_bytes: u64,
     /// Bytes one note to the open feedback inbox may carry: a POST body, or
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
     pub feedback_inbox_bytes: u64,
+    /// The engine's rows (`oneiron::limit_ask`), which the vault opens with:
+    /// work past one is served whole, and the row asks.
+    pub engine: EngineLimits,
 }
 
 impl Default for LimitsConfig {
@@ -132,7 +157,13 @@ impl Default for LimitsConfig {
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
+            live_sessions: 4_096,
+            live_subscriptions: 65_536,
+            message_streams: oneiron::live_rows::LiveRows::DEFAULT_MESSAGE_STREAMS,
+            live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
+            retained_memory_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
+            engine: EngineLimits::default(),
         }
     }
 }
@@ -147,7 +178,8 @@ fn descriptor_floor() -> usize {
 }
 
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
-/// at least 256 MiB; 2 GiB when the platform does not say.
+/// and as much for app-tier state kept between frames, each at least 256
+/// MiB; 2 GiB when the platform does not say.
 fn memory_floor() -> u64 {
     const MIB: u64 = 1024 * 1024;
     crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
@@ -190,7 +222,13 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
             disk_reserve_bytes,
+            live_sessions,
+            live_subscriptions,
+            message_streams,
+            live_documents,
+            retained_memory_bytes,
             feedback_inbox_bytes,
+            keyed_filter_json_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -216,7 +254,15 @@ impl LimitsConfig {
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
+        set(&mut self.live_sessions, live_sessions);
+        set(&mut self.live_subscriptions, live_subscriptions);
+        set(&mut self.message_streams, message_streams);
+        set(&mut self.live_documents, live_documents);
+        set(&mut self.retained_memory_bytes, retained_memory_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
+        if let Some(bound) = keyed_filter_json_bytes {
+            self.engine.set(EngineLimit::KeyedFilterJsonBytes, bound);
+        }
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -244,10 +290,20 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("live_sessions", self.live_sessions as u64),
+            ("live_subscriptions", self.live_subscriptions as u64),
+            ("message_streams", self.message_streams as u64),
+            ("live_documents", self.live_documents as u64),
+            ("retained_memory_bytes", self.retained_memory_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
+            }
+        }
+        for row in EngineLimit::ALL {
+            if self.engine.bound(row) == 0 {
+                anyhow::bail!("{} must be at least 1", row.key());
             }
         }
         for (key, value) in [
@@ -303,5 +359,11 @@ pub(super) struct LimitsConfigOverride {
     pub(super) git_scan_disk_floor_bytes: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,
     pub(super) disk_reserve_bytes: Option<u64>,
+    pub(super) live_sessions: Option<usize>,
+    pub(super) live_subscriptions: Option<usize>,
+    pub(super) message_streams: Option<usize>,
+    pub(super) live_documents: Option<usize>,
+    pub(super) retained_memory_bytes: Option<u64>,
     pub(super) feedback_inbox_bytes: Option<u64>,
+    pub(super) keyed_filter_json_bytes: Option<u64>,
 }

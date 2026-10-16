@@ -9,7 +9,9 @@ use std::io::{Cursor, Read, Write};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
-use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links, route_workbook};
+use oneiron_xlsx_formula::{
+    DocumentLocation, FormulaError, RecalcClock, preserve_external_links, route_workbook,
+};
 
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -157,7 +159,25 @@ fn recalc_at(
     bytes: &[u8],
     clock: &RecalcClock,
 ) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
-    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock)
+    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock, None)
+}
+fn recalc_located(
+    bytes: &[u8],
+    location: &DocumentLocation,
+) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
+    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), &tokyo(), Some(location))
+}
+/// Formula cells of the first row, `(cell, formula)`, each caching 0.
+fn formula_cells(formulas: &[(&str, &str)]) -> String {
+    formulas
+        .iter()
+        .map(|(cell, formula)| {
+            format!(
+                r#"<c r="{cell}"><f>{}</f><v>0</v></c>"#,
+                formula.replace('"', "&quot;")
+            )
+        })
+        .collect()
 }
 /// The fallback reason, or a panic when the workbook was not refused to it.
 fn fallback(bytes: &[u8]) -> String {
@@ -295,6 +315,132 @@ fn workbook_date_system_changes_dates_but_not_time_or_numeric_inputs() {
         );
         assert!(xml.contains("<f>TIME(13,30,0)</f><v>0.5625</v>"), "{xml}");
         assert!(xml.contains("<f>Input!A1+1</f><v>61</v>"), "{xml}");
+    }
+}
+
+/// `fixture` with "Set precision as displayed" on and a styles part: `numfmts`
+/// are its `numFmt` elements and cell style N (from 1) has format id
+/// `ids[N - 1]`.
+fn with_precision_as_displayed(bytes: &[u8], numfmts: &str, ids: &[u32]) -> Vec<u8> {
+    let bytes = edit_part(bytes, "xl/workbook.xml", |xml| {
+        xml.replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#)
+    });
+    let bytes = edit_part(&bytes, "xl/_rels/workbook.xml.rels", |rels| {
+        rels.replace("</Relationships>", &format!(r#"<Relationship Id="styles" Type="{DOC_REL}/styles" Target="styles.xml"/></Relationships>"#))
+    });
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/styles.xml" ContentType="{SPREADSHEET}.styles+xml"/></Types>"#))
+    });
+    let xfs: String = std::iter::once(0)
+        .chain(ids.iter().copied())
+        .map(|id| format!(r#"<xf numFmtId="{id}" fontId="0" fillId="0" borderId="0" xfId="0"/>"#))
+        .collect();
+    with_part(
+        &bytes,
+        "xl/styles.xml",
+        format!(
+            r#"<styleSheet xmlns="{MAIN}"><numFmts>{numfmts}</numFmts><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs>{xfs}</cellXfs></styleSheet>"#
+        ),
+    )
+}
+
+#[test]
+fn precision_as_displayed_stores_each_result_as_its_format_shows_it() {
+    // Excel for Windows 16.0.20430 (jobs probe-w2-precision-1 to -4): =1/3
+    // under 0.00 stores 0.33 and a formula reading it reads 0.33; General
+    // keeps 15 digits; a constant keeps the value the file holds; # ?/?
+    // stores 13/17 as 3/4; [>100]0;0.00 stores 2/3 by its first section.
+    let input = with_precision_as_displayed(
+        &fixture(
+            r#"<c r="A1" s="1"><v>1.23456</v></c>"#,
+            r#"<c r="A1" s="1"><f>1/3</f></c><c r="B1"><f>A1*3</f></c><c r="C1"><f>0.1+0.2</f></c><c r="D1"><f>Input!A1</f></c><c r="E1" s="2"><f>13/17</f></c><c r="F1" s="3"><f>2/3</f></c>"#,
+            false,
+        ),
+        r#"<numFmt numFmtId="164" formatCode="[&gt;100]0;0.00"/>"#,
+        &[2, 12, 164],
+    );
+    let report = recalc(&input).expect("precision as displayed is native");
+    let xml = part_text(&report.bytes, OUTPUT);
+    for cache in [
+        r#"<c r="A1" s="1"><f>1/3</f><v>0.33</v></c>"#,
+        r#"<c r="B1"><f>A1*3</f><v>0.99</v></c>"#,
+        r#"<c r="C1"><f>0.1+0.2</f><v>0.3</v></c>"#,
+        r#"<c r="D1"><f>Input!A1</f><v>1.23456</v></c>"#,
+        r#"<c r="E1" s="2"><f>13/17</f><v>0.75</v></c>"#,
+        r#"<c r="F1" s="3"><f>2/3</f><v>1</v></c>"#,
+    ] {
+        assert!(xml.contains(cache), "{cache} in {xml}");
+    }
+    assert_eq!(part_text(&report.bytes, INPUT), part_text(&input, INPUT));
+}
+
+#[test]
+fn precision_as_displayed_falls_back_where_excels_stored_value_is_unknown() {
+    // Each goes to the fallback instead of being written: a cell format with a
+    // lowercase exponent (Excel for Windows will not open it), a negative
+    // number shown by a section of literal text only, a style the styles part
+    // does not define, a scientific format scaled by a comma (Excel stores
+    // every number under 0.0,E+0 as 0; the fork stored 0.33), a format Excel
+    // will not open a workbook with (0.0@; the fork stored 15 digits), a
+    // number General rounds past the largest double (Excel saves #NUM! for it,
+    // yet =A1=0 is FALSE; the fork kept the number), and a circular reference
+    // (Excel keeps the saved values of A1=A1 and of B1=A1*2; the fork
+    // calculated B1 again). Excel for Windows 16.0.20430, jobs
+    // probe-w2-precision-sol-raw, -5, -sol2-2 and -6.
+    let formula = r#"<c r="A1" s="1"><f>0-1/3</f></c>"#;
+    for (numfmts, ids) in [
+        (
+            r#"<numFmt numFmtId="164" formatCode="0.00e+00"/>"#,
+            &[164][..],
+        ),
+        (
+            r#"<numFmt numFmtId="164" formatCode="0.00;&quot;none&quot;"/>"#,
+            &[164],
+        ),
+        ("", &[]),
+        (r#"<numFmt numFmtId="164" formatCode="0.0,E+0"/>"#, &[164]),
+        (r#"<numFmt numFmtId="164" formatCode="0.0@"/>"#, &[164]),
+    ] {
+        fallback(&with_precision_as_displayed(
+            &fixture("", formula, false),
+            numfmts,
+            ids,
+        ));
+    }
+    let largest = r#"<c r="A1"><f>2^1023*(2-2^-52)</f></c><c r="B1"><f>A1=0</f></c>"#;
+    fallback(&with_precision_as_displayed(
+        &fixture("", largest, false),
+        "",
+        &[],
+    ));
+    let circular =
+        r#"<c r="A1" s="1"><f>A1</f><v>1.23456</v></c><c r="B1"><f>A1*2</f><v>99</v></c>"#;
+    fallback(&with_precision_as_displayed(
+        &fixture("", circular, false),
+        "",
+        &[2],
+    ));
+}
+
+#[test]
+fn a_join_cut_through_a_character_outside_the_bmp_falls_back() {
+    // Excel for Windows 16.0.20430 (job probe-w2-parse-7, SC05 and SC02) keeps
+    // half of a character that a join past 32,767 UTF-16 units cuts through:
+    // IFERROR(LEN(..),42) is 32766 and ISERROR(..) is FALSE. The engine's
+    // #N/IMPL! there was caught, so the fork at d890db6d cached 42 and TRUE.
+    // No Rust string holds half a character, so the workbook falls back.
+    let join = "A1&amp;_xlfn.UNICHAR(128512)";
+    for formula in [
+        format!("IFERROR(LEN({join}),42)"),
+        format!("ISERROR({join})"),
+    ] {
+        let cells =
+            format!(r#"<c r="A1"><f>REPT("a",32766)</f></c><c r="B1"><f>{formula}</f></c>"#);
+        let reason = fallback(&fixture("", &cells, false));
+        assert!(
+            reason.contains("a join cut through a character"),
+            "{reason}"
+        );
     }
 }
 
@@ -1292,6 +1438,194 @@ fn cached<'x>(xml: &'x str, cell: &str) -> &'x str {
             .map_or(value.len(), |end| start + end)]
 }
 
+fn number(xml: &str, cell: &str) -> f64 {
+    cached(xml, cell)
+        .parse()
+        .unwrap_or_else(|_| panic!("{cell} number in {xml}"))
+}
+
+#[test]
+fn cell_filename_and_address_name_the_callers_location() {
+    // Excel for Windows 16.0.20430 (ops/excel-hostinfo-probe-20261008.md):
+    // the folder and file before the sheet, the file before another sheet's
+    // address, the reference's sheet rather than the formula's.
+    let input = with_names(
+        &fixture(
+            r#"<c r="A1"><v>1</v></c>"#,
+            &formula_cells(&[
+                ("A1", r#"CELL("filename",A1)"#),
+                ("B1", r#"CELL("filename",Input!A1)"#),
+                (
+                    "C1",
+                    r#"MID(CELL("filename",A1),FIND("]",CELL("filename",A1))+1,255)"#,
+                ),
+                (
+                    "D1",
+                    r#"LEFT(CELL("filename",A1),FIND("[",CELL("filename",A1))-1)"#,
+                ),
+                ("E1", r#"CELL("address",Input!B2)"#),
+                ("F1", r#"CELL("address",Result!B2)"#),
+                ("G1", "book"),
+            ]),
+            false,
+        ),
+        r#"<definedName name="book">CELL(&quot;filename&quot;,Input!$A$1)</definedName>"#,
+    );
+    let location = DocumentLocation::from_path(r"C:\Reports\Budget.xlsx").expect("location");
+    let output = recalc_located(&input, &location).expect("native recalc");
+    let xml = part_text(&output.bytes, OUTPUT);
+    for (cell, value) in [
+        ("A1", r"C:\Reports\[Budget.xlsx]Result"),
+        ("B1", r"C:\Reports\[Budget.xlsx]Input"),
+        ("C1", "Result"),
+        ("D1", r"C:\Reports\"),
+        ("E1", "[Budget.xlsx]Input!$B$2"),
+        ("F1", "$B$2"),
+        ("G1", r"C:\Reports\[Budget.xlsx]Input"),
+    ] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn without_a_location_cell_filename_reads_the_one_excel_saved() {
+    let saved = |cells: &str| fixture("", cells, false);
+    let filename = |cache: &str| {
+        format!(r#"<c r="A1" t="str"><f>CELL(&quot;filename&quot;,A1)</f><v>{cache}</v></c>"#)
+    };
+    let readers = formula_cells(&[
+        (
+            "B1",
+            r#"MID(CELL("filename",A1),FIND("]",CELL("filename",A1))+1,255)"#,
+        ),
+        ("C1", r#"CELL("address",Input!B2)"#),
+    ]);
+    // Excel last calculated the workbook as C:\Old\Book.xlsx.
+    let input = saved(&(filename(r"C:\Old\[Book.xlsx]Result") + &readers));
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), r"C:\Old\[Book.xlsx]Result", "{xml}");
+    assert_eq!(cached(&xml, "B1"), "Result", "{xml}");
+    assert_eq!(cached(&xml, "C1"), "[Book.xlsx]Input!$B$2", "{xml}");
+    // The caller's location wins over the saved one.
+    let location = DocumentLocation::from_path(r"D:\New\Plan.xlsx").expect("location");
+    let xml = part_text(
+        &recalc_located(&input, &location).expect("native").bytes,
+        OUTPUT,
+    );
+    assert_eq!(cached(&xml, "A1"), r"D:\New\[Plan.xlsx]Result", "{xml}");
+    // A folder may hold a bracket: Excel opened C:\...\hi\a]b\Book.xlsx
+    // (ops/excel-hostinfo-probe-20261008.md).
+    let bracketed = saved(&filename(r"C:\a]b\[Book.xlsx]Result"));
+    let xml = part_text(&recalc(&bracketed).expect("native recalc").bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), r"C:\a]b\[Book.xlsx]Result", "{xml}");
+
+    let need = r#"formula needs host context: CELL("filename") reads the file's path; neither the caller nor a cached CELL("filename") value gives it"#;
+    // No cached path: the sheet-name formula of SpreadsheetBench 118-8 and
+    // 342-46 caches only the text after it, a never-saved workbook caches "",
+    // and LibreOffice caches its own form.
+    for cells in [
+        r#"<c r="A1" t="str"><f>MID(CELL(&quot;filename&quot;,A1),FIND(&quot;]&quot;,CELL(&quot;filename&quot;,A1))+1,255)</f><v>Result</v></c>"#.to_owned(),
+        filename(""),
+        filename("'file:///C:/Old/Book.xlsx'#$Result"),
+        // Caches that disagree (review of this change): a shared formula's
+        // member before its anchor (its index spelled `00`, group 0 to the
+        // writer), and a cache the reader cannot decode.
+        r#"<c r="A1" t="str"><f t="shared" si="00"/><v>C:\New\[Plan.xlsx]Result</v></c><c r="B1" t="str"><f t="shared" ref="A1:B1" si="0">CELL(&quot;filename&quot;,$A$1)</f><v>C:\Old\[Book.xlsx]Result</v></c>"#.to_owned(),
+        filename(r"C:\Old\[Book.xlsx]Result")
+            + r#"<c r="B1" t="str"><f>CELL(&quot;filename&quot;,A1)</f><v>C:\New\[Bo_x006F_k.xlsx]Result</v></c>"#,
+    ] {
+        assert_eq!(fallback(&saved(&cells)), need, "{cells}");
+    }
+}
+
+#[test]
+fn cell_location_of_a_linked_cell_falls_back() {
+    // CELL("filename") and CELL("address") of a linked cell name the linked
+    // workbook's file, which the engine does not read: given the caller's
+    // location, the fork printed the calling workbook's (review of this
+    // change).
+    let location = DocumentLocation::from_path(r"C:\Reports\Budget.xlsx").expect("location");
+    for formula in [
+        "CELL(&quot;filename&quot;,[1]S!A1)",
+        "CELL(&quot;address&quot;,INDEX([1]S!A1:A5,2))",
+    ] {
+        assert!(
+            matches!(
+                recalc_located(&over_five(formula), &location),
+                Err(FormulaError::UnsupportedWorkbook(_))
+            ),
+            "{formula}"
+        );
+    }
+}
+
+#[test]
+fn info_and_cell_answers_that_do_not_read_the_host_recalculate_natively() {
+    // Excel for Windows 16.0.20430 (ops/excel-hostinfo-probe-20261008.md):
+    // the retired memory types are #N/A, anything else outside INFO's and
+    // CELL's types #VALUE!, whatever the host.
+    let input = fixture(
+        r#"<c r="A1"><v>1</v></c>"#,
+        &formula_cells(&[
+            ("A1", r#"INFO("memavail")"#),
+            ("B1", r#"INFO("system ")"#),
+            ("C1", "INFO(TRUE)"),
+            ("D1", r#"CELL(" row",A1)"#),
+        ]),
+        false,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    for (cell, value) in [
+        ("A1", "#N/A"),
+        ("B1", "#VALUE!"),
+        ("C1", "#VALUE!"),
+        ("D1", "#VALUE!"),
+    ] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn native_measurement_cli_takes_the_workbooks_location() {
+    use std::process::Command;
+
+    let directory = tempfile::tempdir().expect("measurement directory");
+    let input = directory.path().join("input.xlsx");
+    let output = directory.path().join("output.xlsx");
+    std::fs::write(
+        &input,
+        fixture(
+            "",
+            &formula_cells(&[("A1", r#"CELL("filename",A1)"#)]),
+            false,
+        ),
+    )
+    .expect("input");
+    let run = |args: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_recalc_native"))
+            .args(args)
+            .output()
+            .expect("native measurement CLI")
+    };
+    // Without a location or a cached path, the precision fallback.
+    let refused = run(&[input.as_os_str(), output.as_os_str()]);
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(!output.exists());
+    let located = run(&[
+        "--location".as_ref(),
+        r"C:\Reports\Budget.xlsx".as_ref(),
+        input.as_os_str(),
+        output.as_os_str(),
+    ]);
+    assert!(located.status.success(), "{located:?}");
+    let xml = part_text(&std::fs::read(&output).expect("native output"), OUTPUT);
+    assert_eq!(
+        cached(&xml, "A1"),
+        r"C:\Reports\[Budget.xlsx]Result",
+        "{xml}"
+    );
+}
+
 #[test]
 fn relative_references_in_a_name_read_the_calling_cell() {
     // Prev = INDIRECT("RC[-1]",FALSE) in B2 is A2, as Excel reads it (review
@@ -1594,7 +1928,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.12"
+        "0.1.0+formualizer.0.9.3-oneiron.13"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);
@@ -1654,38 +1988,174 @@ fn absent_inline_string_is_blank_but_explicit_empty_text_is_not() {
 
 #[test]
 fn unsafe_formula_depth_refuses_before_recursive_evaluation_on_both_doors() {
-    use oneiron_xlsx_formula::engine::{RecalcEngine, StagedValue};
+    use oneiron_xlsx_formula::engine::{CellValue as CalcValue, RecalcEngine, StagedValue};
     use std::collections::BTreeMap;
-    let fixture_formula = include_str!("fixtures/fuse-chain-formula.txt").trim();
+    // Past what Excel's 8,192 characters hold, a formula is refused on both
+    // doors before its recursive AST is built.
     let long_chain = std::iter::repeat_n("1", 10_000)
         .collect::<Vec<_>>()
         .join("+");
+    let input = fixture(
+        "",
+        &format!(r#"<c r="A1"><f>{long_chain}</f><v>999</v></c>"#),
+        false,
+    );
+    assert!(matches!(
+        recalc(&input),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
+    assert!(matches!(
+        FormualizerEngine::new().evaluate(&BTreeMap::new(), &long_chain, "A1", None),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
+    let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(long_chain))]);
+    assert!(matches!(
+        FormualizerEngine::new().evaluate(&setup, "B1", "A1", None),
+        Err(FormulaError::UnsupportedWorkbook(_))
+    ));
+    // Shorter ones, which overflowed a 2 MiB stack in debug builds (a real
+    // FUSE input of 201 chained additions, 40 chained terms, 40 nested ABS),
+    // evaluate on both doors from a thread with that much stack.
+    let fixture_formula = include_str!("fixtures/fuse-chain-formula.txt")
+        .trim()
+        .to_owned();
     let deep_chain = std::iter::repeat_n("1", 40).collect::<Vec<_>>().join("+");
     let nested = format!("{}1{}", "ABS(".repeat(40), ")".repeat(40));
-    for formula in [
-        fixture_formula,
-        long_chain.as_str(),
-        deep_chain.as_str(),
-        nested.as_str(),
-    ] {
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            for (formula, value) in [(fixture_formula, 0.0), (deep_chain, 40.0), (nested, 1.0)] {
+                let input = fixture(
+                    "",
+                    &format!(r#"<c r="A1"><f>{formula}</f><v>999</v></c>"#),
+                    false,
+                );
+                let report = recalc(&input).expect("native");
+                assert_eq!(number(&part_text(&report.bytes, OUTPUT), "A1"), value);
+                let direct = FormualizerEngine::new()
+                    .evaluate(&BTreeMap::new(), &formula, "A1", None)
+                    .expect("evaluates");
+                assert_eq!(direct.value, CalcValue::Number(value));
+                let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula.clone()))]);
+                let staged = FormualizerEngine::new()
+                    .evaluate(&setup, "B1", "A1", None)
+                    .expect("evaluates");
+                assert_eq!(staged.value, CalcValue::Number(value));
+            }
+        })
+        .expect("caller thread")
+        .join()
+        .expect("no overflow");
+}
+
+#[test]
+fn what_the_writer_refuses_out_of_band_the_formula_door_refuses_too() {
+    use oneiron_xlsx_formula::engine::{RecalcEngine, StagedValue};
+    use std::collections::BTreeMap;
+    // Excel for Windows 16.0.20430: IFERROR(LEN(H6&UNICHAR(128512)),42) over
+    // H6 = REPT("a",32766) is 32766 (job probe-w2-parse-7, SC05), and
+    // ROWS(INDIRECT("F1:F1")#)+1 in F1 is 2 (job probe-w2-parse-4, OC07).
+    // The engine notes each out of band (a caught #N/IMPL!, a #CIRC!) and the
+    // writer refuses the workbook; the formula door returned 42 and #CIRC!.
+    let refused = |result: oneiron_xlsx_formula::Result<()>| {
+        matches!(result, Err(FormulaError::UnsupportedWorkbook(_)))
+    };
+    let split = "IFERROR(LEN(H6&_xlfn.UNICHAR(128512)),42)";
+    let rept = r#"REPT("a",32766)"#;
+    let cycle = r#"ROWS(_xlfn.ANCHORARRAY(INDIRECT("F1:F1")))+1"#;
+    let input = fixture(
+        "",
+        &format!(
+            r#"<c r="F1"><f>{}</f><v>32766</v></c><c r="H6"><f>{rept}</f></c>"#,
+            split.replace('&', "&amp;")
+        ),
+        false,
+    );
+    assert!(refused(recalc(&input).map(|_| ())));
+    let input = fixture(
+        "",
+        &format!(r#"<c r="F1"><f>{cycle}</f><v>2</v></c>"#),
+        false,
+    );
+    assert!(refused(recalc(&input).map(|_| ())));
+    let setup = BTreeMap::from([("H6".into(), StagedValue::Formula(rept.into()))]);
+    let engine = FormualizerEngine::new;
+    assert!(refused(
+        engine().evaluate(&setup, split, "F1", None).map(|_| ())
+    ));
+    let nothing = BTreeMap::new();
+    assert!(refused(
+        engine().evaluate(&nothing, cycle, "F1", None).map(|_| ())
+    ));
+}
+
+#[test]
+fn long_formulas_recalculate_natively() {
+    // A real FUSE input of 201 chained additions overflowed a worker's 2 MiB
+    // stack in debug builds; the writer evaluates on a stack for the longest
+    // formula Excel saves now, so it recalculates natively from a thread with
+    // that much stack (its blank cells sum to 0).
+    let input = fixture(
+        "",
+        &format!(
+            r#"<c r="A1"><f>{}</f><v>999</v></c>"#,
+            include_str!("fixtures/fuse-chain-formula.txt").trim()
+        ),
+        false,
+    );
+    let report = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || recalc(&input))
+        .expect("caller thread")
+        .join()
+        .expect("no overflow")
+        .expect("the FUSE chain recalculates natively");
+    assert_eq!(number(&part_text(&report.bytes, OUTPUT), "A1"), 0.0);
+    // A defined name and a LAMBDA body of 2,000 chained terms, which the
+    // engine evaluates as trees, took time cubic in their length (a review's
+    // workbook of three chained names of 3,500 terms ran for 45 minutes).
+    let chain = vec!["Input!$A$1"; 2000].join("+");
+    let body = vec!["_xlpm.x"; 2000].join("+");
+    let input = with_names(
+        &fixture(
+            r#"<c r="A1"><v>1</v></c>"#,
+            &format!(
+                r#"<c r="A1"><f>Chain</f><v>0</v></c><c r="B1"><f>_xlfn.LAMBDA(_xlpm.x,{body})(Input!A1)</f><v>0</v></c>"#
+            ),
+            false,
+        ),
+        &format!(r#"<definedName name="Chain">{chain}</definedName>"#),
+    );
+    let xml = part_text(
+        &recalc(&input)
+            .expect("a long name and LAMBDA body recalculate natively")
+            .bytes,
+        OUTPUT,
+    );
+    assert_eq!(number(&xml, "A1"), 2000.0);
+    assert_eq!(number(&xml, "B1"), 2000.0);
+    // A join keeps Excel's first 32,767 characters: 128 copies of a
+    // 256-character cell are 32,767 long in Excel for Windows 16.0.20430
+    // (probe CL18 of ops/excel-parse-probe-20261008.md in the fork's repo;
+    // the review's workbook cached 32,768), and 2,048 copies of a
+    // 32,767-character cell, which built a 67,106,816-character text in
+    // 58 s, are too.
+    for (copies, length) in [(128, 256), (2048, 32767)] {
+        let chain = vec!["B1"; copies].join("&amp;");
         let input = fixture(
             "",
-            &format!(r#"<c r="A1"><f>{formula}</f><v>999</v></c>"#),
+            &format!(
+                r#"<c r="A1"><f>LEN({chain})</f><v>0</v></c><c r="B1" t="str"><f>REPT("a",{length})</f><v></v></c>"#
+            ),
             false,
         );
-        assert!(matches!(
-            recalc(&input),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
-        assert!(matches!(
-            FormualizerEngine::new().evaluate(&BTreeMap::new(), formula, "A1", None),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
-        let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula.into()))]);
-        assert!(matches!(
-            FormualizerEngine::new().evaluate(&setup, "B1", "A1", None),
-            Err(FormulaError::UnsupportedWorkbook(_))
-        ));
+        let xml = part_text(
+            &recalc(&input)
+                .expect("a long join recalculates natively")
+                .bytes,
+            OUTPUT,
+        );
+        assert_eq!(number(&xml, "A1"), 32767.0, "{copies} copies");
     }
 }
 
@@ -1701,4 +2171,59 @@ fn concatenation_preserves_error_values_for_iferror_in_retained_xlsx() {
     assert_eq!(xml.matches("<v>missing</v>").count(), 2);
     assert!(xml.contains("<v>#N/A</v>"));
     assert_eq!(result.formula_count, 3);
+}
+
+#[test]
+fn deleted_references_and_spill_references_recalculate_natively() {
+    // The names SpreadsheetBench 14207 keeps for a deleted column, and the
+    // spill references (`A1#`, stored `_xlfn.ANCHORARRAY(A1)`) 49667's names
+    // hold over a closed linked workbook, with Excel for Windows 16.0.20430's
+    // values (ops/excel-parse-probe-20261008.md): the name over a deleted
+    // range is #REF!, a spill reference into a closed workbook #REF!, and one
+    // to a formula's own cell that cell (`=1+1` sums to 2).
+    let bytes = linked_workbook(
+        RATES,
+        r#"<c r="A1"><f>ISERROR(Gone)</f><v>0</v></c><c r="B1"><f>ERROR.TYPE(All)</f><v>0</v></c><c r="C1"><f>SUM(_xlfn.ANCHORARRAY(D1))</f><v>0</v></c><c r="D1"><f>1+1</f><v>0</v></c><c r="E1"><f>COUNTA(Gone)</f><v>0</v></c>"#,
+    );
+    let input = edit_part(&bytes, "xl/workbook.xml", |xml| {
+        xml.replace(
+            "</externalReferences>",
+            r#"</externalReferences><definedNames><definedName name="Gone">Result!#REF!:INDEX(Result!#REF!,COUNTA(Result!#REF!))</definedName><definedName name="All">_xlfn.ANCHORARRAY([1]Rates!$A$1)</definedName></definedNames>"#,
+        )
+    });
+    let report = recalc(&input).expect("deleted and spill references recalculate natively");
+    let xml = part_text(&report.bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "1");
+    assert_eq!(number(&xml, "B1"), 4.0);
+    assert_eq!(number(&xml, "C1"), 2.0);
+    assert_eq!(number(&xml, "E1"), 1.0);
+}
+
+#[test]
+fn spill_references_read_the_spilled_range() {
+    // `_xlfn.ANCHORARRAY(A1)` is A1's spill: SEQUENCE(2,2) sums to 10 over
+    // two rows, as `SUM(A1#)` and `ROWS(A1#)` in Excel for Windows 16.0.20430
+    // (probes S01-S04 of ops/excel-parse-probe-20261008.md).
+    let members = r#"<c r="B1"><v>9</v></c></row><row r="2"><c r="A2"><v>9</v></c><c r="B2"><v>9</v></c><c r="C2"><f>SUM(_xlfn.ANCHORARRAY(A1))</f><v>0</v></c><c r="D2"><f>ROWS(_xlfn.ANCHORARRAY(A1))</f><v>0</v></c>"#;
+    let report = recalc(&dynamic_array("A1:B2", members)).expect("native spill references");
+    let xml = part_text(&report.bytes, OUTPUT);
+    assert_eq!(number(&xml, "C2"), 10.0);
+    assert_eq!(number(&xml, "D2"), 2.0);
+}
+
+#[test]
+fn a_spill_reference_to_its_own_cell_falls_back() {
+    // A review's workbook: ROWS(A1#)+1 in A1, cached 77, kept 77 as a
+    // circular formula. Excel for Windows 16.0.20430 calculates it to 2 and
+    // SEQUENCE(ROWS(A1#)+1) to a circular 0 (probes SR01 and SR05 of
+    // ops/excel-parse-probe-20261008.md), so the workbook falls back.
+    let input = fixture(
+        "",
+        r#"<c r="A1"><f>ROWS(_xlfn.ANCHORARRAY(A1))+1</f><v>77</v></c>"#,
+        false,
+    );
+    assert_eq!(
+        fallback(&input),
+        "a circular reference through a spill reference (workbook)"
+    );
 }

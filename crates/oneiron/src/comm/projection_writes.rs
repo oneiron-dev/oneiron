@@ -314,6 +314,14 @@ pub(super) fn matching_claims_in_txn(
         if active_only && !claim.is_standing() {
             continue;
         }
+        // A held row only restricts: a standing opt-out counts held or not;
+        // a held touch, grant or closed head's boundary is skipped.
+        let restricts = claim.is_standing() && matches!(claim.value, CommClaimValue::OptOut { .. });
+        if !(restricts
+            || crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)?)
+        {
+            continue;
+        }
         let key_matches = match &claim.value {
             // SLOT lookup, not fold matching: a party-wide head answers a
             // `None` query and never a channel-scoped one, so the two heads
@@ -400,6 +408,12 @@ pub(super) fn build_contact_view_in_txn(
         }
         let claim = CommClaim::from_claim_body(&body)?;
         if !claim.is_standing() {
+            continue;
+        }
+        // A held opt-out still shows; a held positive entry never does.
+        if !matches!(claim.value, CommClaimValue::OptOut { .. })
+            && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)?
+        {
             continue;
         }
         match claim.value {

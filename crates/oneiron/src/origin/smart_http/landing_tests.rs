@@ -11,6 +11,17 @@ use crate::config::VaultConfig;
 use crate::error::CodeError;
 use crate::store::Store;
 
+/// `repo.*` is engine-owned, so fixture surgery on its evidence takes the reserved door.
+fn put_reserved_fixture(
+    vault: &Vault,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+) -> crate::Result<()> {
+    vault.with_write_txn(|wtxn| {
+        vault.put_reserved_claim_in_txn(wtxn, id, body, landing_time(), now_secs())
+    })
+}
+
 fn sync_plane_rows(vault: &Vault) -> BTreeMap<String, Vec<u8>> {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     vault
@@ -213,9 +224,7 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
         .expect("source")
         .expect("claim");
     let copied_id = EntityId::now();
-    vault
-        .put_claim(&copied_id, &source, landing_time(), now_secs())
-        .expect("generic copied claim");
+    put_reserved_fixture(&vault, &copied_id, &source).expect("copied claim");
     let copied = ReceivePackAttribution {
         provenance_claim_id: copied_id,
         ..attribution
@@ -308,14 +317,8 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     );
     let mut relabeled = source.clone();
     relabeled.predicate = "test.relabeled_source".to_owned();
-    vault
-        .put_claim(
-            &attribution.provenance_claim_id,
-            &relabeled,
-            landing_time(),
-            now_secs(),
-        )
-        .expect("generic predicate overwrite fixture");
+    put_reserved_fixture(&vault, &attribution.provenance_claim_id, &relabeled)
+        .expect("predicate overwrite fixture");
     assert!(
         vault.publish_origin_ref(&wire, wrong_ref_request).is_err(),
         "rewriting a producer claim predicate cannot evade its source binding"
@@ -328,14 +331,8 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
             .expect("actor field")
             .1 = Value::from(wrong_actor.actor_id.to_hex());
     }
-    vault
-        .put_claim(
-            &attribution.provenance_claim_id,
-            &forged,
-            landing_time(),
-            now_secs(),
-        )
-        .expect("generic overwrite of claim fixture");
+    put_reserved_fixture(&vault, &attribution.provenance_claim_id, &forged)
+        .expect("overwrite of claim fixture");
     assert!(
         vault
             .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
@@ -344,26 +341,14 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     );
     let mut inactive = source.clone();
     inactive.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
-    vault
-        .put_claim(
-            &attribution.provenance_claim_id,
-            &inactive,
-            landing_time(),
-            now_secs(),
-        )
+    put_reserved_fixture(&vault, &attribution.provenance_claim_id, &inactive)
         .expect("retract source fixture");
     assert!(
         vault
             .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)
             .is_err()
     );
-    vault
-        .put_claim(
-            &attribution.provenance_claim_id,
-            &source,
-            landing_time(),
-            now_secs(),
-        )
+    put_reserved_fixture(&vault, &attribution.provenance_claim_id, &source)
         .expect("restore exact source fixture");
     assert!(
         vault
@@ -455,9 +440,7 @@ fn smart_http_receive_pack_evidence_survives_reopen_and_is_not_an_id_only_anchor
         .expect("read admission")
         .expect("admission");
     admission.lifecycle = ClaimLifecycleStatus::Retracted;
-    reopened
-        .put_claim(&operation, &admission, landing_time(), now_secs())
-        .expect("retract fixture");
+    put_reserved_fixture(&reopened, &operation, &admission).expect("retract fixture");
     assert!(
         reopened
             .apply_receive_pack_update_with_attribution(&repo, &outcome, &attribution)

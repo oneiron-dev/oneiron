@@ -7,6 +7,7 @@ mod leases;
 mod lifecycle;
 mod message_stream;
 mod oversight;
+mod presence;
 mod read_shape;
 mod recall;
 mod recall_rerank;
@@ -20,10 +21,13 @@ pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::oversight::OversightStartError;
 pub use self::read_shape::RetrievalQueryCheck;
 pub(crate) use self::read_shape::{QueryDoor, query_caller};
+pub(crate) use self::recall::blocking;
 pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
 mod housekeeping_tests;
+#[cfg(test)]
+pub(crate) mod live_rows_tests;
 #[cfg(test)]
 mod slip_transport_tests;
 #[cfg(test)]

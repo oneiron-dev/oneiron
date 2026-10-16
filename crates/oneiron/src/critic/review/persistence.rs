@@ -83,6 +83,7 @@ pub(super) fn persist_review(
             verdict_claim: id,
             triage: triage.clone(),
             artifacts: artifacts.to_vec(),
+            receipts: Vec::new(),
         };
         let stored = StoredReview {
             verdict: id.to_hex(),
@@ -250,6 +251,7 @@ pub(super) fn cached_review(
         verdict_claim: id,
         triage: stored.triage,
         artifacts: stored.artifacts,
+        receipts: Vec::new(),
     }))
 }
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
