@@ -62885,15 +62885,16 @@
      "notable": [
       "OfferCooldowns",
       "QuotaChoice",
+      "QuotaFallback",
       "QuotaQuestion"
      ],
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -62989,7 +62990,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 1
      }
@@ -63201,7 +63202,7 @@
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
