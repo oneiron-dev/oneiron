@@ -66,13 +66,13 @@ pub use self::types::{
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason,
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
-    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
-    SelfWakePolicyWriteCall, peer_result_wait,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult, SelfSkillCall,
+    SelfSkillCallResult, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
+    SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange, TaskRefuseDomain, TaskRefuseInput,
+    MemoryTimeRange, SkillCallInput, TaskRefuseDomain, TaskRefuseInput,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
