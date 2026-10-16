@@ -17,6 +17,7 @@ mod lag_resync;
 #[cfg(test)]
 mod lag_resync_tests;
 mod lfs_chunks;
+pub(crate) mod mesh;
 #[cfg(test)]
 mod note_socket_tests;
 #[cfg(test)]
