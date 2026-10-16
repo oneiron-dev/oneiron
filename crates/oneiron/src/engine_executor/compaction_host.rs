@@ -135,7 +135,11 @@ impl EngineNativeExecutor<'_> {
         // The run's position is its coverage rows, withdrawn summaries
         // included: erasing a summary never moves where the next one starts.
         let coverage = vault.code_run_compaction_coverage(run_id)?;
-        let prior = coverage.iter().map(|row| (row.epoch(), row.last())).max();
+        let newest = coverage
+            .iter()
+            .max_by_key(|row| row.epoch())
+            .copied();
+        let prior = newest.map(|row| (row.epoch(), row.last()));
         let start = prior.map_or(0, |(_, last)| last.saturating_add(1));
         if start > watermark {
             return Ok(None);
@@ -230,23 +234,33 @@ impl EngineNativeExecutor<'_> {
             }
             pins = super::compaction::window_pins(&window);
         }
-        // The host's own words: the run's speech, and every epoch its
-        // requests rendered (each prior epoch of the run).
+        // Nested provenance: the newest epoch stands for every id the calls
+        // before its count served, and for the epochs before it, since those
+        // are its own sources. Only the calls since then are read here, so a
+        // long run never outgrows one summary's sources, and a record served
+        // before the epoch and purged since withdrew that epoch instead.
+        let captured = newest.map_or(0, |row| row.calls());
+        let calls = usize::try_from(captured)
+            .ok()
+            .and_then(|from| record.bridge_calls.get(from..))
+            .ok_or(crate::Error::CorruptedIndex(
+                "compaction coverage names calls the run never made",
+            ))?;
+        // The host's own words: the run's speech since the newest epoch, and
+        // that epoch, which its requests rendered.
         let mut host = vec![turn_id];
-        for order in super::compaction::speech_orders(record) {
+        for order in super::compaction::speech_orders(calls) {
             host.push(crate::code_run::executor_speech_message_id_in_run(
                 run_ref, run_id, order,
             )?);
         }
-        host.extend(
-            coverage
-                .iter()
-                .map(crate::code_run::CodeRunCompactionCoverage::summary_id),
-        );
-        let sources = super::compaction::served_sources(vault, record, host)?;
+        host.extend(newest.map(|row| row.summary_id()));
+        let sources = super::compaction::served_sources(vault, calls, host)?;
         let prior = prior.map(|(epoch, last)| crate::compaction::PriorEpoch::new(epoch, last));
+        let calls = u64::try_from(record.bridge_calls.len())
+            .map_err(|_| crate::Error::ArithmeticOverflow("executor call count"))?;
         Ok(Some(driver.request_for_log(
-            vault, &session, window, pins, sources, prior,
+            vault, &session, window, pins, sources, prior, calls,
         )?))
     }
 

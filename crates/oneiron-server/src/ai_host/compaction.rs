@@ -24,7 +24,7 @@ use oneiron::llm::{
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
-use oneiron::{BudgetGuard, CompactionOwnership, MemoryProfile, Vault, WriteActor};
+use oneiron::{BudgetGuard, CompactionOwnership, EdgeActorClass, MemoryProfile, Vault, WriteActor};
 
 use super::CHAT_ROLE;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
@@ -36,6 +36,15 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
+
+/// The reasoning seats an agent's memory profile may name as its compaction
+/// backend, each by its role's key (agent-runtime-v1 §d7: a cheap specialist,
+/// the on-device track, or code mode's own seat).
+const PROFILE_ROLES: [ModelRole; 3] = [
+    ModelRole::Checker,
+    ModelRole::LocalReasoner,
+    ModelRole::GenerativeReasoner,
+];
 
 /// The run each pass's model call is admitted under, one run per call so the
 /// server keeps no per-pass state.
@@ -52,7 +61,9 @@ pub(super) enum CodeModeCompaction {
 }
 
 pub(super) struct LiveCompaction {
+    vault: Arc<Vault>,
     registry: CompactionBackendRegistry,
+    /// The host's profile: a run whose agent carries none compacts by it.
     profile: MemoryProfile,
     policy: CompactionGatePolicy,
     hot_steps: u64,
@@ -122,24 +133,44 @@ impl CodeModeCompaction {
                 return Self::Off(CompactionOff::NoPrompt);
             }
         };
-        let backend = Arc::new(ServedCompactionBackend {
-            vault: Arc::clone(vault),
-            models: Arc::clone(runtime),
-            guard,
-            role,
-            model: seat.model.clone(),
-            locality: seat.locality,
-            prompt_tokens: oneiron::count_context_pack_tokens(&prompt) as u64,
-            prompt,
-            allowances: input_allowances(models, runtime),
-            handle: tokio::runtime::Handle::current(),
-        });
+        let prompt_tokens = oneiron::count_context_pack_tokens(&prompt) as u64;
+        let allowances = input_allowances(models, runtime);
+        let served = |key: String, role: ModelRole, seat: &crate::models::Seat| {
+            Arc::new(ServedCompactionBackend {
+                key,
+                vault: Arc::clone(vault),
+                models: Arc::clone(runtime),
+                guard: guard.clone(),
+                role,
+                model: seat.model.clone(),
+                locality: seat.locality,
+                prompt: prompt.clone(),
+                prompt_tokens,
+                allowances: allowances.clone(),
+                handle: tokio::runtime::Handle::current(),
+            })
+        };
         let mut registry = CompactionBackendRegistry::new();
-        if let Err(error) = registry.register(backend) {
+        if let Err(error) = registry.register(served(BACKEND_KEY.to_owned(), role, seat)) {
             tracing::error!(kind = ?error.kind(), "the compaction backend did not register");
             return Self::Off(CompactionOff::BackendFailed);
         }
+        // A profile may name another reasoning seat, by its role's key. A
+        // window longer than that seat takes compacts in prefixes.
+        for other in PROFILE_ROLES {
+            let Some(seat) = runtime.seat(other) else {
+                continue;
+            };
+            if let Err(error) = registry.register(served(role_key(other), other, seat)) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    role = %role_key(other),
+                    "a profile's compaction seat did not register"
+                );
+            }
+        }
         Self::Live(Arc::new(LiveCompaction {
+            vault: Arc::clone(vault),
             registry,
             profile: MemoryProfile::new(
                 window_tokens,
@@ -189,13 +220,14 @@ impl CodeModeCompaction {
     }
 
     /// A fresh seat for one run, its summaries bylined `byline`, its passes
-    /// queued in `credential`'s turn.
+    /// queued in `credential`'s turn, on the memory profile of the agent
+    /// `byline` names.
     pub(super) fn for_run(&self, byline: WriteActor, credential: &str) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
         };
-        match CompactionDriver::for_profile(&live.profile, &live.registry) {
+        match CompactionDriver::for_profile(&live.run_profile(byline), &live.registry) {
             Ok(Some(driver)) => RunCompaction::live(
                 driver,
                 live.policy,
@@ -207,12 +239,46 @@ impl CodeModeCompaction {
                     runtime: live.runtime.clone(),
                 }),
             ),
-            Ok(None) => RunCompaction::off(CompactionOff::Disabled),
+            Ok(None) => RunCompaction::off(CompactionOff::HarnessCompacts),
             Err(error) => {
                 tracing::error!(kind = ?error.kind(), "a run's compaction driver did not build");
                 RunCompaction::off(CompactionOff::BackendFailed)
             }
         }
+    }
+}
+
+impl LiveCompaction {
+    /// The run's memory profile (agent-runtime-v1 §d7): the profile on the
+    /// agent definition its byline names, when it is one and carries one,
+    /// else the host's. The profile's window, owner and summary split apply;
+    /// a backend this host does not serve falls back to the host's own seat,
+    /// so the run still compacts.
+    fn run_profile(&self, byline: WriteActor) -> MemoryProfile {
+        if byline.actor_class() != EdgeActorClass::Agent {
+            return self.profile.clone();
+        }
+        // An agent actor that is not a definition (a person-backed agent, a
+        // connector) has no profile.
+        let Some(mut profile) = self
+            .vault
+            .get_agent_definition(&byline.entity_ref())
+            .ok()
+            .flatten()
+            .and_then(|definition| definition.memory_profile)
+        else {
+            return self.profile.clone();
+        };
+        if profile.compaction == CompactionOwnership::Engine
+            && self.registry.resolve(&profile).is_err()
+        {
+            tracing::warn!(
+                backend = %profile.compaction_backend.as_str(),
+                "an agent's memory profile names a compaction backend this host does not serve; its run compacts on the host's seat"
+            );
+            profile.compaction_backend = self.profile.compaction_backend.clone();
+        }
+        profile
     }
 }
 
@@ -319,6 +385,8 @@ impl CompactionSpawn for ThreadSpawn {
 /// (its usage, or its reservation when it reports none or fails after it went
 /// out).
 struct ServedCompactionBackend {
+    /// The registry key a profile names this seat by.
+    key: String,
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     guard: BudgetGuard,
@@ -384,7 +452,7 @@ impl ServedCompactionBackend {
 
 impl CompactionBackend for ServedCompactionBackend {
     fn backend_key(&self) -> &str {
-        BACKEND_KEY
+        &self.key
     }
 
     fn tier_class(&self) -> CompactionTierClass {
