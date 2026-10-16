@@ -23,7 +23,9 @@ pub use coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
-pub use delete::{DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview};
+pub use delete::{
+    DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, HeldBytes, LfsChunkImpact,
+};
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
     DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,

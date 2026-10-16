@@ -54,7 +54,7 @@ fn time(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-fn policy(
+pub(crate) fn policy(
     vault: &Vault,
     issuer: &WriteActor,
     share: &Share,

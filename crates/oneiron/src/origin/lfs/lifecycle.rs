@@ -48,6 +48,48 @@ pub(crate) fn delete_lfs_lifecycle_in_txn(
     Ok(())
 }
 
+/// One row per distinct chunk of the live LFS object whose manifest ASSET is `id`, in manifest
+/// order: the chunk hash and every other owner the chunk reference rows name, which are exactly
+/// the rows garbage collection counts before it lets the chunk go (upload journals and queued
+/// owners included). `raw` is that ASSET's stored row. Empty when `id` is no live object's
+/// manifest.
+pub(crate) fn lfs_chunk_owners_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<([u8; 32], Vec<EntityId>)>> {
+    let Some(oid) = REVERSE.get(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    if DELETED.contains(store, txn, &oid)? {
+        return Ok(Vec::new());
+    }
+    let Some(record) = super::store::OBJECTS.get(store, txn, &oid)? else {
+        return Ok(Vec::new());
+    };
+    let manifest = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| super::LfsManifest::decode(body).ok())
+        .ok_or(Error::CorruptedIndex("lfs manifest"))?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut rows = Vec::new();
+    for chunk in &manifest.chunks {
+        if !seen.insert(chunk.hash) {
+            continue;
+        }
+        let mut others = Vec::new();
+        for row in chunks::CHUNK_REFS.iter_from(store, txn, chunk.hash.as_slice())? {
+            let ((_, owner), ()) = row?;
+            if owner != record.ref_owner {
+                others.push(owner);
+            }
+        }
+        rows.push((chunk.hash, others));
+    }
+    Ok(rows)
+}
+
 /// Whether a stored row is an LFS chunk that no published object holds yet.
 /// A chunk lands as an ASSET before its object is read whole and published,
 /// so every generic reader takes such a chunk as absent; the LFS store reads
