@@ -98,6 +98,47 @@ pub(crate) struct TurnText {
 }
 
 impl TurnText {
+    /// Pins every fact that can change the words or their attribution, including
+    /// a same-text edit, an author edge and a stream-generation switch.
+    pub(crate) fn summary_fingerprint(&self) -> Result<[u8; 32]> {
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron:scope-summary-turn:v1");
+        let mut part = |bytes: &[u8]| {
+            hash.update(&(bytes.len() as u64).to_be_bytes());
+            hash.update(bytes);
+        };
+        part(self.text.as_deref().unwrap_or_default().as_bytes());
+        part(&[
+            u8::from(self.text.is_some()),
+            u8::from(self.messages.is_some()),
+        ]);
+        for pin in self.messages.iter().flatten() {
+            part(pin.id.as_bytes());
+            part(&pin.learned_at.to_be_bytes());
+            part(&pin.revision);
+            for author in &pin.authors {
+                part(author.as_bytes());
+            }
+            part(&[]);
+            part(pin.frontier.as_deref().unwrap_or_default());
+            if let Some((finality, generation)) = &pin.stream {
+                part(
+                    &serde_json::to_vec(finality)
+                        .map_err(|_| invalid_consolidation("summary finality encoding"))?,
+                );
+                part(generation.as_bytes());
+            } else {
+                part(&[]);
+            }
+        }
+        for (id, start, len) in &self.layout {
+            part(id.as_bytes());
+            part(&(*start as u64).to_be_bytes());
+            part(&(*len as u64).to_be_bytes());
+        }
+        Ok(*hash.finalize().as_bytes())
+    }
+
     pub(crate) fn text(&self) -> Option<&str> {
         self.text.as_deref()
     }

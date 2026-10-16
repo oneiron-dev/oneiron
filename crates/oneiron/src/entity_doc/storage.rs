@@ -284,7 +284,7 @@ impl Vault {
     }
 }
 
-fn replace_text(body: &[u8], field: &TextField, doc: &str) -> Result<(String, Vec<u8>)> {
+pub(super) fn replace_text(body: &[u8], field: &TextField, doc: &str) -> Result<(String, Vec<u8>)> {
     let (text, mut fields) = match field {
         TextField::Utf8Body => (
             std::str::from_utf8(body)

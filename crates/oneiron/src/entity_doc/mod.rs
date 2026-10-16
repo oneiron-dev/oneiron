@@ -12,6 +12,10 @@ pub mod office;
 mod pins;
 mod recovery;
 mod registry;
+mod summary;
+pub(crate) use summary::{
+    birth_summary_in_txn, summary_frontier_in_txn, summary_meta_in_txn, summary_text_in_txn,
+};
 pub mod review_explainer;
 mod side_keys;
 mod storage;
@@ -27,10 +31,10 @@ pub(crate) use recovery::{
 mod verbs;
 
 pub use document::{Birth, EntityDoc, TextChange};
-pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
 };
+pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::RegistryStatus;

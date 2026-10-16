@@ -1,0 +1,58 @@
+[
+  {
+    "id": "compaction_keyframe",
+    "description": "Compaction keyframe"
+  },
+  {
+    "id": "session_recap",
+    "description": "Session recap"
+  },
+  {
+    "id": "sub_agent_merge_artifact",
+    "description": "Sub-agent merge artifact"
+  },
+  {
+    "id": "calendar_rollup",
+    "description": "Day, week and month rollup"
+  },
+  {
+    "id": "milestone_arc_narrative",
+    "description": "Milestone and arc narrative"
+  },
+  {
+    "id": "base_persona",
+    "description": "Base persona"
+  },
+  {
+    "id": "psych_mirror",
+    "description": "Psych mirror"
+  },
+  {
+    "id": "self_model",
+    "description": "Self-model"
+  },
+  {
+    "id": "asset_rollup",
+    "description": "Asset rollup"
+  },
+  {
+    "id": "note_summary",
+    "description": "Note and note-revision summary"
+  },
+  {
+    "id": "record_lifecycle_summary",
+    "description": "Record-lifecycle summary"
+  },
+  {
+    "id": "tool_output_decay_summary",
+    "description": "Tool-output decay summary"
+  },
+  {
+    "id": "vault_wrapped",
+    "description": "Vault Wrapped"
+  },
+  {
+    "id": "review_bundle_explainer",
+    "description": "Review-bundle explainer"
+  }
+]
