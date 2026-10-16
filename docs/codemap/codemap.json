@@ -16591,7 +16591,7 @@
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 1,
       "fn": 13,
       "struct": 7
@@ -16633,7 +16633,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 3,
+      "mod": 4,
       "re-export": 3
      }
     },
@@ -16714,6 +16714,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PrematerializedDraft",
       "RepresentationDraft",
       "RepresentationPlanner"
      ],
@@ -16722,7 +16723,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -16733,6 +16734,24 @@
      "path": "src/dreamer_runner/maintenance/representation/tests.rs",
      "purpose": "Public-path fixture: queued wake -> review -> OF-327 task -> recorded sink",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StewardshipDraftRequest",
+      "StewardshipDraftRoute",
+      "StewardshipRule",
+      "StewardshipRules"
+     ],
+     "path": "src/dreamer_runner/maintenance/stewardship.rs",
+     "purpose": "Relationship stewardship (ARCH-0026, Forward and relationships)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 4,
+      "struct": 4
+     }
     },
     {
      "bucket": "s",
@@ -45953,7 +45972,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46914,7 +46933,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2822,
+   "source_files": 2823,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56722,6 +56741,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/stewardship.rs",
+     "purpose": "Follow-up drafts for due stewardship reach-outs (ARCH-0026 Represent)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/sync_wake.rs",
      "purpose": "A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's…",
      "surface": {
@@ -58190,6 +58219,16 @@
      "notable": [],
      "path": "src/api/owner_routes/peer_confidence_routes.rs",
      "purpose": "`/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/proactivity_routes.rs",
+     "purpose": "`/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read…",
      "surface": {
       "crate-vis": 1
      }
@@ -62791,14 +62830,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 223,
+     "files": 224,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63038,7 +63077,7 @@
    },
    "over_bar": 20,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 410,
+   "source_files": 412,
    "test_files": 182
   },
   "oneiron-spawn": {
