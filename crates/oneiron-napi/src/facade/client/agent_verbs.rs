@@ -7,6 +7,10 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("report", input).map_err(facade_error)
+    }
+    #[napi]
     pub fn self_memory_diary(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.memory.diary", input)
@@ -113,6 +117,12 @@ impl NativeClient {
             .into_iter()
             .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
             .collect()
+    }
+    #[napi]
+    pub fn vault_receipts_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts.get", input)
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_kv_get(&self, request_json: String) -> napi::Result<String> {

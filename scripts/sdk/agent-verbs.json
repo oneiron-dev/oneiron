@@ -1,6 +1,20 @@
 {
   "verbs": [
     {
+      "name": "report",
+      "input": "crate::feedback::ReportRequest",
+      "output": "crate::feedback::ReportReceipt",
+      "call": "memory.report(input)?",
+      "scope": "Read",
+      "mcp_scope": "filtered",
+      "section": false,
+      "admission": {
+        "validate": "input.validate().map_err(MemoryError::from)?;",
+        "lane_record_scope": true
+      },
+      "server_door": "report_off_runtime"
+    },
+    {
       "name": "self.focus.refresh",
       "input": "BoardRefreshRequest",
       "output": "crate::board_verb::BoardVerbOutput",
@@ -372,6 +386,17 @@
         },
         "output": "Vec<FacadeReceipt>"
       }
+    },
+    {
+      "name": "vault.receipts.get",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<crate::receipt::CallReceipt>",
+      "call": "memory.call_receipt(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
     },
     {
       "name": "vault.kv.get",
@@ -1879,6 +1904,13 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.skills.call",
+      "input": "crate::code_run::SkillCallInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "SkillsCall"
     }
   ]
 }

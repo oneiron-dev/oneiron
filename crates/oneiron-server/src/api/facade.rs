@@ -30,13 +30,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
+use oneiron::receipt::{CallOutcome, CallReceiptInput, CallTransport};
 use serde::Serialize;
 
+use super::call_receipt;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -73,6 +77,105 @@ pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
         .merge(agent_verbs::routes())
         .fallback(facade_unknown_verb)
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+}
+
+/// [`facade_routes`] with every reply's call receipt (OF-538): one layer
+/// around the generated routes and the unknown-verb fallback alike.
+pub(crate) fn recorded_facade_routes(server: Arc<SyncServer>) -> Router<Arc<SyncServer>> {
+    facade_routes().layer(axum::middleware::from_fn_with_state(
+        server,
+        facade_call_receipt,
+    ))
+}
+
+/// Records one facade call once its handler has answered, in its own write
+/// transaction, and states the receipt on the reply: the
+/// `x-oneiron-receipt-ref` header on every reply, and `receiptRef` inside a
+/// refusal's error body. A success body keeps its shape (some are JSON
+/// arrays). A call inside an anonymous off-record session records nothing
+/// and says so (`none; no-record`).
+///
+/// The call is attributed to the authenticated credential. A request no
+/// credential authenticates is answered as before, by the handler's own
+/// refusal, and records nothing: there is nobody to scope it to.
+async fn facade_call_receipt(
+    State(server): State<Arc<SyncServer>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let (mut parts, body) = request.into_parts();
+    let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
+        return next.run(Request::from_parts(parts, body)).await;
+    };
+    let anonymous = call_receipt::in_anonymous_session(&server, &parts.headers);
+    let verb = parts.uri.path().trim_start_matches('/').to_owned();
+    // The handler reads these same bytes. A body past the facade's limit
+    // reaches it empty and is refused there as malformed, as it was before.
+    let bytes = axum::body::to_bytes(body, FACADE_MAX_BODY_BYTES)
+        .await
+        .unwrap_or_default();
+    let request_digest = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(value) => oneiron::receipt::call_json_digest(&value),
+        Err(_) => oneiron::receipt::call_bytes_digest(&bytes),
+    };
+    let mut response = next
+        .run(Request::from_parts(parts, Body::from(bytes)))
+        .await;
+    let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
+    let status = response.status();
+    let mut result_digest = None;
+    if refusal.is_none() && status.is_success() {
+        let (head, body) = response.into_parts();
+        response = match axum::body::to_bytes(body, usize::MAX).await {
+            Ok(bytes) => {
+                result_digest = Some(oneiron::receipt::call_bytes_digest(&bytes));
+                Response::from_parts(head, Body::from(bytes))
+            }
+            Err(_) => {
+                let failed = FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    MEMORY_CODE_INTERNAL,
+                    "result encoding failed",
+                    ["Report this SDK response mismatch."],
+                );
+                let reply = failed.reply();
+                refusal = Some(failed);
+                reply
+            }
+        };
+    }
+    let outcome = match &refusal {
+        Some(refusal) => CallOutcome::Refused {
+            code: refusal.body.error.code.clone(),
+        },
+        None if status.is_success() => CallOutcome::Ok,
+        // A reply no facade refusal built (an axum rejection): its status.
+        None => CallOutcome::Refused {
+            code: format!("HTTP_{}", status.as_u16()),
+        },
+    };
+    let (actor_ref, actor_class) = call_receipt::call_actor(&auth);
+    let stamp = call_receipt::record(
+        &server,
+        anonymous,
+        CallReceiptInput {
+            transport: CallTransport::HttpFacade,
+            verb,
+            actor_ref,
+            actor_class,
+            credential_ref: call_receipt::credential_ref(&auth),
+            outcome,
+            request_digest,
+            result_digest,
+            served: Vec::new(),
+        },
+    );
+    if let Some(mut refusal) = refusal {
+        refusal.body.error.receipt_ref = stamp.receipt_ref().map(str::to_owned);
+        response = refusal.reply();
+    }
+    stamp.stamp_header(&mut response);
+    response
 }
 
 /// A facade path that names no verb. One naming a canonical verb under the
@@ -450,7 +553,7 @@ fn facade_readable_task_rows(
 /// Carries the RAW engine code string, never [`crate::error::ErrorCode`]. An
 /// engine code this server has never heard of still reaches the client spelled
 /// the way the engine spelled it; only the HTTP status is this file's opinion.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct FacadeApiError {
     status: StatusCode,
     body: FacadeErrorEnvelope,
@@ -458,7 +561,7 @@ pub(super) struct FacadeApiError {
 
 /// `{error: {...}}`, the same transport envelope shape `/v1/core` uses,
 /// with the read receipt beside the error when a read verb refused.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct FacadeErrorEnvelope {
     error: FacadeErrorBody,
     /// Boxed so the refusal stays small on every `Result` that carries it.
@@ -471,13 +574,19 @@ struct FacadeErrorEnvelope {
 /// `code` is a `String` and that is the load-bearing difference from
 /// [`crate::error::ApiErrorEnvelopeBody`]. `details` is absent because the
 /// engine vocabulary has no per-code detail variants to project.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FacadeErrorBody {
     code: String,
     message: String,
     request_id: String,
     suggestions: Vec<String>,
+    /// The lasting receipt of the call this refusal answered (OF-538),
+    /// `call:<32hex>`, resolvable through `vault.receipts.get`. Set by the
+    /// facade's receipt layer once the call is recorded; absent for a call
+    /// that has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_ref: Option<String>,
     /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
     #[serde(flatten)]
     wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
@@ -498,6 +607,7 @@ impl FacadeApiError {
                     message: message.into(),
                     request_id: facade_request_id(),
                     suggestions: suggestions.into_iter().map(Into::into).collect(),
+                    receipt_ref: None,
                     wrong_root: None,
                 },
                 narrowing: None,
@@ -571,6 +681,7 @@ impl From<MemoryError> for FacadeApiError {
                     message: error.message,
                     request_id: facade_request_id(),
                     suggestions: error.suggestions,
+                    receipt_ref: None,
                     wrong_root: error.wrong_root,
                 },
                 narrowing: error.read_receipt,
@@ -594,9 +705,21 @@ impl From<ApiError> for FacadeApiError {
     }
 }
 
+impl FacadeApiError {
+    /// The refusal's wire reply: its status and `{error, narrowing?}` body.
+    fn reply(&self) -> Response {
+        (self.status, Json(&self.body)).into_response()
+    }
+}
+
+/// The reply, with the refusal itself riding along in the response's
+/// extensions, so the facade's receipt layer reads its code and states the
+/// call's receipt in its body (OF-538).
 impl IntoResponse for FacadeApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self.body)).into_response()
+        let mut response = self.reply();
+        response.extensions_mut().insert(self);
+        response
     }
 }
 

@@ -58,12 +58,24 @@ impl PolicyDecisions {
         budget: Duration,
     ) -> Result<Self> {
         dial.band.validate()?;
-        if dial.first > dial.ceiling || revision.trim().is_empty()
-            || wording.trim().is_empty() || budget.is_zero()
+        if dial.first > dial.ceiling
+            || revision.trim().is_empty()
+            || wording.trim().is_empty()
+            || budget.is_zero()
         {
-            return Err(Error::InvalidConfig("invalid policy decision configuration".into()));
+            return Err(Error::InvalidConfig(
+                "invalid policy decision configuration".into(),
+            ));
         }
-        Ok(Self { ladder, principal, dial, bands, revision, wording, budget })
+        Ok(Self {
+            ladder,
+            principal,
+            dial,
+            bands,
+            revision,
+            wording,
+            budget,
+        })
     }
 
     /// A cached verdict cannot survive a change to this plane's ladder.
@@ -75,7 +87,10 @@ impl PolicyDecisions {
             self.ladder.escalation.as_ref(),
             self.ladder.big.as_ref(),
         ];
-        let pins: Vec<_> = slots.into_iter().map(|slot| slot.map(|provider| provider.pin())).collect();
+        let pins: Vec<_> = slots
+            .into_iter()
+            .map(|slot| slot.map(|provider| provider.pin()))
+            .collect();
         let value = serde_json::json!({
             "revision": self.revision,
             "principal": self.principal.to_hex(),
@@ -86,7 +101,9 @@ impl PolicyDecisions {
             "person_question": self.ladder.person,
             "budget_nanos": self.budget.as_nanos().to_string(),
         });
-        blake3::hash(value.to_string().as_bytes()).to_hex().to_string()
+        blake3::hash(value.to_string().as_bytes())
+            .to_hex()
+            .to_string()
     }
 
     pub(super) fn classify(
@@ -103,16 +120,26 @@ impl PolicyDecisions {
             AnswerPlane::Hosted(_) => (PolicyPlane::HostedLegal, POLICY_HOSTED_ROW),
         };
         if prompt.rubric_rows.is_empty() {
-            return Ok(PolicyClassifyVerdict::clean_allow(binding, config, plane_id).with_audit(audit));
+            return Ok(
+                PolicyClassifyVerdict::clean_allow(binding, config, plane_id).with_audit(audit),
+            );
         }
         let document_hash = blake3::hash(prompt.system.as_bytes());
-        let questions = prompt.rubric_rows.iter().map(|row| {
-            family.question(
-                &[document_hash.as_bytes(), row.row_ref.as_bytes(), row.action.as_str().as_bytes()],
-                format!("{}\n{}", self.wording, row.text),
-                AnswerContract::Noul,
-            )
-        }).collect::<Result<Vec<_>>>()?;
+        let questions = prompt
+            .rubric_rows
+            .iter()
+            .map(|row| {
+                family.question(
+                    &[
+                        document_hash.as_bytes(),
+                        row.row_ref.as_bytes(),
+                        row.action.as_str().as_bytes(),
+                    ],
+                    format!("{}\n{}", self.wording, row.text),
+                    AnswerContract::Noul,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
         // Never cut the policy or candidate to fit: a model must not clear a
         // candidate it only partly read. The ladder refuses an oversized state.
         let state = serde_json::json!({
@@ -139,40 +166,63 @@ impl PolicyDecisions {
         );
         let decisions = match decisions {
             Ok(decisions) => decisions,
-            Err(_) => return Ok(PolicyClassifyVerdict::skipped(
-                PolicySkipReason::BackendUnavailable, binding, config, plane_id,
-            ).with_audit(audit)),
+            Err(_) => {
+                return Ok(PolicyClassifyVerdict::skipped(
+                    PolicySkipReason::BackendUnavailable,
+                    binding,
+                    config,
+                    plane_id,
+                )
+                .with_audit(audit));
+            }
         };
         audit.typed_decisions = decisions;
         // An unfinished row is not a clean answer for the whole policy. The
         // owner fails open visibly; the hosted caller degrades and applies
         // its own outage posture. A queued ladder ask never grants a permit.
-        if audit.typed_decisions.iter().any(|decision| {
-            !matches!(decision.answer, DecisionAnswer::Noul(_))
-        }) {
+        if audit
+            .typed_decisions
+            .iter()
+            .any(|decision| !matches!(decision.answer, DecisionAnswer::Noul(_)))
+        {
             return Ok(PolicyClassifyVerdict::skipped(
-                PolicySkipReason::ResponseUnusable, binding, config, plane_id,
-            ).with_audit(audit));
+                PolicySkipReason::ResponseUnusable,
+                binding,
+                config,
+                plane_id,
+            )
+            .with_audit(audit));
         }
         let mut governing = None;
         for (row, decision) in prompt.rubric_rows.iter().zip(&audit.typed_decisions) {
             if decision.answer == DecisionAnswer::Noul(true) {
                 audit.model_rule_ids.push(row.row_ref.clone());
-                if governing.as_ref().is_none_or(|(old, _): &(&super::planes::PolicyRubricRow, f64)| {
-                    decision_severity(row.action) > decision_severity(old.action)
-                }) {
+                if governing.as_ref().is_none_or(
+                    |(old, _): &(&super::planes::PolicyRubricRow, f64)| {
+                        decision_severity(row.action) > decision_severity(old.action)
+                    },
+                ) {
                     governing = Some((row, decision.probability.unwrap_or_default()));
                 }
             }
         }
         let Some((row, probability)) = governing else {
-            return Ok(PolicyClassifyVerdict::clean_allow(binding, config, plane_id).with_audit(audit));
+            return Ok(
+                PolicyClassifyVerdict::clean_allow(binding, config, plane_id).with_audit(audit),
+            );
         };
         let category = match plane {
-            AnswerPlane::Owner => PolicyVerdictCategory::OwnerPolicy { row_ref: row.row_ref.clone() },
+            AnswerPlane::Owner => PolicyVerdictCategory::OwnerPolicy {
+                row_ref: row.row_ref.clone(),
+            },
             AnswerPlane::Hosted(policy) => {
-                let registered = policy.rows.iter().find(|registered| registered.row_ref == row.row_ref)
-                    .ok_or_else(|| Error::InvalidConfig("policy decision named an unregistered row".into()))?;
+                let registered = policy
+                    .rows
+                    .iter()
+                    .find(|registered| registered.row_ref == row.row_ref)
+                    .ok_or_else(|| {
+                        Error::InvalidConfig("policy decision named an unregistered row".into())
+                    })?;
                 PolicyVerdictCategory::HostedLegal {
                     category: registered.category.clone(),
                     jurisdiction: policy.jurisdiction.clone(),
@@ -191,7 +241,9 @@ impl PolicyDecisions {
                 PolicyHedgeBucket::Low
             },
         };
-        Ok(PolicyClassifyVerdict::new(row.action, category, confidence, binding, config, plane_id)
-            .with_audit(audit))
+        Ok(
+            PolicyClassifyVerdict::new(row.action, category, confidence, binding, config, plane_id)
+                .with_audit(audit),
+        )
     }
 }

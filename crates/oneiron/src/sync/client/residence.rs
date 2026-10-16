@@ -4,9 +4,9 @@
 mod authority;
 mod index;
 mod sealed;
+pub(crate) use authority::catch_up_authority;
 pub use index::ResidenceIndexWindow;
 pub use sealed::SealedRelay;
-pub(crate) use authority::catch_up_authority;
 pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;

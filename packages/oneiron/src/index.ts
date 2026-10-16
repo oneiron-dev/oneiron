@@ -128,6 +128,7 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  report(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.report(input) as unknown) }
   readonly self = {
     memory: {
       diary: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown),
@@ -179,7 +180,9 @@ export class Oneiron {
     /** Exports the live vault as toon (default), md, json, yaml, or txt. */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */
-    receipts: (limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)),
+    receipts: Object.assign((limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)), {
+      get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultReceiptsGet(input) as unknown),
+    }),
     kv: {
       /** Exact actor-owned worldless key lookup, never recall. */
       get: (request: KeyValueAddress): KeyValueItem | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }),

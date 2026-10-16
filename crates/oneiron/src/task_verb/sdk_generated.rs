@@ -10,6 +10,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     > = std::sync::LazyLock::new(|| {
         std::collections::HashMap::from([
             (
+                "report",
+                crate::code_run::vault_read::request_schema::<crate::feedback::ReportRequest>(),
+            ),
+            (
                 "self.focus.refresh",
                 crate::code_run::vault_read::request_schema::<BoardRefreshRequest>(),
             ),
@@ -64,6 +68,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.receipts",
                 crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
+            ),
+            (
+                "vault.receipts.get",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
             ),
             (
                 "vault.kv.get",
@@ -451,6 +459,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "tasks.refuse",
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
+            (
+                "self.skills.call",
+                crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
@@ -464,6 +476,13 @@ pub fn mcp_arguments_schema_from_input(
 ) -> Option<serde_json::Value> {
     let mut properties = serde_json::Map::new();
     let required: &[&str] = match verb {
+        "report" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.focus.refresh" => {
             properties.insert(
                 "frame_epoch".to_owned(),
@@ -573,6 +592,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1096,6 +1122,10 @@ pub fn mcp_arguments_schema_from_input(
 }
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
+        "report" => {
+            let input: crate::feedback::ReportRequest = decode(value.clone())?;
+            input.validate().map_err(MemoryError::from)?;
+        }
         "self.focus.refresh" => {
             let _input: BoardRefreshRequest = decode(value.clone())?;
         }
@@ -1152,6 +1182,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
+        }
+        "vault.receipts.get" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
         "vault.kv.get" => {
             let _input: crate::memory::KeyValueAddress = decode(value.clone())?;
@@ -1426,6 +1459,7 @@ pub fn invoke(
     value: serde_json::Value,
 ) -> MemoryResult<serde_json::Value> {
     match verb {
+        "report" => encode(report(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -1437,6 +1471,7 @@ pub fn invoke(
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
@@ -1582,6 +1617,13 @@ pub fn invoke_browser(
     };
     output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
 }
+pub fn report(
+    memory: &Memory<'_>,
+    input: crate::feedback::ReportRequest,
+) -> MemoryResult<crate::feedback::ReportReceipt> {
+    input.validate().map_err(MemoryError::from)?;
+    memory.report(input)
+}
 pub fn self_focus_refresh<S: crate::board_verb::LiveBoardSource>(
     context: &mut crate::board_verb::BoardVerbContext<'_, S>,
     input: BoardRefreshRequest,
@@ -1726,6 +1768,12 @@ pub fn vault_receipts(
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )
+}
+pub fn vault_receipts_get(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
+    memory.call_receipt(&input.receipt_ref)
 }
 pub fn vault_kv_get(
     memory: &Memory<'_>,

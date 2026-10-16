@@ -208,6 +208,13 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "report")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("report", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_memory_diary(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.memory.diary")?;
         let output = py
@@ -317,6 +324,13 @@ impl NativeClient {
         let limit = limit.unwrap_or(100);
         let output = py
             .detach(|| self.inner.vault_receipts(limit))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_receipts_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.receipts.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.receipts.get", input))
             .map_err(raise)?;
         encode(&output)
     }

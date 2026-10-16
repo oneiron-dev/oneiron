@@ -232,6 +232,21 @@ impl OneironClient {
         }
     }
 
+    /// The lasting call receipt the last verb's reply stated (OF-538), as
+    /// `call:<32hex>`, whether it answered or refused; resolvable through
+    /// `vault.receipts.get` by the same actor or the vault's owner. Typed
+    /// returns keep their shape; the ref rides beside them here. `None` for
+    /// an embedded handle (no wire call), before any call, after a call that
+    /// reached no server, and for an anonymous off-record call, which by
+    /// design has no receipt.
+    #[must_use]
+    pub fn last_receipt_ref(&self) -> Option<String> {
+        match &self.backend {
+            Backend::Embedded(_) => None,
+            Backend::Remote(remote) => remote.last_receipt_ref(),
+        }
+    }
+
     /// The 32-hex id of the actor an embedded handle writes as; `None` when
     /// remote.
     ///

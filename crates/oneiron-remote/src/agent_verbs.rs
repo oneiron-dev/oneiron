@@ -35,6 +35,9 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
+                "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
+                    client, verb, &input,
+                ),
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
@@ -74,6 +77,9 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.receipts.get" => remote_agent_verb_output::<
+                    Option<oneiron::receipt::CallReceipt>,
+                >(client, verb, &input),
                 "vault.kv.get" => {
                     remote_agent_verb_output::<Option<oneiron::memory::KeyValueItem>>(
                         client, verb, &input,
@@ -321,6 +327,19 @@ impl OneironClient {
             }
         }
     }
+    pub fn report(
+        &self,
+        input: &oneiron::feedback::ReportRequest,
+    ) -> Result<oneiron::feedback::ReportReceipt, MemoryError> {
+        input.validate().map_err(MemoryError::from)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("report", value)
+    }
     pub fn self_memory_diary(
         &self,
         input: &oneiron::task_verb::sdk::DiaryEntryRequest,
@@ -516,6 +535,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    pub fn vault_receipts_get(
+        &self,
+        input: &oneiron::receipt::CallReceiptRequest,
+    ) -> Result<Option<oneiron::receipt::CallReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.receipts.get", value)
     }
     /// Actor-owned worldless keyed memory; identical embedded/remote semantics.
     pub fn vault_kv_get(
