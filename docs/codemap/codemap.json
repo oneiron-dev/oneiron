@@ -18658,6 +18658,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FeedbackInboxNote",
+      "FeedbackInboxVia"
+     ],
+     "path": "src/feedback/inbox.rs",
+     "purpose": "The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FeedbackDedup",
       "FeedbackReviewItem"
      ],
@@ -18694,7 +18709,7 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -32036,7 +32051,7 @@
      "purpose": "Lease/registration/receipt row types, VaultInstant clock, key prefixes",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 1,
       "struct": 6
      }
@@ -39113,7 +39128,7 @@
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
       "crate-vis": 9,
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -42411,7 +42426,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43183,7 +43198,7 @@
    },
    "over_bar": 45,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2598,
+   "source_files": 2599,
    "test_files": 881
   },
   "oneiron-android": {
@@ -53106,6 +53121,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/feedback_inbox.rs",
+     "purpose": "The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/feedback_inbox/flood.rs",
+     "purpose": "The open inbox's flood cap: the one refusal its keyless intake makes",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/git_http/gate.rs",
      "purpose": "Authentication gate and service canonicalization for Git smart-HTTP",
      "surface": {
@@ -53471,7 +53506,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -53827,6 +53862,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/feedback_inbox.rs",
+     "purpose": "The open feedback inbox (ARCH-0056 #open-inbox, owner ruling 2026-10-16): \"if someone has an issue with…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -54008,7 +54051,9 @@
      "notable": [],
      "path": "src/api/tests/owner_surfaces.rs",
      "purpose": "`/v1/owner` surfaces wired from built engine doors: cleanup review, persona export, off-record sessions, the…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "s",
@@ -54720,14 +54765,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "FeedbackConfig"
+      "FeedbackConfig",
+      "FeedbackInboxConfig"
      ],
      "path": "src/config/feedback.rs",
      "purpose": "The `[feedback]` section: where the owner's feedback goes (OF-420)",
      "surface": {
-      "crate-vis": 4,
-      "fn": 1,
-      "struct": 1
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -56720,7 +56767,7 @@
      "path": "src/owner/feedback.rs",
      "purpose": "Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -57707,7 +57754,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 200,
+     "files": 203,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57947,8 +57994,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 359,
-   "test_files": 173
+   "source_files": 361,
+   "test_files": 174
   },
   "oneiron-spawn": {
    "files": [
