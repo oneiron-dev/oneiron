@@ -966,7 +966,7 @@ async fn graph_fs_grep_pages_through_one_file() {
     assert_eq!(joined, format!("{prefix}{long}\n{prefix}match two\n"));
 }
 
-fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
+pub(super) fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
     use crate::feedback_delivery::{FeedbackDeliveryConfig, FeedbackDestination, FeedbackHost};
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
@@ -990,7 +990,7 @@ fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
 
 /// The vault's policy grants its owner `external:send` on the feedback
 /// collector channel.
-fn grant_feedback_sends(server: &SyncServer) {
+pub(super) fn grant_feedback_sends(server: &SyncServer) {
     let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
     let mut effect = oneiron::federation::Scope::top();
     effect.verbs = oneiron::federation::ScopeAxis::Some(["effect".to_owned()].into());

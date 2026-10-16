@@ -12,8 +12,8 @@ use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackPlatform, FeedbackPreview, UnredactedFeedback, feedback_approval_card,
-    prepare_feedback_preview,
+    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, UnredactedFeedback,
+    feedback_approval_card, prepare_feedback_preview,
 };
 use oneiron::genui::{
     ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
@@ -208,5 +208,50 @@ fn feedback_error(error: oneiron::feedback::FeedbackError) -> OwnerError {
             }
         },
         error => OwnerError::Invalid(error.to_string()),
+    }
+}
+
+/// Notes one inbox read returns unless it names fewer, and the most it may.
+const INBOX_PAGE: usize = 100;
+const INBOX_PAGE_MAX: usize = 1_000;
+
+/// One page of the open inbox (ARCH-0056 #open-inbox): the notes after
+/// arrival number `after`, oldest first. A sweep keeps the last number it
+/// read and passes it back.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InboxPage {
+    #[serde(default)]
+    pub(crate) after: Option<u64>,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+}
+
+/// The notes anyone left this vault's open inbox, for the owner's triage
+/// sweep. Nothing the inbox takes is read anywhere else.
+pub(crate) fn inbox(vault: &Vault, page: &InboxPage) -> OwnerResult<Vec<FeedbackInboxNote>> {
+    let limit = page.limit.unwrap_or(INBOX_PAGE).clamp(1, INBOX_PAGE_MAX);
+    Ok(vault.feedback_inbox(page.after, limit)?)
+}
+
+/// Where this server's feedback goes, and whether it keeps the open inbox:
+/// the effective setting, shown in the owner's status.
+#[derive(Debug, Serialize)]
+pub(crate) struct FeedbackStatus {
+    /// `cloud`, `collector` or `github_issue`; `None` sends nowhere.
+    pub(crate) destination: Option<crate::feedback_delivery::FeedbackDestination>,
+    pub(crate) endpoint: Option<String>,
+    /// Whether `/v1/feedback` takes keyless notes here.
+    pub(crate) inbox: bool,
+}
+
+pub(crate) fn status(
+    host: Option<&FeedbackHost>,
+    inbox: &crate::config::FeedbackInboxConfig,
+) -> FeedbackStatus {
+    FeedbackStatus {
+        destination: host.map(|host| host.config.destination),
+        endpoint: host.map(|host| host.config.endpoint.clone()),
+        inbox: inbox.enabled,
     }
 }

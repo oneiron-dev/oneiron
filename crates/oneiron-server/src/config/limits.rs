@@ -96,6 +96,10 @@ pub struct LimitsConfig {
     /// claims nothing, so writes asking at once can each pass it by their own
     /// bytes.
     pub disk_reserve_bytes: u64,
+    /// Bytes one note to the open feedback inbox may carry: a POST body, or
+    /// a GET link's query. A memory floor: a longer note is refused with 413
+    /// before it is stored. Room for any v1 feedback bundle.
+    pub feedback_inbox_bytes: u64,
 }
 
 impl Default for LimitsConfig {
@@ -122,6 +126,7 @@ impl Default for LimitsConfig {
             git_scan_disk_floor_bytes: ScanBounds::default_disk_floor_bytes(),
             queue_wait_timeout_ms: 300_000,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
+            feedback_inbox_bytes: 128 * 1024,
         }
     }
 }
@@ -178,6 +183,7 @@ impl LimitsConfig {
             git_scan_disk_floor_bytes,
             queue_wait_timeout_ms,
             disk_reserve_bytes,
+            feedback_inbox_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -202,6 +208,7 @@ impl LimitsConfig {
         );
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
+        set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -228,6 +235,7 @@ impl LimitsConfig {
             ("git_scan_blob_bytes", self.git_scan_blob_bytes),
             ("git_scan_disk_floor_bytes", self.git_scan_disk_floor_bytes),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
@@ -285,4 +293,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) git_scan_disk_floor_bytes: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,
     pub(super) disk_reserve_bytes: Option<u64>,
+    pub(super) feedback_inbox_bytes: Option<u64>,
 }

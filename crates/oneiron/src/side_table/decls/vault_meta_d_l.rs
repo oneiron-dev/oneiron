@@ -293,6 +293,8 @@ side_tables! {
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
+    FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
     FEEDBACK_QUEUE: VaultMeta b"feedback:queue:v1:" Named;
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
