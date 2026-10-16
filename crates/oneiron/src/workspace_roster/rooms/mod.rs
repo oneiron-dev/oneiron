@@ -4,6 +4,7 @@ mod hosting;
 mod liveness;
 mod offer_settle;
 mod offers;
+mod participation;
 #[cfg(test)]
 mod tests;
 mod witness;
@@ -22,6 +23,11 @@ pub use liveness::{
 };
 pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OffersPage, OffersRequest};
+pub use participation::JoinCause;
+pub(crate) use participation::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
+    record_participation_in_txn, require_join_covering_in_txn,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use witness::admit_witness;
