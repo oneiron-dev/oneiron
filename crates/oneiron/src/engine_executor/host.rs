@@ -122,8 +122,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(outcome);
         };
         let mut size = ByteCount::default();
-        serde_json::to_writer(&mut size, &answer.output)
-            .map_err(|error| Error::InvalidConfig(format!("verb answer encoding failed: {error}")))?;
+        serde_json::to_writer(&mut size, &answer.output).map_err(|error| {
+            Error::InvalidConfig(format!("verb answer encoding failed: {error}"))
+        })?;
         if size.0 <= RESULT_REPLY_INLINE_BYTES {
             return Ok(SelfDispatchOutcome::AgentVerb(answer));
         }
@@ -158,7 +159,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 .parse::<u64>()
                 .ok()
                 .filter(|parsed| offset == parsed.to_string())
-                .ok_or(Error::InvalidConfig("invalid stored result reference".into()))?;
+                .ok_or(Error::InvalidConfig(
+                    "invalid stored result reference".into(),
+                ))?;
             if offset > output.raw_len {
                 return Err(Error::InvalidConfig(
                     "stored result offset exceeds its body".into(),

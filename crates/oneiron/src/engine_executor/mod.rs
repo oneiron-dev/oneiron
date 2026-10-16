@@ -19,9 +19,9 @@ mod wire;
 
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
-pub(crate) use self::store::RESULT_READ_ROOT;
 #[cfg(test)]
 use self::record::step_state_hash;
+pub(crate) use self::store::RESULT_READ_ROOT;
 pub use self::types::{
     ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
     ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
