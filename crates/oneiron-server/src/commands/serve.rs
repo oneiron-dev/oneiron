@@ -215,6 +215,8 @@ pub(super) async fn serve_with_config(
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
+    // Approved sends leave through the connector executor (OF-187).
+    workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
