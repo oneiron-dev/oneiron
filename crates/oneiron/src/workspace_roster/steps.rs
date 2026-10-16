@@ -405,10 +405,10 @@ pub(super) fn record_roster_member(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     writer: &WriteActor,
-    mailbox_owner: Option<&AuthenticatedOwner>,
+    proofs: MailboxProofs<'_>,
 ) -> Result<()> {
     require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
-    let revision = verify_mailbox_revision(vault, intent, mailbox_owner)?;
+    let revision = verify_mailbox_revision(vault, intent, proofs)?;
     let companion = intent.required_companion()?;
     let row = RosterMemberRow {
         person_ref: intent.person_ref,

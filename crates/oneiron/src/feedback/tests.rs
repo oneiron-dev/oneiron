@@ -822,16 +822,7 @@ fn feedback_approval_rejects_every_non_approval() {
 #[test]
 fn feedback_approval_rides_the_landed_consent_surface() {
     let (_dir, vault) = temp_vault();
-    let owner_actor = entity(0x71);
-    vault
-        .put_entity(
-            &owner_actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("seed owner");
+    let owner_actor = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(
             owner_actor,

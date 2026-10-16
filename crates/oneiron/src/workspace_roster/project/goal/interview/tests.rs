@@ -1,11 +1,10 @@
 use super::*;
-use crate::TimeRange;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL};
+use crate::registry::ENTITY_TYPE_SKILL;
 
 fn speak(
     vault: &Vault,
@@ -75,14 +74,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
     let project = vault.root_project()?;
     let mut spec = vault.project(project)?.unwrap();
     let agent = EntityId::from_hex(&spec.leader)?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault.ensure_embedded_owner_actor().unwrap();
     spec.roster.push(human.to_hex());
     vault.put_project(project, &spec, 2)?;
     let room = EntityId::from_hex(&spec.home_room)?;
@@ -452,14 +444,7 @@ fn loaded_interview(dedupe: &str) -> Result<Interview> {
     let project = vault.root_project()?;
     let mut spec = vault.project(project)?.unwrap();
     let agent = EntityId::from_hex(&spec.leader)?;
-    let human = EntityId::now();
-    vault.put_entity(
-        &human,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"human",
-    )?;
+    let human = vault.ensure_embedded_owner_actor().unwrap();
     spec.roster.push(human.to_hex());
     vault.put_project(project, &spec, 2)?;
     let room = EntityId::from_hex(&spec.home_room)?;

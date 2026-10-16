@@ -2,6 +2,7 @@
 
 mod coop_request;
 mod delete;
+mod derived_rows;
 mod erase;
 mod gate;
 mod identity_event_stamps;
@@ -41,6 +42,7 @@ pub use tombstone::{
     TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 
+pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use gate::{DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use sweep_queue::{
