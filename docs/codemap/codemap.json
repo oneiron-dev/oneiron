@@ -21829,13 +21829,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 13
      }
     },
     {
@@ -25251,9 +25251,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "LinkedText",
+      "ProseSpan",
+      "RecordLinks",
+      "RecordLinksRequest",
       "RecordRef",
       "RecordRefPreview",
       "ResolveRecordRefRequest"
@@ -25261,9 +25265,10 @@
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 3,
-      "fn": 2,
-      "struct": 3
+      "const": 4,
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -34179,9 +34184,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/receipt/reference_refusal.rs",
-     "purpose": "Reference-refusal receipts (OF-063): a write was refused because a record ref it named does not resolve for…",
+     "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -43556,11 +43561,11 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 153
+      "fn": 158
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AiAnswer",
@@ -43581,15 +43586,21 @@
       "PackFileInput",
       "PackPutOutcome",
       "PackPutReceipt",
-      "PackPutRequest"
+      "PackPutRequest",
+      "PackSetupAnswerRequest",
+      "PackSetupCardActionInput",
+      "PackSetupReceipt",
+      "PackSetupRequest",
+      "PackSetupStoreSecret",
+      "PackSetupVerifyRequest"
      ],
      "path": "src/task_verb/sdk_host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "enum": 5,
-      "fn": 8,
-      "struct": 14
+      "fn": 16,
+      "struct": 20
      }
     },
     {
@@ -49274,7 +49285,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 100,
+   "over_bar": 101,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2971,
    "test_files": 903
@@ -56862,7 +56873,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 131
+      "fn": 136
      }
     },
     {
@@ -57875,7 +57886,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 132
+      "fn": 137
      }
     },
     {
@@ -60324,7 +60335,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 22
      }
     },
     {
@@ -62208,6 +62219,7 @@
      "path": "src/commands/init.rs",
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
+      "crate-vis": 5,
       "fn": 1
      }
     },
