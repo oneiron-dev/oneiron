@@ -9,7 +9,12 @@ mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::InProcessHost;
 #[cfg(unix)]
-pub use native::{LaunchdHost, SystemdHost};
+mod desktop;
+#[cfg(unix)]
+pub use desktop::{
+    ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost,
+    SecretSource, SystemdHost,
+};
 
 /// The embedding WASM runtime supplies only its sandbox capabilities. It may
 /// implement sleep with a browser timer or WASI poll; it must not exit on idle.
