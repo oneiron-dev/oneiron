@@ -18480,8 +18480,24 @@
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
       "crate-vis": 7,
-      "mod": 1,
-      "re-export": 6
+      "mod": 2,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeckBody",
+      "DeckExport",
+      "DeckReview",
+      "ReevalWake"
+     ],
+     "path": "src/entity_doc/office.rs",
+     "purpose": "The live deck body bound to a deck entity (OF-510; ARCH-0077 \"Multiplayer\", ARCH-0075 section 4)",
+     "surface": {
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -44266,7 +44282,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45143,7 +45159,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2706,
+   "source_files": 2707,
    "test_files": 903
   },
   "oneiron-android": {
@@ -49490,8 +49506,78 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "mod": 11,
+      "mod": 12,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExportKey",
+      "ExportOutcome",
+      "ExportProfile",
+      "Gate",
+      "OracleReceipt",
+      "RoundtripReport",
+      "StepOutcome"
+     ],
+     "path": "src/live/deck_export.rs",
+     "purpose": "The deterministic export projector and the eight-step gate (ARCH-0077, \"Export is a deterministic projection\")",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LiveError"
+     ],
+     "path": "src/live/mod.rs",
+     "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain",
+     "surface": {
+      "enum": 1,
+      "mod": 2,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ApproveScope",
+      "AttributionIndex",
+      "ChangeKind",
+      "Conflict",
+      "DeckDiff",
+      "DeckFork",
+      "DeckNode",
+      "DeckOp",
+      "GeometryProps",
+      "Landing",
+      "LandingReceipt",
+      "LiveDeck",
+      "NodeBinding",
+      "NodeId",
+      "NodeKind",
+      "NodeMove",
+      "OpaqueChange",
+      "Paragraph",
+      "PreflightReport",
+      "Run",
+      "StampedOp",
+      "TextBody"
+     ],
+     "path": "src/live/pptx.rs",
+     "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
+     "surface": {
+      "enum": 6,
+      "fn": 20,
+      "struct": 16
      }
     },
     {
@@ -49776,6 +49862,13 @@
      "layout": "dir",
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
+    "live": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain"
+    },
     "native_patch": {
      "files": 5,
      "impl_vault": false,
@@ -49805,9 +49898,9 @@
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     }
    },
-   "over_bar": 3,
+   "over_bar": 4,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 53,
+   "source_files": 56,
    "test_files": 14
   },
   "oneiron-driver": {
