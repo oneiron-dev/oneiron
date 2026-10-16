@@ -94,6 +94,11 @@ pub struct CoreHydrateRequest {
     /// Projection view for live entities. Defaults to `Full`.
     #[serde(default)]
     pub view: Option<View>,
+    /// Whether the reader's model takes images in: a live generated image
+    /// is then served as its bytes, base64, rather than its text form.
+    /// Defaults to `false`.
+    #[serde(default, rename = "image_input", alias = "imageInput")]
+    pub image_input: bool,
 }
 
 /// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
@@ -113,6 +118,11 @@ pub struct CoreBatchShortIdHydrateRequest {
     /// Projection view for live entities. Defaults to `Full`.
     #[serde(default)]
     pub view: Option<View>,
+    /// Whether the reader's model takes images in: a live generated image
+    /// is then served as its bytes, base64, rather than its text form.
+    /// Defaults to `false`.
+    #[serde(default, rename = "image_input", alias = "imageInput")]
+    pub image_input: bool,
 }
 
 /// Canonical transport body for the accepted
