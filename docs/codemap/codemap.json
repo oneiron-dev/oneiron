@@ -11819,13 +11819,13 @@
      "kind": "src",
      "notable": [
       "CompanionExpression",
-      "CompanionRecordKey",
-      "CompanionRecordKind",
       "CompanionScope",
-      "CompanionSubject"
+      "CompanionSubject",
+      "CompanionSubjectKind",
+      "CompanionTaskKey"
      ],
      "path": "src/companion/model.rs",
-     "purpose": "Typed companion record domain: kinds, scopes, subjects, provenance, and records",
+     "purpose": "Typed companion task domain: scopes, PERSON/relationship subjects, and task keys",
      "surface": {
       "crate-vis": 3,
       "enum": 4,
@@ -58396,7 +58396,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/serve.rs",
@@ -58917,7 +58917,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -59075,7 +59075,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -60957,13 +60957,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GpuDerivationJob",
+      "GpuLeaseGuard",
+      "GpuPodConfig",
+      "GpuPool",
+      "GpuPoolConfig"
+     ],
+     "path": "src/runtime/gpu_pool.rs",
+     "purpose": "The serve host's owner of the per-region GPU registry",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 13,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/runtime/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -61962,7 +61980,7 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62013,7 +62031,7 @@
    },
    "over_bar": 18,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 401,
+   "source_files": 402,
    "test_files": 182
   },
   "oneiron-spawn": {
