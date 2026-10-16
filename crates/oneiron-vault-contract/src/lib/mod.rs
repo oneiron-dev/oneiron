@@ -15,6 +15,8 @@ mod ctl;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
+/// Private, lease-bound live process ports.
+pub mod preview;
 mod ledger;
 mod limits;
 mod managed_holder;
