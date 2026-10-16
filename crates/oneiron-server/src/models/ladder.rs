@@ -1,11 +1,15 @@
 //! One role's ladder under a run: the engine sees a single seat model; each
 //! rung a call reaches is admitted on its own one-use permit and sent through
 //! the run's gate for that rung's offer, and a rung that fails hands the call
-//! to the next. An offer refused for a quota or a limit rests until its reset
-//! and the same request goes to the next offer; a request error ends the call.
+//! to the next. An offer refused for a quota or a limit rests (a rate limit
+//! for a backoff, a spent window until its reset, spent credit until the
+//! owner clears it) and the same request goes to the next offer; while only
+//! rests stop the call, it waits for the first offer back and tries again,
+//! until its wait budget is spent. A request error ends the call.
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::llm::SpentKind;
 use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
@@ -16,7 +20,7 @@ use oneiron::{
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
-use super::cooldown::{OfferCooldowns, Rest, leaves_device};
+use super::cooldown::{Asked, OfferCooldowns, Refusal, Rest, leaves_device};
 use super::driven::Driven;
 use super::forward::{Ended, forward};
 use super::media::{HeldJob, MediaAnswer, MediaRung};
@@ -288,23 +292,38 @@ impl OfferLadder {
         (0..self.rungs.len()).find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
     }
 
-    /// Rests the offer at `index` when `error` is a limit refusal, until the
-    /// reset it names.
+    /// Rests the offer at `index` when `error` is a limit refusal: a rate
+    /// limit for its wait or a backoff, a spent window until its reset,
+    /// spent credit until the owner clears it (OF-305).
     fn rest_if_limited(&self, index: usize, error: &LlmError) -> Option<Option<Rest>> {
-        let LlmError::Retryable(RetryableLlmError::RateLimited {
-            retry_after,
-            resets_at,
-        }) = error
-        else {
-            return None;
+        let refusal = match error {
+            LlmError::Retryable(RetryableLlmError::RateLimited {
+                retry_after,
+                resets_at,
+            }) => Refusal {
+                retry_after: *retry_after,
+                resets_at,
+                spent: None,
+            },
+            LlmError::Retryable(RetryableLlmError::QuotaSpent {
+                kind,
+                retry_after,
+                resets_at,
+            }) => Refusal {
+                retry_after: *retry_after,
+                resets_at,
+                spent: Some(*kind),
+            },
+            _ => return None,
         };
         let rung = &self.rungs[index];
-        let rest = self.rests.rest(
-            &rung.offer.binding,
-            &rung.wire_model,
-            *retry_after,
-            resets_at,
-        );
+        let asked = Asked {
+            provider: &rung.provider,
+            wire_model: &rung.wire_model,
+        };
+        let rest = self
+            .rests
+            .rest(&rung.offer.binding, &rung.wire_model, refusal, asked);
         tracing::warn!(
             rung = rung.position,
             kind = failure_kind(error),
@@ -349,7 +368,7 @@ impl OfferLadder {
     /// cooling chain is not refused for rate; its call waits for the first
     /// offer back. Each rung is judged again first, one already sent too, so
     /// the wait goes only to an offer the call may use now.
-    fn waits_for(&self, call: Call<'_>, walk: &mut Walk) -> Option<Back> {
+    fn waits_for(&self, call: Call<'_>, walk: &mut Walk, budget_secs: u64) -> Option<Back> {
         if !walk.limited() {
             return None;
         }
@@ -360,7 +379,7 @@ impl OfferLadder {
         }
         let (index, at) = walk.back()?;
         let wait = at.saturating_sub(self.rests.now()?);
-        (wait <= self.rests.max_wait_secs()).then(|| Back {
+        (wait <= budget_secs).then(|| Back {
             index,
             at,
             wait: Duration::from_secs(wait),
@@ -383,6 +402,20 @@ impl OfferLadder {
             return RetryableLlmError::KeptOnDevice {
                 retry_after,
                 resets_at,
+            }
+            .into();
+        }
+        // Every offer the call could use is parked on spent credit: no
+        // reset brings one back, only the owner.
+        if back
+            .as_ref()
+            .is_some_and(|(_, resets)| resets == &[u64::MAX])
+            && walk.limited()
+        {
+            return RetryableLlmError::QuotaSpent {
+                kind: SpentKind::Credit,
+                retry_after: None,
+                resets_at: Vec::new(),
             }
             .into();
         }
@@ -425,6 +458,23 @@ impl OfferLadder {
         selector: Option<&str>,
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<LlmResponse> {
+        let budget = Duration::from_secs(self.rests.max_wait_secs());
+        self.generate_within(run, request, selector, may_send, budget)
+            .await
+    }
+
+    /// [`Self::generate_while`] for a caller with its own deadline: the
+    /// call waits for offers back for at most `wait_budget` in all, the
+    /// vault's longest wait or not (OF-305: a rate-limited chain backs off
+    /// and retries until the caller's deadline).
+    pub async fn generate_within(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+    ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let call = Call {
             run,
@@ -432,13 +482,20 @@ impl OfferLadder {
             selector,
         };
         let mut walk = Walk::default();
-        // The chain, each rung at most once, then, when only rests stopped
-        // it, the chain once more after one wait for its first offer back.
-        for waited in [false, true] {
-            if waited {
-                let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
+        let mut budget = wait_budget.as_secs();
+        // The chain, each rung at most once a pass; then, while only rests
+        // stopped it, a wait for its first offer back and the chain again,
+        // until the waits would pass the call's budget.
+        for pass in 0.. {
+            if pass > 0 {
+                let Some(back) = self
+                    .waits_for(call, &mut walk, budget)
+                    .filter(|_| may_send())
+                else {
                     break;
                 };
+                // Each wait spends at least a second, so a chain ends.
+                budget = budget.saturating_sub(back.wait.as_secs().max(1));
                 self.rests.wait(back.wait, back.at, may_send).await;
             }
             let mut sent = vec![false; self.rungs.len()];
@@ -522,11 +579,14 @@ impl OfferLadder {
             selector,
         };
         let mut walk = Walk::default();
-        for waited in [false, true] {
-            if waited {
-                let Some(back) = self.waits_for(call, &mut walk) else {
+        let mut budget = self.rests.max_wait_secs();
+        for pass in 0.. {
+            if pass > 0 {
+                let Some(back) = self.waits_for(call, &mut walk, budget) else {
                     break;
                 };
+                // Each wait spends at least a second, so a chain ends.
+                budget = budget.saturating_sub(back.wait.as_secs().max(1));
                 self.rests.wait(back.wait, back.at, &|| true).await;
             }
             let mut sent = vec![false; self.rungs.len()];
@@ -634,7 +694,7 @@ impl OfferLadder {
         let (start, wait) =
             match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
                 Some(start) => (start, None),
-                None => match self.waits_for(call, &mut walk) {
+                None => match self.waits_for(call, &mut walk, self.rests.max_wait_secs()) {
                     Some(back) => (back.index, Some(back)),
                     None => return Err(self.unanswered(walk)),
                 },
@@ -692,35 +752,39 @@ impl OfferLadder {
             }
             wait = None;
             if !usable {
-                let Some(back) = self.waits_for(call, &mut walk) else {
+                let Some(back) = self.waits_for(call, &mut walk, self.rests.max_wait_secs()) else {
                     let _ = events.send(Err(self.unanswered(walk))).await;
                     return;
                 };
                 wait = Some(back);
             }
         }
-        // The chain, then, when only rests stopped it, the chain once more
-        // after one wait for its first offer back. A stream that opened with
+        // The chain; then, while only rests stopped it, a wait for its first
+        // offer back and the chain again, until the waits would pass the
+        // vault's longest wait in all (OF-305). A stream that opened with
         // every usable offer resting starts with that wait.
-        let back = match wait {
+        let mut budget = self.rests.max_wait_secs();
+        let mut back = match wait {
             Some(back) => Some(back),
             None => match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await
             {
                 Flow::Ended => return,
-                Flow::On => self.waits_for(call, &mut walk),
+                Flow::On => self.waits_for(call, &mut walk, budget),
             },
         };
-        if let Some(back) = back {
+        while let Some(next) = back {
+            budget = budget.saturating_sub(next.wait.as_secs().max(1));
             // Dropping the stream drops this wait: nothing else stops it.
-            self.rests.wait(back.wait, back.at, &|| true).await;
-            if let Flow::Ended = self
+            self.rests.wait(next.wait, next.at, &|| true).await;
+            back = match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await
             {
-                return;
-            }
+                Flow::Ended => return,
+                Flow::On => self.waits_for(call, &mut walk, budget),
+            };
         }
         if let Some((_, (_, permit))) = held {
             settle_failed(permit);

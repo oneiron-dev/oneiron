@@ -1,11 +1,17 @@
 [Unit]
 Description=Oneiron local sync daemon
 Documentation=https://github.com/oneiron-dev/oneiron
-After=network-online.target
+After=network-online.target oneiron.socket
 Wants=network-online.target
 
 [Service]
-Type=simple
+# The daemon reports READY=1 once the vault is open and both listeners are
+# bound, and STOPPING=1 when it drains. With oneiron.socket enabled it adopts
+# that socket; without it, it binds the configured host:port itself.
+Type=notify
+# The auth secret may come from systemd's credential store instead of the
+# config file or ONEIRON_AUTH_SECRET:
+# LoadCredential=auth_secret:%h/.config/oneiron/auth_secret
 # glibc's per-thread malloc arenas hold freed memory: two arenas measured
 # 75-93 MiB less resident per vault running the local embedder, at the same
 # embedding speed (2026-10-10).

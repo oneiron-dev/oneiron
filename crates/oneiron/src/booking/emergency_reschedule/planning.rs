@@ -446,18 +446,13 @@ pub(super) fn plan_item(
     };
     let mut plan = EmergencyPlan {
         request: request.clone(),
-        payload: ics
-            .as_ref()
-            .map(|ics| {
-                Ok::<_, BookingError>(CalendarInvitePayload {
-                    method,
-                    uid: booking.calendar.uid.clone(),
-                    sequence,
-                    ics_blob_ref: format!("blob:{}", blob_id(ics)?.to_hex()),
-                    recipient: recipient.clone(),
-                })
-            })
-            .transpose()?,
+        payload: ics.as_ref().map(|_| CalendarInvitePayload {
+            method,
+            uid: booking.calendar.uid.clone(),
+            sequence,
+            ics_blob_ref: String::new(),
+            recipient: recipient.clone(),
+        }),
         booking,
         proposals,
         planned_at: now_utc,
@@ -466,7 +461,6 @@ pub(super) fn plan_item(
         invite_before,
         content_hash: [0; 32],
     };
-    plan.content_hash = plan.hash()?;
     booking_writer(vault, |txn| {
         verify_instruction_in_txn(vault, txn, request)?;
         if crate::booking::lifecycle::emergency_current_revision_in(
@@ -478,6 +472,18 @@ pub(super) fn plan_item(
         {
             return Err(refused("booking or invitation changed during planning"));
         }
+        if let (Some(payload), Some(ics)) = (&mut plan.payload, &ics) {
+            payload.ics_blob_ref = persist_content_in(
+                vault,
+                txn,
+                request,
+                &plan.booking.event_type.0,
+                crate::calendar::CALENDAR_INVITE_MEDIA_TYPE,
+                ics,
+                now_utc,
+            )?;
+        }
+        plan.content_hash = plan.hash()?;
         let key = plan_key(request, plan.booking.calendar.event_ref)?;
         let hex = hex_suffix(&key, EMERGENCY_PLAN_META_PREFIX)
             .ok_or_else(|| refused("emergency plan key is malformed"))?;
@@ -491,17 +497,6 @@ pub(super) fn plan_item(
                 ));
             }
         } else {
-            if let Some(ics) = &ics {
-                persist_content_in(
-                    vault,
-                    txn,
-                    request,
-                    &plan.booking.event_type.0,
-                    crate::calendar::CALENDAR_INVITE_MEDIA_TYPE,
-                    ics,
-                    now_utc,
-                )?;
-            }
             PLAN.put(&vault.store, txn, &hex.to_owned(), &plan)
                 .map_err(storage_failure)?;
         }
@@ -529,7 +524,7 @@ pub(crate) fn verify_plan_blob(vault: &Vault, plan: &EmergencyPlan) -> Result<()
     };
     let bytes =
         crate::calendar::read_calendar_invite_ics(vault, payload).map_err(storage_failure)?;
-    if payload.ics_blob_ref != format!("blob:{}", blob_id(&bytes)?.to_hex()) {
+    if payload.blob_version_ref().map_err(storage_failure)?.0 != blob_id(&bytes)? {
         return Err(refused(
             "emergency ICS content conflicts with its content-addressed plan",
         ));

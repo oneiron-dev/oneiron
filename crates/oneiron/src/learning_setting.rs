@@ -341,7 +341,8 @@ pub(crate) fn setting_value_in_txn(
     if let Some(value) = owner_row_value(store, txn, spec, SettingMode::Pin)? {
         return Ok(value);
     }
-    if let Some(fit) = crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
+    if let Some(fit) =
+        crate::learning::project::SETTING_FIT.get(store, txn, &spec.key.to_owned())?
         && fit.runs > 0.0
         && fit.value.is_finite()
     {

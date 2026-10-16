@@ -1,8 +1,8 @@
 //! First-run embedder and tagger choices, using the same config and providers as serve.
 use crate::cli::InitArgs;
 use crate::config::{
-    EmbedderConfig, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerMode,
-    OneironerProvider, ServeArgs, ServeConfig,
+    EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerConfig,
+    OneironerMode, OneironerProvider, ServeArgs, ServeConfig,
 };
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -59,10 +59,10 @@ fn init_with_env(
     let staged = stage_config(&path, &config_text)?;
     let result = (|| {
         let config = read_config(&staged, env)?;
-        // The same slot serve builds: the local provider is refused by name,
-        // and a reachable tagger must be the configured one.
+        // The same slot serve builds: a local bundle loads on its engine, and
+        // a reachable tagger must be the configured one.
         // Checked first, so a refusal comes before the local model download.
-        crate::oneironer::build_slot(config.oneironer.as_ref())?;
+        let tagger_slot = crate::oneironer::build_slot(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
             Some(embedder) if embedder.provider == EmbedderProvider::Local => {
                 crate::embedder::prepare_local(embedder)?.to_owned()
@@ -98,12 +98,21 @@ fn init_with_env(
             )?;
         }
         if let Some(tagger) = config.oneironer.as_ref().filter(|t| t.is_active()) {
-            writeln!(
+            write!(
                 output,
                 "tagger: provider={} mode={}",
                 tagger.provider.as_str(),
                 tagger.mode.as_str()
             )?;
+            match tagger_slot.as_ref().and_then(|slot| slot.serving()) {
+                Some(serving) => writeln!(
+                    output,
+                    " engine={} ({})",
+                    serving.engine.id(),
+                    serving.pick.as_str()
+                )?,
+                None => writeln!(output)?,
+            }
         }
         writeln!(output, "Embedder guide: {EMBEDDER_DOCS}")?;
         if choice == EmbedderProvider::Endpoint {
@@ -120,42 +129,48 @@ fn init_with_env(
     result
 }
 
-/// Asks for the tagger the way the embedder is asked for. The local tagger is
-/// not built yet, so the default is none. A vault with a tagger saves its
-/// tags, so the mode defaults to save; shadow is the test switch.
+/// Asks for the tagger the way the embedder is asked for: local, endpoint or
+/// none. The local tagger runs a model bundle already on this machine, so the
+/// default is none. A vault with a tagger saves its tags, so the mode
+/// defaults to save; shadow is the test switch.
 fn ask_tagger(
     args: &mut InitArgs,
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let mut ask = |prompt: &str| -> anyhow::Result<String> {
-        write!(output, "{prompt}")?;
-        output.flush()?;
-        let mut line = String::new();
-        input.read_line(&mut line)?;
-        Ok(line.trim().to_owned())
-    };
-    let choice = ask("Tagger local | endpoint | none [none]: ")?;
+    let choice = ask_line(input, output, "Tagger local | endpoint | none [none]: ")?;
     let choice: OneironerProvider = if choice.is_empty() {
         OneironerProvider::None
     } else {
         choice.parse().map_err(anyhow::Error::msg)?
     };
     args.oneironer = Some(choice);
-    if choice != OneironerProvider::Endpoint {
-        return Ok(());
-    }
-    if args.oneironer_url.is_none() {
-        args.oneironer_url = Some(ask("Tagger server URL on this machine: ")?);
-    }
-    if args.oneironer_checkpoint_sha16.is_none() {
-        args.oneironer_checkpoint_sha16 = Some(ask("Tagger checkpoint (16 hex digits): ")?);
-    }
-    if args.oneironer_label_count.is_none() {
-        args.oneironer_label_count = Some(ask("Tagger label count: ")?.parse()?);
+    match choice {
+        OneironerProvider::None => return Ok(()),
+        OneironerProvider::Local => ask_local_tagger(args, input, output)?,
+        OneironerProvider::Endpoint => {
+            if args.oneironer_url.is_none() {
+                args.oneironer_url = Some(ask_line(
+                    input,
+                    output,
+                    "Tagger server URL on this machine: ",
+                )?);
+            }
+            if args.oneironer_checkpoint_sha16.is_none() {
+                args.oneironer_checkpoint_sha16 = Some(ask_line(
+                    input,
+                    output,
+                    "Tagger checkpoint (16 hex digits): ",
+                )?);
+            }
+            if args.oneironer_label_count.is_none() {
+                args.oneironer_label_count =
+                    Some(ask_line(input, output, "Tagger label count: ")?.parse()?);
+            }
+        }
     }
     if args.oneironer_mode.is_none() {
-        let mode = ask("Tagger mode save | shadow [save]: ")?;
+        let mode = ask_line(input, output, "Tagger mode save | shadow [save]: ")?;
         args.oneironer_mode = Some(if mode.is_empty() {
             OneironerMode::Save
         } else {
@@ -165,27 +180,166 @@ fn ask_tagger(
     Ok(())
 }
 
+/// The local tagger's questions: the bundle, then the engine. The bundle's
+/// manifest names its checkpoint and label count, so neither is asked. Every
+/// engine this machine runs is measured against the bundle's reference and
+/// listed; `auto` serves the fastest that clears the bar, and any other one
+/// listed may be picked by name (ARCH-0036).
+fn ask_local_tagger(
+    args: &mut InitArgs,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
+    if args.oneironer_model_dir.is_none() {
+        let dir = ask_line(
+            input,
+            output,
+            "Tagger model directory (holds oneironer.json): ",
+        )?;
+        args.oneironer_model_dir = Some(PathBuf::from(dir));
+    }
+    if args.oneironer_device.is_some() {
+        return Ok(());
+    }
+    let config = local_tagger_config(args)?;
+    let survey = crate::oneironer::engines::survey(&config)?;
+    writeln!(output, "Tagger engines on this machine:")?;
+    for (engine, row) in &survey.engines {
+        let measured = match row {
+            Some(row) => match (row.clears, row.mean_ms) {
+                (true, Some(ms)) => format!("{ms:.1} ms per reference case"),
+                (false, Some(ms)) => {
+                    format!("{ms:.1} ms per reference case, misses the parity bar")
+                }
+                (_, None) => "could not run the bundle".to_owned(),
+            },
+            None => "no reference in the bundle; unmeasured".to_owned(),
+        };
+        let default = if Some(*engine) == survey.default {
+            " (auto)"
+        } else {
+            ""
+        };
+        writeln!(output, "  {}{default}: {measured}", engine.id())?;
+    }
+    let names: Vec<&str> = survey
+        .engines
+        .iter()
+        .map(|(engine, _)| engine.device.as_str())
+        .collect();
+    // With no engine clearing the bar there is no `auto` to offer: the
+    // operator names one, knowing what it measured.
+    let prompt = if survey.default.is_some() {
+        format!("Tagger engine auto | {} [auto]: ", names.join(" | "))
+    } else {
+        format!(
+            "No engine clears the bundle's parity bar; tagger engine {}: ",
+            names.join(" | ")
+        )
+    };
+    let picked = ask_line(input, output, &prompt)?;
+    let device: EmbedderDevice = if picked.is_empty() && survey.default.is_some() {
+        EmbedderDevice::Auto
+    } else {
+        // `candle/metal` as listed, or the device alone.
+        let device = picked.rsplit('/').next().unwrap_or_default();
+        device.parse().map_err(anyhow::Error::msg)?
+    };
+    args.oneironer_device = Some(device);
+    Ok(())
+}
+
+/// The local section init's answers describe, the bundle's identity filled
+/// in where no flag gave it.
+fn local_tagger_config(args: &InitArgs) -> anyhow::Result<OneironerConfig> {
+    let dir = args
+        .oneironer_model_dir
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--oneironer local requires --oneironer-model-dir"))?;
+    // The config file outlives the shell init ran in: a relative directory
+    // would move with whatever directory serve starts from.
+    let dir = std::fs::canonicalize(dir).map_err(|error| {
+        anyhow::anyhow!(
+            "tagger model directory {} is unreadable: {error}",
+            dir.display()
+        )
+    })?;
+    let identity = crate::oneironer::engines::bundle_identity(&dir)?;
+    Ok(OneironerConfig {
+        provider: OneironerProvider::Local,
+        model_dir: Some(dir),
+        checkpoint_sha16: Some(
+            args.oneironer_checkpoint_sha16
+                .clone()
+                .unwrap_or(identity.checkpoint_sha16),
+        ),
+        label_count: Some(args.oneironer_label_count.unwrap_or(identity.label_count)),
+        device: args.oneironer_device.unwrap_or(EmbedderDevice::Auto),
+        ..OneironerConfig::default()
+    })
+}
+
+fn ask_line(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    write!(output, "{prompt}")?;
+    output.flush()?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    Ok(line.trim().to_owned())
+}
+
 /// The `[oneironer]` table init writes: the provider always, so a rerun with
-/// `none` turns an old tagger off; the endpoint keys for an endpoint.
+/// `none` turns an old tagger off; the bundle and its identity for a local
+/// tagger, the endpoint keys for an endpoint.
 fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
     let choice = args.oneironer.unwrap_or(OneironerProvider::None);
-    let endpoint_options = args.oneironer_url.is_some()
-        || args.oneironer_checkpoint_sha16.is_some()
-        || args.oneironer_label_count.is_some();
-    if choice != OneironerProvider::Endpoint && endpoint_options {
-        anyhow::bail!("tagger endpoint options require --oneironer endpoint");
+    if choice != OneironerProvider::Endpoint && args.oneironer_url.is_some() {
+        anyhow::bail!("--oneironer-url requires --oneironer endpoint");
+    }
+    if choice != OneironerProvider::Local
+        && (args.oneironer_model_dir.is_some() || args.oneironer_device.is_some())
+    {
+        anyhow::bail!("tagger model directory and device options require --oneironer local");
+    }
+    if choice == OneironerProvider::None
+        && (args.oneironer_checkpoint_sha16.is_some() || args.oneironer_label_count.is_some())
+    {
+        anyhow::bail!(
+            "tagger checkpoint and label count options require --oneironer local or endpoint"
+        );
     }
     let mut table = toml::Table::new();
     table.insert("provider".into(), choice.as_str().into());
-    // An endpoint without a stated mode saves its tags, as the interactive
+    // A tagger without a stated mode saves its tags, as the interactive
     // default does.
     let mode = match (choice, args.oneironer_mode) {
         (_, Some(mode)) => Some(mode),
-        (OneironerProvider::Endpoint, None) => Some(OneironerMode::Save),
+        (OneironerProvider::Endpoint | OneironerProvider::Local, None) => Some(OneironerMode::Save),
         _ => None,
     };
     if let Some(mode) = mode {
         table.insert("mode".into(), mode.as_str().into());
+    }
+    if choice == OneironerProvider::Local {
+        let config = local_tagger_config(args)?;
+        let dir = config
+            .model_dir
+            .as_deref()
+            .and_then(Path::to_str)
+            .ok_or_else(|| anyhow::anyhow!("tagger model directory is not UTF-8"))?;
+        table.insert("model_dir".into(), dir.into());
+        if let Some(checkpoint) = config.checkpoint_sha16 {
+            table.insert("checkpoint_sha16".into(), checkpoint.into());
+        }
+        if let Some(labels) = config.label_count {
+            table.insert("label_count".into(), i64::from(labels).into());
+        }
+        if let Some(device) = args.oneironer_device {
+            table.insert("device".into(), device.as_str().into());
+        }
     }
     if choice == OneironerProvider::Endpoint {
         let missing = |flag: &str| anyhow::anyhow!("--oneironer endpoint requires {flag}");
