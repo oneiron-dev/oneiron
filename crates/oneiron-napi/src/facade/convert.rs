@@ -369,6 +369,7 @@ pub(super) fn memory_pack_from_engine(
                     })
                 })
                 .collect::<BoundaryResult<_>>()?,
+            limit_clamped: pack.retrieval_meta.limit_clamped,
         },
         pack_version: pack.pack_version,
         rendered: pack.rendered,

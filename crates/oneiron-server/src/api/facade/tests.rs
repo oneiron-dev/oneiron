@@ -5,6 +5,38 @@ use oneiron::memory::caps::{MAX_BATCH_ENTITIES, MAX_ENTITY_PAYLOAD_BYTES, MAX_QU
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+/// The route census: every facade verb of the one verb table has its POST
+/// route, and no other verb of the table has one. A GET of a POST-only route
+/// is refused by method, and a GET of an absent route is not found, so no
+/// handler runs.
+#[tokio::test]
+async fn every_facade_verb_has_its_http_post_route() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault"));
+    let server = Arc::new(
+        SyncServer::new(vault, crate::config::SyncServerConfig::default()).expect("server"),
+    );
+    let app = facade_routes().with_state(server);
+    for verb in oneiron::task_verb::sdk::AgentVerb::ALL {
+        let request = Request::get(format!("/{}", verb.as_str()))
+            .body(Body::empty())
+            .expect("request");
+        let status = app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("response")
+            .status();
+        let expected = if verb.is_facade() {
+            axum::http::StatusCode::METHOD_NOT_ALLOWED
+        } else {
+            axum::http::StatusCode::NOT_FOUND
+        };
+        assert_eq!(status, expected, "{}", verb.as_str());
+    }
+}
+
 #[tokio::test]
 async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes() {
     const SECRET: &str = "facade-cap-regression-secret";

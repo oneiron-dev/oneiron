@@ -100,7 +100,10 @@ impl Read {
             }
             "receipts" => {
                 let p: Receipts = params(value)?;
-                Self::Receipts(facade_limit(p.limit, 100)?)
+                Self::Receipts(facade_limit(
+                    p.limit,
+                    oneiron::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT,
+                )?)
             }
             "claimList" => {
                 let mut filter: ClaimListFilter = params(value)?;

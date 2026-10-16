@@ -64,12 +64,6 @@ pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
 use crate::remote::RemoteClient;
 
-/// `recall`'s default result count, per §HEAD-CONTRACT.
-pub const DEFAULT_RECALL_LIMIT: usize = 10;
-
-/// `receipts`'s default row count, per §HEAD-CONTRACT.
-pub const DEFAULT_RECEIPTS_LIMIT: usize = 100;
-
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
 ///
 /// `PartialEq` is not decoration: I9 compares a reopen's options against the

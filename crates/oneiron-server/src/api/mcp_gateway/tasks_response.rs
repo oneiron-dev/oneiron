@@ -60,7 +60,8 @@ fn mcp_tasks_section(
         scope_omitted,
         window_truncated,
         exhausted,
-    );
+    )
+    .rows_at("rows");
     Ok((
         json!({
             "kind": "tasks_section",
@@ -97,7 +98,7 @@ fn mcp_describe_result(
             Ok((value, crate::mcp::McpPageSource::complete(1)))
         }
         oneiron::task_verb::TaskDescription::Card { lines } => {
-            let source = crate::mcp::McpPageSource::complete(lines.len());
+            let source = crate::mcp::McpPageSource::complete(lines.len()).rows_at("lines");
             let value = serde_json::to_value(oneiron::task_verb::TaskDescription::Card { lines })
                 .map_err(|_| {
                 McpGatewayError::new(
@@ -200,7 +201,7 @@ pub(crate) async fn execute_mcp_generated_verb(
             (output, source.health(), carrier, snapshot, producer_epoch)
         };
     dispatch.producer_epoch = producer_epoch;
-    let page = mcp_resolve_page(
+    let mut page = mcp_resolve_page(
         server,
         actor,
         args.tool.name,
@@ -211,7 +212,7 @@ pub(crate) async fn execute_mcp_generated_verb(
     )
     .await?;
     // The granted budget is ENFORCED here, not merely reported.
-    mcp_cap_verb_rows(&mut output, &page);
+    mcp_cap_verb_rows(&mut output, &mut page, snapshot.source);
     let structured = json!({
         "tool": args.tool.name,
         "family": args.tool.family.as_str(),
@@ -237,28 +238,41 @@ pub(crate) async fn execute_mcp_generated_verb(
     mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }
 
-/// Caps whichever row array this verb result pages over, in place.
+/// Caps the row array this verb result pages over, in place: the output itself
+/// when it is an array, else the key its producer names (a generated verb's
+/// comes from its manifest `page`). A single record has none and passes whole.
 ///
 /// A result that states `granted` and then ships more rows than that is the
 /// fail-open this closes; the row count it reports is the count it returned.
-fn mcp_cap_verb_rows(output: &mut Value, page: &McpPageBudget) {
+/// A producer's own continuation is named only on the page that ends the
+/// retained window. Inside it the opaque cursor is the way on, and the
+/// producer's continuation would skip the rows still retained, so the output
+/// carries none there.
+fn mcp_cap_verb_rows(
+    output: &mut Value,
+    page: &mut McpPageBudget,
+    source: crate::mcp::McpPageSource,
+) {
     if let Some(rows) = output.as_array_mut() {
         *rows = page.cap(std::mem::take(rows));
         return;
     }
-    for key in ["rows", "lines"] {
-        let Some(rows) = output.get(key).and_then(Value::as_array).cloned() else {
-            continue;
-        };
-        let capped = page.cap(rows);
-        let Some(object) = output.as_object_mut() else {
-            return;
-        };
-        if object.contains_key("count") {
-            object.insert("count".to_owned(), Value::from(capped.len()));
-        }
-        object.insert(key.to_owned(), Value::Array(capped));
+    let Some(object) = output.as_object_mut() else {
         return;
+    };
+    if let Some(Value::Array(rows)) = source.rows.and_then(|key| object.get_mut(key)) {
+        *rows = page.cap(std::mem::take(rows));
+        let count = rows.len();
+        if object.contains_key("count") {
+            object.insert("count".to_owned(), Value::from(count));
+        }
+    }
+    if let Some(resume) = source.resume {
+        if page.successor_position().is_some() {
+            object.insert(resume.field.to_owned(), Value::Null);
+        } else if let Some(value) = object.get(resume.field).filter(|value| !value.is_null()) {
+            page.resume_with(resume.argument, value.clone());
+        }
     }
 }
 
@@ -1189,9 +1203,11 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.rows.len(),
                 0,
-                0,
-                output.next_after.is_none(),
-            );
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("rows")
+            .resumed_by("next_after", "turn_ref");
             mcp_agent_verb_output(output, source)
         }
         "rooms.render" => {
@@ -1210,9 +1226,11 @@ async fn execute_agent_verb_listing(
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.rows.len(),
                 0,
-                0,
-                output.next_after.is_none(),
-            );
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("rows")
+            .resumed_by("next_after", "turn_ref");
             mcp_agent_verb_output(output, source)
         }
         "rooms.get" => {
@@ -1277,3 +1295,25 @@ fn mcp_agent_verb_output(
 }
 
 // END GENERATED MCP DISPATCH
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_cap_reads_the_rows_key_the_manifest_names() {
+        let source = crate::mcp::McpPageSource::complete(3).rows_at("items");
+        let request = crate::mcp::McpPageRequest {
+            limit: Some(2),
+            forceful_override: false,
+            cursor: None,
+        };
+        let mut page = McpPageBudget::resolve_page(Some(&request), source, 0);
+        let mut output = json!({"count": 3, "items": [1, 2, 3], "rows": [1, 2, 3]});
+        mcp_cap_verb_rows(&mut output, &mut page, source);
+        assert_eq!(output["items"], json!([1, 2]));
+        assert_eq!(output["count"], 2);
+        // Only the list the producer names is its page.
+        assert_eq!(output["rows"], json!([1, 2, 3]));
+    }
+}

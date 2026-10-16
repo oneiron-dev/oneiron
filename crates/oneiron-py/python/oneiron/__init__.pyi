@@ -110,6 +110,7 @@ class RetrievalMeta(TypedDict):
     claims_returned: int
     deep_pending: bool | None
     temporal_hints: NotRequired[list[TemporalHint]]
+    limit_clamped: NotRequired[bool]
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]

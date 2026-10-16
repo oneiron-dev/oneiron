@@ -89,6 +89,51 @@ class AgentSdkProjectionTests(unittest.TestCase):
         ]:
             self.assertIn(spelling, outputs[path], path)
 
+    def test_page_rows_key_reaches_the_mcp_cap(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        row = json.loads(json.dumps(next(row for row in generator.ROWS if row["name"] == "rooms.find")))
+        row["name"] = "rooms.items"
+        row["page"] = {"rows": "items", "cursor": "next"}
+        generator.ROWS.append(row)
+        dispatch = generator.outputs()["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"]
+        dispatch = dispatch.split("async fn execute_agent_verb_listing(", 1)[1]
+        arm = dispatch.split('"rooms.items" => {', 1)[1].split("mcp_agent_verb_output(", 1)[0]
+        self.assertIn('.rows_at("items")', arm)
+        self.assertIn("output.items.len()", arm)
+        self.assertIn("output.next.is_some()", arm)
+        # A page names its own continuation only when its row says how it goes back.
+        self.assertNotIn(".resumed_by(", arm)
+        room = dispatch.split('"rooms.messages" => {', 1)[1].split("mcp_agent_verb_output(", 1)[0]
+        self.assertIn('.resumed_by("next_after", "turn_ref")', room)
+
+    def test_recall_default_limit_comes_from_the_manifest(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        # A count default is spelled once: on its argument, never again in a row's code.
+        for row in generator.ROWS:
+            code = json.dumps([row.get("call", ""), row.get("admission", {}).get("validate", "")])
+            for arg in row.get("binding", {}).get("args", []):
+                if isinstance(arg.get("default"), int):
+                    self.assertNotIn(f"unwrap_or({arg['default']})", code, row["name"])
+        recall = next(row for row in generator.ROWS if row["name"] == "recall")
+        limit = next(arg for arg in recall["binding"]["args"] if arg["name"] == "limit")
+        self.assertEqual(limit["default"], 10)
+        limit["default"] = 17
+        outputs = generator.outputs()
+        self.assertIn("pub const RECALL_LIMIT_DEFAULT: usize = 17;", outputs["crates/oneiron/src/task_verb/sdk_generated.rs"])
+        for path, start, spelling in [
+            ("crates/oneiron-napi/src/facade/client/agent_verbs.rs", "pub fn recall(", ".unwrap_or(17)"),
+            ("crates/oneiron-py/src/lib.rs", "fn recall(", "limit.unwrap_or(17)"),
+            ("packages/oneiron/src/index.ts", "recall(query: string", "opts.limit ?? 17"),
+            ("crates/oneiron-py/python/oneiron/__init__.py", "def recall(", "limit: int = 17"),
+            ("crates/oneiron-py/python/oneiron/__init__.pyi", "def recall(", "limit: int = 17"),
+        ]:
+            binding = outputs[path].split(start, 1)[1].split("\n\n", 1)[0]
+            self.assertIn(spelling, binding, path)
+
     def test_manifest_removal_suppresses_mcp_dispatch_and_catalog(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)

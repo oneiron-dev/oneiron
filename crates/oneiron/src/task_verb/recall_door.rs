@@ -1,6 +1,6 @@
 //! The recall door: when a recall's clock starts, what it answers when its
 //! door stops waiting, and how it serves high, xhigh and max.
-use super::sdk::RecallRequest;
+use super::sdk::{RECALL_LIMIT_DEFAULT, RecallRequest};
 use crate::memory::{Memory, MemoryResult};
 
 /// When a recall's clock started and what its door does if it stops waiting.
@@ -65,7 +65,8 @@ pub fn recall_at_door(
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
-    let (limit, clamped) = crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(10));
+    let (limit, clamped) =
+        crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(RECALL_LIMIT_DEFAULT));
     if !clamped {
         return recall_within_ceiling(memory, input, embed, door);
     }
@@ -101,7 +102,7 @@ fn recall_within_ceiling(
         memory.call_mode_deadline(),
     )?;
     let scope = input.scope.clone().unwrap_or_default();
-    let limit = input.limit.unwrap_or(10);
+    let limit = input.limit.unwrap_or(RECALL_LIMIT_DEFAULT);
     crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(limit)?;
     let host = match door.rerank {

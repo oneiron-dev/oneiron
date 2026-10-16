@@ -182,6 +182,8 @@ export type RetrievalMeta = {
   claimsReturned: number
   deepPending?: boolean
   temporalHints?: TemporalHint[]
+  /** The request's limit was past the ceiling and was served at it. */
+  limitClamped?: boolean
 }
 
 /** A full-vault render in one of the five pack serialization formats. */
