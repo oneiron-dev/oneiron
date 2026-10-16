@@ -20,8 +20,9 @@ mod burst_inputs;
 mod call;
 mod defaults;
 pub use defaults::{
-    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
-    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
+    DEFAULT_ASSET_TEXT_AT, ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable,
+    ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane, VoicePrecedence,
+    locality_within_extraction_bound,
 };
 // Public so `oneiron`'s resident-default door ranks routes the same way the table does.
 pub use defaults::locality_rank;
@@ -32,6 +33,7 @@ pub use self::scope::{Scope, ScopeResource};
 mod catalog;
 mod error;
 mod fallback;
+pub mod limit;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
 mod failure_policy;
 pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
@@ -43,6 +45,8 @@ pub use failure_policy::{
     parse_failure_rules,
 };
 pub mod image;
+mod label_read;
+pub use label_read::{LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet};
 mod model_id;
 mod protocol;
 mod safeguard;

@@ -17,9 +17,7 @@ pub(super) fn park_consent_bundle_member(
     body.subject = ClaimSubject::Entity(test_id(subject_seed));
     body.value = Value::from(value);
     body.approval = ClaimApprovalStatus::Proposed;
-    // Dreamer-authored bodies satisfy the evidence floor with their own seeded
-    // subject entity.
-    body.evidence = Some(precommit_evidence(vec![test_id(subject_seed)]));
+    body.evidence = Some(said_evidence(vault)?);
     let (candidate, envelope) = dreamer_claim_candidate_write_parts(vault, &body, actor, run_id)?;
     vault
         .batch()
@@ -37,17 +35,11 @@ pub(super) fn park_consent_bundle_member(
     Ok(())
 }
 
+/// The vault's embedded owner's proof: who resolves a consent bundle.
 pub(super) fn consent_bundle_owner(
     vault: &crate::Vault,
-    owner_id: EntityId,
 ) -> Result<crate::consent::AuthenticatedOwner> {
-    vault.put_entity(
-        &owner_id,
-        ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"consent bundle owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
 }
 
@@ -192,7 +184,7 @@ fn gate_consent_bundle_review_is_content_bound_and_goes_stale() -> Result<()> {
     assert_ne!(widened.bundle_id, edited.bundle_id);
 
     // The first review is now stale, and a stale review resolves nothing.
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
     let err = vault
         .resolve_gate_consent_bundle(
             &owner,
@@ -229,8 +221,8 @@ fn gate_consent_bundle_approve_applies_every_member_with_one_receipt() -> Result
 
     let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
     let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    let owner_id = test_id(0x60);
-    let owner = consent_bundle_owner(&vault, owner_id)?;
+    let owner = consent_bundle_owner(&vault)?;
+    let owner_id = owner.actor();
 
     let receipt = vault.resolve_gate_consent_bundle(
         &owner,
@@ -302,7 +294,7 @@ fn gate_consent_bundle_decline_closes_every_member_with_one_receipt() -> Result<
 
     let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
     let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
 
     let receipt = vault.resolve_gate_consent_bundle(
         &owner,
@@ -371,7 +363,7 @@ fn gate_consent_bundle_resolves_whole_however_many_rows_other_runs_have_waiting(
         .map(|member| member.claim_id)
         .collect();
     assert_eq!(members, vec![first, second]);
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
     let receipt = vault.resolve_gate_consent_bundle(
         &owner,
         bundle.bundle_id,
@@ -415,7 +407,7 @@ fn gate_consent_bundle_rolls_back_when_one_member_is_stale() -> Result<()> {
     let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
     assert_eq!(bundle.members.len(), 2);
     assert_eq!(bundle.members[0].claim_id, good);
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
     let metric_emissions_before = gate_metric_emission_count_for_test();
 
     let err = vault
@@ -478,8 +470,7 @@ fn gate_consent_bundle_resolution_is_owner_only() -> Result<()> {
         vault.authenticate_owner(machine, &machine.to_hex(), true, GateDecisionId::now()),
         Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
-    let owner_id = test_id(0x60);
-    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     assert!(matches!(
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), false, GateDecisionId::now()),
         Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))

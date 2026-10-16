@@ -150,16 +150,14 @@ fn forget_drains_all_active_matches_beyond_one_page() {
 
     let dir = unique_vault_dir("forget");
     let path = dir.to_str().expect("utf8 path").to_owned();
-    let actor = EntityId::from_bytes([0x41; 16]).expect("actor id");
     let subject = EntityId::from_bytes([0x42; 16]).expect("subject id");
 
     // Scope the vault so its LMDB env closes before the temp dir removal.
     {
         let vault = Vault::open(&path, VaultConfig::device()).expect("open vault");
         let time = oneiron::TimeRange { start: 1, end: 1 };
-        vault
-            .put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"actor")
-            .expect("put actor");
+        // The vault's owner, whose claims these are.
+        let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
         vault
             .put_entity(&subject, ENTITY_TYPE_PERSON, time, 1, b"subject")
             .expect("put subject");

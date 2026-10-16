@@ -4,7 +4,7 @@
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
-use crate::llm::decision::{DecisionReceipt, TypedDecision};
+use crate::llm::decision::{DecisionReceipt, PairedReading, TypedDecision};
 use crate::side_table::SideKey;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -161,6 +161,7 @@ pub fn refresh_question(
                         band_version: 0,
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
+                        paired: p.proposal.paired.clone(),
                     },
                     human_ask: None,
                 },
@@ -193,7 +194,16 @@ pub fn refresh_question(
             }
             QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question), &updated)?;
         }
-        if let RefreshTrigger::Arrival(unit) = trigger {
+        // A held unit keeps its marker, so the pump answers it once its
+        // owner has answered.
+        if let RefreshTrigger::Arrival(unit) = trigger
+            && crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                txn,
+                &unit,
+                crate::gate::ConsolidationReader::QuestionRefreshSource,
+            )?
+        {
             arrival::PENDING.delete(&vault.store, txn, &(question, unit))?;
         }
         Ok(answers)
@@ -340,6 +350,11 @@ fn validate_proposal(record: &QuestionRecord, proposal: &AnswerProposal) -> Resu
                 || p.model.is_empty()
                 || p.version.is_empty()
         })
+        || !PairedReading::rows_valid(
+            &proposal.paired,
+            record.definition.question.id,
+            &proposal.providers,
+        )
     {
         return Err(Error::InvalidConfig(
             "invalid standing question answer".into(),
@@ -378,8 +393,16 @@ fn source(
     }
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("question source header"))?;
+    // A claim awaiting its owner's answer is no unit to answer yet.
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
         || raw.len() == ENTITY_METADATA_HEADER_LEN
+        || (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+            && !crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                txn,
+                &unit,
+                crate::gate::ConsolidationReader::QuestionRefreshSource,
+            )?)
     {
         return Ok(None);
     }

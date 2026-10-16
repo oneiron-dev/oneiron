@@ -7,7 +7,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
-use super::feedback::FeedbackConfig;
+use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
@@ -94,6 +94,9 @@ pub struct SyncServerConfig {
     pub max_bulk_decompressed: usize,
     /// The bounds on work a remote caller can start: git and LFS transfers.
     pub limits: LimitsConfig,
+    /// `[feedback.inbox]`: whether this server keeps the keyless open inbox,
+    /// and its flood cap.
+    pub feedback_inbox: FeedbackInboxConfig,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -125,6 +128,7 @@ impl Default for SyncServerConfig {
             max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             limits: LimitsConfig::default(),
+            feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
         }
     }
@@ -197,6 +201,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("limits", &self.limits)
+            .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
             .finish()
     }
@@ -212,6 +217,9 @@ pub struct ServeConfig {
     pub vault_path: PathBuf,
     pub host: String,
     pub port: u16,
+    /// The artifact-only listener's port on `host`; `0` takes any free one,
+    /// which `/api/health` advertises as `artifact_port`.
+    pub artifact_port: u16,
     pub auth_secret: Option<String>,
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
@@ -286,6 +294,7 @@ impl Default for ServeConfig {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
             host: "0.0.0.0".to_owned(),
             port: 9090,
+            artifact_port: 0,
             auth_secret: server.auth_secret,
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
@@ -339,6 +348,7 @@ impl fmt::Debug for ServeConfig {
             .field("vault_path", &self.vault_path)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
@@ -420,6 +430,7 @@ impl ServeConfig {
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
             limits: self.limits.clone(),
+            feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
@@ -438,6 +449,7 @@ impl ServeConfig {
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
         config.privacy = self.vault_privacy_config();
+        config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {

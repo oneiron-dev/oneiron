@@ -10,7 +10,7 @@ use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
 use crate::origin::lfs::LfsOid;
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;
@@ -341,7 +341,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Failed,
+                GitWireRejection::Unauthorized,
                 "origin authority epoch no longer permits this publication",
                 learned_at,
             );
@@ -351,7 +351,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Conflicted,
+                GitWireRejection::RefMoved,
                 "live ref no longer equals the expected value",
                 learned_at,
             );
@@ -371,7 +371,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Failed,
+                GitWireRejection::ObjectsUnavailable,
                 &failure,
                 learned_at,
             );
@@ -414,22 +414,22 @@ impl Vault {
         // Retrying it is exactly how the second writer would clobber the first,
         // so neither arm below ever loops.
         if let GitWireCommitOutcome::Rejected { reason, .. } = outcome {
-            let (status, failure) = match reason {
-                GitWireRejection::RefMoved => (
-                    OriginPublicationStatus::Conflicted,
+            let failure = match reason {
+                GitWireRejection::RefMoved => {
                     "compare-and-swap found a value on the ref that nobody decided against"
-                        .to_owned(),
-                ),
-                GitWireRejection::ObjectsUnavailable => (
-                    OriginPublicationStatus::Failed,
-                    "the git wire found required objects unavailable".to_owned(),
-                ),
+                }
+                GitWireRejection::ObjectsUnavailable => {
+                    "the git wire found required objects unavailable"
+                }
+                GitWireRejection::Unauthorized => {
+                    "origin authority epoch no longer permits this publication"
+                }
                 GitWireRejection::EffectUnconfirmed => {
                     return Err(Error::ConcurrentWrite("origin CAS effect is uncertain"));
                 }
             };
             let mut refused =
-                self.refuse_origin_publication(git, repo, record, status, &failure, learned_at)?;
+                self.refuse_origin_publication(git, repo, record, reason, failure, learned_at)?;
             refused.wire = Some(outcome);
             return Ok(refused);
         }
@@ -459,7 +459,7 @@ impl Vault {
     /// is still readable: a later publication of its ref may have released
     /// them, and resolution is about to make the record certify its ref's
     /// value again.
-    fn repin_origin_dependencies(
+    pub(in crate::origin) fn repin_origin_dependencies(
         &self,
         git: &GitWire<'_>,
         repo: &GitWireRepo,
@@ -652,10 +652,24 @@ impl Vault {
         git: &GitWire<'_>,
         repo: &GitWireRepo,
         record: OriginPublicationRecord,
-        status: OriginPublicationStatus,
+        reason: GitWireRejection,
         failure: &str,
         learned_at: u64,
     ) -> Result<OriginAdvance> {
+        // A refusal decided before the wire ran must not leave an earlier
+        // uncertain attempt at this move runnable by generic recovery. Voided
+        // first: a crash before the refusal re-decides on the same evidence.
+        git.void_prepared_ref_move(
+            repo,
+            &record.ref_name,
+            record.expected_old_oid.as_ref(),
+            &record.new_oid,
+        )?;
+        let status = if reason == GitWireRejection::RefMoved {
+            OriginPublicationStatus::Conflicted
+        } else {
+            OriginPublicationStatus::Failed
+        };
         let mut refused = record;
         refused.status = status;
         refused.failure = Some(bounded_failure(failure));
@@ -710,15 +724,24 @@ impl Vault {
                     oid.to_hex()
                 )));
             }
-            match self.verify_lfs_object(*oid, *size) {
-                Ok(true) => {}
-                Ok(false) | Err(Error::CorruptedIndex(_)) => {
-                    return Ok(Some(format!(
-                        "required lfs object {} is not locally readable at {size} bytes",
-                        oid.to_hex()
-                    )));
-                }
-                Err(error) => return Err(error),
+            // The check reads the object's whole manifest, so it first takes
+            // room for it from the host, by the row it found stored, and
+            // holds it through the check. A wait that runs out is an error
+            // and decides nothing. An object whose manifest row is gone has
+            // nothing to read, so it is not readable, as the check would find.
+            let readable = match self.lfs_manifest_read_room(*oid)? {
+                Some(_room) => match self.verify_lfs_object(*oid, *size) {
+                    Ok(readable) => readable,
+                    Err(Error::CorruptedIndex(_)) => false,
+                    Err(error) => return Err(error),
+                },
+                None => false,
+            };
+            if !readable {
+                return Ok(Some(format!(
+                    "required lfs object {} is not locally readable at {size} bytes",
+                    oid.to_hex()
+                )));
             }
         }
         Ok(None)
@@ -737,6 +760,9 @@ impl Vault {
         if record.status == OriginPublicationStatus::Prepared {
             return Ok(());
         }
+        // Held throughout, so no push is accepted between what is read below
+        // and the release it decides.
+        let _coordinator = lock_repository(repo.common_dir())?;
         self.unpin_origin_object(
             git,
             repo,
@@ -755,9 +781,19 @@ impl Vault {
                 )?
                 .is_some_and(|id| id == record.publication_id)
         };
-        if record.status != OriginPublicationStatus::Published
+        let released = record.status != OriginPublicationStatus::Published
             || !owns_visible_slot
-            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid)
+            || git.read_ref(repo, &record.ref_name)?.as_ref() != Some(&record.new_oid);
+        // A push of this record's own move that is still pending lands on this
+        // record, and its proof needs every dependency: they stay rooted until
+        // that push settles.
+        if released
+            && !(record.status == OriginPublicationStatus::Published
+                && record
+                    .required_objects
+                    .iter()
+                    .any(|oid| oid != &record.new_oid)
+                && self.receive_pack_move_pending(repo.repo_root(), record)?)
         {
             for oid in &record.required_objects {
                 if oid != &record.new_oid {
@@ -793,8 +829,12 @@ impl Vault {
         // its length (rule 5).
         let (owners, count) = {
             let rtxn = self.store.env.read_txn()?;
-            let mut count =
-                ScanCount::start(&self.store, &rtxn, OriginScan::KeepOwnerRows, Some(repo_id))?;
+            let mut count = ScanCount::start(
+                &self.store,
+                &rtxn,
+                EngineScan::KeepOwnerRows,
+                repo_id.as_bytes(),
+            )?;
             let mut owners = Vec::new();
             for row in KEEP_OWNER.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
                 count.row();

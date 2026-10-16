@@ -6,28 +6,29 @@ use std::path::Path;
 use super::cgi_finish::realized_updates;
 use super::door::DoorAdmissionStamp;
 use super::door_window::{
-    DoorWindowReport, DoorWindowVerdict, printable_ref_name, unlandable_ref_reasons,
+    DoorWindowReport, DoorWindowVerdict, held_by_ref, printable_ref_name, unlandable_ref_reasons,
 };
 use super::evidence::{
     PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, RefUpdate, receive_pack_field,
     receive_pack_provenance_refused,
 };
 use super::landing::ReceivePackLanding;
+use super::paths::ORIGIN_REF_UPDATE_BATCH;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{CodeError, Error, ErrorKind, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, lock_repository};
 use crate::origin::lfs::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id,
 };
 use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 // A local operation journal, not an exported claim or caller-supplied authority.
@@ -45,7 +46,7 @@ const PRUNE_BATCH: usize = 4096;
 type IntentRows<'txn> =
     Box<dyn Iterator<Item = Result<(ReceivePackIntentKey, ReceivePackIntent)>> + 'txn>;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct ReceivePackIntentKey {
     repo_identity_hex: String,
     operation_id: EntityId,
@@ -65,6 +66,51 @@ impl SideKey for ReceivePackIntentKey {
             operation_id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
         })
     }
+}
+
+/// A push's per-ref progress, one row per batch of [`ORIGIN_REF_UPDATE_BATCH`]
+/// refs of its intent. The intent's ref list is written once; settling a
+/// batch rewrites that batch's row alone, so a push of n refs writes O(n)
+/// journal bytes. A batch with no row has made no progress since the intent.
+const PROGRESS: SideTable<ReceivePackProgressKey, ReceivePackBatchProgress, Named> =
+    SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_PROGRESS);
+
+struct ReceivePackProgressKey {
+    intent: ReceivePackIntentKey,
+    batch: u64,
+}
+
+impl SideKey for ReceivePackProgressKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.intent.encode_into(out);
+        self.batch.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (intent, batch) = bytes.split_at(bytes.len().checked_sub(8)?);
+        Some(Self {
+            intent: ReceivePackIntentKey::decode_key(intent)?,
+            batch: u64::decode_key(batch)?,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReceivePackBatchProgress {
+    refs: Vec<(bool, ReceivePackRefStatus)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Journal bytes this thread's intent and progress writes encoded.
+    pub(super) static JOURNAL_BYTES_WRITTEN: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_journal_bytes(encoded: Result<Vec<u8>>) {
+    let len = encoded.map_or(0, |bytes| bytes.len() as u64);
+    JOURNAL_BYTES_WRITTEN.with(|written| written.set(written.get() + len));
 }
 
 /// Per-ref completion, independent of the backend's transport success.
@@ -102,10 +148,14 @@ pub(super) struct ReceivePackIntentRef {
     pub(super) outcome_id: String,
     pub(super) observed: bool,
     pub(super) status: ReceivePackRefStatus,
+    // The positions in the intent's pointers this ref is held to. A row from
+    // before refs were held to their own has none: it held each to all.
+    #[serde(default)]
+    pointers: Option<Vec<usize>>,
 }
 
 impl ReceivePackIntentRef {
-    fn update(&self) -> Result<RefUpdate> {
+    pub(super) fn update(&self) -> Result<RefUpdate> {
         Ok(RefUpdate {
             name: self.name.clone(),
             old_oid: self.old_oid.clone().map(GitOid::parse_hex).transpose()?,
@@ -138,14 +188,52 @@ impl ReceivePackIntent {
     }
 }
 
-/// Removes one intent's rows. Every prune of a settled intent goes here, so
-/// a settled push leaves no row behind.
+/// Removes one intent's rows, its batch progress with it. Every prune of a
+/// settled intent goes here, so a settled push leaves no row behind.
 fn prune_receive_pack_intent_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     key: &ReceivePackIntentKey,
 ) -> Result<()> {
     INTENTS.delete(store, wtxn, key)?;
+    let mut prefix = Vec::new();
+    key.encode_into(&mut prefix);
+    let batches = PROGRESS
+        .iter_from(store, wtxn, &prefix)?
+        .map(|row| row.map(|(batch, _)| batch))
+        .collect::<Result<Vec<_>>>()?;
+    for batch in &batches {
+        PROGRESS.delete(store, wtxn, batch)?;
+    }
+    Ok(())
+}
+
+/// Lays the intent's saved batch progress over its refs. A row holds exactly
+/// its own batch of its own intent, as its writer saves it; any other shape is
+/// refused, never applied.
+fn fold_receive_pack_progress(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    key: &ReceivePackIntentKey,
+    intent: &mut ReceivePackIntent,
+) -> Result<()> {
+    let mut prefix = Vec::new();
+    key.encode_into(&mut prefix);
+    for row in PROGRESS.iter_from(store, rtxn, &prefix)? {
+        let (progress_key, progress) = row?;
+        let refs = intent.refs.len();
+        let batch = usize::try_from(progress_key.batch)
+            .ok()
+            .and_then(|batch| batch.checked_mul(ORIGIN_REF_UPDATE_BATCH))
+            .filter(|start| *start < refs)
+            .map(|start| start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs))
+            .filter(|batch| progress_key.intent == *key && batch.len() == progress.refs.len())
+            .ok_or(Error::CorruptedIndex("receive-pack progress batch"))?;
+        for (entry, (observed, status)) in intent.refs[batch].iter_mut().zip(progress.refs) {
+            entry.observed = observed;
+            entry.status = status;
+        }
+    }
     Ok(())
 }
 
@@ -165,14 +253,14 @@ impl Vault {
     /// end [uncertified](ReceivePackRefStatus::Uncertified). A `Prepared`
     /// owner's obligations are fixed, so it is held to them before it is
     /// decided; if it is refused, its move is free and the push can be sent
-    /// again. The large files a push brings count against each of its
-    /// advancing refs, so a push that also brings another ref new large
-    /// files is refused whole.
+    /// again. A ref is held to the large files its own move brings
+    /// (`ref_pointers`), never to another ref's.
     pub(super) fn receive_pack_owner_shortfalls(
         &self,
         repo: &RepoRef,
         updates: &[RefUpdate],
         pointers: &[LfsPushedPointer],
+        ref_pointers: &[Vec<usize>],
     ) -> Result<Vec<String>> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
@@ -182,14 +270,14 @@ impl Vault {
         let mut lfs_objects = Vec::new();
         for pointer in pointers {
             let intent = pointer.intent(repo_id);
-            if self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?
-                == LfsAdmission::StoreInLfs
-            {
-                lfs_objects.push((intent.oid, intent.size_bytes));
-            }
+            let admission =
+                self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?;
+            lfs_objects.push(
+                (admission == LfsAdmission::StoreInLfs).then_some((intent.oid, intent.size_bytes)),
+            );
         }
         let mut reasons = Vec::new();
-        for update in updates {
+        for (index, update) in updates.iter().enumerate() {
             let Some(next) = update.new_oid.as_ref() else {
                 continue;
             };
@@ -205,9 +293,10 @@ impl Vault {
             ) {
                 continue;
             }
-            if let Some(refusal) =
-                obligations_beyond_owner(&owner, std::iter::once(next), lfs_objects.iter())
-            {
+            let held = held_by_ref(&lfs_objects, ref_pointers.get(index).map(Vec::as_slice))
+                .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
+            let held = held.into_iter().flatten();
+            if let Some(refusal) = obligations_beyond_owner(&owner, std::iter::once(next), held) {
                 reasons.push(format!("{}: {refusal}", printable_ref_name(&update.name)));
             }
         }
@@ -259,7 +348,11 @@ impl Vault {
             refs: door
                 .ref_updates
                 .iter()
-                .map(|update| {
+                .enumerate()
+                .map(|(index, update)| {
+                    let pointers = door.ref_lfs_pointers.get(index).cloned();
+                    held_by_ref(&door.lfs_pointers, pointers.as_deref())
+                        .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
                     Ok(ReceivePackIntentRef {
                         name: update.name.clone(),
                         old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
@@ -267,6 +360,7 @@ impl Vault {
                         outcome_id: self.store.clock.entity_id()?.to_hex(),
                         observed: false,
                         status: ReceivePackRefStatus::Pending,
+                        pointers,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -287,6 +381,8 @@ impl Vault {
             operation_id: stamp.operation_id,
         };
         INTENTS.encode_value(&intent)?;
+        #[cfg(test)]
+        count_journal_bytes(INTENTS.encode_value(&intent));
         self.with_write_txn_grouped(|wtxn| {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
@@ -303,11 +399,46 @@ impl Vault {
         key: &ReceivePackIntentKey,
         intent: &ReceivePackIntent,
     ) -> Result<()> {
+        #[cfg(test)]
+        count_journal_bytes(INTENTS.encode_value(intent));
         self.with_write_txn_grouped(|wtxn| {
             if intent.is_settled() {
                 return prune_receive_pack_intent_in_txn(&self.store, wtxn, key);
             }
             INTENTS.put(&self.store, wtxn, key, intent)?;
+            Ok(())
+        })
+    }
+
+    /// Saves the progress of the intent's `batch`-th batch of refs. The save
+    /// that settles the intent prunes it instead.
+    pub(super) fn save_receive_pack_progress(
+        &self,
+        key: &ReceivePackIntentKey,
+        intent: &ReceivePackIntent,
+        batch: usize,
+    ) -> Result<()> {
+        let start = batch * ORIGIN_REF_UPDATE_BATCH;
+        let end = (start + ORIGIN_REF_UPDATE_BATCH).min(intent.refs.len());
+        let progress = ReceivePackBatchProgress {
+            refs: intent.refs[start..end]
+                .iter()
+                .map(|entry| (entry.observed, entry.status))
+                .collect(),
+        };
+        let progress_key = ReceivePackProgressKey {
+            intent: key.clone(),
+            batch: batch as u64,
+        };
+        #[cfg(test)]
+        count_journal_bytes(PROGRESS.encode_value(&progress));
+        self.with_write_txn_grouped(|wtxn| {
+            // The save that settles the intent prunes it instead, in the same
+            // transaction, so no settled row outlives it.
+            if intent.is_settled() {
+                return prune_receive_pack_intent_in_txn(&self.store, wtxn, key);
+            }
+            PROGRESS.put(&self.store, wtxn, &progress_key, &progress)?;
             Ok(())
         })
     }
@@ -324,6 +455,29 @@ impl Vault {
         Ok(())
     }
 
+    /// Writes a progress row as given, for tests of rows no writer makes.
+    #[cfg(test)]
+    pub(super) fn put_receive_pack_progress_for_test(
+        &self,
+        key: &ReceivePackIntentKey,
+        batch: u64,
+        refs: Vec<(bool, ReceivePackRefStatus)>,
+    ) -> Result<()> {
+        let progress_key = ReceivePackProgressKey {
+            intent: key.clone(),
+            batch,
+        };
+        self.with_write_txn_grouped(|wtxn| {
+            PROGRESS.put(
+                &self.store,
+                wtxn,
+                &progress_key,
+                &ReceivePackBatchProgress { refs },
+            )?;
+            Ok(())
+        })
+    }
+
     /// How many intent rows the repository holds, settled or not, read
     /// without pruning.
     #[cfg(test)]
@@ -333,6 +487,17 @@ impl Vault {
         INTENTS
             .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())
             .expect("intent rows")
+            .count()
+    }
+
+    /// How many batch progress rows the repository's intents hold.
+    #[cfg(test)]
+    pub(super) fn receive_pack_progress_rows_for_test(&self, repo_root: &Path) -> usize {
+        let repo_identity_hex = receive_pack_repo_identity_hex(self, repo_root).expect("identity");
+        let rtxn = self.store.env.read_txn().expect("read txn");
+        PROGRESS
+            .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())
+            .expect("progress rows")
             .count()
     }
 
@@ -368,9 +533,11 @@ impl Vault {
             operation_id,
         };
         let rtxn = self.store.env.read_txn()?;
-        Ok(INTENTS
-            .get(&self.store, &rtxn, &key)?
-            .map(|intent| (key, intent)))
+        let Some(mut intent) = INTENTS.get(&self.store, &rtxn, &key)? else {
+            return Ok(None);
+        };
+        fold_receive_pack_progress(&self.store, &rtxn, &key, &mut intent)?;
+        Ok(Some((key, intent)))
     }
 
     /// The repository's pending intents, in operation order.
@@ -392,8 +559,8 @@ impl Vault {
             ScanCount::start(
                 &self.store,
                 &rtxn,
-                OriginScan::ReceivePackIntents,
-                Some(lfs_repo_id(&repo_identity_hex)?),
+                EngineScan::ReceivePackIntents,
+                lfs_repo_id(&repo_identity_hex)?.as_bytes(),
             )?
         };
         let mut pending = Vec::new();
@@ -416,11 +583,12 @@ impl Vault {
                     )?),
                 };
                 for row in rows {
-                    let (key, intent) = row?;
+                    let (key, mut intent) = row?;
                     if key.repo_identity_hex != repo_identity_hex {
                         break;
                     }
                     count.row();
+                    fold_receive_pack_progress(&self.store, &rtxn, &key, &mut intent)?;
                     if !intent.is_settled() {
                         pending.push((key, intent));
                         continue;
@@ -502,89 +670,122 @@ impl Vault {
         let mut replay_outcome = None;
         let mut landing: Option<ReceivePackLanding> = None;
         let (request_bytes, response_bytes) = intent.transport_bytes.unwrap_or((0, 0));
-        for index in 0..intent.refs.len() {
-            if intent.refs[index].status != ReceivePackRefStatus::Pending {
-                continue;
-            }
-            let update = intent.refs[index].update()?;
-            // A failed proof is uncertainty, not permission to replay a ref.
-            let observed = realized_updates(self, root, std::slice::from_ref(&update));
-            match observed {
-                Ok(updates) if updates.is_empty() => {
-                    intent.refs[index].status = if intent.refs[index].observed {
-                        ReceivePackRefStatus::Superseded
-                    } else {
-                        ReceivePackRefStatus::NotApplied
-                    };
-                    self.save_receive_pack_intent(key, intent)?;
+        // A push may name any number of refs. They are settled a batch at a
+        // time: a batch's observations are saved once, before any of its
+        // refs is published, and its publications once after, each to the
+        // batch's own progress row. A crash inside a batch leaves its
+        // published refs observed and pending, and the next pass replays them
+        // under their same outcome ids.
+        let refs = intent.refs.len();
+        for (batch, start) in (0..refs).step_by(ORIGIN_REF_UPDATE_BATCH).enumerate() {
+            let mut observed_any = false;
+            let mut realized = Vec::new();
+            for index in start..(start + ORIGIN_REF_UPDATE_BATCH).min(refs) {
+                if intent.refs[index].status != ReceivePackRefStatus::Pending {
                     continue;
                 }
-                Err(_) => continue,
-                Ok(_) => {}
-            }
-            if !intent.refs[index].observed {
-                intent.refs[index].observed = true;
-                self.save_receive_pack_intent(key, intent)?;
-            }
-            let outcome = ReceivePackOutcome {
-                repo_root: root.to_path_buf(),
-                ref_updates: vec![update.clone()],
-                lfs_pointers: pointers.clone(),
-                staged_objects_dir: root.join("objects"),
-                // These are whole-exchange totals, not a per-ref allocation.
-                // Only a crash before the checkpoint leaves them unmeasured:
-                // zero then means unknown, not newly measured recovery traffic.
-                pack_stats: PackStats {
-                    request_bytes,
-                    response_bytes,
-                    ref_update_count: 1,
-                },
-            };
-            let door = DoorWindowReport {
-                verdict: DoorWindowVerdict::Clean,
-                ref_updates: vec![update],
-                lfs_pointers: pointers.clone(),
-                quarantine_path: None,
-            };
-            let result = (|| {
-                let attribution = self.record_receive_pack_outcome_at(
-                    &stamp,
-                    &door,
-                    &outcome,
-                    0,
-                    EntityId::from_hex(&intent.refs[index].outcome_id)
-                        .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
-                )?;
-                if replay_outcome.is_none() {
-                    replay_outcome = Some(outcome.clone());
-                }
-                self.apply_receive_pack_update_with_attribution(
-                    &outcome.pinned_repo_ref()?,
-                    &outcome,
-                    &attribution,
-                )
-            })();
-            match result {
-                Ok(receipt) => {
-                    intent.refs[index].status = ReceivePackRefStatus::Published;
-                    self.save_receive_pack_intent(key, intent)?;
-                    if let Some(previous) = &mut landing {
-                        previous.replayed &= receipt.replayed;
-                    } else {
-                        // The exposed replay outcome must name the same ref and
-                        // source as the first receipt, not an uncertified aggregate.
-                        replay_outcome = Some(outcome);
-                        landing = Some(receipt);
+                let update = intent.refs[index].update()?;
+                // A failed proof is uncertainty, not permission to replay a ref.
+                match realized_updates(self, root, std::slice::from_ref(&update)) {
+                    Ok(updates) if updates.is_empty() => {
+                        intent.refs[index].status = if intent.refs[index].observed {
+                            ReceivePackRefStatus::Superseded
+                        } else {
+                            ReceivePackRefStatus::NotApplied
+                        };
+                        observed_any = true;
+                    }
+                    Err(_) => {}
+                    Ok(_) => {
+                        observed_any |= !intent.refs[index].observed;
+                        intent.refs[index].observed = true;
+                        realized.push((index, update));
                     }
                 }
-                Err(error) if error.kind() == ErrorKind::OriginPublicationBeyondOwner => {
-                    intent.refs[index].status = ReceivePackRefStatus::Uncertified;
-                    self.save_receive_pack_intent(key, intent)?;
-                }
-                Err(_) => {}
             }
-            // Do not stop after a failed ref: retain its Pending disposition
-            // and recover the other refs independently.
+            if observed_any {
+                self.save_receive_pack_progress(key, intent, batch)?;
+            }
+            let mut settled_any = false;
+            for (index, update) in realized {
+                let held = held_by_ref(&pointers, intent.refs[index].pointers.as_deref())
+                    .ok_or(Error::CorruptedIndex("receive-pack pointer position"))?;
+                let held: Vec<_> = held.into_iter().cloned().collect();
+                let outcome = ReceivePackOutcome {
+                    repo_root: root.to_path_buf(),
+                    ref_updates: vec![update.clone()],
+                    lfs_pointers: held.clone(),
+                    staged_objects_dir: root.join("objects"),
+                    // These are whole-exchange totals, not a per-ref allocation.
+                    // Only a crash before the checkpoint leaves them unmeasured:
+                    // zero then means unknown, not newly measured recovery traffic.
+                    pack_stats: PackStats {
+                        request_bytes,
+                        response_bytes,
+                        ref_update_count: 1,
+                    },
+                };
+                let door = DoorWindowReport {
+                    verdict: DoorWindowVerdict::Clean,
+                    ref_updates: vec![update],
+                    lfs_pointers: held,
+                    ref_lfs_pointers: Vec::new(),
+                    quarantine_path: None,
+                };
+                let result = (|| {
+                    let attribution = self.record_receive_pack_outcome_at(
+                        &stamp,
+                        &door,
+                        &outcome,
+                        0,
+                        EntityId::from_hex(&intent.refs[index].outcome_id)
+                            .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
+                    )?;
+                    if replay_outcome.is_none() {
+                        replay_outcome = Some(outcome.clone());
+                    }
+                    self.apply_receive_pack_update_with_attribution(
+                        &outcome.pinned_repo_ref()?,
+                        &outcome,
+                        &attribution,
+                    )
+                })();
+                // A check that waited past the host's room for an LFS read
+                // decided nothing: the ref stays Pending, and the caller hears
+                // so rather than answer as if it had recovered, or wait as long
+                // again for the next ref. What the batch settled so far is
+                // kept first.
+                if matches!(result, Err(Error::Code(CodeError::LfsReadRoomWaitedOut))) {
+                    if settled_any {
+                        self.save_receive_pack_progress(key, intent, batch)?;
+                    }
+                    return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+                }
+                match result {
+                    Ok(receipt) => {
+                        intent.refs[index].status = ReceivePackRefStatus::Published;
+                        settled_any = true;
+                        if let Some(previous) = &mut landing {
+                            previous.replayed &= receipt.replayed;
+                        } else {
+                            // The exposed replay outcome must name the same ref and
+                            // source as the first receipt, not an uncertified aggregate.
+                            replay_outcome = Some(outcome);
+                            landing = Some(receipt);
+                        }
+                    }
+                    Err(error) if error.kind() == ErrorKind::OriginPublicationBeyondOwner => {
+                        intent.refs[index].status = ReceivePackRefStatus::Uncertified;
+                        settled_any = true;
+                    }
+                    // Do not stop after a failed ref: retain its Pending disposition
+                    // and recover the other refs independently.
+                    Err(_) => {}
+                }
+            }
+            if settled_any {
+                self.save_receive_pack_progress(key, intent, batch)?;
+            }
         }
         Ok((replay_outcome, landing))
     }

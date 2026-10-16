@@ -198,7 +198,8 @@ impl Memory<'_> {
     }
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that
-    /// is absent or withheld, under the read's receipt either way.
+    /// is absent or withheld, under the read's receipt either way. An image
+    /// ASSET is served in its resolved form (OF-329).
     fn hydrated(
         &self,
         lane: &crate::claim::ScopedRead<'_>,
@@ -207,7 +208,7 @@ impl Memory<'_> {
         unresolved: &str,
         whole_body: bool,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let ScopedReadResult { value, receipt } = if whole_body {
+        let ScopedReadResult { value, mut receipt } = if whole_body {
             self.read_views_whole_body(lane, targets)?
         } else {
             self.read_views(lane, targets)?
@@ -222,6 +223,7 @@ impl Memory<'_> {
             };
             views.push(view);
         }
+        self.serve_hydrated_assets(lane, targets, &mut views, &mut receipt)?;
         Ok(ScopedReadResult {
             value: views,
             receipt,

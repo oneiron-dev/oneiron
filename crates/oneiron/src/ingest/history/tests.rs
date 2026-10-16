@@ -14,6 +14,9 @@ use crate::{Vault, VaultConfig};
 
 const SOURCE: HistorySource = HistorySource::ClaudeCode;
 const IMPORTED_AT: u64 = 1_800_000_000;
+/// A plain witness happens in the past: the witness door refuses a time past
+/// the store clock's skew (F30), and `IMPORTED_AT` is ahead of today.
+const WITNESSED_AT: u64 = 1_700_000_000;
 
 fn vault_and_owner() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -442,7 +445,7 @@ fn an_import_never_lands_in_a_plain_conversation_at_its_derived_id() {
                 is_visible: true,
                 order: 0,
             }],
-            occurred_at: IMPORTED_AT,
+            occurred_at: WITNESSED_AT,
         })
         .expect("plain witness");
 
@@ -1218,4 +1221,33 @@ fn a_dry_run_over_two_sources_keeps_their_messages_apart() {
         .expect("plan");
     assert_eq!((chatgpt.new, chatgpt.skipped), (1, 0));
     assert_eq!((claude.new, claude.skipped), (1, 0));
+}
+
+/// F18 tier flip: an import writes this vault's memory on its owner's
+/// authority, so a live person who does not own the vault imports nothing.
+/// Positive control: the owner's import of the same session lands it new.
+#[test]
+fn a_non_owner_persons_proof_imports_no_history() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let person = crate::test_util::non_owner_proof(&vault);
+    let conversation = session(
+        "session-tier",
+        vec![message(
+            "u1",
+            HistoryRole::User,
+            "A line to import.",
+            1_700_000_000_000,
+        )],
+    );
+    let Err(refusal) = vault.import_history(&person, SOURCE, &conversation, IMPORTED_AT) else {
+        panic!("a non-owner imports nothing");
+    };
+    assert!(
+        format!("{refusal:?}").contains("not an owner of this vault"),
+        "{refusal:?}"
+    );
+    let report = vault
+        .import_history(&owner, SOURCE, &conversation, IMPORTED_AT)
+        .expect("the owner imports");
+    assert_eq!((report.new, report.refused), (1, 0));
 }

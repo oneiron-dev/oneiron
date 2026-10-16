@@ -115,7 +115,7 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
 /// The consent arm and local inputs of a fold of this vault's own log under
 /// its hosting posture and pin. Relay and self-host keep owner-device consent;
 /// only managed hosts may treat a cloud key as root.
-fn own_log_inputs(
+pub(in crate::authority) fn own_log_inputs(
     posture: crate::HostingPrivacyPosture,
     pin: Option<&PinnedRoot>,
 ) -> (fn(&FoldedDevice) -> bool, FoldLocalInputs<'_>) {
@@ -217,6 +217,7 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
 
 /// The reference fold under the vault's local observations (sequence floors
 /// and observation policy), hosting posture and pin.
+#[cfg(test)]
 pub(in crate::authority) fn fold_authority_log_with_local_observations_and_posture(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,

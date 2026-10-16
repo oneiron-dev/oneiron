@@ -11,16 +11,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::advertise::AdvertisedRefGate;
+use super::bounds::{ExchangeBounds, ScanBounds};
 use super::cgi_finish::{finish_serve, stream_response};
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
 use super::exchange_idle::{Progress, ProgressRead, ProgressSink, Watched, stall_as_idle, watch};
+use super::held::{HeldBytes, SpillFloor};
 use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, ORIGIN_MAX_COMMAND_SECTION_BYTES, SERVE_IDLE_TIMEOUT,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_COMMAND_SECTION_MEMORY_BYTES, SERVE_IDLE_TIMEOUT,
     SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
     origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
@@ -30,7 +32,7 @@ use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{lock_repository, lock_repository_before_maintenance, try_lock_repository};
+use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
@@ -99,10 +101,11 @@ pub struct ServeReport {
 /// # The idle limit
 ///
 /// This function owns the child for its whole life. An exchange that moves no
-/// byte in either direction for [`SERVE_IDLE_TIMEOUT`] has its backend killed
+/// byte in either direction for [`SERVE_IDLE_TIMEOUT`](super::SERVE_IDLE_TIMEOUT) has its backend killed
 /// and fails with [`CodeError::GitHttpExchangeIdle`], which also releases the
 /// coordinator a push holds; [`serve_bounded`] sets another limit. A child
-/// is always reaped before this returns.
+/// is always reaped before this returns. The door's scan keeps the default
+/// [`ScanBounds`](super::ScanBounds).
 ///
 /// [`CodeError::GitHttpExchangeIdle`]: crate::error::CodeError::GitHttpExchangeIdle
 pub fn serve(
@@ -118,16 +121,18 @@ pub fn serve(
 
 /// [`serve`] for a transport that admits exchanges by permit.
 ///
-/// It runs under its own idle limit in place of [`SERVE_IDLE_TIMEOUT`]: a
-/// transport whose body and sink bound their own waits passes the same limit,
-/// so whichever side sees the stall first ends the exchange the same way. And
-/// it never waits for another writer: a push that finds the coordinator taken
-/// fails at once with [`CodeError::GitHttpRepositoryBusy`], so an admitted
-/// exchange never sits queued behind another push. The host's repository
-/// maintenance gives the coordinator up to it instead, within one of the
-/// maintenance's polls, and the push waits that out. A read is never refused
-/// for it: it recovers and projects its ref list under the coordinator only
-/// when it finds it free.
+/// It runs under its host's [`ExchangeBounds`]: its own idle limit in place of
+/// [`SERVE_IDLE_TIMEOUT`], and the floors its door scan keeps. A transport
+/// whose body and sink bound their own waits passes the same idle limit, so
+/// whichever side sees the stall first ends the exchange the same way. A
+/// push that finds the repository coordinator taken waits for it, for
+/// `repository_wait` at most, and only then fails with
+/// [`CodeError::GitHttpRepositoryBusy`]; the transport queues its own pushes
+/// to one repository before this, so the wait is for a writer outside it.
+/// The host's repository maintenance gives the coordinator up to it, within
+/// one of the maintenance's polls, and the push waits that out whatever
+/// `repository_wait` is. A read never waits for the coordinator: it recovers
+/// and projects its ref list under the coordinator only when it finds it free.
 ///
 /// [`CodeError::GitHttpRepositoryBusy`]: crate::error::CodeError::GitHttpRepositoryBusy
 pub fn serve_bounded(
@@ -135,17 +140,27 @@ pub fn serve_bounded(
     repo_name: &str,
     request: &ServeRequest,
     seam: DoorSeam,
-    idle: Duration,
+    bounds: ExchangeBounds,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
     let terms = ServeTerms {
         seam,
         authority: None,
-        idle,
+        idle: bounds.idle,
+        scan: bounds.scan,
+        spill_floor: bounds.spill_floor,
         wait_for_repository: false,
+        push_wait: Some(bounds.repository_wait),
     };
     serve_request(vault, repo_name, request, terms, body, sink)
+}
+
+/// The key one served repository's pushes queue under: the git common
+/// directory its coordinator is taken on, so two names for one repository
+/// share one line.
+pub fn push_queue_key(vault: &Vault, repo_name: &str) -> Result<PathBuf> {
+    repo_common_dir(&origin_repo_dir(vault, repo_name)?)
 }
 
 /// Compatibility entry point. A new exchange always produces its own evidence;
@@ -169,7 +184,10 @@ pub fn serve_with_provenance(
         seam,
         authority: None,
         idle: SERVE_IDLE_TIMEOUT,
+        scan: ScanBounds::default(),
+        spill_floor: None,
         wait_for_repository: true,
+        push_wait: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -190,19 +208,26 @@ pub fn serve_with_authority(
         seam,
         authority: Some(authority),
         idle: SERVE_IDLE_TIMEOUT,
+        scan: ScanBounds::default(),
+        spill_floor: None,
         wait_for_repository: true,
+        push_wait: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// What one invocation runs under besides its request: the door seam, a lease
-/// from trusted host configuration, the exchange's idle limit, and whether a
-/// push waits for a repository another writer holds or is refused.
+/// from trusted host configuration, the exchange's idle limit, scan floors
+/// and spill floor, whether a read may wait for a repository a writer holds,
+/// and how long a push waits for it (`None`: until it is free).
 struct ServeTerms<'a> {
     seam: DoorSeam,
     authority: Option<&'a OriginAuthorityLease>,
     idle: Duration,
+    scan: ScanBounds,
+    spill_floor: Option<Arc<dyn SpillFloor>>,
     wait_for_repository: bool,
+    push_wait: Option<Duration>,
 }
 
 fn serve_request(
@@ -217,7 +242,10 @@ fn serve_request(
         seam,
         authority,
         idle,
+        scan,
+        spill_floor,
         wait_for_repository,
+        push_wait,
     } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
@@ -237,14 +265,16 @@ fn serve_request(
             .checkout_credential(ticket, principal, &unpinned_repo_ref(&repo_dir))
             .map_err(|error| super::paths::door_refused(&error))?;
     }
-    let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
+    let door_root = origin_door_root(vault)?;
+    let hooks = DoorHooksDir::materialize_with(&door_root, scan)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let coordinator = if request.is_receive_pack() {
         let common_dir = repo_common_dir(&repo_dir)?;
-        if wait_for_repository {
-            Some(lock_repository(&common_dir)?)
-        } else {
-            Some(lock_repository_before_maintenance(&common_dir)?.ok_or_else(repository_busy)?)
+        match push_wait {
+            None => Some(lock_repository(&common_dir)?),
+            Some(wait) => {
+                Some(lock_repository_within(&common_dir, wait)?.ok_or_else(repository_busy)?)
+            }
         }
     } else {
         // A fetch and an advertisement mutate nothing, so neither queues behind
@@ -288,12 +318,17 @@ fn serve_request(
             (request, body)
         };
     // A body that stalls here ends at the idle limit, as it would mid-exchange.
-    let commands = if request.is_receive_pack() {
-        read_command_section(body).map_err(stall_as_idle)?
+    let mut commands = if request.is_receive_pack() {
+        read_command_section(body, door_root, spill_floor).map_err(stall_as_idle)?
     } else {
-        Vec::new()
+        HeldBytes::new(0, None)
     };
-    let body = &mut io::Cursor::new(commands).chain(body);
+    // A publication this push may land on again gets its roots back while no
+    // backend can move a ref yet, on the thread holding the coordinator.
+    if coordinator.is_some() {
+        vault.repin_pushed_move_owners(&repo_dir, &mut commands.reader().map_err(Error::Io)?)?;
+    }
+    let body = &mut commands.reader().map_err(Error::Io)?.chain(body);
     // Between the coordinator and the child, so on every way out the child
     // is reaped first, then what a killed backend left in quarantine is
     // swept, and only then is the coordinator let go. Noted only now: a push
@@ -312,6 +347,7 @@ fn serve_request(
             context: DoorWindowContext {
                 seam,
                 admission: admission.as_ref(),
+                scan,
             },
             repo_dir: &repo_dir,
             hooks: &hooks,
@@ -342,6 +378,15 @@ fn serve_request(
             "git http-backend exited with a failure: {}",
             exchange.stderr
         )));
+    }
+    #[cfg(test)]
+    if request.is_receive_pack()
+        && vault
+            .test_hooks()
+            .stop_push_before_landing
+            .swap(false, Ordering::SeqCst)
+    {
+        return Err(serve_failed("stopped before the landing"));
     }
     let report = finish_serve(vault, request, &repo_dir, admission, exchange);
     // Held to here on purpose: the ref mutation, the quarantine migration and
@@ -536,7 +581,8 @@ fn run_exchange(
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
         let streamed = if request.is_ref_advertisement() {
-            let mut gate = AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, &mut sink);
+            let mut gate =
+                AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, clock, &mut sink);
             stream_response(stdout, &mut gate)
         } else {
             stream_response(stdout, &mut sink)
@@ -600,49 +646,57 @@ fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {
 /// store as a blob before any hook runs, so its bytes would stay there with no
 /// door having read them, even on a delete-only push. This origin offers no
 /// signed push (the advertisement drops the capability), and a request that
-/// sends a certificate anyway is refused here. A section this cannot read is
-/// refused too: a malformed pkt-line, or one past
-/// [`ORIGIN_MAX_COMMAND_SECTION_BYTES`]. `body` is what receive-pack would
-/// read, already inflated where the backend would inflate it. Returns the
-/// bytes read, which go to the backend ahead of the rest.
-fn read_command_section(body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
-    let mut section = Vec::new();
+/// sends a certificate anyway is refused here. A section this cannot read, a
+/// malformed pkt-line, is refused too. A push may name any number of refs
+/// (rule 5), so the section is held whatever its size: in memory up to
+/// [`ORIGIN_COMMAND_SECTION_MEMORY_BYTES`], then in an unnamed file in
+/// `door_root`, as long as each write to it keeps `floor`. `body` is what
+/// receive-pack would read, already inflated where the backend would inflate
+/// it. Returns the bytes read, which go to the backend ahead of the rest.
+fn read_command_section(
+    body: &mut (dyn Read + Send),
+    door_root: PathBuf,
+    floor: Option<Arc<dyn SpillFloor>>,
+) -> Result<HeldBytes> {
+    let mut section =
+        HeldBytes::new(ORIGIN_COMMAND_SECTION_MEMORY_BYTES, Some(door_root)).with_floor(floor);
+    // One pkt-line at a time: its four-digit length bounds it at 64 KiB.
+    let mut line = Vec::new();
     loop {
-        let start = section.len();
-        // The bound counts every byte read, each header and the flush too.
-        if start + 4 > ORIGIN_MAX_COMMAND_SECTION_BYTES {
-            return Err(push_refused("the push's command section is too large"));
-        }
+        line.clear();
         // A body that ends before its flush goes on as it is: receive-pack's
         // reader dies at that end before any command runs or any certificate
         // is written, and no certificate line here was whole.
-        if !read_exactly(body, &mut section, 4)? {
-            return Ok(section);
-        }
-        let hex = &section[start..];
-        let length = std::str::from_utf8(hex)
-            .ok()
-            .filter(|_| hex.iter().all(u8::is_ascii_hexdigit))
-            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
-            .ok_or_else(|| push_refused("the push's command section is malformed"))?;
-        match length {
-            0 => return Ok(section),
-            1..=3 => return Err(push_refused("the push's command section is malformed")),
-            _ if start + length > ORIGIN_MAX_COMMAND_SECTION_BYTES => {
-                return Err(push_refused("the push's command section is too large"));
+        let whole = read_exactly(body, &mut line, 4)?;
+        if whole {
+            let length = std::str::from_utf8(&line)
+                .ok()
+                .filter(|_| line.iter().all(u8::is_ascii_hexdigit))
+                .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+                .ok_or_else(|| push_refused("the push's command section is malformed"))?;
+            match length {
+                0 => {
+                    section.write_all(&line).map_err(Error::Io)?;
+                    return Ok(section);
+                }
+                1..=3 => return Err(push_refused("the push's command section is malformed")),
+                _ => {}
             }
-            _ => {}
+            if read_exactly(body, &mut line, length - 4)? {
+                // receive-pack's own reading: one trailing newline chomped,
+                // and the line's name ends at the NUL before any
+                // capabilities.
+                let payload = &line[4..];
+                let payload = payload.strip_suffix(b"\n").unwrap_or(payload);
+                if payload.split(|byte| *byte == 0).next() == Some(b"push-cert".as_slice()) {
+                    return Err(push_refused("the origin accepts no push certificate"));
+                }
+                section.write_all(&line).map_err(Error::Io)?;
+                continue;
+            }
         }
-        if !read_exactly(body, &mut section, length - 4)? {
-            return Ok(section);
-        }
-        // receive-pack's own reading: one trailing newline chomped, and the
-        // line's name ends at the NUL before any capabilities.
-        let line = &section[start + 4..];
-        let line = line.strip_suffix(b"\n").unwrap_or(line);
-        if line.split(|byte| *byte == 0).next() == Some(b"push-cert".as_slice()) {
-            return Err(push_refused("the origin accepts no push certificate"));
-        }
+        section.write_all(&line).map_err(Error::Io)?;
+        return Ok(section);
     }
 }
 

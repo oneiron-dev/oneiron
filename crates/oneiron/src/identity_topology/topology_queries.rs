@@ -138,7 +138,6 @@ impl Vault {
             target,
             EdgeKind::FacetOf,
             Some(ENTITY_TYPE_CLAIM),
-            "facet scoped claims",
         )?);
         Ok(claims.into_iter().collect())
     }

@@ -1164,8 +1164,9 @@ fn entity_not_found_event_leaves_pass_index_unpoisoned() -> CommResult<()> {
 fn snapshot_pass_index(vault: &Vault) -> CommResult<CommProjectorIndex> {
     let rtxn = vault.store.env.read_txn()?;
     let records = comm_records_in_txn(vault, &rtxn)?;
+    let pending_stops = super::stop_hold::pending_stop_ids_in_txn(&vault.store, &rtxn)?;
     drop(rtxn);
-    Ok(CommProjectorIndex::from_records(&records))
+    Ok(CommProjectorIndex::from_records(&records, &pending_stops))
 }
 
 /// Finds the durable id of one recorded thread event row.
@@ -1916,6 +1917,9 @@ fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<
 
 #[path = "thread_alias_tests.rs"]
 mod thread_alias_tests;
+
+#[path = "consent_projection_tests.rs"]
+mod consent_projection_tests;
 
 /// Insert the real node-local receipt shape without a transport adapter, so
 /// comm tests exercise the receipt importer rather than the manual event door.

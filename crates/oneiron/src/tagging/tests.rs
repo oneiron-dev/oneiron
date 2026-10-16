@@ -839,15 +839,8 @@ fn an_edit_that_changes_a_message_document_marks_its_turn_again() {
     let read = reconciler.drain_once().expect("drain");
     assert_eq!(read.traces.len(), 1);
 
-    let actor = WriteActor::new(writer, EdgeActorClass::Human);
-    let owner = vault
-        .authenticate_owner(
-            writer,
-            "principal:tagging-test",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
     let authorization = DocAuthorization::Owner(&owner);
     vault
         .migrate_entity_text(
@@ -922,6 +915,7 @@ fn a_stream_continuation_marks_its_turn_again() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
     let writer = speaker(&vault);
+    crate::test_util::bind_test_owner(&vault, writer);
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let mut streamed = message(0, "");
     streamed.id = Some("67676767676767676767676767676767".into());
@@ -1022,19 +1016,12 @@ fn restoring_a_lost_message_document_marks_its_turn_again() {
     let tagger = Scripted::new(Answer::Good);
     let reconciler = reconciler(&vault, &tagger);
     assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 1);
-    let owner = vault
-        .authenticate_owner(
-            writer,
-            "principal:tagging-test",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     vault
         .migrate_entity_text(
             &message,
             &TextField::MapField("content".into()),
-            WriteActor::new(writer, EdgeActorClass::Human),
+            WriteActor::new(owner.actor(), EdgeActorClass::Human),
             &DocAuthorization::Owner(&owner),
         )
         .expect("migrate");
@@ -1094,19 +1081,12 @@ fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
             .memory(writer, EdgeActorClass::Human)
             .witness(&turn(None, vec![first.clone()]))
             .expect("witness");
-        let owner = vault
-            .authenticate_owner(
-                writer,
-                "principal:tagging-test",
-                true,
-                crate::store::GateDecisionId::now(),
-            )
-            .expect("owner");
+        let owner = crate::test_util::embedded_owner_proof(vault);
         vault
             .migrate_entity_text(
                 &message,
                 &TextField::MapField("content".into()),
-                actor,
+                WriteActor::new(owner.actor(), EdgeActorClass::Human),
                 &DocAuthorization::Owner(&owner),
             )
             .expect("migrate");
@@ -1152,7 +1132,7 @@ fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
                 &EntityId::from_bytes(PROPOSAL).expect("proposal id"),
                 SettleVerb::Merge,
                 &DocAuthorization::Owner(owner),
-                actor,
+                WriteActor::new(owner.actor(), EdgeActorClass::Human),
                 NOW + 30,
             )
             .expect("merge");
@@ -1914,16 +1894,7 @@ fn ledger_rows(vault: &Vault) -> u64 {
 fn bind_resident(vault: &Vault) -> EntityId {
     use crate::agent_dispatch::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
     use crate::task_verb::ConsultPayloadRef;
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("owner");
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let (lead, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")
         .expect("seeded definitions")
@@ -3208,19 +3179,12 @@ fn an_earlier_message_in_an_entity_document_ends_the_window() {
         .expect("witness");
     let second = witness_at(&vault, "Grace stayed behind", NOW + 1);
     let third = witness_at(&vault, "they wrote letters", NOW + 2);
-    let owner = vault
-        .authenticate_owner(
-            writer,
-            "principal:tagging-test",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     vault
         .migrate_entity_text(
             &EntityId::from_hex(first.id.as_deref().expect("id")).expect("message id"),
             &TextField::MapField("content".into()),
-            WriteActor::new(writer, EdgeActorClass::Human),
+            WriteActor::new(owner.actor(), EdgeActorClass::Human),
             &DocAuthorization::Owner(&owner),
         )
         .expect("migrate");

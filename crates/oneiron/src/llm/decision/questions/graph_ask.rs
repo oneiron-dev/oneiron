@@ -1,10 +1,11 @@
 //! One-off graph judgment: scoped context, injected answerer, and proposed claims.
 
+use super::super::types::paired_valid;
 use super::{records::AnswerRecord, store::encode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::llm::decision::{
     DecisionAnswer, DecisionBand, DecisionQuestion, DecisionReceipt, DecisionRung, EvidenceVersion,
-    ProviderPin, TypedDecision,
+    PairedAnswer, ProviderPin, TypedDecision,
 };
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -40,6 +41,8 @@ pub struct GraphPrediction {
     pub probability: f64,
     pub provider: ProviderPin,
     pub cost_per_thousand: f64,
+    /// The paired reading from the same measurement, when the provider takes one.
+    pub paired: Option<PairedAnswer>,
 }
 
 /// Host-injected answerer. The agent/provider layer chooses the rung and enforces
@@ -231,6 +234,39 @@ enum UnitOutcome {
     Answered(Box<AnswerRecord>),
 }
 
+/// Whether a graph source may inform an answer: a claim awaiting its owner's
+/// answer informs none.
+fn source_eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId, kind: u8) -> Result<bool> {
+    Ok(kind != crate::registry::ENTITY_TYPE_CLAIM
+        || crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            txn,
+            id,
+            crate::gate::ConsolidationReader::GraphAnswer,
+        )?)
+}
+
+/// Whether the unit's eligible neighbours are still the prepared ones.
+fn same_eligible_neighbors(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    neighbors: Option<Vec<(EntityId, u8, Vec<u8>)>>,
+    context: &GraphUnitContext,
+) -> Result<bool> {
+    let Some(neighbors) = neighbors else {
+        return Ok(false);
+    };
+    let mut eligible = Vec::with_capacity(neighbors.len());
+    for (id, kind, _) in neighbors {
+        if source_eligible(vault, txn, &id, kind)? {
+            eligible.push(id);
+        }
+    }
+    Ok(eligible
+        .into_iter()
+        .eq(context.sources.iter().skip(1).map(|source| source.id)))
+}
+
 fn answer_unit(
     scoped: &crate::claim::ScopedRead<'_>,
     principal: EntityId,
@@ -251,12 +287,18 @@ fn answer_unit(
     if body.is_empty() || body.len() > MAX_SOURCE_BYTES {
         return Ok(UnitOutcome::Abstain);
     }
+    if !source_eligible(vault, &vault.store.env.read_txn()?, &unit, kind)? {
+        return Ok(UnitOutcome::Abstain);
+    }
     let mut sources = vec![source(unit, kind, body)];
     if let Some(neighbors) =
         scoped.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?
     {
+        let txn = vault.store.env.read_txn()?;
         for (id, kind, body) in neighbors {
-            sources.push(source(id, kind, body));
+            if source_eligible(vault, &txn, &id, kind)? {
+                sources.push(source(id, kind, body));
+            }
         }
     } else {
         return Ok(UnitOutcome::Abstain);
@@ -272,16 +314,9 @@ fn answer_unit(
     // A callback can take arbitrarily long. A cheap preflight avoids waiting
     // for the writer when authority or source bytes have already changed.
     let fresh = vault.scoped_read(asker_reader(vault, principal)?);
-    if !fresh
-        .graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?
-        .is_some_and(|neighbors| {
-            neighbors.iter().map(|row| row.0).eq(context
-                .sources
-                .iter()
-                .skip(1)
-                .map(|source| source.id))
-        })
-    {
+    let neighbors =
+        fresh.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?;
+    if !same_eligible_neighbors(vault, &vault.store.env.read_txn()?, neighbors, &context)? {
         return Ok(UnitOutcome::Abstain);
     }
     let current = fresh.get_entities_parts_with_receipt(
@@ -300,22 +335,14 @@ fn answer_unit(
     // but provider and write-gate failures remain typed failures.
     let record = vault.with_write_txn_grouped(|txn| {
         let scoped = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?);
-        if !scoped
-            .graph_ask_neighbors_in_txn(
-                txn,
-                &unit,
-                MAX_NEIGHBORS,
-                MAX_NEIGHBOR_SCAN,
-                MAX_SOURCE_BYTES,
-            )?
-            .is_some_and(|neighbors| {
-                neighbors.iter().map(|row| row.0).eq(context
-                    .sources
-                    .iter()
-                    .skip(1)
-                    .map(|source| source.id))
-            })
-        {
+        let neighbors = scoped.graph_ask_neighbors_in_txn(
+            txn,
+            &unit,
+            MAX_NEIGHBORS,
+            MAX_NEIGHBOR_SCAN,
+            MAX_SOURCE_BYTES,
+        )?;
+        if !same_eligible_neighbors(vault, txn, neighbors, &context)? {
             return Ok(None);
         }
         let mut taint = ClaimSource::UserStated;
@@ -323,7 +350,10 @@ fn answer_unit(
             let Some((kind, _, body)) = scoped.graph_ask_parts_in_txn(txn, &source.id)? else {
                 return Ok(None);
             };
-            if kind != source.entity_type || *blake3::hash(&body).as_bytes() != source.hash {
+            if kind != source.entity_type
+                || *blake3::hash(&body).as_bytes() != source.hash
+                || !source_eligible(vault, txn, &source.id, kind)?
+            {
                 return Ok(None);
             }
             let observed = if kind == crate::registry::ENTITY_TYPE_CLAIM {
@@ -362,6 +392,11 @@ fn answer_unit(
                         })
                         .collect(),
                     cost_per_thousand: Some(prediction.cost_per_thousand),
+                    paired: prediction
+                        .paired
+                        .map(|reading| reading.bind(prediction.provider.clone()))
+                        .into_iter()
+                        .collect(),
                 },
                 human_ask: None,
             },
@@ -444,6 +479,14 @@ fn validate_prediction(question: &DecisionQuestion, prediction: &GraphPrediction
         .is_err()
         || !prediction.cost_per_thousand.is_finite()
         || prediction.cost_per_thousand < 0.0
+        || prediction.paired.is_some_and(|reading| {
+            !paired_valid(
+                question.id,
+                reading.question,
+                reading.question_version,
+                reading.probability,
+            )
+        })
     {
         return Err(Error::InvalidConfig("invalid graph ask prediction".into()));
     }

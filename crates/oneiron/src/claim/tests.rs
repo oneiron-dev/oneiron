@@ -1660,14 +1660,7 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
 fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let vault = Vault::open(temp.path().join("vault"), crate::VaultConfig::device())?;
-    let subject = EntityId::now();
-    vault.put_entity(
-        &subject,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let subject = vault.ensure_embedded_owner_actor().unwrap();
     let claim = guard_claim(&vault, &subject, "osaka", 2);
     let owner = vault.authenticate_owner(
         subject,
@@ -2575,20 +2568,35 @@ fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, Write
             b"subject",
         )
         .expect("seed expression preference subject");
-    let human = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    // The human is the vault's owner, who may override an agent (H149).
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let human = WriteActor::new(owner, EdgeActorClass::Human);
     let agent = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
-    for actor in [&human, &agent] {
-        vault
-            .put_entity(
-                &actor.entity_ref(),
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"actor",
-            )
-            .expect("seed write actor");
-    }
+    vault
+        .put_entity(
+            &agent.entity_ref(),
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("seed write actor");
     (temp, vault, subject, human, agent)
+}
+
+/// A PERSON acting as human that is not the vault's owner (H149).
+fn non_owner_human(vault: &Vault) -> WriteActor {
+    let persona = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    vault
+        .put_entity(
+            &persona.entity_ref(),
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("seed a human who is not the owner");
+    persona
 }
 
 #[test]
@@ -2869,12 +2877,48 @@ fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
 fn expression_preference_retract_admits_human_owner_actor() -> Result<()> {
     let (_temp, vault, subject, human, agent) = expression_preference_fixture();
     let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
-    // No authority root is folded in this vault, so owner verbs keep the
-    // store-truth check only.
+    // No authority root is folded in this vault, so its embedded owner holds
+    // the owner verbs.
     vault.retract_expression_preference(&human, &claim_id, 3)?;
     assert_eq!(
         vault.get_claim(&claim_id)?.expect("claim").lifecycle,
         ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
+/// H149: on a vault with no authority root, a PERSON that names itself
+/// human is not the owner. It neither retracts another actor's preference nor
+/// replaces it with an explicit one.
+#[test]
+fn expression_preference_override_refuses_a_human_who_is_not_the_owner() -> Result<()> {
+    let (_temp, vault, subject, _owner, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    let persona = non_owner_human(&vault);
+    assert_matches!(
+        vault.retract_expression_preference(&persona, &claim_id, 3),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }))
+    );
+    let replaced = vault.set_expression_preference(
+        &persona,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 3,
+        },
+        TimeRange { start: 3, end: 3 },
+        3,
+    );
+    assert_matches!(
+        replaced,
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }))
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the agent's preference stands"
     );
     Ok(())
 }
@@ -3326,7 +3370,7 @@ fn the_code_run_candidate_put_refuses_an_expression_preference() -> Result<()> {
     );
     let claim_id = EntityId::now();
 
-    let refusal = vault.put_claim_candidate_without_lexical_query_reconcile(
+    let refusal = vault.put_claim_candidate_with_landing(
         &claim_id,
         expression_preference_candidate(subject),
         &envelope,
@@ -3405,7 +3449,9 @@ fn typed_expression_doors_still_supersede_and_restore_after_the_guards() -> Resu
 /// `superseded_short_id` where a preference write can close several heads.
 #[test]
 fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
-    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let (_temp, vault, subject, _owner, _agent) = expression_preference_fixture();
+    // Its own preferences: a human needs no owner binding for them.
+    let human = non_owner_human(&vault);
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     let first = memory
         .set_expression_preference(
@@ -3475,7 +3521,9 @@ fn the_typed_memory_door_writes_and_reports_what_it_superseded() -> Result<()> {
 /// would perform only the first half.
 #[test]
 fn the_typed_memory_door_retracts_and_restores_the_predecessor() {
-    let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
+    let (_temp, vault, subject, _owner, _agent) = expression_preference_fixture();
+    // Its own preferences: a human needs no owner binding for them.
+    let human = non_owner_human(&vault);
     let memory = vault.memory(human.entity_ref(), EdgeActorClass::Human);
     for (language, at) in [("ja", 1), ("en-US", 2)] {
         memory

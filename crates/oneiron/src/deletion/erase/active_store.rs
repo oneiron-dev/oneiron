@@ -39,7 +39,10 @@ impl Vault {
     ) -> Result<(bool, Vec<EntityId>)> {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        // Capture before tear: a project's signed history outlives its row.
+        self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // A purged message's turns stop matching its words: read them while
         // its edges stand, and drop their vectors once it is gone.
         let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
@@ -99,6 +102,9 @@ impl Vault {
         id: &EntityId,
     ) -> Result<(bool, bool, bool)> {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
+        // Capture before the body is scrubbed (see the purge).
+        self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // An erased message's turns stop matching its words (see the purge).
         let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
@@ -171,6 +177,7 @@ impl Vault {
         crate::skill_hub::remove_refinement_carrier_in_txn(&self.store, wtxn, id)?;
         crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
+        crate::comm::clear_pending_stop_for_delete(&self.store, wtxn, id)?;
         let Some(entity_record) =
             crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
         else {
@@ -199,6 +206,7 @@ impl Vault {
             id,
             header.entity_type,
         )?;
+        crate::deletion::tear_derived_rows_in_txn(&self.store, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the

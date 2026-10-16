@@ -34,17 +34,10 @@ fn put_person(vault: &Vault, seed: u8) -> EntityId {
     person
 }
 
-/// The authenticated owner every graduation tap needs. Seeded distinctly from
-/// the merge fixtures so no identity is doing two jobs.
+/// The authenticated owner every graduation tap needs: the vault's embedded
+/// owner, distinct from the merge fixtures so no identity is doing two jobs.
 fn owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let actor = crate::test_util::entity(0x25);
-    if vault
-        .get_entity_type(&actor)
-        .expect("entity type")
-        .is_none()
-    {
-        put_person(vault, 0x25);
-    }
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault
         .authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner")
@@ -348,8 +341,9 @@ fn identity_topology_op_kinds_never_graduate() {
 }
 
 /// H183: a standing grant the owner approved is taken away by the owner, or by
-/// the scope's own actor stepping back. Another vault's owner proof and
-/// another actor's facade both leave it standing, and record nothing.
+/// the scope's own actor stepping back. Another vault's owner proof, a proof
+/// for a person of this vault who is not its owner (H149), and another actor's
+/// facade all leave it standing, and record nothing.
 #[test]
 fn only_the_owner_or_the_scope_actor_takes_a_standing_grant_away() {
     let (_other_dir, other) = open_vault();
@@ -378,6 +372,21 @@ fn only_the_owner_or_the_scope_actor_takes_a_standing_grant_away() {
             .is_err()
     );
     let stranger = put_person(&vault, 0x32);
+    let not_the_owner = vault
+        .authenticate_owner(stranger, "principal:stranger", true, GateDecisionId::now())
+        .expect("a live person authenticates");
+    assert!(
+        vault
+            .demote_scope_to_propose(&not_the_owner, &scope, DemotionReason::Rejected)
+            .is_err(),
+        "a person who is not this vault's owner took the owner's grant away"
+    );
+    assert!(
+        vault
+            .record_proposal_outcome_for_ramp(&not_the_owner, &scope, ProposalOutcome::Rejected)
+            .is_err(),
+        "a person who is not this vault's owner ruled on a proposal"
+    );
     assert!(
         vault
             .memory(stranger, crate::edge::EdgeActorClass::Agent)
@@ -422,21 +431,37 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
-    // Only the vault's owner shares it; the 0x25 owner the ramp doors take
-    // is an Owner member from then on.
-    let owner = owner(&vault);
+    // Only the vault's owner shares it, and a shared vault whose sharer holds
+    // no Owner membership opens no owner door. 0x25, another Owner member, is
+    // the owner whose proof the ramp doors take.
+    put_person(&vault, 0x25);
+    let sharer = crate::test_util::embedded_owner_proof(&vault);
     vault
         .initialize_shared_vault(
-            &crate::test_util::embedded_owner_proof(&vault),
+            &sharer,
             42,
             None,
-            &[InitialSharedMember {
-                member_ref: crate::test_util::entity(0x25),
-                role: Some(FederationGrantRole::Owner),
-            }],
+            &[
+                InitialSharedMember {
+                    member_ref: sharer.actor(),
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: crate::test_util::entity(0x25),
+                    role: Some(FederationGrantRole::Owner),
+                },
+            ],
             1,
         )
         .expect("share the vault");
+    let owner = vault
+        .authenticate_owner(
+            crate::test_util::entity(0x25),
+            "principal:owner",
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("the Owner member's proof");
     let agent = put_person(&vault, 0x33);
     let project = ScopeId(crate::test_util::entity(0x34));
     let mut grant = FederationGrant::new(

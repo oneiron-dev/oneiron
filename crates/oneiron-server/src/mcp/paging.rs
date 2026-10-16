@@ -68,6 +68,19 @@ pub struct McpPageSource {
     pub window_truncated: usize,
     /// True only when the producer reached the end of its own source.
     pub source_exhausted: bool,
+    /// The output key whose array this page counts. A bare-array output
+    /// needs none, and a single record has none.
+    pub rows: Option<&'static str>,
+    /// The producer's own continuation past this page, when it has one.
+    pub resume: Option<McpPageResume>,
+}
+
+/// Where a producer states its own continuation: the output field that holds
+/// it and the argument a caller passes it back as.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct McpPageResume {
+    pub field: &'static str,
+    pub argument: &'static str,
 }
 
 impl McpPageSource {
@@ -79,6 +92,8 @@ impl McpPageSource {
             scope_omitted: 0,
             window_truncated: 0,
             source_exhausted: true,
+            rows: None,
+            resume: None,
         }
     }
 
@@ -90,6 +105,8 @@ impl McpPageSource {
             scope_omitted,
             window_truncated: 0,
             source_exhausted,
+            rows: None,
+            resume: None,
         }
     }
 
@@ -107,7 +124,24 @@ impl McpPageSource {
             scope_omitted,
             window_truncated,
             source_exhausted,
+            rows: None,
+            resume: None,
         }
+    }
+
+    /// Names the output key whose array this page counts.
+    #[must_use]
+    pub const fn rows_at(mut self, key: &'static str) -> Self {
+        self.rows = Some(key);
+        self
+    }
+
+    /// Names the producer's own continuation: `field` of the output holds it,
+    /// and a caller passes it back as `argument`.
+    #[must_use]
+    pub const fn resumed_by(mut self, field: &'static str, argument: &'static str) -> Self {
+        self.resume = Some(McpPageResume { field, argument });
+        self
     }
 
     /// Rows this producer withheld on EITHER axis.
@@ -162,6 +196,9 @@ pub struct McpPageBudget {
     /// [`Self::successor_position`], present only once a registry has minted
     /// and RETAINED it ([`McpConnectorActorRegistry::mint_page_cursor`](crate::mcp::McpConnectorActorRegistry::mint_page_cursor)).
     pub cursor: Option<String>,
+    /// The producer's own continuation, named on the page that ends the
+    /// retained window: the argument to call again with, and its value.
+    resume: Option<(&'static str, Value)>,
 }
 
 impl McpPageBudget {
@@ -241,6 +278,7 @@ impl McpPageBudget {
             offset,
             successor,
             cursor: None,
+            resume: None,
         }
     }
 
@@ -269,13 +307,20 @@ impl McpPageBudget {
         self.cursor = Some(cursor);
     }
 
-    /// A non-terminal page that carries NO successor handle says so explicitly.
+    /// Names the producer's own continuation: call again with `argument` set
+    /// to `value`.
+    pub fn resume_with(&mut self, argument: &'static str, value: Value) {
+        self.resume = Some((argument, value));
+    }
+
+    /// A non-terminal page that carries NO way on says so explicitly.
     ///
-    /// This is derived from the two facts it is about, so a `More` can never
-    /// silently ship without either a usable handle or this marker.
+    /// This is derived from the facts it is about, so a `More` can never
+    /// silently ship without a usable handle, the producer's own
+    /// continuation, or this marker.
     #[must_use]
     pub const fn continuation_unavailable(&self) -> bool {
-        matches!(self.end, McpResultEnd::More) && self.cursor.is_none()
+        matches!(self.end, McpResultEnd::More) && self.cursor.is_none() && self.resume.is_none()
     }
 
     /// ENFORCES the granted budget on one producer page.
@@ -305,6 +350,8 @@ impl McpPageBudget {
         if let Some(object) = page.as_object_mut() {
             if let Some(cursor) = &self.cursor {
                 object.insert("cursor".to_owned(), Value::String(cursor.clone()));
+            } else if let Some((argument, value)) = &self.resume {
+                object.insert("resume".to_owned(), json!({ *argument: value }));
             } else if self.continuation_unavailable() {
                 object.insert("continuation_unavailable".to_owned(), Value::Bool(true));
             }

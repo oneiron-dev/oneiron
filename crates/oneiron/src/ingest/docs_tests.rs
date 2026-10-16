@@ -85,14 +85,7 @@ fn deep_fixture() -> Result<(
 )> {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let doc = document();
@@ -152,6 +145,49 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
     }
 }
 
+/// Adds an explicit, receipted `Auto` permit for imported claims to the
+/// vault's default policy, and a rule declaring `docs.*` normal, so a deep
+/// pass's derived claims land `Auto` and read as live facts. Without the rule,
+/// an undeclared `docs.topic` takes the criticality floor and waits in the
+/// tray.
+fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
+    use rmpv::Value;
+    let id = crate::gate::default_policy_manifest_id()?;
+    // A legacy test vault stores no manifest and reads the shipped one.
+    let bytes = match vault.get(&id)? {
+        Some(bytes) => bytes,
+        None => crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?,
+    };
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice())
+        .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?
+    else {
+        return Err(crate::Error::InvalidClaimBody("policy manifest"));
+    };
+    let permit = (
+        Value::from("imported"),
+        Value::Map(vec![
+            (Value::from("max_auto_sensitivity"), Value::from(255_u64)),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]),
+    );
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("source_trust"))
+    {
+        Some((_, Value::Map(rows))) => {
+            rows.retain(|(source, _)| source.as_str() != Some("imported"));
+            rows.push(permit);
+        }
+        _ => entries.push((Value::from("source_trust"), Value::Map(vec![permit]))),
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?;
+    crate::test_util::put_policy_manifest_bytes(vault, id, &data)?;
+    crate::test_util::declare_predicates_normal(vault, &["docs."])
+}
+
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
     use rmpv::Value;
     let bytes = crate::gate::default_policy_manifest_with_scoped_grants(vec![Value::Map(vec![
@@ -200,14 +236,7 @@ fn docs_registry_thin_star_ids_do_not_depend_on_export_path() {
 fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -372,14 +401,7 @@ fn searchable_docs(
 ) -> Result<(tempfile::TempDir, crate::Vault, DocsImportReceipt, EntityId)> {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -581,14 +603,7 @@ fn fused_receipt_adds_disjoint_lexical_and_vector_exclusions() -> Result<()> {
 fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -690,14 +705,7 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let document = document();
@@ -753,7 +761,9 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
     let claim_id = EntityId::from_hex(&deep.claim_refs[0])?;
     let claim = vault.get_claim(&claim_id)?.unwrap();
     assert_eq!(claim.source, Some(crate::claim::ClaimSource::Imported));
-    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Approved);
+    // This fixture grants imported claims no `Auto` permit, so the derived
+    // claim stays `Proposed`.
+    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Proposed);
     assert_eq!(claim.subject, crate::claim::ClaimSubject::Entity(asset));
     let evidence = claim.evidence.as_ref().unwrap();
     let candidate = field(
@@ -786,6 +796,29 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
 
     let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
     let first_project = first_doc.project_id;
+    // No derived claim lands `Auto` without the owner's word, and a vault
+    // with no stored manifest parks none in the tray: the fixture stands in
+    // for the owner's approval of each, at its own times, so it reads as a
+    // live fact. A Proposed one is not queryable.
+    let approve = |ids: &BTreeSet<EntityId>| -> Result<()> {
+        for id in ids {
+            let raw = vault.get_raw(id)?.ok_or(crate::Error::EntityNotFound)?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(crate::Error::CorruptedIndex("entity header"))?;
+            let mut body = vault.get_claim(id)?.ok_or(crate::Error::EntityNotFound)?;
+            body.approval = ClaimApprovalStatus::Approved;
+            vault.put_claim(
+                id,
+                &body,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+            )?;
+        }
+        Ok(())
+    };
     let first_asset = EntityId::from_hex(&first_import.asset_refs[0])?;
     let first = vault.deep_ingest_docs_asset(
         &owner,
@@ -799,6 +832,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
+    approve(&first_ids)?;
 
     let mut second_doc = first_doc;
     second_doc.corpus_id = "second-corpus".into();
@@ -818,6 +852,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
+    approve(&second_ids)?;
     assert_eq!(first_ids.len(), 2);
     assert_eq!(second_ids.len(), 2);
 
@@ -908,14 +943,7 @@ fn docs_import_refuses_missing_or_non_corpus_project() -> Result<()> {
 fn deep_docs_respect_revision_ceiling_and_quote_validation() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let ceiling = DocsImportCeiling {
@@ -1088,20 +1116,33 @@ fn docs_deep_claims_register_source_dependencies_and_refuse_dangling_chunks() ->
     Ok(())
 }
 
+/// Security pack 2, F14 H405: the owner's bulk import consent approved reading
+/// and deriving from this source revision. It never saw the extractor's
+/// output, so under the shipped policy (no `Auto` permit for imported claims)
+/// every derived claim waits `Proposed` in the tray until the owner approves
+/// that claim.
 #[test]
-fn docs_deep_bulk_import_consent_yields_approved_claims_without_individual_tray_rows() -> Result<()>
-{
+fn docs_deep_claims_wait_for_review_under_bulk_import_consent() -> Result<()> {
     let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?,
+    )?;
     assert!(vault.pending_gate_consents(20)?.is_empty());
     let deep =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Dreamer, &MultiNer, 3)?;
     assert_eq!(deep.claim_refs.len(), 2);
-    assert!(vault.pending_gate_consents(20)?.is_empty());
-    for reference in deep.claim_refs {
-        let claim = vault.get_claim(&EntityId::from_hex(&reference)?)?.unwrap();
+    for reference in &deep.claim_refs {
+        let claim = vault.get_claim(&EntityId::from_hex(reference)?)?.unwrap();
+        assert_eq!(
+            claim.approval,
+            crate::claim::ClaimApprovalStatus::Proposed,
+            "FAILBEFORE H405: an extractor's output landed {:?} with no review",
+            claim.approval
+        );
         assert_eq!(claim.source, Some(crate::claim::ClaimSource::Imported));
-        assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Approved);
         let derivation = field(
             field(
                 claim.evidence.as_ref().unwrap(),
@@ -1117,6 +1158,24 @@ fn docs_deep_bulk_import_consent_yields_approved_claims_without_individual_tray_
                 .is_some()
         );
     }
+    assert_eq!(
+        vault.pending_gate_consents(20)?.len(),
+        2,
+        "each derived claim is in the tray"
+    );
+
+    // The positive control: the owner's own approval lands one.
+    let approved = EntityId::from_hex(&deep.claim_refs[0])?;
+    let body = vault.get_claim(&approved)?.unwrap();
+    vault.approve_inbox_member_with_edit_at(
+        &approved,
+        &crate::claim::encode_claim_body(&body)?,
+        crate::unix_seconds_now(),
+    )?;
+    assert_eq!(
+        vault.get_claim(&approved)?.unwrap().approval,
+        crate::claim::ClaimApprovalStatus::Approved
+    );
     Ok(())
 }
 
@@ -1124,6 +1183,7 @@ fn docs_deep_bulk_import_consent_yields_approved_claims_without_individual_tray_
 fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let (_dir, vault, owner, mut doc, ceiling, receipt) = deep_fixture()?;
+    trust_imported_claims(&vault)?;
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
     let ner = Ner(AtomicUsize::new(0));
     let original =
@@ -1160,6 +1220,7 @@ fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
 #[test]
 fn deleting_docs_asset_invalidates_its_deep_claim_at_normal_read() -> Result<()> {
     let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+    trust_imported_claims(&vault)?;
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
     let deep =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &MultiNer, 3)?;
@@ -1179,6 +1240,7 @@ fn deleting_docs_asset_invalidates_its_deep_claim_at_normal_read() -> Result<()>
 fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
     for change_asset in [false, true] {
         let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+        trust_imported_claims(&vault)?;
         let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
         let chunk = EntityId::from_hex(&receipt.chunk_refs[1])?;
         let deep = vault.deep_ingest_docs_asset(
@@ -1223,14 +1285,7 @@ fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
 fn heading_reimport_keeps_rewritten_summaries_readable() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let ceiling = DocsImportCeiling {

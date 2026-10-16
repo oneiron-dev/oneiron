@@ -1,10 +1,10 @@
 //! Host-injected, one-step decision ladder. The engine owns routing and receipts.
 
 use super::policy::{BandMode, DecisionBandPolicy, Reversibility};
-use super::types::invalid;
+use super::types::{invalid, paired_valid};
 use super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung, HumanAskReason,
-    ProviderPin, TypedDecision,
+    PairedReading, ProviderPin, TypedDecision,
 };
 use crate::{EntityId, Result};
 use std::collections::BTreeMap;
@@ -14,10 +14,33 @@ use std::sync::Arc;
 pub struct ProviderDecision {
     pub answer: DecisionAnswer,
     pub probability: Option<f64>,
+    /// The paired question's reading from the same measurement, when the provider takes one.
+    pub paired: Option<PairedAnswer>,
+}
+
+/// The paired "does this need more thinking?" answer. It is never an answer option.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairedAnswer {
+    pub question: EntityId,
+    pub question_version: u32,
+    /// P(yes).
+    pub probability: f64,
+}
+
+impl PairedAnswer {
+    /// The engine binds a reading to the provider that measured it.
+    pub(crate) fn bind(self, provider: ProviderPin) -> PairedReading {
+        PairedReading {
+            provider,
+            question: self.question,
+            question_version: self.question_version,
+            probability: self.probability,
+        }
+    }
 }
 
 impl ProviderDecision {
-    fn validate(&self, question: &DecisionQuestion) -> Result<()> {
+    pub(crate) fn validate(&self, question: &DecisionQuestion) -> Result<()> {
         if !question.contract.accepts(&self.answer)
             || match self.answer {
                 DecisionAnswer::Abstain => self.probability.is_some(),
@@ -25,6 +48,14 @@ impl ProviderDecision {
                     .probability
                     .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)),
             }
+            || self.paired.is_some_and(|paired| {
+                !paired_valid(
+                    question.id,
+                    paired.question,
+                    paired.question_version,
+                    paired.probability,
+                )
+            })
         {
             return Err(invalid("invalid provider decision"));
         }
@@ -92,7 +123,7 @@ impl DecisionProvider for RuleDecisionProvider {
     }
 }
 
-/// Host adapter for local head, Jev (SystemOne), or big model. Model access,
+/// Host adapter for the local head, the System One rung or the big model. Model access,
 /// budget admission, egress, and evidence reads stay with the host.
 pub trait DecisionModel: Send + Sync {
     fn decide(
@@ -148,12 +179,14 @@ pub trait HumanDecisionQueue: Send + Sync {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
 }
 
-/// Slots are fixed and cannot silently skip a missing rung. The fifth rung is
-/// a queue, not a model-produced human answer.
+/// Slots are fixed. A step up skips a rung with no provider, up to the dial's
+/// ceiling, and the receipt's pins name every rung that ran. The last rung is a
+/// queue, not a model-produced human answer.
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
-    pub jev: Option<&'a dyn DecisionProvider>,
+    pub system_one: Option<&'a dyn DecisionProvider>,
+    pub escalation: Option<&'a dyn DecisionProvider>,
     pub big: Option<&'a dyn DecisionProvider>,
     pub human: &'a dyn HumanDecisionQueue,
     pub human_pin: ProviderPin,
@@ -176,19 +209,32 @@ impl DecisionLadder<'_> {
         }
         let row = policy.resolve(question, reversibility, dial.band)?;
         let mut pins = Vec::new();
+        let mut paired = Vec::new();
         let mut rung = dial.first;
         let mut prior = None;
         let mut in_band = false;
+        let mut unavailable = false;
         if rung != DecisionRung::Human {
-            let answer = self.run_provider(rung, question, evidence, &mut pins)?;
+            let answer = self.run_provider(rung, question, evidence, &mut pins, &mut paired)?;
             in_band = answer.probability.is_some_and(|p| row.band.contains(p));
             prior = Some(answer);
             if in_band && row.mode == BandMode::Enforce && rung < dial.ceiling {
-                rung = next_rung(rung);
+                match self.next_available(rung, dial.ceiling) {
+                    Some(next) => rung = next,
+                    None => unavailable = true,
+                }
             }
         }
         let mut human_ask = None;
-        let outcome = if rung == DecisionRung::Human {
+        let outcome = if unavailable {
+            // No rung up to the ceiling can take the step: a typed abstention.
+            human_ask = Some(HumanAskReason::ProviderUnavailable);
+            ProviderDecision {
+                answer: DecisionAnswer::Abstain,
+                probability: None,
+                paired: None,
+            }
+        } else if rung == DecisionRung::Human {
             validate_pin(&self.human_pin, DecisionRung::Human)?;
             let reason = if prior.is_some() {
                 HumanAskReason::Uncertain
@@ -208,11 +254,12 @@ impl DecisionLadder<'_> {
             ProviderDecision {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
+                paired: None,
             }
         } else if rung == dial.first {
             prior.expect("non-human first rung has an answer")
         } else {
-            self.run_provider(rung, question, evidence, &mut pins)?
+            self.run_provider(rung, question, evidence, &mut pins, &mut paired)?
         };
         Ok(TypedDecision {
             answer: outcome.answer,
@@ -229,8 +276,37 @@ impl DecisionLadder<'_> {
                 band_version: row.version,
                 evidence_versions: Vec::new(),
                 cost_per_thousand: None,
+                paired,
             },
         })
+    }
+
+    fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
+        match rung {
+            DecisionRung::Rule => self.rule,
+            DecisionRung::Local => self.local,
+            DecisionRung::SystemOne => self.system_one,
+            DecisionRung::Escalation => self.escalation,
+            DecisionRung::Big => self.big,
+            DecisionRung::Human => None,
+        }
+    }
+
+    /// The next rung above `rung` that can answer, up to `ceiling`. The person's
+    /// queue is always present (ARCH-0076 #posture: no house model sends the step
+    /// to the big model or the person).
+    fn next_available(
+        &self,
+        mut rung: DecisionRung,
+        ceiling: DecisionRung,
+    ) -> Option<DecisionRung> {
+        while rung < ceiling {
+            rung = next_rung(rung);
+            if rung == DecisionRung::Human || self.slot(rung).is_some() {
+                return Some(rung);
+            }
+        }
+        None
     }
 
     fn run_provider(
@@ -239,19 +315,18 @@ impl DecisionLadder<'_> {
         question: &DecisionQuestion,
         evidence: &[EntityId],
         pins: &mut Vec<ProviderPin>,
+        paired: &mut Vec<PairedReading>,
     ) -> Result<ProviderDecision> {
-        let provider = match rung {
-            DecisionRung::Rule => self.rule,
-            DecisionRung::Local => self.local,
-            DecisionRung::SystemOne => self.jev,
-            DecisionRung::Big => self.big,
-            DecisionRung::Human => None,
-        }
-        .ok_or_else(|| invalid("decision provider unavailable"))?;
+        let provider = self
+            .slot(rung)
+            .ok_or_else(|| invalid("decision provider unavailable"))?;
         let pin = provider.pin();
         validate_pin(&pin, rung)?;
         let answer = provider.decide(question, evidence)?;
         answer.validate(question)?;
+        if let Some(reading) = answer.paired {
+            paired.push(reading.bind(pin.clone()));
+        }
         pins.push(pin);
         Ok(answer)
     }
@@ -261,12 +336,13 @@ fn next_rung(rung: DecisionRung) -> DecisionRung {
     match rung {
         DecisionRung::Rule => DecisionRung::Local,
         DecisionRung::Local => DecisionRung::SystemOne,
-        DecisionRung::SystemOne => DecisionRung::Big,
+        DecisionRung::SystemOne => DecisionRung::Escalation,
+        DecisionRung::Escalation => DecisionRung::Big,
         DecisionRung::Big | DecisionRung::Human => DecisionRung::Human,
     }
 }
 
-fn validate_pin(pin: &ProviderPin, rung: DecisionRung) -> Result<()> {
+pub(super) fn validate_pin(pin: &ProviderPin, rung: DecisionRung) -> Result<()> {
     if pin.rung != rung
         || pin.model.trim().is_empty()
         || pin.version.trim().is_empty()

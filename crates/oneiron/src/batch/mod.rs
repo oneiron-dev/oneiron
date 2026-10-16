@@ -63,6 +63,8 @@ pub(crate) use self::deindex::{
     drop_seeded_actor_row,
 };
 pub(crate) use self::facet_validation::validate_facet_of_edge;
+#[cfg(test)]
+pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 #[cfg(test)]
 pub(crate) use self::put_apply::wiped_rows;
@@ -81,6 +83,7 @@ pub(crate) use self::ops_pipeline::{
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
 use self::prepared_index::PreparedIndexWork;
 pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
+pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,

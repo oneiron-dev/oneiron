@@ -1753,6 +1753,34 @@ fn ask_receipt_labels_only_counted_human_words_against_pinned_ladder_option() ->
     Ok(())
 }
 
+/// PR B2 acceptance: the house model's decision read feeds the ask door like System
+/// One, with its probability.
+#[test]
+fn house_read_ladder_answer_is_admitted_with_its_probability() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let mut spec = fixture.spec();
+    spec.what.class_key = Some("house-read-class".into());
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::Escalation,
+        probability: None,
+    });
+    assert!(
+        fixture.ask(&spec).is_err(),
+        "a model rung answers with its probability"
+    );
+    if let Some(ladder) = spec.what.ladder_answer.as_mut() {
+        ladder.probability = Some(0.6);
+    }
+    let handle = fixture.ask(&spec)?;
+    fixture.word(handle, 0, "no")?;
+    assert_eq!(
+        fixture.result(handle)?.evidence[0].ladder_changed,
+        Some(true)
+    );
+    Ok(())
+}
+
 #[test]
 fn comparable_ask_without_question_class_is_refused_before_admission() -> Result<()> {
     let fixture = RuledAskFixture::new(1)?;
@@ -1986,9 +2014,10 @@ fn guest_fixture(
         ActionClass, ActionEnvelope, ActorBound, AudienceBound, DisclosureClass,
         DisclosureEnvelope, GrantBound,
     };
+    // The vault's owner records the guest's consent.
     let owner = fixture.vault.authenticate_owner(
-        person,
-        &person.to_hex(),
+        fixture.owner,
+        &fixture.owner.to_hex(),
         true,
         crate::store::GateDecisionId::now(),
     )?;
@@ -2232,8 +2261,8 @@ fn guest_ask_reuses_only_live_person_disclosure_and_is_not_membership() -> Resul
         "undisclosed answer fact must not pass the ask guest grant"
     );
     let owner = fixture.vault.authenticate_owner(
-        person,
-        &person.to_hex(),
+        fixture.owner,
+        &fixture.owner.to_hex(),
         true,
         crate::store::GateDecisionId::now(),
     )?;
@@ -2808,8 +2837,8 @@ fn class_policy_narrows_guest_facts_and_selects_soft_confirm_surface() -> Result
     let mut guest = guest_fixture(&fixture, person, companion, true)?;
     let extra = super::tests::support::consult_turn(&fixture.vault, 0xD4);
     let owner = fixture.vault.authenticate_owner(
-        person,
-        &person.to_hex(),
+        fixture.owner,
+        &fixture.owner.to_hex(),
         true,
         crate::store::GateDecisionId::now(),
     )?;
@@ -2901,8 +2930,8 @@ fn hint_first_then_delegation_cannot_rewrite_stored_answer_or_notice() -> Result
     let memory = fixture.vault.memory(companion, EdgeActorClass::Agent);
     let original = memory.tasks_answer(&handle, &word)?;
     let owner = fixture.vault.authenticate_owner(
-        person,
-        &person.to_hex(),
+        fixture.owner,
+        &fixture.owner.to_hex(),
         true,
         crate::store::GateDecisionId::now(),
     )?;
@@ -2927,6 +2956,148 @@ fn hint_first_then_delegation_cannot_rewrite_stored_answer_or_notice() -> Result
         .tasks_ask_soft_confirm_notice(handle, person)?
         .unwrap();
     assert_eq!(notice.companion_answer_ref, original.word_ref);
+    Ok(())
+}
+
+/// F18 tier flip: a guest's consent counts only as the vault's owner recorded
+/// it. A disclosure grant the guest stamped for themselves admits no ask, and
+/// the refusal names why, for the host to show the owner; the same bound the
+/// owner records admits it.
+#[test]
+fn a_grant_the_guest_stamped_is_no_consent_and_the_owners_record_is() -> Result<()> {
+    use crate::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let bound = GrantBound::disclosure(
+        AudienceBound::new([fixture.owner.to_hex(), person.to_hex()])?,
+        DisclosureClass::new("meeting")?,
+        DisclosureEnvelope::new([fixture.question.entity_ref().to_hex()])?,
+    )?;
+    let guests_own = fixture.vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let guest = TaskAskGuest {
+        companion_ref: companion,
+        disclosure_grant_ref: fixture
+            .vault
+            .put_standing_grant_unchecked_for_test(&guests_own, bound.clone())?,
+    };
+    let row = fixture
+        .vault
+        .consent_grant(&guest.disclosure_grant_ref)?
+        .expect("the guest-stamped row");
+    assert!(row.is_active() && row.owner_stamp.actor == person);
+    let mut spec = fixture.spec();
+    spec.what.class_key = Some("meeting".into());
+    let txn = fixture.vault.store.env.read_txn()?;
+    let native = super::ask_guest::check_disclosure(
+        &fixture.vault,
+        &txn,
+        person,
+        fixture.owner,
+        &guest,
+        &spec,
+    )
+    .expect_err("a guest's own stamp is no consent");
+    assert_eq!(native.kind(), crate::ErrorKind::ConsentGuestNotRecorded);
+    drop(txn);
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    let refused = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask(&spec)
+        .expect_err("a guest's own stamp is no consent");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused
+            .message
+            .contains("the owner has not recorded this guest's consent"),
+        "{}",
+        refused.message
+    );
+    let owner = fixture.vault.authenticate_owner(
+        fixture.owner,
+        &fixture.owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture.vault.create_standing_grant(&owner, bound)?;
+    fixture.ask(&spec)?;
+    Ok(())
+}
+
+/// Tier r3 (Astra P2-1): an answer delegation counts only when its target is
+/// the guest. The owner's delegation with no target names no guest, so the
+/// companion's answer stays a hint.
+#[test]
+fn an_owner_delegation_that_names_no_guest_counts_for_none() -> Result<()> {
+    use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, false)?;
+    let owner = fixture.vault.authenticate_owner(
+        fixture.owner,
+        &fixture.owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture.vault.create_standing_grant(
+        &owner,
+        GrantBound::action(
+            ActorBound::new(companion.to_hex())?.with_actor_class("agent")?,
+            ActionClass::new("ask.answer.meeting")?,
+            ActionEnvelope::new(["answer".to_owned()])?,
+        )?,
+    )?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    let handle = fixture.ask(&spec)?;
+    fixture
+        .vault
+        .memory(companion, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.question.entity_ref(),
+                option: Some(TaskAskOptionId::new("yes")?),
+                inform_for: None,
+                companion_for: Some(person),
+                confirmation: None,
+                provenance_refs: Default::default(),
+            },
+        )?;
+    let evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    assert_eq!(evidence[0].reason, TaskAskEvidenceReason::CompanionHint);
+    assert!(evidence[0].delegation_grant_ref.is_none());
     Ok(())
 }
 
@@ -3487,8 +3658,8 @@ fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> 
 
 /// Sol R8 F1, F3: the TASK scans an ask and a room thread read take place
 /// at the caller's locality. Off this device a TASK a device-local world
-/// keeps takes no place in a page, a scan cap or the room census guard, so
-/// none of their refusals counts it; on this device each still does.
+/// keeps takes no place in a page, a scan cap or the room census; on this
+/// device each still does.
 #[test]
 fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
     use crate::claim::CallerLocality;
@@ -3542,11 +3713,115 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
     let members = std::collections::BTreeSet::from([owner.to_hex()]);
     let census = |locality| {
         let memory = vault.memory(owner, EdgeActorClass::Human).at(locality);
-        super::room_thread::thread_tasks_capped(&memory, &roots, &members, 1, 1)
+        super::room_thread::thread_tasks(&memory, &roots, &members, 1)
             .map(|tasks| tasks.len())
             .map_err(|error| format!("{error:?}"))
     };
     assert_eq!(census(CallerLocality::OffDevice)?, 0);
-    assert!(census(CallerLocality::OnDevice).is_err());
+    assert_eq!(census(CallerLocality::OnDevice)?, 2);
+    Ok(())
+}
+
+/// F13 H431: a room thread read walks the room members' tasks, never every
+/// TASK in the vault. An unrelated TASK no member owns, whose row no longer
+/// reads, costs the read nothing; a walk over every TASK fails on it.
+#[test]
+fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let root = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("thread_ref"),
+                rmpv::Value::from(root.to_hex()),
+            )]),
+            None,
+            None,
+            None,
+        ))?;
+    vault.backfill_tasks_by_owner()?;
+    let unrelated = EntityId::from_bytes([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])?;
+    vault.with_write_txn(|wtxn| {
+        // A TASK row with no readable header, filed under no owner.
+        vault.store.entities.put(
+            wtxn,
+            unrelated.as_bytes(),
+            &[crate::registry::ENTITY_TYPE_TASK],
+        )?;
+        let type_key =
+            crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_TASK, &unrelated);
+        vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })?;
+
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([owner.to_hex()]);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let tasks = super::room_thread::thread_tasks(&memory, &roots, &members, 1)
+        .expect("the members' tasks read");
+    assert_eq!(tasks.len(), 1);
+    Ok(())
+}
+
+/// Class-A rows 3 to 7: an ask's task census, its words and a room thread
+/// census read every row they need, however many (rule 5). Main refused
+/// past 4,096 tasks or words and 100,000 thread tasks; here each scan's
+/// threshold row is lowered to 1, every read serves past it, and each scan
+/// raises the owner's check once. Rows 3 and 4 share one census, read here
+/// through the ask's omitted task context.
+#[test]
+fn ask_and_thread_census_read_past_their_threshold_row() -> Result<()> {
+    use crate::scan_check::EngineScan;
+    let fixture = RuledAskFixture::new(2)?;
+    let (agent, _) = governed_agent(&fixture)?;
+    let root = EntityId::now();
+    let owner_memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    for _ in 0..2 {
+        owner_memory.tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("thread_ref"),
+                rmpv::Value::from(root.to_hex()),
+            )]),
+            None,
+            None,
+            None,
+        ))?;
+    }
+    let scans = [
+        EngineScan::TaskCensusRows,
+        EngineScan::AskWordRows,
+        EngineScan::RoomThreadTasks,
+    ];
+    for scan in scans {
+        fixture.vault.set_scan_threshold(scan, 1)?;
+    }
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Hold;
+    let receipt = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)?;
+    fixture.word(receipt.handle, 0, "yes")?;
+    fixture.word(receipt.handle, 1, "no")?;
+    let evidence = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask_evidence(receipt.handle)?;
+    assert_eq!(evidence.len(), 2);
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([fixture.owner.to_hex()]);
+    let tasks = super::room_thread::thread_tasks(&owner_memory, &roots, &members, 1)?;
+    assert_eq!(tasks.len(), 2);
+    let checks = fixture.vault.scan_checks()?;
+    for scan in scans {
+        let raised = checks
+            .iter()
+            .filter(|check| check.scan == scan.code())
+            .count();
+        assert_eq!(raised, 1, "{} raised its check once", scan.code());
+    }
     Ok(())
 }

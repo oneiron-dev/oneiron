@@ -92,6 +92,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                         auto_checker: None,
                         defer_metrics_until_commit: true,
                         transition: None,
+                        owner_authored: None,
                     },
                     &policy,
                     crate::gate::GateWriteMode {
@@ -140,6 +141,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                 auto_checker: None,
                                 defer_metrics_until_commit: true,
                                 transition: None,
+                                owner_authored: None,
                             },
                             &policy,
                             crate::gate::GateWriteMode {
@@ -179,6 +181,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                             .filter(|_| body.approval == ClaimApprovalStatus::Auto),
                         defer_metrics_until_commit: true,
                         transition: None,
+                        owner_authored: None,
                     },
                     &policy,
                     crate::gate::GateWriteMode {

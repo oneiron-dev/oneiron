@@ -124,6 +124,13 @@ fn spent(fixture: &Fixture, address: &str, now: u64) -> u32 {
     LIMIT - u32::try_from(left).expect("count")
 }
 
+/// The budget an owner listing from `address` is charged to: the address and
+/// the credential it came under.
+fn owner_key(fixture: &Fixture, address: &str) -> String {
+    let auth = crate::test_credentials::authenticate(&fixture.server, "jti=booking-owner");
+    format!("{address}\0{}", auth.principal())
+}
+
 /// Whether the clock is still in the rate window `then` was in.
 fn same_minute(then: u64) -> bool {
     then / 60 == now_secs().expect("clock") / 60
@@ -145,7 +152,7 @@ async fn authenticated_booking_charges_the_connection_not_a_forwarding_header() 
             continue;
         }
         assert_eq!(
-            spent(&fixture, "203.0.113.9", now),
+            spent(&fixture, &owner_key(&fixture, "203.0.113.9"), now),
             2,
             "the connection pays"
         );
@@ -182,7 +189,12 @@ async fn supervisor_listing_charges_loopback(owner: bool) {
             0,
             "owner route: {owner}"
         );
-        assert_eq!(spent(&fixture, "127.0.0.1", now), 1, "owner route: {owner}");
+        let loopback = if owner {
+            owner_key(&fixture, "127.0.0.1")
+        } else {
+            "127.0.0.1".to_owned()
+        };
+        assert_eq!(spent(&fixture, &loopback, now), 1, "owner route: {owner}");
         return;
     }
     panic!("could not list within one rate window");
@@ -247,10 +259,15 @@ async fn trusted_proxy_chain_charges_each_client_behind_it() {
             "198.51.100.9",
             "10.0.0.2",
             "203.0.113.9",
-            "198.51.100.11",
         ] {
             assert_eq!(spent(&fixture, charged, now), 1, "{charged} pays once");
         }
+        let owner = owner_key(&fixture, "198.51.100.11");
+        assert_eq!(
+            spent(&fixture, &owner, now),
+            1,
+            "the owner listing pays once"
+        );
         for untouched in ["192.0.2.50", "10.0.0.3", "192.0.2.51", "198.51.100.10"] {
             assert_eq!(spent(&fixture, untouched, now), 0, "{untouched}");
         }

@@ -42,12 +42,10 @@ fn an_owner_purge_keeps_the_message_version_a_live_claim_cites() -> Result<()> {
         vault.check_entity_text_purge(&cited, &latest).is_err(),
         "a live citation floors the purge"
     );
-    let owner = vault.authenticate_owner(
-        writer,
-        &writer.to_hex(),
-        true,
-        crate::store::GateDecisionId::now(),
-    )?;
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    // The stream bound its writer under the host root, which holds one human
+    // binding: the owner's purge takes it over, one epoch on from the writer's.
+    vault.bind_host_owner_for_test(&crate::test_util::test_host_issuer(), owner.actor())?;
     let receipt =
         vault.purge_entity_text_history(&cited, &latest, &DocAuthorization::Owner(&owner), 20)?;
     assert_ne!(

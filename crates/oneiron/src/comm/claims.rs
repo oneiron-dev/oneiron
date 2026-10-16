@@ -241,6 +241,14 @@ pub fn claim_class_descriptors() -> Vec<ClaimClassDescriptorRow> {
     ]
 }
 
+/// Whether `predicate` is a restrictive row of [`claim_class_descriptors`]:
+/// its heads only add suppression.
+pub(crate) fn is_restrictive_comm_predicate(predicate: &str) -> bool {
+    claim_class_descriptors()
+        .iter()
+        .any(|row| row.restrictive && row.predicate == predicate)
+}
+
 /// Typed value carried by one claim in the `comm.*` family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -549,6 +557,30 @@ impl CommClaim {
 #[must_use]
 pub fn is_comm_claim_predicate(predicate: &str) -> bool {
     COMM_CLAIM_PREDICATES.contains(&predicate)
+}
+
+/// A live `comm.send_override` is an owner ruling, so only the typed mint
+/// (`mint_send_override`, which checks a stored human actor) may write one. Any other door that would land an ACTIVE override (the public
+/// claim door, a raw batch put, a generic lifecycle transition) is refused;
+/// retracting or superseding one is a restriction and always lands.
+/// Replication carries rulings the owner's own devices already admitted; a
+/// federated import (restamped `Imported`) is another vault's word and is
+/// refused even there.
+pub(crate) fn guard_send_override_put(
+    body: &ClaimBody,
+    typed_door: bool,
+    replicated: bool,
+) -> Result<()> {
+    let imported = body.source == Some(ClaimSource::Imported);
+    if body.predicate == PREDICATE_COMM_SEND_OVERRIDE
+        && body.lifecycle == ClaimLifecycleStatus::Active
+        && (imported || (!typed_door && !replicated))
+    {
+        return Err(Error::InvalidClaimBody(
+            "comm.send_override is ruled only through mint_send_override",
+        ));
+    }
+    Ok(())
 }
 
 /// Validates one `comm.*` claim value, subject, and conflict-key shape.

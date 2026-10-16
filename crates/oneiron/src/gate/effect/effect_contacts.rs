@@ -2,10 +2,10 @@
 
 use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_by_index_in_txn,
-    counterparty_contact_matches_channel_class, counterparty_contacts_by_party_channel,
-    counterparty_contacts_by_party_full_scan, normalize_channel_class,
-    read_counterparty_contact_in_txn,
+    CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
+    counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,
+    counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
+    normalize_channel_class, read_counterparty_contact_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -17,6 +17,10 @@ use crate::store::Store;
 /// receipt-reason family.
 const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
     "counterparty_opt_out_do_not_contact";
+
+/// Receipt reason for a hold whose restrictive source is an owner-revoked
+/// `COUNTERPARTY_CONTACT` row. Same closed `counterparty_*` family.
+const COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON: &str = "counterparty_contact_revoked";
 
 /// Hydrates the counterparty consent facts the external-effect door decides on.
 ///
@@ -35,19 +39,21 @@ const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
 /// heads are read on THIS transaction and returned BESIDE the input.
 /// [`ExternalEffectGateInput`] stays byte-unchanged — an override is never
 /// something a caller may assert — so the match travels back as its own value
-/// and the single caller writes it onto the gate-internal context.
+/// and the single caller writes it onto the gate-internal context. Whether a
+/// matching contact is owner-revoked travels back the same way.
 pub(crate) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &crate::gate::PolicyManifestResolution,
-) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>)> {
+) -> Result<(ExternalEffectGateInput, Option<SendOverrideMatch>, bool)> {
     let mut hydrated = effect.clone();
     let Some(party_ref) = effect.counterparty.as_deref() else {
-        return Ok((hydrated, None));
+        return Ok((hydrated, None, false));
     };
 
     let channel_class = normalize_channel_class(&effect.channel);
+    let mut any_revoked = false;
     for record in counterparty_contacts_for_send(
         store,
         txn,
@@ -63,11 +69,17 @@ pub(crate) fn hydrate_external_effect_contact(
         {
             hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
         }
-        hydrated.counterparty_opted_out |= record.is_opted_out();
-        if record.is_opted_out() && hydrated.counterparty_opt_out_receipt_reason.is_none() {
+        // An owner-revoked contact is unreachable: it suppresses the send like
+        // an opt-out, under its own reason, and an active sibling row never
+        // clears it.
+        let revoked = record.status == CounterpartyContactStatus::Revoked;
+        any_revoked |= revoked;
+        hydrated.counterparty_opted_out |= record.is_opted_out() || revoked;
+        if hydrated.counterparty_opt_out_receipt_reason.is_none() {
             hydrated.counterparty_opt_out_receipt_reason = record
                 .opt_out
-                .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason);
+                .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason)
+                .or_else(|| revoked.then_some(COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON));
         }
     }
 
@@ -102,8 +114,22 @@ pub(crate) fn hydrate_external_effect_contact(
         }
     }
 
-    fold_matching_comm_do_not_contact_heads(store, txn, party_ref, &channel_class, &mut hydrated)?;
-    let send_override = if hydrated.counterparty_opted_out {
+    // Every PERSON that carries the counterparty's key, read once for both
+    // comm legs: the node-local party shortcut would fail open.
+    let persons = crate::campaign::claims::do_not_contact_subjects_in_txn(store, txn, party_ref)?;
+    fold_matching_comm_do_not_contact_heads(store, txn, &persons, &channel_class, &mut hydrated)?;
+    fold_comm_stop(
+        store,
+        txn,
+        &persons,
+        party_ref,
+        &channel_class,
+        &mut hydrated,
+    )?;
+    // A send override answers the counterparty's opt-out. The owner's own
+    // revocation is not an opt-out, so no override lifts it (nor does the
+    // opt-out posture; see the evaluator).
+    let send_override = if hydrated.counterparty_opted_out && !any_revoked {
         counterparty_send_override_in_txn(
             store,
             txn,
@@ -116,7 +142,7 @@ pub(crate) fn hydrate_external_effect_contact(
         // opt-out fall-through, so an unsuppressed send must not carry one.
         None
     };
-    Ok((hydrated, send_override))
+    Ok((hydrated, send_override, any_revoked))
 }
 
 /// The owner's `comm.send_override` head for this send, read on the caller's
@@ -244,14 +270,14 @@ fn counterparty_contact_by_identity_index(
 fn fold_matching_comm_do_not_contact_heads(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    party_ref: &str,
+    persons: &[EntityId],
     channel_class: &str,
     hydrated: &mut ExternalEffectGateInput,
 ) -> Result<()> {
-    if !crate::campaign::claims::counterparty_do_not_contact_in_txn(
+    if !crate::campaign::claims::subjects_do_not_contact_in_txn(
         store,
         txn,
-        party_ref,
+        persons,
         Some(channel_class),
         &hydrated.verb,
     )? {
@@ -263,6 +289,41 @@ fn fold_matching_comm_do_not_contact_heads(
     if hydrated.counterparty_opt_out_receipt_reason.is_none() {
         hydrated.counterparty_opt_out_receipt_reason =
             Some(COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON);
+    }
+    Ok(())
+}
+
+/// OR-folds the counterparty's standing comm opt-out (F06): a STOP's
+/// `comm.opt_out` head and a party-wide one, which the contact rows above only
+/// cache and a supported drop removes (R2-F5), and a STOP this replica has not
+/// projected yet. Each holds the send as the contact row it projects to does,
+/// so an owner override or posture answers it the same way. Monotonic, like
+/// every leg here.
+fn fold_comm_stop(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    persons: &[EntityId],
+    party_ref: &str,
+    channel_class: &str,
+    hydrated: &mut ExternalEffectGateInput,
+) -> Result<()> {
+    // A send already held, with its reason, gains nothing here.
+    if hydrated.counterparty_opted_out && hydrated.counterparty_opt_out_receipt_reason.is_some() {
+        return Ok(());
+    }
+    let Some(reason) = comm_result(crate::comm::send_stop_reason_in_txn(
+        store,
+        txn,
+        persons,
+        party_ref,
+        channel_class,
+    ))?
+    else {
+        return Ok(());
+    };
+    hydrated.counterparty_opted_out = true;
+    if hydrated.counterparty_opt_out_receipt_reason.is_none() {
+        hydrated.counterparty_opt_out_receipt_reason = Some(reason);
     }
     Ok(())
 }

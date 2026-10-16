@@ -179,6 +179,9 @@ pub(crate) fn resolve_policy_manifest(
                             None => worlds,
                         });
                 }
+                resolution
+                    .persona_core_prefixes
+                    .extend(decoded.persona_core_prefixes);
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution
                     .experiment_selection

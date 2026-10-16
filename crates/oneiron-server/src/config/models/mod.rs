@@ -12,7 +12,7 @@
 //! is swapped by editing one string and no vendor appears in code. Absent
 //! `[models]`, the server runs every model-free path and reports each seat
 //! as unconfigured.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use oneiron::llm::manifest::ModelRole;
@@ -111,7 +111,6 @@ struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
     max_runs: Option<usize>,
-    max_runs_per_credential: Option<usize>,
     #[serde(default)]
     compaction: compaction::CompactionFile,
     #[serde(default)]
@@ -131,6 +130,9 @@ struct CodeCheckFile {
 pub struct ModelsConfig {
     pub providers: BTreeMap<String, ProviderConfig>,
     pub roles: BTreeMap<ModelRole, Vec<Rung>>,
+    /// The roles whose work never leaves the device (`leave_device =
+    /// "never"`): no rung off it serves them, first or as a fallback.
+    pub stays_on_device: BTreeSet<ModelRole>,
     /// Owner opt-in for the Dreamer's extraction calls to leave the device.
     /// Off by default: personal-data extraction stays local unless the owner
     /// says otherwise (ARCH-0036 counter-arrow).
@@ -229,10 +231,10 @@ pub struct CodeModeSettings {
     pub prompt_package: Option<PathBuf>,
     /// Process-lifetime meter for code mode's model calls.
     pub budget_units: u64,
-    /// `execute_code` runs at once, across every credential.
+    /// `execute_code` runs at once, across every credential: a row sized
+    /// from this machine's cores and memory by default. Past it, runs wait
+    /// their turn, round-robin across credentials.
     pub max_runs: usize,
-    /// `execute_code` runs at once under one registered credential.
-    pub max_runs_per_credential: usize,
     pub compaction: CompactionSettings,
     pub check: CodeCheckSettings,
 }
@@ -271,6 +273,7 @@ impl ModelsFile {
             .into_iter()
             .map(|(name, file)| Ok((name.clone(), file.resolve(&name)?)))
             .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+        let stays_on_device = levels::stays_on_device(&self.roles)?;
         let roles = levels::expand(
             Shorthand {
                 default: self.default,
@@ -329,7 +332,6 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
-        let default_runs = crate::mcp::CodeRunLimits::default();
         let code_mode = CodeModeSettings {
             prompt_package: self.code_mode.prompt_package.map(|path| match base {
                 Some(base) if path.is_relative() => base.join(path),
@@ -339,11 +341,10 @@ impl ModelsFile {
                 .code_mode
                 .budget_units
                 .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
-            max_runs: self.code_mode.max_runs.unwrap_or(default_runs.total),
-            max_runs_per_credential: self
+            max_runs: self
                 .code_mode
-                .max_runs_per_credential
-                .unwrap_or(default_runs.per_credential),
+                .max_runs
+                .unwrap_or_else(crate::mcp::CodeRunLimits::runs_for_this_machine),
             compaction: self.code_mode.compaction.resolve()?,
             check: self.code_mode.check.resolve(base)?,
         };
@@ -365,8 +366,8 @@ impl ModelsFile {
         {
             anyhow::bail!("models budget units must be greater than zero");
         }
-        if code_mode.max_runs == 0 || code_mode.max_runs_per_credential == 0 {
-            anyhow::bail!("models.code_mode run limits must be at least 1");
+        if code_mode.max_runs == 0 {
+            anyhow::bail!("models.code_mode.max_runs must be at least 1");
         }
         // Every try of a step reserves one call's units, the same amount
         // whatever this config later becomes, so its retries can replay
@@ -381,6 +382,7 @@ impl ModelsFile {
         Ok(ModelsConfig {
             providers,
             roles,
+            stays_on_device,
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
             dreamer,

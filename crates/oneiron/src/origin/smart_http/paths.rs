@@ -69,13 +69,14 @@ pub const DOOR_PRE_RECEIVE_HOOK_NAME: &str = "pre-receive";
 /// Longest repository name the origin will resolve.
 pub const ORIGIN_MAX_REPO_NAME_BYTES: usize = 100;
 
-/// The most ref moves one push may propose.
+/// The most refs one step of the landing handles at once.
 ///
-/// It mirrors GitWire's publication bound, because the landing publishes what
-/// the push moved through exactly one publication set: a batch the landing
-/// could not carry is refused BEFORE `git receive-pack` moves anything, rather
-/// than discovered after the refs are already elsewhere.
-pub const ORIGIN_MAX_REF_UPDATES: usize = 64;
+/// A push may move any number of refs. The landing publishes each through its
+/// own publication set, reads the refs a push named this many to a git
+/// command, and saves the push's journal once per this many refs, so neither
+/// a command it runs nor the journal writes per ref grow with the push. It
+/// matches GitWire's publication bound.
+pub const ORIGIN_REF_UPDATE_BATCH: usize = 64;
 
 /// The ref namespace this origin never lets a push write.
 ///
@@ -85,10 +86,10 @@ pub const ORIGIN_MAX_REF_UPDATES: usize = 64;
 /// bytes nobody is landing.
 pub const ORIGIN_REFUSED_REF_PREFIX: &str = "refs/replace/";
 
-/// Bound on a receive-pack's command section, read ahead of the backend to
-/// refuse a push certificate. [`ORIGIN_MAX_REF_UPDATES`] commands with their
-/// capabilities fit many times over.
-pub(super) const ORIGIN_MAX_COMMAND_SECTION_BYTES: usize = 1024 * 1024;
+/// How much of a receive-pack's command section, read ahead of the backend to
+/// refuse a push certificate, is held in memory. The rest is held in an
+/// unnamed file in the door root: a push may name any number of refs.
+pub(super) const ORIGIN_COMMAND_SECTION_MEMORY_BYTES: usize = 1024 * 1024;
 
 /// Bound on the CGI header block. This bounds a protocol preamble, not a body:
 /// request and response bodies stream unbounded and unbuffered.
@@ -120,24 +121,16 @@ pub(super) const SERVE_QUARANTINE_PREFIX: &str = "tmp_objdir-incoming-";
 /// killed and reaped.
 pub(super) const SERVE_REAP_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The most blob bytes one push may hand the door to scan, across the tip
-/// diffs and the history walk together. The door reads every framed byte into
-/// memory, so a push past this is refused whole by the hook rather than scanned
-/// in part; a long history still lands when pushed in smaller parts.
-pub(super) const DOOR_MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+/// The refusal for a blob past the scan's per-blob bound
+/// ([`super::ScanBounds::blob_bytes`]). The door holds a blob whole while it
+/// scans it, so this is its memory floor; the refusal names the bound and the
+/// `[limits]` key that moves it, and nothing of the push.
+pub(super) const DOOR_BLOB_TOO_LARGE: &str = "a blob is larger than limits.git_scan_blob_bytes";
 
-/// The most lines those blobs may split into, across both streams, each
-/// record counting as one line at least. The door holds each line and each
-/// record as its own allocation, so the byte cap alone bounds no memory: 256
-/// MiB of bare newlines is 268 million lines, and an empty blob under many
-/// paths costs no content byte at all. Lines and records are counted before
-/// any is allocated, and past this the window is refused whole.
-pub(super) const DOOR_MAX_SCAN_LINES: usize = 4 * 1024 * 1024;
-
-/// The most bytes both framed streams may hold, record headers included: the
-/// scan cap's content bytes and as much again for the headers that name them.
-/// Checked as the streams are read, before either is parsed.
-pub(super) const DOOR_MAX_FRAMED_BYTES: u64 = 2 * DOOR_MAX_SCAN_BYTES;
+/// The refusal for a push whose framed blobs would take the hook's disk below
+/// the scan's floor ([`super::ScanBounds::disk_floor_bytes`]).
+pub(super) const DOOR_DISK_FLOOR: &str =
+    "its blobs would take the disk below limits.git_scan_disk_floor_bytes";
 
 /// The verdict line the vetted hook accepts as an admission.
 pub(super) const DOOR_VERDICT_OK: &str = "ok";
@@ -218,7 +211,7 @@ pub fn origin_serving_root(vault: &Vault) -> Result<PathBuf> {
 
 /// The per-request door root. Never inside the serving root, so it is never
 /// addressable as a repository.
-pub(super) fn origin_door_root(vault: &Vault) -> Result<PathBuf> {
+pub fn origin_door_root(vault: &Vault) -> Result<PathBuf> {
     let root = vault.store.env.path().join(ORIGIN_DOOR_ROOT_NAME);
     fs::create_dir_all(&root)?;
     Ok(root.canonicalize()?)

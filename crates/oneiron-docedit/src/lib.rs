@@ -1,17 +1,28 @@
-//! Native document editing organ crate: the retained OPC substrate and
-//! native Word revisions over a pinned, Apache-2.0-selected stemma fork.
+//! Native document editing organ crate: the retained OPC substrate, typed
+//! read-only deck views over it, deck design plans compiled from a kept
+//! brief, the closed SVG subset compiled to native shapes, native tables and
+//! classic charts written with their embedded workbooks, narrow value and
+//! text edits in place, and native Word revisions over a pinned,
+//! Apache-2.0-selected stemma fork.
 //!
 //! The wrapper owns no global session or handle store. Its document value
 //! facade addresses stable block IDs and staleness guards; the writer applies
 //! a typed transaction and refuses bytes that fail the Word package linker.
 //! `PROVENANCE.md` records the fork, licenses and local changes.
 
+pub mod deck;
+pub mod design_plan;
+pub mod edit;
+pub mod emit;
+pub mod graphic;
+pub mod native_patch;
 pub mod ooxml;
 pub mod retained_opc;
 pub mod xlfn;
 
 pub use stemma::api::{Document, validate};
 pub use stemma::docx::ArchiveLimits;
+pub use stemma::edit::EditNote;
 use stemma::edit::{EditTransaction, MaterializationMode};
 pub use stemma::edit_v4::parse_transaction;
 pub use stemma::{ExportMode, ExportOptions, ValidatorLevel};
@@ -81,16 +92,27 @@ pub fn revise_with_limits(
     transaction_json: &str,
     limits: ArchiveLimits,
 ) -> Result<Vec<u8>, DoceditError> {
+    revise_with_notes(input, transaction_json, limits).map(|(output, _)| output)
+}
+
+/// [`revise_with_limits`], also returning the [`EditNote`]s the transaction's
+/// steps report, such as a comment quote that matched more than one copy and
+/// the copy it anchored.
+pub fn revise_with_notes(
+    input: &[u8],
+    transaction_json: &str,
+    limits: ArchiveLimits,
+) -> Result<(Vec<u8>, Vec<EditNote>), DoceditError> {
     preflight_with_limits(input, limits)?;
     let transaction = parse_native_revision(transaction_json)?;
-    let edited = Document::parse(input)?.apply(&transaction)?;
+    let (edited, notes) = Document::parse(input)?.apply_with_notes(&transaction)?;
     let output = edited.serialize(&ExportOptions {
         mode: ExportMode::Redline,
         validator_level: ValidatorLevel::Blocking,
         validator: None,
     })?;
     preflight_with_limits(&output, limits)?;
-    Ok(output)
+    Ok((output, notes))
 }
 
 /// Re-run the blocking OOXML linker on caller-supplied output at settlement.

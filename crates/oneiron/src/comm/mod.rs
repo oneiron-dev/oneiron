@@ -2,31 +2,37 @@
 //!
 //! Directory module. `claims` holds the `comm.*` claim family; `records` the
 //! COMM_RECORD storage and codec; `parties` the party identity doors;
+//! `stop_hold` the send hold of a STOP, standing or not projected here yet;
 //! `projector` the ordered projector pass; `projection_writes` the
 //! deterministic claim writes; `consent` the human gates, send overrides and
-//! standing opt-out folds; `thread_membership` the alias-aware membership
-//! reads. This file keeps the seam (module declarations and the re-exports
+//! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
+//! reads the human clear takes across a party's redirect shells;
+//! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
 
 mod claims;
 mod consent;
+mod opt_out_slots;
 mod parties;
 mod projection_writes;
 mod projector;
 mod records;
+mod stop_hold;
 mod thread_membership;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::claims::validate_comm_claim_structure;
 pub use self::claims::{
     COMM_CLAIM_PREDICATES, COMM_SCHEMA_VERSION, ClaimClassDescriptorRow, CommClaim, CommClaimValue,
     CommClearOptOutOutcome, CommError, CommResult, PREDICATE_COMM_LAST_TOUCH,
     PREDICATE_COMM_OPT_OUT, PREDICATE_COMM_REACHABLE_VIA, PREDICATE_COMM_SEND_OVERRIDE,
     PREDICATE_COMM_THREAD_MEMBER, SendOverrideMatch, SendOverrideScope, claim_class_descriptors,
     is_comm_claim_predicate,
+};
+pub(crate) use self::claims::{
+    guard_send_override_put, is_restrictive_comm_predicate, validate_comm_claim_structure,
 };
 pub use self::consent::{
     approve_pending_opt_out_clear, count_active_comm_claims, count_active_thread_member_claims,
@@ -50,7 +56,11 @@ pub use self::projector::{
 pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
+pub(crate) use self::stop_hold::{
+    clear_pending_stop_for_delete, maintain_pending_stop_put, send_stop_reason_in_txn,
+};
 
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use self::projector::ProjectorAction;
@@ -109,7 +119,8 @@ struct IndexedGate {
 /// after the snapshot are simply picked up by the next pass.
 #[derive(Debug, Default)]
 struct CommProjectorIndex {
-    /// Unprojected source events as `(sequence, id)`, sequence ascending.
+    /// Unprojected source events as `(sequence, id)`, sequence ascending,
+    /// and each STOP whose send hold this replica has not released yet.
     pending_events: Vec<(u64, EntityId)>,
     pending_gates: HashMap<PartyChannelKey, Vec<IndexedGate>>,
     latest_projected_thread_transition: HashMap<PartyThreadKey, (u64, bool)>,
@@ -119,10 +130,18 @@ struct CommProjectorIndex {
     /// still bounds the decision instead of being folded too late, after an
     /// earlier retried join already minted standing membership.
     pending_thread_events: HashMap<PartyThreadKey, Vec<EntityId>>,
+    /// The last committed LMDB transaction id this pass accounts for: what
+    /// the next event's transaction observes when no other writer committed
+    /// since this pass last re-read a slot's candidates.
+    accounted_txn: Cell<Option<usize>>,
+    /// Peer boundary per membership slot as last re-read, kept while every
+    /// commit since is this pass's own, so n same-slot events re-read the
+    /// slot once rather than n times (F06 H228).
+    peer_boundaries: RefCell<HashMap<PartyThreadKey, Option<(u64, bool)>>>,
 }
 
 impl CommProjectorIndex {
-    fn from_records(records: &[(EntityId, CommRecord)]) -> Self {
+    fn from_records(records: &[(EntityId, CommRecord)], pending_stops: &HashSet<EntityId>) -> Self {
         let mut index = Self::default();
         for (id, record) in records {
             match record {
@@ -131,9 +150,9 @@ impl CommProjectorIndex {
                     kind,
                     party_ref,
                     thread_ref,
-                    projected: false,
+                    projected,
                     ..
-                } => {
+                } if !projected || pending_stops.contains(id) => {
                     index.pending_events.push((*sequence, *id));
                     if matches!(
                         kind,
@@ -241,6 +260,29 @@ impl CommProjectorIndex {
             .or_insert(boundary);
     }
 
+    /// Runs first inside each event's write transaction. A commit this pass
+    /// cannot account for (a peer pass, a replay, any other writer) may have
+    /// flipped a candidate, so the cached peer boundaries are dropped.
+    fn begin_event_txn(&self, vault: &Vault) {
+        let committed = vault.store.env.info().last_txn_id;
+        if self.accounted_txn.get() != Some(committed) {
+            self.peer_boundaries.borrow_mut().clear();
+        }
+        self.accounted_txn.set(Some(committed));
+    }
+
+    /// This event's transaction wrote, so its own commit, a write group of its
+    /// own, advances the committed id by exactly one.
+    fn expect_own_commit(&self) {
+        self.accounted_txn
+            .set(self.accounted_txn.get().and_then(|id| id.checked_add(1)));
+    }
+
+    /// An event failed after it may have written: the next event re-reads.
+    fn forget_accounted_txn(&self) {
+        self.accounted_txn.set(None);
+    }
+
     /// Latest membership boundary from snapshotted same-key join/leave events
     /// that a peer pass has already committed — including entries still AHEAD
     /// of this pass's cursor, which neither the snapshot nor `apply_committed`
@@ -258,6 +300,12 @@ impl CommProjectorIndex {
         key: &PartyThreadKey,
         source_event_id: EntityId,
     ) -> CommResult<Option<(u64, bool)>> {
+        // The slot's own earlier events in this pass fold through
+        // `apply_committed`, so a cached read stays exact while no other
+        // writer has committed (`begin_event_txn`).
+        if let Some(cached) = self.peer_boundaries.borrow().get(key) {
+            return Ok(*cached);
+        }
         let mut latest = None;
         let aliases = crate::thread_passport::thread_aliases_in_txn(vault, rtxn)?;
         let keys = equivalent_thread_keys(key, &aliases);
@@ -269,6 +317,7 @@ impl CommProjectorIndex {
             if *candidate_id == source_event_id {
                 continue;
             }
+            note_peer_candidate_read();
             let Some(CommRecord::Event {
                 kind: kind @ (CommEventKind::ThreadJoined | CommEventKind::ThreadLeft),
                 party_ref,
@@ -287,6 +336,9 @@ impl CommProjectorIndex {
                 latest = latest.max(Some((occurred_at, kind == CommEventKind::ThreadLeft)));
             }
         }
+        self.peer_boundaries
+            .borrow_mut()
+            .insert(key.clone(), latest);
         Ok(latest)
     }
 
@@ -357,6 +409,21 @@ thread_local! {
 fn note_pending_gate_retain() {
     PENDING_GATE_RETAINS.with(|retains| retains.set(retains.get().saturating_add(1)));
 }
+
+// Test-only tally of peer-candidate row reads a join/leave makes while it
+// decides (F06 H228): one pass must stay linear in its same-slot events.
+#[cfg(test)]
+thread_local! {
+    static PEER_CANDIDATE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_peer_candidate_read() {
+    PEER_CANDIDATE_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+const fn note_peer_candidate_read() {}
 
 #[cfg(not(test))]
 const fn note_pending_gate_retain() {}
