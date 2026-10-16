@@ -23024,6 +23024,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DefaultVaultInput",
+      "DefaultVaultItem"
+     ],
+     "path": "src/lens/default_vault.rs",
+     "purpose": "Renderer-neutral default vault composition over already-admitted projections",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GeneratedUiCard"
      ],
      "path": "src/lens/generated_ui/genui_card.rs",
@@ -23332,7 +23346,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -40238,6 +40252,7 @@
      "purpose": "Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5)",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 21,
       "struct": 4
@@ -44167,7 +44182,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44841,7 +44856,7 @@
    },
    "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2690,
+   "source_files": 2691,
    "test_files": 903
   },
   "oneiron-android": {
