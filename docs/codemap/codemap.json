@@ -62195,7 +62195,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -63916,6 +63916,16 @@
      "purpose": "One rung's stream handed to the caller event by event, up to its terminal or its failure",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/hosted_speech.rs",
+     "purpose": "Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -65729,7 +65739,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65850,7 +65860,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 455,
+   "source_files": 456,
    "test_files": 182
   },
   "oneiron-spawn": {
