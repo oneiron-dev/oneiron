@@ -358,7 +358,11 @@ impl CoreContextPackRequest {
             .iter()
             .flat_map(|controls| &controls.third_parties)
             .filter_map(|party| party.contact_ref.as_deref())
-            .chain(self.reader.as_ref().map(|reader| reader.definition.as_str()))
+            .chain(
+                self.reader
+                    .as_ref()
+                    .map(|reader| reader.definition.as_str()),
+            )
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
             .collect()
     }
