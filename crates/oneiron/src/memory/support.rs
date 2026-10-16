@@ -420,6 +420,9 @@ pub struct Memory<'v> {
     /// The vault owner's authentication, when a host bound the owner's own
     /// direct request (`with_owner_authorship`).
     pub(super) owner_authorship: Option<crate::consent::AuthenticatedOwner>,
+    /// The logical verb's id a host carried in (`with_invocation`): verb
+    /// hooks run once per id, across wrappers (ARCH-0080 §3).
+    pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -471,6 +474,7 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            invocation: None,
         }
     }
 
@@ -503,6 +507,7 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            invocation: None,
         }
     }
 }
@@ -543,6 +548,8 @@ impl<'v> Memory<'v> {
                 // A room turn writes into the room's talk, not as the owner
                 // in person.
                 owner_authorship: None,
+                // The same logical verb, run inside the turn.
+                invocation: self.invocation,
             },
         })
     }
@@ -586,6 +593,20 @@ impl Memory<'_> {
     pub fn with_owner_authorship(mut self, owner: &crate::consent::AuthenticatedOwner) -> Self {
         self.owner_authorship = Some(owner.clone());
         self
+    }
+
+    /// Binds the logical verb's id a transport carried in, so a verb hook
+    /// fires once for it however many wrappers it crosses.
+    #[must_use]
+    pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
+        self.invocation = Some(invocation);
+        self
+    }
+
+    /// The logical verb's id a host bound, if any.
+    #[must_use]
+    pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
+        self.invocation
     }
 
     /// The owner authorship of a claim write in `txn`, revalidated there.

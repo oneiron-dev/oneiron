@@ -141,6 +141,7 @@ impl JsCodeModeHost for DispatcherHost<'_> {
         Ok(SelfDispatchResponse {
             outcome: self.0.dispatch(call.with_bridge_stamp(0, 10_000))?,
             budget: None,
+            view: None,
         })
     }
 }
@@ -473,6 +474,7 @@ fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> 
             Ok(SelfDispatchResponse {
                 outcome,
                 budget: None,
+                view: None,
             })
         }
     }

@@ -4,8 +4,9 @@
 //! This is where the pure evaluator meets LMDB. Three doors, and the split
 //! between them is the whole design:
 //!
-//! * [`Vault::put_commitment_series`] is the ONLY door that indexes a series.
-//!   A typed payload written through CMT-1's generic
+//! * [`Vault::put_commitment_series`] is the typed door that indexes a series,
+//!   and the generic claim commit indexes a series it lands through the same
+//!   row writer (OF-187). A typed payload written through CMT-1's
 //!   [`Vault::put_commitment_claim`] is stored-but-unindexed, which is a legal
 //!   state every reader here tolerates rather than treats as corruption.
 //! * [`Vault::reconcile_commitment_schedule`] is the ONLY production projector.
@@ -90,7 +91,8 @@ struct SeriesMint<'a> {
 impl Vault {
     /// Writes a commitment SERIES and indexes it in one transaction.
     ///
-    /// This is the only door that creates a `Project` row. CMT-1's
+    /// This is the typed door that creates a `Project` row; the generic claim
+    /// commit reaches the same row writer for a series it lands. CMT-1's
     /// [`Vault::put_commitment_claim`] still accepts a typed payload and still
     /// stores it faithfully — it simply does not index it, and every reader in
     /// this module treats that stored-but-unindexed claim as ordinary data.
@@ -245,6 +247,44 @@ impl Vault {
                 .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
             self.commitment_successors_in_txn(wtxn, &closed, envelope, closed_at)
         })
+    }
+
+    /// Indexes a commitment SERIES that a generic claim write has just landed,
+    /// inside that write's transaction (OF-187).
+    ///
+    /// [`Vault::put_commitment_series`] is the typed door, but a promise is
+    /// mostly recorded through the generic claim doors (`vault.remember`,
+    /// `vault.claims.upsert`, MCP), which store the schedule faithfully and
+    /// index nothing. The generic commit calls this after its own write, so a
+    /// promise born there owes its reminders too. Everything that is not a
+    /// live, unrejected CMT-2 series passes: a CMT-1 opaque schedule stays
+    /// ordinary data, an rrule stays stored, and a schedule that already owes
+    /// nothing (a `Once` in the past) or that the evaluator refuses indexes
+    /// nothing and leaves the write alone. Only a storage failure fails it.
+    pub(crate) fn index_landed_commitment_series_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        series_ref: &EntityId,
+        now: u64,
+    ) -> crate::Result<()> {
+        let payload = match self.live_series_in_txn(&*wtxn, series_ref) {
+            Ok(Some((_, payload))) => payload,
+            Ok(None) => return Ok(()),
+            Err(ScheduleError::Engine(error)) => return Err(error),
+            Err(_) => return Ok(()),
+        };
+        match self.index_commitment_series_in_txn(wtxn, series_ref, &payload, now) {
+            Ok(_) => Ok(()),
+            Err(ScheduleError::Engine(error)) => Err(error),
+            Err(error) => {
+                tracing::info!(
+                    series = %series_ref.to_hex(),
+                    %error,
+                    "commitment series stored without a due index"
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Writes the `Project` row for a series, in the caller's transaction.
@@ -556,7 +596,10 @@ impl Vault {
         let Some(body) = self.get_claim_in_txn(txn, series_ref)? else {
             return Ok(None);
         };
-        if body.lifecycle != ClaimLifecycleStatus::Active {
+        // A promise the owner rejected owes no occurrence.
+        if body.lifecycle != ClaimLifecycleStatus::Active
+            || body.approval == crate::claim::ClaimApprovalStatus::Rejected
+        {
             return Ok(None);
         }
         let Some(record) = decode_commitment_claim(&body)? else {

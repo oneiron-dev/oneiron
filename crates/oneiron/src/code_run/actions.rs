@@ -182,7 +182,11 @@ impl ActionRegistry {
     /// definition-only rows need a run or a socket of their own, and a row
     /// whose name is no action id is one no lens can name; none is offered.
     pub fn register_sdk_verbs(&mut self) -> Result<()> {
-        for verb in AgentVerb::ALL.iter().copied().filter(|verb| verb.is_facade()) {
+        for verb in AgentVerb::ALL
+            .iter()
+            .copied()
+            .filter(|verb| verb.is_facade())
+        {
             let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
                 continue;
             };
@@ -472,7 +476,9 @@ impl ActionRegistry {
 }
 fn build_sdk_verb(verb: AgentVerb, args: &[ActionArgument]) -> Result<SelfCall> {
     let [ActionArgument::Text(input)] = args else {
-        return Err(invalid("verb-table action takes its JSON input as one text"));
+        return Err(invalid(
+            "verb-table action takes its JSON input as one text",
+        ));
     };
     let input = serde_json::from_str(input.as_str())
         .map_err(|_| invalid("verb-table action input is not JSON"))?;

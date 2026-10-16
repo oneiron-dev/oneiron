@@ -877,8 +877,8 @@ impl ScopedRead<'_> {
     ) -> Result<Option<StoredWeaveDigest>> {
         let latest = {
             let txn = self.vault.store.env.read_txn()?;
-            let prefix = WeaveDigestReader::of(&reader, reader.id(self.vault, &txn)?)
-                .key(DIGEST_PREFIX);
+            let prefix =
+                WeaveDigestReader::of(&reader, reader.id(self.vault, &txn)?).key(DIGEST_PREFIX);
             let mut latest = None;
             for row in self.vault.store.vault_meta.prefix_iter(&txn, &prefix)? {
                 let (key, _) = row?;
