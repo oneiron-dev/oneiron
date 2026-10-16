@@ -198,6 +198,8 @@ pub struct SlideUnitRefused {
     pub target: serde_json::Value,
     pub reason: String,
     pub offer: Option<serde_json::Value>,
+}
+
 /// Whether a held organ call was let go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleasedWait {
@@ -491,6 +493,8 @@ impl Memory<'_> {
                 })
                 .collect(),
         })
+    }
+
     /// `vault.artifacts.waits`: the organ calls held beside one artifact
     /// until one of the owner's nodes can run them, each saying why it waits.
     pub fn artifacts_waits(&self, input: &ArtifactRefRequest) -> MemoryResult<Vec<OrganWaitView>> {
