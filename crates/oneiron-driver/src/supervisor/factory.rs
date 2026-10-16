@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
-    DREAMER_NARRATIVE_ROLE, RoleBackends, RoleCall, ScopeSummaryExecutor,
+    DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
@@ -360,6 +360,19 @@ impl ConsolidationExecutorFactory {
                 },
                 self.summary_instruction.as_deref(),
             );
+            // PEOPLE `about` lines ride the same narrative role.
+            let inner = PersonAboutExecutor::new(
+                inner,
+                narrative.backend,
+                guard,
+                self.actor,
+                narrative.model.clone(),
+                HostInferenceContext {
+                    binding: narrative.inference.binding.clone(),
+                    extraction_egress: narrative.inference.extraction_egress,
+                },
+                None,
+            );
             let inner = WeaveRecipeExecutor {
                 inner,
                 runtime: runtime.take(),
@@ -374,7 +387,10 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
     type Exec<'p> = ConnectorEventExecutor<
         'p,
         WeaveRecipeExecutor<
-            ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+            PersonAboutExecutor<
+                'p,
+                ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+            >,
             Option<&'p mut dyn WeaveRecipeRuntime>,
         >,
     >;

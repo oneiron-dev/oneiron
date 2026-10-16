@@ -300,9 +300,11 @@ fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
         anyhow::bail!("--oneironer-url requires --oneironer endpoint");
     }
     if choice != OneironerProvider::Local
-        && (args.oneironer_model_dir.is_some() || args.oneironer_device.is_some())
+        && (args.oneironer_model_dir.is_some()
+            || args.oneironer_device.is_some()
+            || args.oneironer_tier.is_some())
     {
-        anyhow::bail!("tagger model directory and device options require --oneironer local");
+        anyhow::bail!("tagger model directory, tier and device options require --oneironer local");
     }
     if choice == OneironerProvider::None
         && (args.oneironer_checkpoint_sha16.is_some() || args.oneironer_label_count.is_some())
@@ -330,12 +332,31 @@ fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
             .as_deref()
             .and_then(Path::to_str)
             .ok_or_else(|| anyhow::anyhow!("tagger model directory is not UTF-8"))?;
-        table.insert("model_dir".into(), dir.into());
+        let mut bundle = toml::Table::new();
+        bundle.insert("model_dir".into(), dir.into());
         if let Some(checkpoint) = config.checkpoint_sha16 {
-            table.insert("checkpoint_sha16".into(), checkpoint.into());
+            bundle.insert("checkpoint_sha16".into(), checkpoint.into());
         }
         if let Some(labels) = config.label_count {
-            table.insert("label_count".into(), i64::from(labels).into());
+            bundle.insert("label_count".into(), i64::from(labels).into());
+        }
+        // A named tier is one row of `[oneironer.tiers]`, served by name.
+        match &args.oneironer_tier {
+            Some(tier) => {
+                anyhow::ensure!(
+                    !tier.is_empty() && tier.len() <= 64,
+                    "--oneironer-tier must be 1 to 64 bytes"
+                );
+                let mut tiers = toml::Table::new();
+                tiers.insert(tier.clone(), bundle.into());
+                table.insert("tier".into(), tier.as_str().into());
+                table.insert("tiers".into(), tiers.into());
+            }
+            None => {
+                for (key, value) in bundle {
+                    table.insert(key, value);
+                }
+            }
         }
         if let Some(device) = args.oneironer_device {
             table.insert("device".into(), device.as_str().into());
