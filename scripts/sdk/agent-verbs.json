@@ -1557,6 +1557,13 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.skills.call",
+      "input": "crate::code_run::SkillCallInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "SkillsCall"
     }
   ]
 }
