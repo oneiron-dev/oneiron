@@ -652,6 +652,15 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
+                // A batch-deleted world takes its keys with it (fix 7).
+                crate::world_keys::destroy_world_keys_in_txn(
+                    store,
+                    wtxn,
+                    id,
+                    crate::world_keys::WorldKeyDestroyCause::BatchDelete,
+                    None,
+                    mutation_recorded_at,
+                )?;
                 // Capture before tear (R2-F4): a PROJECT row's signed chain
                 // is kept as revisions before the row goes.
                 let captured = crate::workspace_roster::capture_before_tear(store, wtxn, id)?;
