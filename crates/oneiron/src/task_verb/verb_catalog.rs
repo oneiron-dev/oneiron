@@ -18,6 +18,7 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultPacksPut,
     Can,
     Peek,
     Ask,
@@ -32,6 +33,14 @@ pub enum AgentVerb {
     VaultRoomsTrunk,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    AiOptions,
+    AiImage,
+    AiSpeech,
+    AiTranscribe,
+    AiEmbed,
+    AiVideo,
+    AiVideoPoll,
+    AiVideoCancel,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -61,6 +70,7 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultPacksPut,
         Self::Can,
         Self::Peek,
         Self::Ask,
@@ -75,6 +85,14 @@ impl AgentVerb {
         Self::VaultRoomsTrunk,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::AiOptions,
+        Self::AiImage,
+        Self::AiSpeech,
+        Self::AiTranscribe,
+        Self::AiEmbed,
+        Self::AiVideo,
+        Self::AiVideoPoll,
+        Self::AiVideoCancel,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -107,6 +125,7 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultPacksPut => "vault.packs.put",
             Self::Can => "can",
             Self::Peek => "peek",
             Self::Ask => "ask",
@@ -121,6 +140,14 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => "vault.rooms.trunk",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::AiOptions => "ai.options",
+            Self::AiImage => "ai.image",
+            Self::AiSpeech => "ai.speech",
+            Self::AiTranscribe => "ai.transcribe",
+            Self::AiEmbed => "ai.embed",
+            Self::AiVideo => "ai.video",
+            Self::AiVideoPoll => "ai.video.poll",
+            Self::AiVideoCancel => "ai.video.cancel",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -149,6 +176,7 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultPacksPut
                 | Self::Can
                 | Self::Peek
                 | Self::Ask
@@ -163,6 +191,14 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::AiOptions
+                | Self::AiImage
+                | Self::AiSpeech
+                | Self::AiTranscribe
+                | Self::AiEmbed
+                | Self::AiVideo
+                | Self::AiVideoPoll
+                | Self::AiVideoCancel
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -199,6 +235,7 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultPacksPut
                 | Self::Can
                 | Self::Peek
                 | Self::Ask
@@ -213,6 +250,14 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::AiOptions
+                | Self::AiImage
+                | Self::AiSpeech
+                | Self::AiTranscribe
+                | Self::AiEmbed
+                | Self::AiVideo
+                | Self::AiVideoPoll
+                | Self::AiVideoCancel
         )
     }
     pub const fn is_section(self) -> bool {
@@ -268,6 +313,7 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultPacksPut
                 | Self::Can
                 | Self::Peek
                 | Self::Ask
@@ -282,6 +328,14 @@ impl AgentVerb {
                 | Self::VaultRoomsTrunk
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::AiOptions
+                | Self::AiImage
+                | Self::AiSpeech
+                | Self::AiTranscribe
+                | Self::AiEmbed
+                | Self::AiVideo
+                | Self::AiVideoPoll
+                | Self::AiVideoCancel
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -306,11 +360,18 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultPacksPut
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::AiImage
+                | Self::AiSpeech
+                | Self::AiTranscribe
+                | Self::AiEmbed
+                | Self::AiVideo
+                | Self::AiVideoCancel
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserType
@@ -342,6 +403,7 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultPacksPut => &["spec"],
             Self::Can => &["spec"],
             Self::Peek => &["spec"],
             Self::Ask => &["spec"],
@@ -356,6 +418,14 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::AiOptions => &["spec"],
+            Self::AiImage => &["spec"],
+            Self::AiSpeech => &["spec"],
+            Self::AiTranscribe => &["spec"],
+            Self::AiEmbed => &["spec"],
+            Self::AiVideo => &["spec"],
+            Self::AiVideoPoll => &["spec"],
+            Self::AiVideoCancel => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -386,6 +456,7 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultPacksPut => &["spec"],
             Self::Can => &["spec"],
             Self::Peek => &["spec"],
             Self::Ask => &["spec"],
@@ -400,6 +471,14 @@ impl AgentVerb {
             Self::VaultRoomsTrunk => &["room_ref", "turn_ref"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::AiOptions => &["spec"],
+            Self::AiImage => &["spec"],
+            Self::AiSpeech => &["spec"],
+            Self::AiTranscribe => &["spec"],
+            Self::AiEmbed => &["spec"],
+            Self::AiVideo => &["spec"],
+            Self::AiVideoPoll => &["spec"],
+            Self::AiVideoCancel => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],

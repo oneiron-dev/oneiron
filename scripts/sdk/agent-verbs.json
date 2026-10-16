@@ -488,6 +488,16 @@
       }
     },
     {
+      "name": "vault.packs.put",
+      "input": "PackPutRequest",
+      "output": "PackPutReceipt",
+      "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "can",
       "input": "crate::task_verb::sdk::TaskCanAskRequest",
       "output": "crate::task_verb::TaskAskPreflight",
@@ -689,6 +699,86 @@
         "room_ref": "=conversation_ref"
       },
       "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "ai.options",
+      "input": "AiOptionsRequest",
+      "output": "AiOptions",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.image",
+      "input": "AiCallRequest",
+      "output": "AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.speech",
+      "input": "AiCallRequest",
+      "output": "AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.transcribe",
+      "input": "AiCallRequest",
+      "output": "AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.embed",
+      "input": "AiCallRequest",
+      "output": "AiAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.video",
+      "input": "AiCallRequest",
+      "output": "AiVideoTicket",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.video.poll",
+      "input": "AiVideoJobRequest",
+      "output": "AiVideoJob",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "ai.video.cancel",
+      "input": "AiVideoJobRequest",
+      "output": "AiVideoCancelled",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
       "section": false
     },
     {

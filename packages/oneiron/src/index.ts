@@ -176,6 +176,9 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    packs: {
+      put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+    },
     rooms: {
       list: (): unknown[] => this.#call(() => this.#client.vaultRoomsList({}) as unknown[]),
       messages: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
@@ -193,6 +196,17 @@ export class Oneiron {
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
   ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as TaskAskWait) }
+  readonly ai = {
+    options: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiOptions(input) as unknown),
+    image: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiImage(input) as unknown),
+    speech: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiSpeech(input) as unknown),
+    transcribe: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiTranscribe(input) as unknown),
+    embed: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiEmbed(input) as unknown),
+    video: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideo(input) as unknown), {
+      poll: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoPoll(input) as unknown),
+      cancel: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoCancel(input) as unknown),
+    }),
+  }
 
 // END GENERATED FACADE VERBS
 

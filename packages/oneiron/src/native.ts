@@ -41,6 +41,7 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultPacksPut(input: unknown): unknown
 can(requestJson: string): string
 peek(requestJson: string): string
 ask(input: unknown): unknown
@@ -55,6 +56,14 @@ vaultRoomsGet(input: unknown): unknown
 vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+aiOptions(input: unknown): unknown
+aiImage(input: unknown): unknown
+aiSpeech(input: unknown): unknown
+aiTranscribe(input: unknown): unknown
+aiEmbed(input: unknown): unknown
+aiVideo(input: unknown): unknown
+aiVideoPoll(input: unknown): unknown
+aiVideoCancel(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

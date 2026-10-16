@@ -218,6 +218,9 @@ class Oneiron:
         return json.loads(_translate(lambda: self._client.ask(json.dumps(input))))
     def wait(self, handle, step_key="sdk.wait"):
         return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
+    @property
+    def ai(self) -> "Oneiron._AiVerbs":
+        return Oneiron._AiVerbs(self._client)
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -265,6 +268,9 @@ class Oneiron:
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
+        def packs(self) -> "Oneiron._VaultPacksVerbs":
+            return Oneiron._VaultPacksVerbs(self._client)
+        @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs":
             return Oneiron._VaultRoomsVerbs(self._client)
     class _VaultClaimsVerbs:
@@ -291,6 +297,11 @@ class Oneiron:
         def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
             """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
             return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultPacksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -310,5 +321,30 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+    class _AiVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def options(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
+        def image(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_image(json.dumps(spec))))
+        def speech(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_speech(json.dumps(spec))))
+        def transcribe(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_transcribe(json.dumps(spec))))
+        def embed(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_embed(json.dumps(spec))))
+        @property
+        def video(self) -> "Oneiron._AiVideoVerbs":
+            return Oneiron._AiVideoVerbs(self._client)
+    class _AiVideoVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
+        def poll(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_video_poll(json.dumps(spec))))
+        def cancel(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_video_cancel(json.dumps(spec))))
 
 # END GENERATED FACADE VERBS

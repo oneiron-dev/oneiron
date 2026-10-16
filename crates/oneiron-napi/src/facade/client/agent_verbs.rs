@@ -205,6 +205,12 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn can(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -307,6 +313,54 @@ impl NativeClient {
     pub fn vault_rooms_speak(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.speak", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.options", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_image(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.image", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_speech(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.speech", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_transcribe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.transcribe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_embed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.embed", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video_poll(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video.poll", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video.cancel", input)
             .map_err(facade_error)
     }
 }

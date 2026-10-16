@@ -78,6 +78,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.packs.put",
+                crate::code_run::vault_read::request_schema::<PackPutRequest>(),
+            ),
+            (
                 "can",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::TaskCanAskRequest,
@@ -138,6 +142,38 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.rooms.speak",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
+            ),
+            (
+                "ai.options",
+                crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
+            ),
+            (
+                "ai.image",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.speech",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.transcribe",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.embed",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.video",
+                crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "ai.video.poll",
+                crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
+            ),
+            (
+                "ai.video.cancel",
+                crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
             ),
             (
                 "self.browser.open",
@@ -341,6 +377,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "can" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -457,6 +500,62 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "ai.options" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.image" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.speech" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.transcribe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.embed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.video" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.video.poll" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.video.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -531,6 +630,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.packs.put" => {
+            let _input: PackPutRequest = decode(value.clone())?;
+        }
         "can" => {
             let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
         }
@@ -572,6 +674,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
+        }
+        "ai.options" => {
+            let _input: AiOptionsRequest = decode(value.clone())?;
+        }
+        "ai.image" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.speech" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.transcribe" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.embed" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.video" => {
+            let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "ai.video.poll" => {
+            let _input: AiVideoJobRequest = decode(value.clone())?;
+        }
+        "ai.video.cancel" => {
+            let _input: AiVideoJobRequest = decode(value.clone())?;
         }
         "self.browser.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
@@ -627,6 +753,7 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "can" => encode(can(memory, decode(value)?)?),
         "peek" => encode(peek(memory, decode(value)?)?),
         "ask" => encode(ask(memory, decode(value)?)?),
@@ -641,6 +768,14 @@ pub fn invoke(
         "vault.rooms.trunk" => encode(vault_rooms_trunk(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "ai.options" => encode(ai_options(memory, decode(value)?)?),
+        "ai.image" => encode(ai_image(memory, decode(value)?)?),
+        "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
+        "ai.transcribe" => encode(ai_transcribe(memory, decode(value)?)?),
+        "ai.embed" => encode(ai_embed(memory, decode(value)?)?),
+        "ai.video" => encode(ai_video(memory, decode(value)?)?),
+        "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
+        "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
         _ => {
             Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
@@ -858,6 +993,9 @@ pub fn vault_kv_namespaces(
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
 }
+pub fn vault_packs_put(memory: &Memory<'_>, input: PackPutRequest) -> MemoryResult<PackPutReceipt> {
+    crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
 pub fn can(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::TaskCanAskRequest,
@@ -974,6 +1112,33 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn ai_options(memory: &Memory<'_>, input: AiOptionsRequest) -> MemoryResult<AiOptions> {
+    crate::task_verb::sdk::host_only(memory, "ai.options", &input)
+}
+pub fn ai_image(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.image", &input)
+}
+pub fn ai_speech(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.speech", &input)
+}
+pub fn ai_transcribe(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.transcribe", &input)
+}
+pub fn ai_embed(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.embed", &input)
+}
+pub fn ai_video(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiVideoTicket> {
+    crate::task_verb::sdk::host_only(memory, "ai.video", &input)
+}
+pub fn ai_video_poll(memory: &Memory<'_>, input: AiVideoJobRequest) -> MemoryResult<AiVideoJob> {
+    crate::task_verb::sdk::host_only(memory, "ai.video.poll", &input)
+}
+pub fn ai_video_cancel(
+    memory: &Memory<'_>,
+    input: AiVideoJobRequest,
+) -> MemoryResult<AiVideoCancelled> {
+    crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
 }
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
