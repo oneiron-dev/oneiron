@@ -11726,7 +11726,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -11907,6 +11907,16 @@
      "path": "src/compaction/tests/epoch_regressions.rs",
      "purpose": "Symmetric blank-text refusal and fail-closed durable epoch advancement",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/withdrawn.rs",
+     "purpose": "What a withdrawn epoch summary keeps: its keyframe, without its words",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "m",
@@ -13123,7 +13133,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 7,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -13401,6 +13411,23 @@
      "path": "src/context_board/room_verbs_tests.rs",
      "purpose": "Room render reads: the caller's scoped read and every present peer's",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ScratchpadAppendReceipt",
+      "ScratchpadBoard",
+      "ScratchpadMark"
+     ],
+     "path": "src/context_board/scratchpad.rs",
+     "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -15051,7 +15078,7 @@
      "path": "src/deletion/sweep_queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -45520,7 +45547,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -45569,7 +45596,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46656,7 +46683,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2803,
+   "source_files": 2805,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56936,7 +56963,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -56947,6 +56974,16 @@
      "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/scratchpad.rs",
+     "purpose": "POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -62429,7 +62466,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 221,
+     "files": 222,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62669,7 +62706,7 @@
    },
    "over_bar": 19,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 404,
+   "source_files": 405,
    "test_files": 182
   },
   "oneiron-spawn": {
