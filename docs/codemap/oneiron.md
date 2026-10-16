@@ -132,7 +132,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 23 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
 | `src/attempt_queue/engine/workflow.rs` | src | s | 3 crate-vis | — | Transactional point-claim and retry lineage reads for ordered host composition |
-| `src/attempt_queue/executor.rs` | src | s | 1 fn · 2 crate-vis | — | Write-once executor identity for a skill-bearing attempt's terminal receipt |
+| `src/attempt_queue/executor.rs` | src | s | 2 fn · 2 crate-vis | — | Write-once executor identity for a skill-bearing attempt's terminal receipt |
 | `src/attempt_queue/mod.rs` | src | s | 4 re-export · 17 crate-vis | — | Generic LMDB-backed background attempt queue |
 | `src/attempt_queue/observe.rs` | src | s | 1 fn · 2 crate-vis | — | Post-commit invalidations for local run-tree observers |
 | `src/attempt_queue/ports.rs` | src | s | — | — | JobQueue adapter over the existing lease state machine |
@@ -1184,7 +1184,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/delete/mod.rs` | src | s | 3 re-export | — | — |
 | `src/deletion/delete/outcome.rs` | src | s | 2 struct · 1 crate-vis | DeleteEntityOptions, DeleteEntityOutcome | Reason-aware delete result type and its missing() constructor |
 | `src/deletion/delete/preview.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DeleteEntityPreview | Snapshot-bound impact preview for the one-action, confirmed delete door |
-| `src/deletion/derived_rows.rs` | src | s | 1 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
+| `src/deletion/derived_rows.rs` | src | s | 2 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
 | `src/deletion/erase/active_store.rs` | src | s | 3 crate-vis | — | — |
 | `src/deletion/erase/markers.rs` | src | s | 6 crate-vis | — | — |
 | `src/deletion/erase/mod.rs` | src | s | 4 crate-vis | — | — |
@@ -1893,7 +1893,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/learning/project.rs` | src | m | 1 struct · 1 fn · 10 crate-vis | SettingFit | The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out |
 | `src/learning/read.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | LearningRead | Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers) |
 | `src/learning/retest.rs` | src | s | 1 struct · 1 enum · 1 fn | Retest, RetestScore | `learning.retest_noise`: how often a judge or scorer disagrees with itself when it scores the same case twice |
-| `src/learning_setting.rs` | src | m | 3 struct · 1 enum · 6 fn · 9 const · 2 crate-vis | SettingCheck, SettingMode, SettingRow, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
+| `src/learning_setting.rs` | src | m | 3 struct · 1 enum · 6 fn · 9 const · 3 crate-vis | SettingCheck, SettingMode, SettingRow, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
 | `src/lens/atom/atom_enum.rs` | src | m | 1 enum · 5 fn · 2 crate-vis | LensAtom | LensAtom closed enum with wire codec and primitive/validate/budget dispatch |
 | `src/lens/atom/atom_leaves.rs` | src | m | 27 struct · 6 enum · 2 fn · 16 crate-vis | AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom, GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll +25 | Leaf payload structs with per-atom validate, fallback, and budget impls |
 | `src/lens/atom/atom_node.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LensNode | LensNode depth-bounded tree type with allocation-guarded Deserialize seeds |
@@ -1937,7 +1937,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 15 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | m | 184 mod · 72 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 185 mod · 72 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -2094,6 +2094,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/outbound/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Outbound schedule/dispatch and the calendar read/search/freebusy/invite surface |
 | `src/memory/outbound/schedule.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | Schedule-only dispatch of connector sends through the OF-327 chokepoint |
 | `src/memory/outbound/types.rs` | src | s | 3 struct · 1 crate-vis | OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext | Outbound schedule DTOs: context, draft input, and intent receipt |
+| `src/memory/owner_door.rs` | src | s | 2 fn | — | The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the… |
 | `src/memory/read_lane.rs` | src | m | 14 crate-vis | — | The bound actor's one read lane |
 | `src/memory/reads.rs` | src | m | 5 struct · 10 fn · 2 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
 | `src/memory/recall/call_mode.rs` | src | s | 1 enum · 5 fn · 1 const · 1 crate-vis | RecallEffort | Call mode (retrieval hub #call-mode): recall for live calls |
@@ -2605,12 +2606,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/direct_dispatch.rs` | src | s | 2 crate-vis | — | Ordinary outbound receipts for hosts that call dispatch directly |
 | `src/receipt/dispatch_observation.rs` | src | s | 9 crate-vis | — | Passive OF-327 per-try audit observations; never resend authority |
 | `src/receipt/family.rs` | src | m | 2 struct · 13 fn · 5 crate-vis | PendingTrayAsk, PendingTrayQuery | — |
-| `src/receipt/field_set.rs` | src | m | 1 struct · 13 fn · 1 crate-vis | ContextReceiptFields | — |
+| `src/receipt/field_set.rs` | src | m | 1 struct · 15 fn · 1 crate-vis | ContextReceiptFields | — |
 | `src/receipt/grant.rs` | src | m | 4 struct · 1 fn · 6 crate-vis | StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery | — |
 | `src/receipt/identity_kind.rs` | src | m | 2 fn · 2 crate-vis | — | — |
 | `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 11 fn · 4 const · 93 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 15 crate-vis | — | — |
-| `src/receipt/mod.rs` | src | s | 9 re-export · 16 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/mod.rs` | src | s | 10 re-export · 17 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/pack_attribution.rs` | src | s | 6 struct · 1 fn · 4 crate-vis | ContributionCheck, CreditOptions, PackAttributionFields, PackLearningContext, SkillContribution, UsedProvenanceEdge | Frozen execution and actual-use facts on an attempt's pack receipt |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
 | `src/receipt/record.rs` | src | m | 12 crate-vis | — | First-class, replicated immutable terminal outbound receipt record, and the served-form receipt record a… |
 | `src/receipt/send_receipt_txn.rs` | src | s | 2 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
@@ -2867,11 +2869,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/codec.rs` | src | m | 11 crate-vis | — | Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode |
 | `src/skill_attribution/judge.rs` | src | m | 2 struct · 1 trait · 1 fn · 2 const · 4 crate-vis | AttributionDecisions, AttributionNotes, AttributionRules | Classification: the deterministic rule tier, the host's decisions for the model tier through the shared… |
 | `src/skill_attribution/judge_supersession.rs` | src | s | 1 struct · 2 fn · 6 crate-vis | DisplacedJudgeReceipt | Judge-revision provenance for routed receipts, and non-destructive displacement |
-| `src/skill_attribution/mod.rs` | src | s | 8 re-export · 6 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/late_credit.rs` | src | s | 2 struct · 1 fn · 3 crate-vis | LateCreditReceipt, LateCreditShare | Late credit over the run's recorded, actually-used derived-from edges |
+| `src/skill_attribution/mod.rs` | src | s | 10 re-export · 6 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
+| `src/skill_attribution/pack_learning.rs` | src | s | 1 struct · 1 fn | AnchoredPackOutcome | The manifest-to-learning bridge |
 | `src/skill_attribution/positive.rs` | src | s | 1 struct · 1 enum · 4 fn | PositiveFinding, PositiveSkillProposal | The positive lane (OF-379): a win that taught the skill something |
 | `src/skill_attribution/projector.rs` | src | s | 6 fn · 5 crate-vis | — | Evidence door and ordered idempotent projection from evidence to judgments and edit proposals |
 | `src/skill_attribution/split.rs` | src | s | 3 crate-vis | — | The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out… |
-| `src/skill_attribution/sweep.rs` | src | m | 2 struct · 1 trait · 2 fn | AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource | TASK-lane receipt pump: capture once, route, then resume both idempotent projections |
+| `src/skill_attribution/sweep.rs` | src | s | 2 struct · 1 trait · 2 fn | AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource | TASK-lane receipt pump: capture once, route, then resume both idempotent projections |
 | `src/skill_attribution/tests.rs` | test | s | — | — | — |
 | `src/skill_attribution/tests/resident.rs` | test | m | — | — | — |
 | `src/skill_attribution/tests/sweep.rs` | test | m | — | — | — |
@@ -3300,8 +3304,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 1 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | L | 19 struct · 1 enum · 6 fn · 1 re-export | BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest, RecallRequest, ReceiptsRequest +12 | Shared typed agent-verb inputs and generated transport dispatch |
-| `src/task_verb/sdk_generated.rs` | src | L | 55 fn · 2 const | — | — |
+| `src/task_verb/sdk.rs` | src | L | 19 struct · 1 enum · 6 fn · 4 re-export | BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest, RecallRequest, ReceiptsRequest +12 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk_connector.rs` | src | s | 5 struct · 3 fn | ConnectorEntry, ConnectorListRequest, ConnectorNameRequest, ConnectorView, OutboundScheduleRequest | The `connector.*` rows over the foreign surface's catalog (`connector.list`, the discovery lens… |
+| `src/task_verb/sdk_generated.rs` | src | XL | 69 fn · 2 const | — | — |
+| `src/task_verb/sdk_host.rs` | src | m | 10 struct · 3 enum · 6 fn | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVideoCancelled, AiVideoJob, AiVideoJobRequest +5 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and the… |
+| `src/task_verb/sdk_self.rs` | src | s | 4 struct · 2 fn | DiaryEntryReceipt, DiaryEntryRequest, SteerReceipt, SteerRequest | The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one… |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |
@@ -3374,6 +3381,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/thread_passport/tests.rs` | test | m | — | — | — |
 | `src/thread_passport/vault_doors.rs` | src | s | 6 fn · 1 crate-vis | — | — |
 | `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 3 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
+| `src/typed_body.rs` | src | m | 4 struct · 1 enum · 11 fn · 10 crate-vis | TypedBodyCommit, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState | Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module… |
 | `src/vault/actors_memory.rs` | src | m | 1 struct · 23 fn · 1 crate-vis | ActorBound | Vault actor binding, structural kinds and code-memory attachment |
 | `src/vault/database_digests.rs` | src | s | 1 fn · 3 crate-vis | — | One BLAKE3 digest per named database: the comparison two vaults given the same writes can be held to… |
 | `src/vault/doctor_manifest.rs` | src | m | 4 struct · 1 enum · 2 fn · 11 crate-vis | TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport | Vault doctor report and text-index manifest handshake |
