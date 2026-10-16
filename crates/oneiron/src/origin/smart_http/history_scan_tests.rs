@@ -4,7 +4,9 @@
 
 use std::process::{Command, Stdio};
 
-use super::tests::{CapturingSink, commit_file, git, seeded_repo, served_repo, temp_vault};
+use super::tests::{
+    CapturingSink, commit_file, git, hooks_dir, seeded_repo, served_repo, temp_vault,
+};
 use super::*;
 
 /// A credential-shaped line the door's detector flags, built at run time.
@@ -270,16 +272,36 @@ fn history_blobs_under_names_rev_list_cannot_pass_on_still_land() {
     }
 }
 
-// The scan caps below are new with the history walk; they have no before.
-
-/// H263 review r2 (Astra F4) and r3 (Sol F2, Astra F8): the byte cap bounds no
-/// memory on its own, since the door holds each line and each record as its
-/// own allocation. Blobs under the byte cap whose lines, each record counting
-/// as one at least, pass the budget across both streams are refused before
-/// any line is split; at the budget they still parse whole. Framed streams,
-/// headers included, past their own bound are refused as they are read.
+/// Rule 5 (the owner's rate law): the door holds memory per blob, never per
+/// push, so an authenticated push is never refused for how much it carries in
+/// all. Five files of a million one-character lines, ten MiB together, split
+/// into more lines than the per-push budget H263 set (4Mi): that window was
+/// refused whole; it now scans clean and lands.
+#[cfg(unix)]
 #[test]
-fn door_streams_past_the_line_budget_are_refused_before_splitting() {
+fn a_push_of_many_short_lines_scans_whole_and_lands() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, second) = served_repo(&vault);
+    let source = source.path();
+    let column = "7\n".repeat(1 << 20);
+    for part in 0..4 {
+        commit_file(source, &format!("column-{part}.csv"), &column);
+    }
+    let tip = commit_file(source, "column-4.csv", &column);
+    let report = receive_pack(&vault, source, None, &tip, "refs/heads/bulk", &[&second]);
+    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
+    assert!(report.landing.is_some());
+    assert_eq!(git(&repo, &["rev-parse", "refs/heads/bulk"]), tip.as_str());
+}
+
+// The bounds below are new with the per-blob scan; they have no before.
+
+/// The door holds one blob at a time, so its memory floor is per blob: a
+/// record whose blob is past the bound is refused before its bytes are read,
+/// and records up to the bound parse whole, in both streams, however many
+/// there are. A record that cannot be read whole is the generic refusal.
+#[test]
+fn framed_records_past_the_blob_bound_are_refused_before_they_are_read() {
     let record = |oid: &str, content: &[u8], terminated: bool| {
         let mut record = format!("blob {oid} {} notes.txt\n", content.len()).into_bytes();
         record.extend_from_slice(content);
@@ -288,32 +310,152 @@ fn door_streams_past_the_line_budget_are_refused_before_splitting() {
         }
         record
     };
+    let read = |mut stream: &[u8], terminated: bool, blob_bytes: u64| {
+        let mut lines = Vec::new();
+        let bounds = ScanBounds::new(blob_bytes, 1).expect("bounds");
+        for_each_framed_blob(&mut stream, terminated, bounds, &mut |blob| {
+            lines.push(blob.lines().count());
+        })
+        .map(|()| lines)
+    };
     let mut tip = record(&"1".repeat(40), &b"\n".repeat(3), false);
     tip.extend(record(&"3".repeat(40), b"", false));
     let history = record(&"2".repeat(40), b"first\nsecond\n", true);
-    assert!(parse_door_streams(&tip, &history, 5).is_err());
-    let (blobs, tip_blobs) =
-        parse_door_streams(&tip, &history, 6).expect("at the budget both streams parse");
-    assert_eq!(tip_blobs, 2);
-    let lines: Vec<usize> = blobs.iter().map(|blob| blob.added_lines.len()).collect();
-    assert_eq!(lines, [3, 0, 2]);
-
-    let dir = tempfile::tempdir().expect("framed tempdir");
-    let path = dir.path().join("stream");
-    fs::write(&path, &tip).expect("write framed stream");
-    let mut short = tip.len() as u64 - 1;
-    assert!(read_framed(&path, &mut short).is_err());
-    let mut exact = tip.len() as u64;
-    assert_eq!(
-        read_framed(&path, &mut exact).expect("within the bound"),
-        tip
-    );
-    assert_eq!(exact, 0);
+    assert_eq!(read(&tip, false, 3).expect("tip at the bound"), [3, 0]);
+    assert_eq!(read(&history, true, 13).expect("history at the bound"), [2]);
+    assert!(matches!(
+        read(&history, true, 12),
+        Err(InputRefused::BlobTooLarge)
+    ));
+    // Declared past the bound, the record is refused before a byte of it is
+    // held or reserved: a petabyte header with no content behind it.
+    let declared = |bytes: u64| format!("blob {} {bytes} notes.txt\n", "4".repeat(40)).into_bytes();
+    assert!(matches!(
+        read(&declared(1 << 50), false, 1024),
+        Err(InputRefused::BlobTooLarge)
+    ));
+    assert!(matches!(
+        read(&declared(1 << 20), false, 1 << 20),
+        Err(InputRefused::Unverified)
+    ));
+    let unterminated = record(&"2".repeat(40), b"first\n", false);
+    assert!(matches!(
+        read(&unterminated, true, 1024),
+        Err(InputRefused::Unverified)
+    ));
 }
 
+/// The door's own refusal names the bound and the key that moves it, and
+/// nothing of the push; any other unreadable input stays the one generic
+/// refusal. Round 1 (Astra, tests 3 and 6): a history stream that breaks after
+/// a clean tip refuses the window, a blob the scanner cannot read refuses it,
+/// and only tip blobs are read for LFS pointers.
+#[test]
+fn a_window_past_the_blob_bound_publishes_a_refusal_naming_its_key() {
+    let (_vault_dir, vault) = temp_vault();
+    let (_repo_dir, root, oid) = seeded_repo();
+    let repo = unpinned_repo_ref(&root);
+    let window = |blobs: &[u8], history: &[u8], blob_bytes: u64| {
+        let (_hook_root, hooks) = hooks_dir();
+        let update = format!("ref {} {} refs/heads/bulk\n", "0".repeat(40), oid.as_str());
+        fs::write(hooks.request_path(), update).expect("request");
+        fs::write(hooks.blobs_path(), blobs).expect("blob stream");
+        fs::write(hooks.history_path(), history).expect("history stream");
+        let report = serve_door_window(
+            &vault,
+            &repo,
+            &hooks,
+            &AtomicBool::new(false),
+            Instant::now() + DOOR_WINDOW_TIMEOUT,
+            DoorWindowContext {
+                seam: DoorSeam::Landed,
+                admission: None,
+                scan: ScanBounds::new(blob_bytes, 1).expect("bounds"),
+            },
+        )
+        .expect("window answered");
+        let published = fs::read_to_string(hooks.verdict_path()).expect("verdict");
+        (report, published)
+    };
+    let record = |oid: char, path: &str, content: &[u8], terminated: bool| {
+        let mut record = format!(
+            "blob {} {} {path}\n",
+            oid.to_string().repeat(40),
+            content.len()
+        )
+        .into_bytes();
+        record.extend_from_slice(content);
+        if terminated {
+            record.push(b'\n');
+        }
+        record
+    };
+    let content = "clean line\n".repeat(400);
+    let framed = format!(
+        "blob {} {} bulk.txt\n{content}",
+        "5".repeat(40),
+        content.len()
+    );
+    let (report, published) = window(framed.as_bytes(), b"", 1024);
+    assert_eq!(
+        report.verdict,
+        DoorWindowVerdict::Rejected {
+            reasons: vec![DOOR_BLOB_TOO_LARGE.to_owned()]
+        }
+    );
+    assert_eq!(
+        published,
+        "oneiron door refused this push: a blob is larger than limits.git_scan_blob_bytes"
+    );
+    let unverified = "oneiron door refused this push: receive-pack input could not be verified";
+    let (report, published) = window(&framed.as_bytes()[..100], b"", 1 << 20);
+    assert_eq!(published, unverified, "{:?}", report.verdict);
+    let clean_tip = record('6', "notes.txt", b"a clean note\n", false);
+    let broken_history = &record('7', "old.txt", b"an old note\n", true)[..30];
+    let (report, published) = window(&clean_tip, broken_history, 1 << 20);
+    assert_eq!(published, unverified, "{:?}", report.verdict);
+    let unreadable = record('8', "logo.png", b"\x89PNG\0\x01", false);
+    let clean_history = record('7', "old.txt", b"an old note\n", true);
+    let (report, _) = window(&unreadable, &clean_history, 1 << 20);
+    assert_eq!(
+        report.verdict,
+        DoorWindowVerdict::Rejected {
+            reasons: vec!["receive-pack scan could not complete".to_owned()]
+        }
+    );
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize 12\n",
+        "a".repeat(64)
+    );
+    let (report, _) = window(
+        &record('9', "asset.bin", pointer.as_bytes(), false),
+        &record('b', "old.bin", pointer.as_bytes(), true),
+        1 << 20,
+    );
+    assert_eq!(
+        report
+            .lfs_pointers
+            .iter()
+            .map(|pointer| pointer.path.as_str())
+            .collect::<Vec<_>>(),
+        ["asset.bin"]
+    );
+}
+
+/// The hook keeps the same floors before it announces anything: a blob past
+/// the per-blob bound, or framed bytes that would take the disk below its
+/// floor, refuse the push with a reason naming the key, and frame no partial
+/// history. Blobs that each fit land together, however much they add up to.
+///
+/// Round 1 (Astra F2, Sol F2): the free space is the number before the
+/// capacity percentage, so a filesystem name with a space in it is read
+/// right, and a `df` that fails refuses the push even when it printed a row.
+/// A stand-in `df` sets the free space, so the floor is crossed by the second
+/// history record rather than at the start.
 #[cfg(unix)]
 #[test]
-fn hook_refuses_a_push_past_the_scan_cap_before_announcing_it() {
+fn hook_refuses_a_blob_past_its_bound_or_the_disk_floor_before_announcing_it() {
+    use std::os::unix::fs::PermissionsExt;
     let (_source_dir, source, _) = seeded_repo();
     let bare_dir = tempfile::tempdir().expect("bare tempdir");
     let source_path = source.to_str().expect("utf-8 source path");
@@ -322,59 +464,196 @@ fn hook_refuses_a_push_past_the_scan_cap_before_announcing_it() {
         &["clone", "-q", "--bare", "--", source_path, "cap.git"],
     );
     let bare = bare_dir.path().join("cap.git");
-    // Four KiB of clean text one commit adds and the next deletes: only the
-    // history walk carries it, so the cap is what refuses.
-    commit_file(&source, "bulk.txt", &"clean line\n".repeat(400));
-    let tip = commit_removal(&source, "bulk.txt");
+    // Two blobs of 4,400 bytes of clean text one commit adds and the next
+    // deletes: only the history walk carries them, so the hook's own bounds
+    // are what decide.
+    let bulk = "clean line\n".repeat(400);
+    commit_file(&source, "bulk.txt", &bulk);
+    commit_file(&source, "more.txt", &bulk.replace("clean", "plain"));
+    commit_removal(&source, "bulk.txt");
+    let tip = commit_removal(&source, "more.txt");
     git(&bare, &["fetch", "-q", "--", source_path, tip.as_str()]);
     let hooks_root = tempfile::tempdir().expect("hooks tempdir");
-    let run = |cap: u64| {
-        let hooks = DoorHooksDir::materialize_with_scan_cap(hooks_root.path(), cap)
-            .expect("materialize door hooks");
-        // A hook under the cap announces its request, then waits for this.
-        hooks.publish_verdict(DOOR_VERDICT_OK).expect("verdict");
-        let mut child = Command::new(hooks.path().join(DOOR_PRE_RECEIVE_HOOK_NAME))
-            .current_dir(&bare)
-            .env("GIT_DIR", &bare)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn hook");
-        let update = format!("{} {} refs/heads/bulk\n", "0".repeat(40), tip.as_str());
-        child
-            .stdin
-            .take()
-            .expect("hook stdin")
-            .write_all(update.as_bytes())
-            .expect("ref update");
-        let output = child.wait_with_output().expect("hook exits");
-        let history = fs::read(hooks.history_path()).ok();
-        (output, hooks.request_path().exists(), history)
+    let fake_bin = tempfile::tempdir().expect("stand-in df directory");
+    let fake_df = fake_bin.path().join("df");
+    fs::write(
+        &fake_df,
+        "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n%s\\n' \"$STAND_IN_DF_ROW\"\nexit \"$STAND_IN_DF_EXIT\"\n",
+    )
+    .expect("stand-in df");
+    fs::set_permissions(&fake_df, fs::Permissions::from_mode(0o755)).expect("executable");
+    let path = format!(
+        "{}:{}",
+        fake_bin.path().display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    // `df`: the stand-in's row and exit status, or the host's own `df`.
+    // `updates`: the hook's stdin. It answers the hook's output and the
+    // request and blob streams it announced, if any, and its history stream.
+    let run_with =
+        |blob_bytes: u64, disk_floor_bytes: u64, df: Option<(&str, &str)>, updates: &str| {
+            let scan = ScanBounds::new(blob_bytes, disk_floor_bytes).expect("bounds");
+            let hooks = DoorHooksDir::materialize_with(hooks_root.path(), scan)
+                .expect("materialize door hooks");
+            // A hook within its bounds announces its request, then waits for this.
+            hooks.publish_verdict(DOOR_VERDICT_OK).expect("verdict");
+            let mut hook = Command::new(hooks.path().join(DOOR_PRE_RECEIVE_HOOK_NAME));
+            if let Some((row, exit)) = df {
+                hook.env("PATH", &path)
+                    .env("STAND_IN_DF_ROW", row)
+                    .env("STAND_IN_DF_EXIT", exit);
+            }
+            let mut child = hook
+                .current_dir(&bare)
+                .env("GIT_DIR", &bare)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn hook");
+            child
+                .stdin
+                .take()
+                .expect("hook stdin")
+                .write_all(updates.as_bytes())
+                .expect("ref update");
+            let output = child.wait_with_output().expect("hook exits");
+            let request = fs::read(hooks.request_path()).ok();
+            let blobs = fs::read(hooks.blobs_path()).ok();
+            (output, request, blobs, fs::read(hooks.history_path()).ok())
+        };
+    let creation = |name: &str| format!("{} {} {name}\n", "0".repeat(40), tip.as_str());
+    let run = |blob_bytes: u64, disk_floor_bytes: u64, df: Option<(&str, &str)>| {
+        let update = creation("refs/heads/bulk");
+        let (output, request, _, history) = run_with(blob_bytes, disk_floor_bytes, df, &update);
+        (output, request.is_some(), history)
+    };
+    let refused_naming = |blob_bytes: u64, disk_floor_bytes: u64, df, key: &str| {
+        let (refused, announced, history) = run(blob_bytes, disk_floor_bytes, df);
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "{key}: {stderr}");
+        assert!(
+            stderr.contains("oneiron door refused this push: ") && stderr.contains(key),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("clean line"), "{stderr}");
+        assert!(!announced, "a refused push announces no request");
+        assert!(history.is_none(), "and frames no partial history");
     };
 
-    let (refused, announced, history) = run(1024);
-    assert!(
-        !refused.status.success(),
-        "past the cap the push is refused"
+    refused_naming(4399, 1, None, "limits.git_scan_blob_bytes");
+    refused_naming(
+        4400,
+        ScanBounds::MAX_BYTES,
+        None,
+        "limits.git_scan_disk_floor_bytes",
     );
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("more than 1024 blob bytes"),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
+    // 6 KiB free under a spaced name, whose used column is near a GiB: the
+    // tip and the first history record fit, the second crosses the floor.
+    refused_naming(
+        4400,
+        1,
+        Some(("example volume 1000000 999994 6 100% /stand/in", "0")),
+        "limits.git_scan_disk_floor_bytes",
     );
-    assert!(!announced, "a refused push announces no request");
-    assert!(history.is_none(), "and frames no partial history");
+    // Every framed byte counts, the tip's and the headers' too. The tip's
+    // `README.md` frames 5 + 128 + 9 bytes and each history record 4,400 +
+    // 128 + 8: 9,214 in all. A 9,100-byte allowance (9 KiB free, a 116-byte
+    // floor) refuses it, where the blob bytes alone or the history alone fit.
+    refused_naming(
+        4400,
+        116,
+        Some(("example 1000000 999991 9 100% /stand/in", "0")),
+        "limits.git_scan_disk_floor_bytes",
+    );
+    // A df that fails refuses the push, whatever row it printed, and so does
+    // a row whose name could be read as the columns (round 2, both F1), even
+    // where df printed its own columns as unknown or negative (round 3, both
+    // F1), and a row whose space available is unknown or negative.
+    for (row, exit) in [
+        ("example 1000000 1 999999 1% /stand/in", "1"),
+        (
+            "example 1000000 1 999999 1% 1638400 1605632 32768 98% /stand/in",
+            "0",
+        ),
+        ("example 1000000 1 999999 1% 0 0 0 - /stand/in", "0"),
+        (
+            "example 1000000 1 999999 1% 1048576 1036288 -4096 101% /stand/in",
+            "0",
+        ),
+        (
+            "example 1048576 1036288 -4096 101% /stand/in 1000000 1 999999 1%",
+            "0",
+        ),
+        ("example 0 0 0 - /stand/in", "0"),
+        ("example 1048576 1036288 -4096 101% /stand/in", "0"),
+    ] {
+        let (refused, announced, history) = run(4400, 1, Some((row, exit)));
+        assert!(!refused.status.success(), "{row}");
+        assert!(!announced && history.is_none(), "{row}");
+    }
 
-    // Control: under a cap that fits, the same push is announced with the
-    // deleted blob framed whole.
-    let (admitted, announced, history) = run(1 << 20);
-    assert!(admitted.status.success());
+    // Three hundred refs naming one move frame its blobs once (rule-5 review
+    // r1, both F3): the tip's README record and the two history records,
+    // 9,214 bytes, fit 16 KiB free, where a record per ref would not. The
+    // request still names every ref.
+    let updates: String = (0..300)
+        .map(|n| creation(&format!("refs/heads/alias-{n:03}")))
+        .collect();
+    let (admitted, request, blobs, _) = run_with(
+        4400,
+        1,
+        Some(("example volume 1000000 999984 16 100% /stand/in", "0")),
+        &updates,
+    );
+    assert!(
+        admitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&admitted.stderr)
+    );
+    let request = String::from_utf8(request.expect("announced")).expect("request text");
+    assert_eq!(
+        request
+            .lines()
+            .filter(|line| line.starts_with("ref "))
+            .count(),
+        300
+    );
+    let blobs = blobs.expect("blob stream");
+    let records = blobs
+        .split(|byte| *byte == b'\n')
+        .filter(|line| line.starts_with(b"blob "))
+        .count();
+    assert_eq!(records, 1, "one README record for three hundred refs");
+
+    // Each blob at the bound, twice the bound together: the push is
+    // announced with both deleted blobs framed whole, under the host's df and
+    // under 12 KiB free.
+    let (admitted, announced, _) = run(
+        4400,
+        1,
+        Some(("example volume 1000000 999988 12 100% /stand/in", "0")),
+    );
+    assert!(
+        admitted.status.success() && announced,
+        "{}",
+        String::from_utf8_lossy(&admitted.stderr)
+    );
+    let (admitted, announced, history) = run(4400, 1, None);
+    assert!(
+        admitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&admitted.stderr)
+    );
     assert!(announced);
     let history = history.expect("history stream");
     assert!(history.starts_with(b"blob "));
     assert_eq!(
         history.windows(11).filter(|w| w == b"clean line\n").count(),
+        400
+    );
+    assert_eq!(
+        history.windows(11).filter(|w| w == b"plain line\n").count(),
         400
     );
 }

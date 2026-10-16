@@ -1,8 +1,9 @@
 //! Native document editing organ crate: the retained OPC substrate, typed
 //! read-only deck views over it, deck design plans compiled from a kept
 //! brief, the closed SVG subset compiled to native shapes, native tables and
-//! classic charts written with their embedded workbooks, and native Word
-//! revisions over a pinned, Apache-2.0-selected stemma fork.
+//! classic charts written with their embedded workbooks, narrow value and
+//! text edits in place, and native Word revisions over a pinned,
+//! Apache-2.0-selected stemma fork.
 //!
 //! The wrapper owns no global session or handle store. Its document value
 //! facade addresses stable block IDs and staleness guards; the writer applies
@@ -11,6 +12,7 @@
 
 pub mod deck;
 pub mod design_plan;
+pub mod edit;
 pub mod emit;
 pub mod graphic;
 pub mod native_patch;

@@ -5,13 +5,14 @@ use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecord
 use crate::edge::EdgeKind;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::vault::ReadMode;
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EdgeInfo, EntityId, Error, Result};
 use std::collections::HashSet;
 
 type GraphAskNeighbors = Vec<(EntityId, u8, Vec<u8>)>;
 type TimelineEntityParts = (u8, u64, Vec<u8>);
-type SupersessionParts = (TimelineEntityParts, TimelineEntityParts);
+type SupersessionSide = (u8, u64, Vec<u8>, RevisionRef);
+type SupersessionParts = (SupersessionSide, SupersessionSide);
 
 impl ScopedRead<'_> {
     /// The graph-ask recipe reads at most `limit` usable outgoing neighbors.
@@ -267,7 +268,8 @@ impl ScopedRead<'_> {
         self.is_entity_raw_readable_with_filter_in(txn, policy, id, &normalized, filter)
     }
 
-    /// Reads the immutable A→B pair recorded with an accepted Supersedes edge.
+    /// Reads the immutable A→B pair recorded with an accepted Supersedes edge,
+    /// each side with the revision it was read at.
     /// Both exact frontiers AND both current rows must still pass this actor's
     /// present read policy. A peer without the local event/frontiers, an erased
     /// row or a restricted side yields no before/after data, never live fallback.
@@ -360,6 +362,7 @@ impl ScopedRead<'_> {
                 header.entity_type,
                 header.learned_at,
                 raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                revision,
             ));
         }
         let after = parts

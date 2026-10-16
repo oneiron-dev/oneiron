@@ -73,6 +73,38 @@ impl GitWire<'_> {
         self.publish_refs(repo, vec![publication], now)
     }
 
+    /// Drops every still-prepared attempt that contains exactly this move,
+    /// direct, staged or batched, without running it, for a caller that has
+    /// refused the move itself. Left alone, such an attempt stays runnable by
+    /// any recovery once the ref carries the expected value again. Dropped,
+    /// not failed: a failed record would answer a later, separately decided
+    /// attempt at the same move with this refusal.
+    pub(crate) fn void_prepared_ref_move(
+        &self,
+        repo: &GitWireRepo,
+        name: &GitRefName,
+        expected: Option<&GitOid>,
+        next: &GitOid,
+    ) -> GitWireResult<()> {
+        let expected = GitRefExpectation::from_observed(expected);
+        let _guard = lock_repository(&repo.common_dir)?;
+        for record in self.prepared_records(repo)? {
+            let carries_move =
+                publications_from_stored(&record.publications)?
+                    .iter()
+                    .any(|publication| {
+                        publication.name == *name
+                            && publication.expected == expected
+                            && publication.next.as_ref() == Some(next)
+                    });
+            if carries_move {
+                self.release_keep_refs(repo, &record)?;
+                self.drop_record(repo, &record.record_key)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Writes a ref, binding the value it currently holds into the effect.
     ///
     /// The observation is taken under the coordinator and becomes part of the
@@ -234,6 +266,12 @@ impl GitWire<'_> {
         }
         if !self.publication_objects_available(repo, &publications)? {
             return self.reject(repo, record, GitWireRejection::ObjectsUnavailable, now);
+        }
+        // Every door to a saved effect passes here -- a first attempt, an
+        // interrupted one finished again, a staged commit, generic recovery --
+        // so the origin judges a move it owns here, at the effect itself.
+        if !self.vault.admit_origin_ref_effect(repo, &publications)? {
+            return self.reject(repo, record, GitWireRejection::Unauthorized, now);
         }
         self.apply_publication(repo, record, &publications, now)
     }
@@ -427,6 +465,13 @@ fn validate_publications(publications: &[GitRefPublication]) -> Result<()> {
             .any(|earlier| earlier.name == publication.name)
         {
             return Err(invalid("git wire publication set names one ref twice"));
+        }
+        // A publication states what it was decided against: an unconditional
+        // write could never be matched to the owner of the move it makes.
+        if publication.expected == GitRefExpectation::Any {
+            return Err(invalid(
+                "git wire publication must state what it was decided against",
+            ));
         }
     }
     Ok(())

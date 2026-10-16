@@ -72,6 +72,7 @@ pub(super) async fn run_serve(
     let bounds = smart_http::ExchangeBounds {
         idle: server.transfers.idle,
         repository_wait: server.transfers.wait,
+        scan: server.transfers.scan,
     };
     // A push is held until its landing is journaled; everything else streams.
     let held = request.is_receive_pack();

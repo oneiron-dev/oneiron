@@ -1849,6 +1849,90 @@ fn observer_b_quarantines_overlay_member_edge_and_keeps_ordinary_control() {
     );
 }
 
+/// F25 H211: a replicated ChildOf winner whose new parent is a live overlay
+/// member is refused by the taint guard after LWW already staged the stored
+/// loser's delete. The refusal must roll that delete back: before, the
+/// component and per-op retries ran in the caller's transaction, so the child
+/// lost its committed parent while the winner was quarantined.
+#[test]
+fn rejected_child_of_winner_keeps_the_stored_parent() {
+    let vault = test_vault();
+    let (child, old_parent, new_parent) = (EntityId::now(), EntityId::now(), EntityId::now());
+    put_tree_nodes(&vault, &[child, old_parent, new_parent]);
+    let replay = |tgt: EntityId, created_at: u64| {
+        vault
+            .with_write_txn(|wtxn| {
+                let ops = vec![BatchOp::EdgeWithCreatedAt {
+                    src: child,
+                    kind: EdgeKind::ChildOf,
+                    tgt,
+                    weight: 1.0,
+                    created_at,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                }];
+                let metas = test_metas_for_ops(&ops);
+                apply_materialized_edge_ops(
+                    &vault,
+                    wtxn,
+                    ops,
+                    &metas,
+                    "2026-03",
+                    &TombstoneIndex::build(&LoroDoc::new().get_map("tombstones")),
+                )
+            })
+            .unwrap();
+    };
+    replay(old_parent, 10);
+    assert!(
+        vault
+            .edge_exists(&child, EdgeKind::ChildOf, &old_parent)
+            .unwrap()
+    );
+
+    let session = vault
+        .off_record_session_vault()
+        .enter(
+            "sess-child-of-winner",
+            crate::off_record::OffRecordBackendClass::Local,
+        )
+        .unwrap();
+    {
+        let overlay = session.overlay();
+        let segment = overlay.install_txn_segment().unwrap();
+        overlay
+            .put(
+                crate::session_overlay::OverlayKeyspace::Entities,
+                new_parent.as_bytes(),
+                b"live session overlay entity",
+            )
+            .unwrap();
+        segment.commit().unwrap();
+    }
+    replay(new_parent, 500);
+
+    assert!(
+        !vault
+            .edge_exists(&child, EdgeKind::ChildOf, &new_parent)
+            .unwrap(),
+        "a winner naming a live overlay member must never reach LMDB"
+    );
+    assert!(
+        vault
+            .edge_exists(&child, EdgeKind::ChildOf, &old_parent)
+            .unwrap(),
+        "the refused winner's LWW delete of the stored parent must roll back"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .iter()
+            .any(|(_, record)| record.reason_code == "OffRecordTaintedBaseWrite"),
+        "the refused winner is quarantined"
+    );
+    drop(session);
+}
+
 /// ONE-1122 AC2 — ARCH-0023b: "If tombstoned in CRDT → never resurrect";
 /// contracts.ts `user_hard_delete`: "Tombstone-first prevents sync
 /// resurrection". Hard delete writes the CRDT tombstone and (ONE-1132)

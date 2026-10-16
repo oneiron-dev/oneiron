@@ -162,6 +162,8 @@ pub(crate) enum ArmKind {
     VanillaRag,
     PprVadSweep,
     BackboneSolo,
+    /// The same reader with its own in-task trace only: no vault recall.
+    TrajectoryOnly,
     Agentic,
     Chat,
 }
@@ -172,6 +174,7 @@ impl ArmKind {
             Self::VanillaRag => "vanilla_rag",
             Self::PprVadSweep => "ppr_vad_sweep",
             Self::BackboneSolo => "backbone_solo",
+            Self::TrajectoryOnly => "trajectory_only",
             Self::Agentic => "agentic",
             Self::Chat => "chat",
         }
