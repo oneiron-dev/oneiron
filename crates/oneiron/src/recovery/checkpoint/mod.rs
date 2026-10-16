@@ -305,6 +305,7 @@ impl Vault {
         self.unlock_vault_key()?;
         let keys = self.checkpoint_signing_keys()?;
         let _custody = self.store.gate_custody_read_guard()?;
+        let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &txn)?;

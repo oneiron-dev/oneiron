@@ -5,7 +5,7 @@ use super::gmail::{
     MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id,
 };
 use super::mail_placement::MailPlacement;
-use super::{EmailProviderInbound, validate_email_inbound_metadata};
+use super::{EmailProviderInbound, EmailThreadHeaders, validate_email_inbound_metadata};
 use crate::channel_identity::MailboxAddr;
 use crate::error::Result;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -105,36 +105,10 @@ pub struct GmailMessageMetadata {
     pub internal_date_secs: u64,
     /// Provider labels classified into an engine placement fact.
     pub placement: MailPlacement,
-    /// RFC 5322 threading headers, when the host's header projection read
-    /// them (OF-374). They key the `(identity × Message-ID)` passport; the
-    /// Gmail ids above never stand in for them.
-    #[serde(default, skip_serializing_if = "GmailRfcThreading::is_empty")]
-    pub rfc_threading: GmailRfcThreading,
-}
-
-/// The raw RFC threading headers of one Gmail message.
-///
-/// Raw on purpose: canonicalization is the passport's, and a malformed header
-/// degrades the message to unthreaded delivery instead of dropping it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GmailRfcThreading {
-    /// The `Message-ID` header.
+    /// The RFC threading headers, when the host wire read them. Gmail's own
+    /// thread id stays a payload ref; these join the passport graph.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message_id: Option<String>,
-    /// The `References` header, split into ids in header order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub references: Vec<String>,
-    /// The `In-Reply-To` header.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub in_reply_to: Option<String>,
-}
-
-impl GmailRfcThreading {
-    /// Whether the host read no threading header at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.message_id.is_none() && self.references.is_empty() && self.in_reply_to.is_none()
-    }
+    pub thread_headers: Option<EmailThreadHeaders>,
 }
 
 impl GmailMessageMetadata {
@@ -160,14 +134,14 @@ impl GmailMessageMetadata {
             from: from.into(),
             internal_date_secs,
             placement,
-            rfc_threading: GmailRfcThreading::default(),
+            thread_headers: None,
         }
     }
 
-    /// Attaches the message's RFC threading headers.
+    /// Attaches the host-parsed RFC threading headers.
     #[must_use]
-    pub fn with_rfc_threading(mut self, threading: GmailRfcThreading) -> Self {
-        self.rfc_threading = threading;
+    pub fn with_thread_headers(mut self, headers: EmailThreadHeaders) -> Self {
+        self.thread_headers = Some(headers);
         self
     }
 
@@ -205,7 +179,7 @@ impl GmailMessageMetadata {
             HeaderMailbox::Parsed(mailbox) => mailbox.to_addr_spec(),
             HeaderMailbox::Unparsed { .. } => String::new(),
         };
-        let inbound = EmailProviderInbound::new(
+        let mut inbound = EmailProviderInbound::new(
             format!("{GMAIL_EVENT_ID_PREFIX}{message_id}"),
             self.to,
             envelope_from,
@@ -213,6 +187,7 @@ impl GmailMessageMetadata {
         )
         .with_payload_ref(format!("{GMAIL_THREAD_PAYLOAD_PREFIX}{thread_id}"))
         .with_header_mailbox(self.from);
+        inbound.thread_headers = self.thread_headers;
         validate_email_inbound_metadata(&inbound)?;
         Ok(inbound)
     }

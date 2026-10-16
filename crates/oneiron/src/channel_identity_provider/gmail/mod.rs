@@ -157,7 +157,7 @@ pub fn delegated_scope_for_google_oauth_scope_allowing_send(
     }
 }
 
-pub use super::gmail_header::{GmailMessageMetadata, GmailRfcThreading, HeaderMailbox};
+pub use super::gmail_header::{GmailMessageMetadata, HeaderMailbox};
 
 /// One page of read-side Gmail results.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

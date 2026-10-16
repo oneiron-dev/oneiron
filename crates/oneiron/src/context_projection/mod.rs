@@ -43,10 +43,10 @@ mod spec;
 
 pub use self::narrowing::{validate_context_narrows, validate_spec_narrows};
 pub use self::panel_spec::{
-    LEAD_PANEL_MAX_MEMBERS, LEAD_PANEL_SPEC_ROLE, LEAD_PANEL_SPEC_SCHEMA_VERSION,
-    LeadPanelExecutionPlan, LeadPanelSpec, LeadPanelTaskInputSpec, PanelJudgeSpec, PanelMemberSpec,
-    PanelResultInputs, PanelSynthesisSpec, decode_lead_panel_spec, encode_lead_panel_spec,
-    load_lead_panel_spec, persist_lead_panel_spec, plan_lead_panel_tasks, validate_lead_panel_spec,
+    LEAD_PANEL_SPEC_ROLE, LEAD_PANEL_SPEC_SCHEMA_VERSION, LeadPanelExecutionPlan, LeadPanelSpec,
+    LeadPanelTaskInputSpec, PanelJudgeSpec, PanelMemberSpec, PanelResultInputs, PanelSynthesisSpec,
+    decode_lead_panel_spec, encode_lead_panel_spec, load_lead_panel_spec, persist_lead_panel_spec,
+    plan_lead_panel_tasks, validate_lead_panel_spec,
 };
 pub use self::resolution::{
     CONTEXT_PROJECTION_MAX_ANCESTORS, CONTEXT_SPEC_MEMORY_SCAN_LIMIT, ContextResolutionRequest,

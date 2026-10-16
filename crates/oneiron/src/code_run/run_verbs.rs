@@ -101,3 +101,15 @@ pub enum TaskRefuseDomain {
     Bond,
     Logistics,
 }
+
+/// `self.skills.call`: one agent-callable skill, run under the run's own
+/// attempt lease (OF-353).
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCallInput {
+    /// The callable skill's entity id, hex, as `self.skills.callables` lists
+    /// it.
+    pub skill: String,
+    /// The call's arguments, in the shape its contract's `arguments` names.
+    pub args: serde_json::Value,
+}

@@ -125,31 +125,12 @@ impl GmailDelegatedAdapter {
         for message in page.messages {
             // A withdrawn row cannot route pages fetched while it was active.
             self.require_active_row_matches_adapter(vault, &identity_id)?;
-            // OF-374: a message whose RFC Message-ID the host read lands on its
-            // thread passport (joined on References) in the same write that
-            // queues it. No usable Message-ID degrades to plain delivery.
-            let threading = crate::surface_event::canonical_email_threading(
-                message.rfc_threading.message_id.as_deref(),
-                &message.rfc_threading.references,
-                message.rfc_threading.in_reply_to.as_deref(),
-            );
             let inbound = message.into_provider_inbound()?;
+            let thread = inbound.thread_headers.clone();
             let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
-            let admission = match threading {
-                Some((message_id, references, in_reply_to)) => {
-                    vault
-                        .enqueue_threaded_email_surface_event(
-                            input,
-                            message_id,
-                            references,
-                            in_reply_to,
-                            now,
-                        )?
-                        .admission
-                }
-                None => vault.enqueue_inbound_surface_event(input, now)?,
-            };
-            if let crate::surface_event::SurfaceEventAdmission::Rejected(_) = admission {
+            if let crate::surface_event::SurfaceEventAdmission::Rejected(_) =
+                vault.enqueue_inbound_email(input, thread.as_ref(), now)?
+            {
                 return Err(Error::InvalidConfig(
                     "gmail mailbox message was rejected by inbound routing".to_owned(),
                 ));
