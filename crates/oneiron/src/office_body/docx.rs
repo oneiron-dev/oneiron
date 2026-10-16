@@ -183,7 +183,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
             _ => return Err(invalid("block kind")),
         };
         let text = match kind {
-            BodyBlockKind::Paragraph | BodyBlockKind::Heading(_) => text(&entry, TEXT)
+            BodyBlockKind::Paragraph | BodyBlockKind::Heading(_) => loro_text(&entry, TEXT)
                 .ok_or_else(|| invalid("paragraph text"))?
                 .to_string(),
             _ => String::new(),
@@ -193,7 +193,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
             let grid = child_map(&entry, CELLS).ok_or_else(|| invalid("table cells"))?;
             for key in grid.keys() {
                 let position = parse_cell_key(&key).ok_or_else(|| invalid("cell key"))?;
-                let cell = text(&grid, &key).ok_or_else(|| invalid("cell text"))?;
+                let cell = loro_text(&grid, &key).ok_or_else(|| invalid("cell text"))?;
                 cells.insert(position, cell.to_string());
             }
         }
@@ -231,7 +231,7 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
     match op {
         DocxBodyOp::SetText { block, text: new } => {
             line(new)?;
-            let body = text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
+            let body = loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
             body.update(new, UpdateOptions::default())
                 .map_err(|_| invalid("paragraph update"))?;
         }
@@ -242,7 +242,7 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
             insert,
         } => {
             line(insert)?;
-            let body = text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
+            let body = loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
             let end = at.checked_add(*delete).ok_or_else(|| invalid("splice range"))?;
             if end > body.len_unicode() {
                 return Err(invalid("splice range"));
@@ -259,7 +259,7 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
         } => {
             bounded(new)?;
             let grid = child_map(&editable(block)?, CELLS).ok_or_else(|| invalid("not a table"))?;
-            text(&grid, &cell_key(*row, *col))
+            loro_text(&grid, &cell_key(*row, *col))
                 .ok_or_else(|| invalid("no such cell"))?
                 .update(new, UpdateOptions::default())
                 .map_err(|_| invalid("cell update"))?;
@@ -479,7 +479,7 @@ fn child_map(map: &LoroMap, key: &str) -> Option<LoroMap> {
     }
 }
 
-fn text(map: &LoroMap, key: &str) -> Option<LoroText> {
+fn loro_text(map: &LoroMap, key: &str) -> Option<LoroText> {
     match map.get(key)? {
         ValueOrContainer::Container(Container::Text(text)) => Some(text),
         _ => None,
