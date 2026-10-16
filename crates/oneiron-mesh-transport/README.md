@@ -5,8 +5,28 @@ This crate keeps the engine's connection seam separate from storage and the read
 bidirectional streams, and exposes the authenticated ALPN on each accepted
 connection for host dispatch. The generic conformance laws in `tests/conformance.rs` run
 against the in-memory test transport and, with `--features iroh`, iroh on loopback.
-The current WebSocket sync client is unchanged; managed cloud HTTP/WebSocket paths
-remain separate. There is no automatic production migration to the mesh.
+Sync rides the mesh only where a host opts in (OF-535, below); managed cloud
+HTTP/WebSocket paths remain separate. There is no automatic production migration to the mesh.
+
+## Sync over the mesh (OF-535)
+
+- **ALPN `oneiron/sync/1`** carries the sync server's own HTTP/1.1 routes and their
+  WebSocket upgrades, one long-lived bidirectional stream (`MeshConnection::open_duplex`)
+  per HTTP connection. The upgrade, its slip, the machine proof and every grant check
+  are the bytes they are on TCP; the mesh adds the paired-machine admission under them.
+- **Admission.** `PairedMachineGrants` admits a key only when `Vault::mesh_peer_machine`
+  proves the paired machine: the host-signed binding names the key the machine stands
+  on, and the live ALPN grant admits it. Both ends use it.
+- **Server.** `oneiron-server` built with `--features mesh` starts the listener when
+  `ONEIRON_MESH_BIND` names a socket address (`ONEIRON_MESH_RELAYS`: comma-separated
+  private relay URLs, none by default). The install must be enrolled as a machine: its
+  transport key derives from the machine key (`TransportKey::for_install`). Routes are
+  one row per ALPN in `handler/mesh.rs` `mesh_routes`; a route may add a tick. A mesh
+  caller is always off-device: its requests carry a `fd00::/8` peer address made from
+  its endpoint key.
+- **Client.** Set `SyncClientConfig::mesh_dialer` to a `MeshSyncDialer` (feature `sync`;
+  `MeshSyncDialer::bind_for_install` with `iroh`). The steady socket and the residence
+  sockets to the configured home ride it; an elected home elsewhere is dialed at its URL.
 
 ## Trust boundary
 

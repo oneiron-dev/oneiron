@@ -10,6 +10,8 @@ use crate::{EntityId, error::Result};
 pub(crate) enum ScrubbedRecord {
     /// SoftErase: the body goes and the header stays.
     Shell,
+    /// A withdrawn epoch summary: its words go and its keyframe stays as the body.
+    WithdrawnEpoch(crate::compaction::WithdrawnKeyframe),
 }
 
 pub(crate) trait EntityStoreMaintenance: Transactions {

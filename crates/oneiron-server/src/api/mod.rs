@@ -58,7 +58,8 @@ use crate::runtime::RuntimeRole;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
-mod ai;
+pub(crate) mod ai;
+mod anonymous_chat;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
@@ -129,6 +130,7 @@ mod params;
 mod context_board;
 #[allow(dead_code)]
 mod reactive;
+mod report;
 mod run_tree;
 mod saved_query;
 mod scoped_auth;
@@ -260,6 +262,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/context-board/turns/{turn}",
             get(context_board_turn_history),
         )
+        .route("/context-board/scratchpad", post(context_board_scratchpad))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
@@ -405,6 +408,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
+        .merge(self::report::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
@@ -434,6 +438,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
         // owner's own off-record routes sit out here for the same reason.
+        // Anonymous turns also keep no wire or idempotency receipt.
+        .merge(self::anonymous_chat::routes())
         .nest("/v1/core/off-record", self::off_record_rooms::routes())
         .nest("/v1/owner", self::owner_routes::off_record_routes())
         .with_state(server.clone())

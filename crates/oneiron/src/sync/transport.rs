@@ -14,8 +14,9 @@ use std::ops::{Deref, DerefMut};
 
 mod documents;
 pub use documents::{
-    DocumentFrame, TAG_BATCH, TAG_DOCUMENT, decode_document, decode_document_batch,
-    document_sub_tags, encode_document, encode_document_batch,
+    DocumentFrame, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT, decode_document,
+    decode_document_batch, decode_node_batch, document_sub_tags, encode_document,
+    encode_document_batch, encode_node_batch,
 };
 
 // ─── Custom Message Tags ──────────────────────────────────────────────────────

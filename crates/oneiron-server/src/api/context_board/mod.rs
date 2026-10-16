@@ -1,4 +1,4 @@
-//! The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional retrieval with its MEMORIES projection, the per-session cursor (ARCH-0067 §2), and the one rendered board frame: WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM (§1).
+//! The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional retrieval with its MEMORIES projection, the per-session cursor (ARCH-0067 §2), and the one rendered board frame: WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM (§1), plus an agent run's SCRATCHPAD.
 //!
 //! The board renders on every call; without retrieval it carries no MEMORIES section.
 
@@ -7,6 +7,7 @@ mod cursor;
 mod history;
 mod memories;
 mod prefix;
+mod scratchpad;
 mod session;
 mod standing;
 
@@ -18,6 +19,7 @@ pub(crate) use cursor::*;
 pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
+pub(crate) use scratchpad::*;
 pub(crate) use session::*;
 
 use super::CoreContextPackRequest;
@@ -119,9 +121,9 @@ pub(crate) struct ContextBoardResponse {
     #[schema(value_type = Option<ContextBoardMemories>)]
     memories: Option<oneiron::MemoriesSection>,
     /// The one rendered board frame (one-way renderer): WORLDS, MEMORIES,
-    /// TASKS, AGENTS, SKILLS and ROOM in canon order, under the board budget.
-    /// Foreign worlds render as guest-attributed evidence, never first-party
-    /// memory.
+    /// TASKS, AGENTS, SKILLS and ROOM in canon order, then an agent run's
+    /// SCRATCHPAD, under the board budget. Foreign worlds render as
+    /// guest-attributed evidence, never first-party memory.
     board: String,
     /// How the board's budget settled and what it shed.
     #[schema(inline)]
@@ -152,6 +154,11 @@ pub(crate) struct ContextBoardResponse {
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
     /// The caller's live child agents, then this turn's capability candidates.
     agents: Vec<String>,
+    /// The full-view rows of the frame's SCRATCHPAD section, an agent run's
+    /// live session pad; absent for any other caller, a run without a
+    /// session, or a session with no live pad.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scratchpad: Option<Vec<String>>,
     /// What recording the named TURN's board wrote; absent without `turn`.
     #[serde(skip_serializing_if = "Option::is_none")]
     board_turn: Option<ContextBoardTurnRecord>,
@@ -396,7 +403,7 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(|pack| pack.capabilities.as_slice())
         .unwrap_or_default();
-    let parts = board::board_parts(
+    let mut parts = board::board_parts(
         &server,
         &auth,
         &read,
@@ -405,6 +412,17 @@ pub(crate) async fn context_board_hydrate(
         hits,
         &observed_reads,
     )?;
+    // An agent run's own live pad joins the frame as its SCRATCHPAD section.
+    let scratchpad = served_scratchpad(
+        &server,
+        &auth,
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
+    )?;
+    let scratchpad_pad = scratchpad.as_ref().map(|served| served.pad);
+    let scratchpad = scratchpad.map(|served| {
+        parts.sections.push(served.section);
+        served.rows
+    });
     let board_render = oneiron::context_board::render_board_block(
         &oneiron::context_board::BoardFrame {
             header: &oneiron::context_board::BoardBlockHeader {
@@ -416,10 +434,11 @@ pub(crate) async fn context_board_hydrate(
             changes: Some(&changed_line),
         },
         oneiron::context_board::BoardBudgetRequest {
-            harness_default_tok: standing.as_ref().map_or(
-                crate::mcp::MCP_BOARD_BUDGET_TOK,
-                |prefix| prefix.other_context_tokens,
-            ),
+            harness_default_tok: standing
+                .as_ref()
+                .map_or(crate::mcp::MCP_BOARD_BUDGET_TOK, |prefix| {
+                    prefix.other_context_tokens
+                }),
             caller_limit_tok: req.board_budget_tok,
             explicit_override_tok: None,
         },
@@ -486,6 +505,7 @@ pub(crate) async fn context_board_hydrate(
         changed,
         skills: parts.skills,
         agents: parts.agents,
+        scratchpad,
         self_brief,
         board_turn: None,
     };
@@ -551,6 +571,7 @@ pub(crate) async fn context_board_hydrate(
     admit.extend(pack_sources);
     admit.extend(named_refs);
     admit.extend(parts.named);
+    admit.extend(scratchpad_pad);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
     }
@@ -580,9 +601,7 @@ pub(crate) async fn context_board_hydrate(
 }
 
 /// The capability hits a pack carried.
-fn hits_of(
-    pack: Option<&CoreContextPackResponse>,
-) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+fn hits_of(pack: Option<&CoreContextPackResponse>) -> impl Iterator<Item = oneiron::EntityId> + '_ {
     pack.into_iter()
         .flat_map(|pack| &pack.capabilities)
         .map(|hit| hit.id)

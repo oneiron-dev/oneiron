@@ -1,8 +1,8 @@
 //! Qualification is a vault door: callers cannot submit a self-graded report.
 use crate::Vault;
 use crate::connector_key::qualification::{
-    GroundingOracle, QualificationConnector, QualificationFailure, QualificationPlan,
-    QualificationReport, qualify_connector_with_schemas,
+    ConnectorQualificationReceipt, GroundingOracle, QualificationConnector, QualificationFailure,
+    QualificationPlan, QualificationReport, qualify_connector_with_schemas,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -69,6 +69,7 @@ impl Vault {
             slate_ref: Some(next_slate_ref),
             admission_epoch,
             consent_required: expanded,
+            qualification_receipt: None,
             ..record
         };
         pending.validate()?;
@@ -152,6 +153,12 @@ impl Vault {
             return Err(invalid_body("connector slate changed during qualification").into());
         }
         let active = ConnectorKeyRecord {
+            qualification_receipt: Some(ConnectorQualificationReceipt::new(
+                report.report_hash.clone(),
+                expected_revision.to_owned(),
+                manifest_hash,
+                at,
+            )?),
             status: ConnectorKeyStatus::Active,
             status_changed_at: Some(at),
             slate_revision: Some(slate.revision()),

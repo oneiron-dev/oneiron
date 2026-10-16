@@ -281,6 +281,8 @@ impl ManagedArgs {
             vault_path: self.data_dir.clone(),
             auth_secret: None,
             allow_unauthenticated: true,
+            // Browser origins are argv policy too, for the external shared UI.
+            allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
             map_size: args.map_size.unwrap_or(defaults.map_size),
             // Argv only: the usual resolver probes HOME and the XDG roots,
@@ -501,7 +503,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "allowed-origins",
         |args| args.allowed_origins.is_some(),
-        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+        ArgvUse::Read,
     ),
     (
         "trusted-proxies",
