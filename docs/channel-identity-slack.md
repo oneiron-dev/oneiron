@@ -15,7 +15,7 @@ so the returned request body has this shape:
 
 ```json
 {
-  "manifest": "{\"display_information\":{\"name\":\"Oneiron\"},\"features\":{\"bot_user\":{\"display_name\":\"Oneiron\",\"always_online\":false}},\"oauth_config\":{\"redirect_urls\":[\"https://example.com/slack/oauth/callback\"],\"scopes\":{\"bot\":[\"app_mentions:read\",\"channels:history\",\"chat:write\",\"chat:write.customize\",\"commands\",\"im:history\",\"im:write\"]}},\"settings\":{\"event_subscriptions\":{\"request_url\":\"https://example.com/slack/events\",\"bot_events\":[\"app_mention\",\"message.im\"]},\"interactivity\":{\"is_enabled\":true,\"request_url\":\"https://example.com/slack/events\"},\"org_deploy_enabled\":false,\"socket_mode_enabled\":false,\"token_rotation_enabled\":true}}"
+  "manifest": "{\"display_information\":{\"name\":\"Oneiron\"},\"features\":{\"bot_user\":{\"display_name\":\"Oneiron\",\"always_online\":false}},\"oauth_config\":{\"redirect_urls\":[\"https://example.com/slack/oauth/callback\"],\"scopes\":{\"bot\":[\"app_mentions:read\",\"chat:write\",\"chat:write.customize\",\"im:history\",\"im:write\"]}},\"settings\":{\"event_subscriptions\":{\"request_url\":\"https://example.com/slack/events\",\"bot_events\":[\"app_mention\",\"message.im\"]},\"interactivity\":{\"is_enabled\":true,\"request_url\":\"https://example.com/slack/events\"},\"org_deploy_enabled\":false,\"socket_mode_enabled\":false,\"token_rotation_enabled\":true}}"
 }
 ```
 

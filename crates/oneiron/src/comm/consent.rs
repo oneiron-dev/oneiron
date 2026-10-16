@@ -11,7 +11,7 @@ use super::parties::{
 };
 use super::projection_writes::{
     build_contact_view_in_txn, count_comm_claims, matching_claims_in_txn,
-    put_comm_claim_with_id_in_txn, put_engine_owned_comm_claim_in_txn, require_at_most_one,
+    put_engine_owned_comm_claim_in_txn, require_at_most_one,
 };
 use super::records::{
     CommEventKind, CommRecord, comm_records_in_txn, put_comm_record_in_txn, validate_channel_class,
@@ -489,7 +489,9 @@ pub fn mint_send_override(
         // the claim door.
         validate_comm_claim_structure(&value.claim_body()?)
             .map_err(|_| CommError::InvalidRecord)?;
-        put_comm_claim_with_id_in_txn(
+        // The human check above IS this write's authorization, and the only
+        // door the claim admission guard lets land a live override.
+        put_engine_owned_comm_claim_in_txn(
             vault,
             wtxn,
             vault.store.clock.entity_id()?,
@@ -556,7 +558,10 @@ pub(crate) fn send_override_for_send_in_txn(
         let Some(body) = claim_body_in_txn(store, txn, &claim_id)? else {
             continue;
         };
+        // An imported override is another vault's statement, never this
+        // owner's ruling.
         if body.predicate != PREDICATE_COMM_SEND_OVERRIDE
+            || body.source == Some(crate::claim::ClaimSource::Imported)
             || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &claim_id)?
         {
             continue;
