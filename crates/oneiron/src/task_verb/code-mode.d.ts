@@ -127,6 +127,13 @@ declare const vault: {
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
   };
+  lenses: {
+    activate(input: { compiled_hash: string; expected_active_ref?: string | null; lens_ref: string }): Promise<unknown>;
+    deactivate(input: { expected_active_ref: string; slot: object }): Promise<unknown>;
+    default(input: { dossiers?: object[]; ledger?: string[]; threads?: string[]; title: string }): Promise<unknown>;
+    list(input: { after?: string | null; limit?: number | null; pack_name?: string | null; with_compiled?: boolean }): Promise<unknown>;
+    propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
+  };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {
     create(input: { kind: string; markdown: string }): Promise<unknown>;
@@ -135,6 +142,13 @@ declare const vault: {
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
+  };
+  projects: {
+    goal: {
+      dismiss(input: { expected_goal_ref: string; project_ref: string; question_digest: string }): Promise<unknown>;
+      revisions(input: { project_ref: string }): Promise<unknown>;
+    };
+    route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {

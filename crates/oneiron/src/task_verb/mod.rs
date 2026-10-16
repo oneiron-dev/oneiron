@@ -53,6 +53,7 @@ mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
+mod project_tradeoff;
 mod proposal_create;
 mod query_facade;
 mod rate_limit;
@@ -76,6 +77,7 @@ pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
     ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
     ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope,
+    FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,

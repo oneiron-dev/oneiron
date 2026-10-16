@@ -24,6 +24,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.search", post(vault_kv_search))
         .route("/vault.kv.namespaces", post(vault_kv_namespaces))
         .route("/vault.packs.put", post(vault_packs_put))
+        .route("/vault.lenses.propose", post(vault_lenses_propose))
+        .route("/vault.lenses.activate", post(vault_lenses_activate))
+        .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
+        .route("/vault.lenses.list", post(vault_lenses_list))
+        .route("/vault.lenses.default", post(vault_lenses_default))
         .route("/vault.hooks.replay", post(vault_hooks_replay))
         .route("/vault.artifacts.view", post(vault_artifacts_view))
         .route("/vault.artifacts.export", post(vault_artifacts_export))
@@ -66,6 +71,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.reply_strips", post(vault_rooms_reply_strips))
         .route("/vault.rooms.claim", post(vault_rooms_claim))
         .route("/vault.rooms.speak", post(vault_rooms_speak))
+        .route(
+            "/vault.projects.goal.revisions",
+            post(vault_projects_goal_revisions),
+        )
+        .route(
+            "/vault.projects.goal.dismiss",
+            post(vault_projects_goal_dismiss),
+        )
+        .route(
+            "/vault.projects.route_tradeoff",
+            post(vault_projects_route_tradeoff),
+        )
         .route(
             "/vault.conversations.turn.continue",
             post(vault_conversations_turn_continue),
@@ -617,6 +634,96 @@ async fn vault_packs_put(
         super::host_doors::vault_packs_put(&server, &auth, facade_input(value)?).await?,
     )?))
 }
+async fn vault_lenses_propose(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.lenses.propose",
+        value,
+    )?))
+}
+async fn vault_lenses_activate(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.lenses.activate")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.lenses.activate", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_lenses_activate(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_lenses_deactivate(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.lenses.deactivate")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.lenses.deactivate", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_lenses_deactivate(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_lenses_list(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.lenses.list",
+        value,
+    )?))
+}
+async fn vault_lenses_default(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.lenses.default",
+        value,
+    )?))
+}
 async fn vault_hooks_replay(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -1125,6 +1232,68 @@ async fn vault_rooms_speak(
         actor,
         class,
         "vault.rooms.speak",
+        value,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(Json(output))
+}
+async fn vault_projects_goal_revisions(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.projects.goal.revisions",
+        value,
+    )?))
+}
+async fn vault_projects_goal_dismiss(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.projects.goal.dismiss",
+        value,
+    )?))
+}
+async fn vault_projects_route_tradeoff(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    let output = facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.projects.route_tradeoff",
         value,
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);

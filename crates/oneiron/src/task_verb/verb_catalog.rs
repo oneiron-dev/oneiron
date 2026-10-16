@@ -26,6 +26,11 @@ pub enum AgentVerb {
     VaultKvSearch,
     VaultKvNamespaces,
     VaultPacksPut,
+    VaultLensesPropose,
+    VaultLensesActivate,
+    VaultLensesDeactivate,
+    VaultLensesList,
+    VaultLensesDefault,
     VaultHooksReplay,
     VaultArtifactsView,
     VaultArtifactsExport,
@@ -53,6 +58,9 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultProjectsGoalRevisions,
+    VaultProjectsGoalDismiss,
+    VaultProjectsRouteTradeoff,
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
     VaultRoomsHost,
@@ -133,6 +141,11 @@ impl AgentVerb {
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
         Self::VaultPacksPut,
+        Self::VaultLensesPropose,
+        Self::VaultLensesActivate,
+        Self::VaultLensesDeactivate,
+        Self::VaultLensesList,
+        Self::VaultLensesDefault,
         Self::VaultHooksReplay,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
@@ -160,6 +173,9 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultProjectsGoalRevisions,
+        Self::VaultProjectsGoalDismiss,
+        Self::VaultProjectsRouteTradeoff,
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
         Self::VaultRoomsHost,
@@ -243,6 +259,11 @@ impl AgentVerb {
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultLensesPropose => "vault.lenses.propose",
+            Self::VaultLensesActivate => "vault.lenses.activate",
+            Self::VaultLensesDeactivate => "vault.lenses.deactivate",
+            Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
@@ -270,6 +291,9 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
+            Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
+            Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
             Self::VaultRoomsHost => "vault.rooms.host",
@@ -349,6 +373,11 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -376,6 +405,9 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalRevisions
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
@@ -463,6 +495,11 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -490,6 +527,9 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalRevisions
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
@@ -568,6 +608,7 @@ impl AgentVerb {
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
+                | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
                 | Self::VaultCommit
@@ -611,6 +652,11 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -638,6 +684,9 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalRevisions
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
@@ -703,6 +752,9 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -714,6 +766,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultWorkspaceWorkCompanionSet
@@ -751,6 +805,7 @@ impl AgentVerb {
             Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
+                | Self::VaultLensesPropose
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -783,6 +838,11 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesActivate => &["spec"],
+            Self::VaultLensesDeactivate => &["spec"],
+            Self::VaultLensesList => &["spec"],
+            Self::VaultLensesDefault => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -810,6 +870,9 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsGoalRevisions => &["spec"],
+            Self::VaultProjectsGoalDismiss => &["spec"],
+            Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
@@ -891,6 +954,11 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesActivate => &["spec"],
+            Self::VaultLensesDeactivate => &["spec"],
+            Self::VaultLensesList => &["spec"],
+            Self::VaultLensesDefault => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -918,6 +986,9 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsGoalRevisions => &["spec"],
+            Self::VaultProjectsGoalDismiss => &["spec"],
+            Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
