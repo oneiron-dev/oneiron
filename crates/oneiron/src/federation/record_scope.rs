@@ -324,6 +324,26 @@ fn writer_settled(prior: &Stamp, proposed: &Scope) -> bool {
             ..prior.scope.clone()
         } == *proposed
 }
+/// Raises a stamped record's sensitivity to at least `band`, in the
+/// transaction that stored it (OF-560: a file the write door kept with keys
+/// in it is Restricted). Every other axis stays. An unstamped record stays
+/// unstamped, and a stamp already as strict stays as it is.
+pub(crate) fn restrict_stamp_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    band: Sensitivity,
+) -> Result<()> {
+    let Some(mut stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
+        return Ok(());
+    };
+    if matches!(stamp.scope.sensitivity, SensitivityCeiling::AtMost(at) if at >= band) {
+        return Ok(());
+    }
+    stamp.scope.sensitivity = SensitivityCeiling::AtMost(band);
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(store, txn, &id, &stamp)
+}
 /// Settle a locally minted TASK at its writer's world and facet, in the
 /// transaction that put its first body. The writer's facet is provenance:
 /// the mask that spoke stamps the record (ARCH-0022 "Every record carries a

@@ -225,7 +225,11 @@ impl Memory<'_> {
         input: &ArtifactExportRequest,
     ) -> MemoryResult<Option<ArtifactExportFile>> {
         let vault = self.vault();
-        let Some(file) = vault.export_blob_artifact(&entity(&input.artifact_ref)?, input.version)?
+        let Some(file) = vault.export_blob_artifact_as(
+            &entity(&input.artifact_ref)?,
+            input.version,
+            self.secret_sight()?,
+        )?
         else {
             return Ok(None);
         };
