@@ -38,6 +38,8 @@ pub use rate::{EsignRateCheck, EsignRateReceipt};
 pub mod render;
 mod seal;
 pub use seal::{EsignSealError, SealedDocument, SealedItem};
+mod seal_run;
+pub use seal_run::EsignSealRun;
 mod sealer;
 pub use sealer::{
     EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError,

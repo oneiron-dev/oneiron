@@ -118,6 +118,7 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         })?;
         entries.push((Value::from(KEY_LAUNCH), Value::from(json)));
     }
+    super::room_join::encode_room_keys(input, &mut entries)?;
     if let Some(team) = &input.team {
         team.validate()?;
         let json = serde_json::to_string(team).map_err(|_| {
@@ -171,6 +172,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut type_ref = None;
     let mut budget = None;
     let mut launch = None;
+    let mut room = None;
+    let mut join = None;
     let mut team = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
@@ -367,6 +370,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     ))
                 })?);
             }
+            super::types::KEY_ROOM => room = Some(super::room_join::decode_room(value)?),
+            super::types::KEY_JOIN => join = Some(super::room_join::decode_join(value)?),
             KEY_DEPTH_REMAINING => {
                 let depth = value.as_u64().ok_or(Error::Artifact(
                     ArtifactError::InvalidAgentDispatchInput("depth_remaining must be an integer"),
@@ -457,6 +462,8 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         type_ref: type_ref.unwrap_or_default(),
         budget,
         launch,
+        room,
+        join,
         team,
     })
 }

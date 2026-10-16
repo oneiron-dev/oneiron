@@ -40,6 +40,7 @@ pub enum AgentVerb {
     VaultArtifactsProposals,
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
+    VaultArtifactsReviewSlides,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -60,6 +61,8 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsJoin,
+    VaultRoomsConsent,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
@@ -103,6 +106,7 @@ pub enum AgentVerb {
     VaultWritesPending,
     VaultHydrate,
     VaultGet,
+    VaultRefsResolve,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -157,6 +161,7 @@ impl AgentVerb {
         Self::VaultArtifactsProposals,
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
+        Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -177,6 +182,8 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsJoin,
+        Self::VaultRoomsConsent,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
@@ -220,6 +227,7 @@ impl AgentVerb {
         Self::VaultWritesPending,
         Self::VaultHydrate,
         Self::VaultGet,
+        Self::VaultRefsResolve,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -277,6 +285,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
+            Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -297,6 +306,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
@@ -340,6 +351,7 @@ impl AgentVerb {
             Self::VaultWritesPending => "vault.writes.pending",
             Self::VaultHydrate => "vault.hydrate",
             Self::VaultGet => "vault.get",
+            Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -393,6 +405,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -413,6 +426,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -447,6 +462,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
+                | Self::VaultRefsResolve
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -517,6 +533,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -537,6 +554,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -571,6 +590,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
+                | Self::VaultRefsResolve
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -638,6 +658,7 @@ impl AgentVerb {
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
                 | Self::VaultGet
+                | Self::VaultRefsResolve
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
         )
@@ -676,6 +697,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -696,6 +718,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -768,6 +792,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultArtifactsReleaseWait
+                | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -778,6 +803,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsJoin
+                | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -864,6 +891,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -884,6 +912,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -927,6 +957,7 @@ impl AgentVerb {
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
+            Self::VaultRefsResolve => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -982,6 +1013,7 @@ impl AgentVerb {
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
+            Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -1002,6 +1034,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1045,6 +1079,7 @@ impl AgentVerb {
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
+            Self::VaultRefsResolve => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
