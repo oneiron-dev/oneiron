@@ -303,9 +303,12 @@ impl Vault {
         let event_hash = blake3::hash(&frozen).to_hex().to_string();
         let mut decisions = Vec::new();
         for (id, row) in subscriptions(&self.store, &*txn)? {
+            // A subscription awaiting its owner's confirmation lists, but wakes
+            // nothing until it is cleared.
             if !row.active
                 || !row.filter.matches(event)
                 || scope.is_some_and(|(agent, key)| row.agent != agent || row.connector_key != key)
+                || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &*txn, &id)?
             {
                 continue;
             }

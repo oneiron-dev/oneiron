@@ -472,6 +472,9 @@ impl Vault {
         self.capture_tier1_receipt_window(&ids, receipts)?;
         Ok(ids)
     }
+    /// Emit-only. The facts are caller-supplied and no durable row holds a
+    /// run's output, expectation, error count or conversation, so these
+    /// diagnostics never become tier-1 export witnesses (OF-418).
     pub fn run_dreamer_output_tripwires(
         &self,
         scope: &str,

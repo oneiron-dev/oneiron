@@ -168,14 +168,9 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
         let root = vault.root_project()?;
-        let owner = EntityId::now();
-        vault.put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"member",
-        )?;
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
         let id = EntityId::now();
         let project = ProjectRecord::new(id, Some(root), root, owner)?;
         vault.put_project(id, &project, 2)?;

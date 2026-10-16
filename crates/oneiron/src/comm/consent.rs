@@ -359,13 +359,44 @@ fn opt_out_subjects_in_txn(
     rtxn: &heed::RoTxn<'_>,
     party_ref: EntityId,
 ) -> CommResult<BTreeSet<EntityId>> {
-    let mut subjects = crate::identity_redirect::inbound_redirect_shells_in_txn(
-        &vault.store,
-        rtxn,
-        &BTreeSet::from([party_ref]),
-    )?;
-    subjects.insert(party_ref);
+    parties_opt_out_subjects_in_txn(&vault.store, rtxn, BTreeSet::from([party_ref]))
+}
+
+/// [`opt_out_subjects_in_txn`] for several parties at once, with a `Store`.
+pub(super) fn parties_opt_out_subjects_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    parties: BTreeSet<EntityId>,
+) -> CommResult<BTreeSet<EntityId>> {
+    let mut subjects =
+        crate::identity_redirect::inbound_redirect_shells_in_txn(store, rtxn, &parties)?;
+    subjects.extend(parties);
     Ok(subjects)
+}
+
+/// The standing `comm.opt_out` head one claim body is, if it is one.
+pub(super) fn standing_opt_out_head(body: &ClaimBody) -> CommResult<Option<StandingOptOutHead>> {
+    if body.predicate != PREDICATE_COMM_OPT_OUT {
+        return Ok(None);
+    }
+    let claim = CommClaim::from_claim_body(body)?;
+    if !claim.is_standing() {
+        return Ok(None);
+    }
+    let CommClaimValue::OptOut {
+        channel_class,
+        reason,
+        occurred_at,
+        ..
+    } = claim.value
+    else {
+        return Ok(None);
+    };
+    Ok(Some(StandingOptOutHead {
+        channel_class,
+        reason,
+        occurred_at,
+    }))
 }
 
 /// Every standing `comm.opt_out` head for one party, on the caller's
@@ -387,26 +418,7 @@ pub(crate) fn standing_opt_out_heads_in_txn(
         let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
             continue;
         };
-        if body.predicate != PREDICATE_COMM_OPT_OUT {
-            continue;
-        }
-        let claim = CommClaim::from_claim_body(&body)?;
-        if !claim.is_standing() {
-            continue;
-        }
-        if let CommClaimValue::OptOut {
-            channel_class,
-            reason,
-            occurred_at,
-            ..
-        } = claim.value
-        {
-            heads.push(StandingOptOutHead {
-                channel_class,
-                reason,
-                occurred_at,
-            });
-        }
+        heads.extend(standing_opt_out_head(&body)?);
     }
     Ok(heads)
 }
@@ -585,7 +597,7 @@ pub(crate) fn send_override_for_send_in_txn(
 
 /// CLAIM ids attached to `subject` through inbound `claim_of` edges, read with
 /// a `Store` alone.
-fn subject_claim_ids_in_txn(
+pub(super) fn subject_claim_ids_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
@@ -606,7 +618,7 @@ fn subject_claim_ids_in_txn(
 
 /// The CLAIM body stored at `id`, or `None` when the row is absent or is not a
 /// type-0 CLAIM.
-fn claim_body_in_txn(
+pub(super) fn claim_body_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

@@ -32,6 +32,20 @@ impl RawValue for PendingGateConsentRecord {
     }
 }
 
+/// How a door removes a tray row, as far as its claim's owner-answer
+/// obligation goes (`crate::gate::owner_answer`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TrayRemoval {
+    /// No owner answered: the obligation stays open, and the owner is shown a
+    /// fresh item for the claim's current revision.
+    Unanswered,
+    /// The obligation stays open and nothing is shown here: an erasure, or a
+    /// revision change whose put shows the item for the new revision.
+    Silent,
+    /// The owner's answer to this item closed the obligation.
+    Answered,
+}
+
 impl Store {
     pub(crate) fn put_pending_gate_consent_in_txn(
         &self,
@@ -39,6 +53,8 @@ impl Store {
         record: &PendingGateConsentRecord,
     ) -> Result<()> {
         vet_pending_gate_consent_record(record)?;
+        let claim_id = EntityId::from_bytes(record.claim_id)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
         if let Some(existing) = TRAY.get(self, &*wtxn, &record.claim_id)? {
             if existing.claim_id != record.claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
@@ -47,6 +63,27 @@ impl Store {
             self.delete_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &existing)?;
             // A replacement keeps its insertion order, but an explicit delete
             // removes it; do not allocate a caller-controlled ordering key.
+            //
+            // A replacement is no answer: the obligation a confirm parked
+            // before obligations were recorded is recorded first.
+            if crate::gate::pending_row_holds_critical_confirm(&existing) {
+                self.open_owner_answer_obligation_in_txn(
+                    wtxn,
+                    &claim_id,
+                    existing.decision_id,
+                    &existing.diff_handle,
+                )?;
+            }
+        }
+        // Every critical confirm, from any door, opens its claim's
+        // owner-answer obligation (`crate::gate::owner_answer`).
+        if crate::gate::pending_row_holds_critical_confirm(record) {
+            self.open_owner_answer_obligation_in_txn(
+                wtxn,
+                &claim_id,
+                record.decision_id,
+                &record.diff_handle,
+            )?;
         }
         TRAY.put(self, wtxn, &record.claim_id, record)?;
         self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
@@ -60,29 +97,49 @@ impl Store {
         txn: &RoTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<Option<PendingGateConsentRecord>> {
-        let Some(record) = TRAY.get(self, txn, claim_id.as_bytes())? else {
-            return Ok(None);
-        };
-        if record.claim_id != *claim_id.as_bytes() {
-            return Err(Error::CorruptedIndex("pending gate consent"));
-        }
-        Ok(Some(record))
+        pending_gate_consent_in(self, txn, claim_id)
     }
 
+    /// Removes `claim_id`'s tray row with no owner answer: its obligation
+    /// stays open, and the owner is shown a fresh item.
     pub(crate) fn delete_pending_gate_consent_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<()> {
+        self.remove_pending_gate_consent_in_txn(wtxn, claim_id, TrayRemoval::Unanswered)
+    }
+
+    pub(crate) fn remove_pending_gate_consent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        removal: TrayRemoval,
+    ) -> Result<()> {
         if let Some(record) = TRAY.get(self, &*wtxn, claim_id.as_bytes())? {
             if record.claim_id != *claim_id.as_bytes() {
                 return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            // A confirm parked before obligations were recorded is one, and
+            // only an answer removes it without recording it.
+            if removal != TrayRemoval::Answered
+                && crate::gate::pending_row_holds_critical_confirm(&record)
+            {
+                self.open_owner_answer_obligation_in_txn(
+                    wtxn,
+                    claim_id,
+                    record.decision_id,
+                    &record.diff_handle,
+                )?;
             }
             self.delete_pending_gate_consent_indexes_in_txn(wtxn, &record)?;
             self.delete_pending_gate_consent_critical_confirm_index_in_txn(wtxn, &record)?;
             self.delete_pending_gate_consent_sequence_in_txn(wtxn, &record.claim_id)?;
         }
         TRAY.delete(self, wtxn, claim_id.as_bytes())?;
+        if removal == TrayRemoval::Unanswered {
+            crate::gate::show_owner_answer_item_in_txn(self, wtxn, claim_id, None)?;
+        }
         Ok(())
     }
 
@@ -116,6 +173,33 @@ impl Store {
         reason_codes: Vec<String>,
         grant_ref: Option<String>,
     ) -> Result<Option<GateDecisionRecord>> {
+        self.close_pending_gate_consent_as_in_txn(
+            wtxn,
+            claim_id,
+            created_at,
+            outcome,
+            reason_codes,
+            grant_ref,
+            TrayRemoval::Unanswered,
+        )
+    }
+
+    /// [`Self::close_pending_gate_consent_in_txn`] with the removal's own
+    /// account of the claim's obligation.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the close's resolution receipt fields plus its removal"
+    )]
+    pub(crate) fn close_pending_gate_consent_as_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        created_at: u64,
+        outcome: &str,
+        reason_codes: Vec<String>,
+        grant_ref: Option<String>,
+        removal: TrayRemoval,
+    ) -> Result<Option<GateDecisionRecord>> {
         let Some(pending) = self.pending_gate_consent_in_txn(wtxn, claim_id)? else {
             return Ok(None);
         };
@@ -146,7 +230,7 @@ impl Store {
             redacted_at: None,
         };
         self.append_gate_decision_in_txn(wtxn, &record)?;
-        self.delete_pending_gate_consent_in_txn(wtxn, claim_id)?;
+        self.remove_pending_gate_consent_in_txn(wtxn, claim_id, removal)?;
         Ok(Some(record))
     }
 
@@ -243,4 +327,19 @@ impl Store {
         }
         Ok(groups)
     }
+}
+
+/// `claim_id`'s tray row, read through any store view.
+pub(crate) fn pending_gate_consent_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<Option<PendingGateConsentRecord>> {
+    let Some(record) = TRAY.get(dbs, txn, claim_id.as_bytes())? else {
+        return Ok(None);
+    };
+    if record.claim_id != *claim_id.as_bytes() {
+        return Err(Error::CorruptedIndex("pending gate consent"));
+    }
+    Ok(Some(record))
 }

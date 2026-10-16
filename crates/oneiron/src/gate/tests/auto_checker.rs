@@ -209,6 +209,7 @@ fn gate_claim_write(
             auto_checker: checker,
             defer_metrics_until_commit: false,
             transition: None,
+            owner_authored: None,
         },
         &policy,
         GateWriteMode {
@@ -948,4 +949,100 @@ fn checker_reasons(reasons: &[String]) -> Vec<String> {
         .filter(|reason| !reason.starts_with("tripwire_normal_"))
         .cloned()
         .collect()
+}
+
+/// Security pack 2, F14 H282: the checker is shown at most a preview, so a
+/// value longer than the preview is never allowed on the strength of its
+/// prefix. It is held without a consult, never written `Auto`.
+#[test]
+fn a_checker_never_allows_a_value_it_saw_only_part_of() -> Result<()> {
+    let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+    let checker = Arc::new(RecordingAutoChecker::allow());
+    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+
+    // The positive control: a value the preview holds whole is allowed.
+    let short = test_id(0x3a);
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    attempt_checked_candidate_write(&vault, &short, &body, Some(&bounded_checker))?;
+    assert_eq!(
+        vault.get_claim(&short)?.expect("allowed claim").approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(checker.calls(), 1);
+
+    // An innocuous preview-length prefix, then text no checker was shown.
+    let long = test_id(0x3b);
+    let mut body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    body.value = Value::from(format!(
+        "{}TAIL_NOT_REVIEWED",
+        "a".repeat(crate::llm::AUTO_CHECK_VALUE_PREVIEW_BYTES)
+    ));
+    let result = attempt_checked_candidate_write(&vault, &long, &body, Some(&bounded_checker));
+    let landed = vault.get_claim(&long)?;
+    assert!(
+        landed
+            .as_ref()
+            .is_none_or(|body| body.approval != ClaimApprovalStatus::Auto),
+        "H282: the checker saw {} bytes and the whole value landed Auto",
+        checker
+            .seen()
+            .last()
+            .map_or(0, |seen| seen.value_preview.len())
+    );
+    assert!(result.is_err(), "the Auto write is held");
+    assert_eq!(checker.calls(), 1, "a partial value is never sent");
+
+    // The door's own receipt names why it held.
+    let (_, envelope) = dreamer_parts(&vault, &body)?;
+    let held = gate_claim_write(
+        &vault,
+        &long,
+        &body,
+        &envelope,
+        Some(&bounded_checker),
+        true,
+    );
+    assert!(held.is_err());
+    assert!(
+        decision_rows(&vault)?.iter().any(|(codes, receipts)| {
+            codes == &["gate.pending.checker.unavailable"]
+                && receipts
+                    .iter()
+                    .any(|reason| reason == "checker_partial_view")
+        }),
+        "the hold is receipted as a partial view"
+    );
+    assert_eq!(checker.calls(), 1);
+    Ok(())
+}
+
+/// Security pack 2, F14 H282: a manifest that names a checker is not
+/// satisfied by a door that injects none. The write gets no verdict, so it is
+/// held as checker-unavailable, never written `Auto` unreviewed. With no
+/// checker named, the same write lands.
+#[test]
+fn a_named_checker_no_door_injected_holds_the_write() -> Result<()> {
+    let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+    let claim = test_id(0x3c);
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    let result = attempt_checked_candidate_write(&vault, &claim, &body, None);
+    assert!(
+        vault
+            .get_claim(&claim)?
+            .is_none_or(|body| body.approval != ClaimApprovalStatus::Auto),
+        "FAILBEFORE H282 no checker: the write landed Auto with no checker consulted"
+    );
+    let (outcome, reason_codes) =
+        gate_rejection_parts(result.expect_err("the Auto request is held"));
+    assert_eq!(outcome, "pending");
+    assert_eq!(reason_codes, vec!["gate.pending.checker.unavailable"]);
+
+    let (_tmp, vault) = checker_vault(None)?;
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    attempt_checked_candidate_write(&vault, &claim, &body, None)?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("landed").approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
 }

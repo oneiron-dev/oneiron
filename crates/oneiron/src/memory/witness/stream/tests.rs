@@ -5,22 +5,12 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 #[cfg(feature = "sync")]
 use crate::registry::ENTITY_TYPE_MESSAGE;
-use crate::registry::ENTITY_TYPE_PERSON;
-use crate::temporal::TimeRange;
 
+/// A vault and its owner, the actor who streams (H149).
 fn fixture() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    let actor = EntityId::now();
-    vault
-        .put_entity(
-            &actor,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     (dir, vault, actor)
 }
 fn input() -> WitnessTurn {

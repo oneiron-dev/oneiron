@@ -137,6 +137,8 @@ pub struct SyncServer {
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Where the owner's feedback goes; `None` until configured.
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
+    /// The open feedback inbox's flood cap, counted while the inbox is on.
+    pub(crate) feedback_flood: crate::api::FloodCap,
     /// The port of the artifact-only listener on the API's host, set by the
     /// serve path once it is bound. `None` where none serves.
     artifact_port: Option<u16>,
@@ -262,6 +264,11 @@ impl SyncServer {
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
+        let feedback_flood = crate::api::FloodCap::new(
+            config.feedback_inbox.notes_per_sender,
+            config.feedback_inbox.notes_per_hour,
+            std::time::Instant::now(),
+        );
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
@@ -304,6 +311,7 @@ impl SyncServer {
             extraction_egress: None,
             owner_host: None,
             feedback: None,
+            feedback_flood,
             artifact_port: None,
             #[cfg(test)]
             booking_test_now_secs: None,

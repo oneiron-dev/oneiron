@@ -141,6 +141,7 @@ fn counterparty_pick_delegates_to_lifecycle_home_node_writer() {
 fn facade_entrypoints_extend_memory_facade_only() {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     page(&vault, PAGE, OWNER);
+    crate::test_util::bind_test_owner(&vault, id(OWNER));
     let input = crate::memory::EmergencyInstructionInput {
         affected_window: crate::calendar::query::CalendarRangeDto {
             start: NOW + 3_600,
