@@ -32,6 +32,23 @@ fn document_crash_child() {
     std::process::abort();
 }
 
+/// Rule 5: the 257th resident document at once, which the old count
+/// refused, opens.
+#[test]
+fn more_live_documents_than_the_old_count_stay_resident() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let registry = DocumentRegistry::new(vault.clone());
+    let held: Vec<_> = (0..257)
+        .map(|_| {
+            let id = EntityId::now();
+            seed(&vault, id);
+            registry.open(id).unwrap()
+        })
+        .collect();
+    assert_eq!(registry.resident_count(), held.len());
+}
+
 #[test]
 fn recovery_replays_snapshot_then_updates_after_kill_and_evicts_idle_docs() {
     let dir = tempfile::tempdir().unwrap();
@@ -621,4 +638,58 @@ fn a_note_frame_exported_before_its_world_turns_device_only_is_withheld_at_relea
             .unwrap();
         assert!(document_frame_withheld(&vault, &frame));
     }
+}
+
+/// Bug repro (rule 5 review, round 1): an export that waited for its
+/// document's turn past the row used the grant it read before the wait.
+/// Done-means: the grant and the selection are read after the wait, so a
+/// grant narrowed meanwhile exports nothing.
+#[test]
+fn a_grant_narrowed_while_an_export_waits_its_turn_exports_nothing() {
+    use crate::federation::{FederationGrant, FederationGrantPreset, FederationGrantRole};
+    use crate::sync::{SyncSelector, SyncSelectorWorld, WindowManager, bridge::Materializer};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    vault.set_live_rows(crate::live_rows::LiveRows {
+        live_documents: 1,
+        ..crate::live_rows::LiveRows::default()
+    });
+    let (held, id) = (EntityId::now(), EntityId::now());
+    seed(&vault, held);
+    seed(&vault, id);
+    let member = EntityId::now();
+    let grant_id = EntityId::now();
+    let scope = crate::FederationGrantScope::vault(7);
+    let grant = FederationGrant::new(
+        scope,
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    document_grant(&vault, grant_id, grant.clone());
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    let manager = Arc::new(WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "wait",
+    ));
+    let empty = loro::VersionVector::new().encode();
+    manager
+        .export_document(id, scope, &selector, &empty)
+        .expect("with a free turn the grant exports");
+    let resident = manager.documents().open(held).unwrap();
+    std::thread::scope(|threads| {
+        let export = threads.spawn(|| manager.export_document(id, scope, &selector, &empty));
+        while manager.documents().waiting() == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let mut narrowed = grant.clone();
+        narrowed.authority_scope.audience =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                crate::federation::ScopeId(EntityId::now()),
+            ]));
+        document_grant(&vault, grant_id, narrowed);
+        drop(resident);
+        assert_document_denied(export.join().unwrap().unwrap_err());
+    });
 }

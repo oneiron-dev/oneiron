@@ -13,6 +13,9 @@ mod documents;
 mod ephemeral;
 mod federation;
 mod hello;
+mod lag_resync;
+#[cfg(test)]
+mod lag_resync_tests;
 mod lfs_chunks;
 #[cfg(test)]
 mod note_socket_tests;

@@ -3,8 +3,6 @@ use crate::memory::MemoryError;
 use crate::{EntityId, Error};
 use serde::{Deserialize, Serialize};
 
-/// Maximum resident handles per vault, including streams currently finalizing.
-pub const MAX_MESSAGE_STREAMS: usize = 256;
 /// Maximum in-memory UTF-8 text per handle.
 pub const MAX_MESSAGE_STREAM_BYTES: usize = 1024 * 1024;
 /// Default quiet interval. Hosts must pump independently of token arrival.
@@ -129,8 +127,10 @@ pub enum MessageStreamError {
     StreamNotFound,
     #[error("message stream belongs to another actor")]
     WrongActor,
-    #[error("message stream handle limit reached")]
-    TooManyStreams,
+    /// The stream waited for its turn past the vault's live row and its
+    /// deadline ([`crate::live_rows::LiveRows`]). Nothing was opened.
+    #[error(transparent)]
+    WaitedOut(#[from] crate::live_rows::LiveWaitedOut),
     #[error("message stream buffer limit reached")]
     BufferOverflow,
     #[error("message stream presence exceeds the 64 KiB frame budget")]

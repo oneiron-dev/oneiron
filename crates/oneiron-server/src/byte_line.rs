@@ -56,6 +56,9 @@ struct Turn {
 pub(crate) struct HeldBytes {
     line: Arc<Mutex<Line>>,
     bytes: usize,
+    /// Whether the state these bytes stand for is past the whole line, so
+    /// running alone; its crossing has asked.
+    past_line: bool,
 }
 
 impl ByteLine {
@@ -155,10 +158,73 @@ impl ByteLine {
         place.settle().then(|| self.held(bytes))
     }
 
+    /// A charge of nothing on this line, for [`Self::try_resize`] to grow.
+    pub(crate) fn empty(&self) -> HeldBytes {
+        self.held(0)
+    }
+
+    /// Takes `bytes` now, for state a synchronous path keeps between
+    /// frames and so cannot wait its turn: when nobody waits and they fit,
+    /// or, for state larger than the whole line, when nothing else holds any,
+    /// so it runs alone. `None` otherwise: past its line such state meets the
+    /// machine's memory floor, the one refusal. Crossing the row asks.
+    pub(crate) fn try_reserve_alone(
+        &self,
+        bytes: usize,
+        questions: &LimitQuestions,
+    ) -> Option<HeldBytes> {
+        let mut held = self.held(0);
+        self.try_resize(&mut held, bytes, questions).then_some(held)
+    }
+
+    /// Moves `held`, taken on this line, to `bytes` now, as
+    /// [`Self::try_reserve_alone`] takes them; shrinking always succeeds and
+    /// hands what it frees on. `false` leaves `held` as it was.
+    pub(crate) fn try_resize(
+        &self,
+        held: &mut HeldBytes,
+        bytes: usize,
+        questions: &LimitQuestions,
+    ) -> bool {
+        debug_assert!(Arc::ptr_eq(&held.line, &self.line));
+        let target = bytes.min(self.total);
+        // State that runs alone past the whole line asks once, as it crosses.
+        let past = bytes > self.total;
+        let crossing = past && !held.past_line;
+        let mut line = lock(&self.line);
+        if target <= held.bytes {
+            line.free += held.bytes - target;
+            held.bytes = target;
+            held.past_line = past;
+            line.grant();
+            drop(line);
+            if crossing {
+                questions.ask(self.row, self.total as u64, bytes as u64);
+            }
+            return true;
+        }
+        let used = self.total - line.free;
+        let extra = target - held.bytes;
+        // Work that waits holds back everything behind it, this state too.
+        let taken = line.waiting.is_empty() && line.free >= extra;
+        let observed = (used - held.bytes).saturating_add(bytes) as u64;
+        if taken {
+            line.free -= extra;
+            held.bytes = target;
+            held.past_line = past;
+        }
+        drop(line);
+        if !taken || crossing {
+            questions.ask(self.row, self.total as u64, observed);
+        }
+        taken
+    }
+
     fn held(&self, bytes: usize) -> HeldBytes {
         HeldBytes {
             line: Arc::clone(&self.line),
             bytes,
+            past_line: false,
         }
     }
 
@@ -231,6 +297,7 @@ impl Drop for Place {
             drop(HeldBytes {
                 line: Arc::clone(&self.line),
                 bytes: self.turn.bytes,
+                past_line: false,
             });
         }
     }

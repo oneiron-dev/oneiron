@@ -25,10 +25,20 @@ const READ_GRANT: &str = "66666666666666666666666666666666";
 pub(super) const AT: u64 = 1_772_000_000;
 
 pub(super) fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
-    server_with_config(oneiron::VaultConfig::device())
+    server_with_limits(crate::config::LimitsConfig::default())
 }
 
-fn server_with_config(config: oneiron::VaultConfig) -> (tempfile::TempDir, Arc<SyncServer>) {
+/// [`server`] with `limits` for its `[limits]` rows.
+pub(super) fn server_with_limits(
+    limits: crate::config::LimitsConfig,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    server_with_config(oneiron::VaultConfig::device(), limits)
+}
+
+fn server_with_config(
+    config: oneiron::VaultConfig,
+    limits: crate::config::LimitsConfig,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     for (id, kind) in [
@@ -72,6 +82,7 @@ fn server_with_config(config: oneiron::VaultConfig) -> (tempfile::TempDir, Arc<S
             SyncServerConfig {
                 auth_secret: Some(SECRET.to_owned()),
                 max_messages_per_sec: 10000,
+                limits,
                 ..Default::default()
             },
         )
@@ -1215,7 +1226,7 @@ async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
 
     let mut config = oneiron::VaultConfig::device();
     config.embedding_model = Some("test/indexed-publication@v1".into());
-    let (_dir, server) = server_with_config(config);
+    let (_dir, server) = server_with_config(config, crate::config::LimitsConfig::default());
     server.vault().set_indexed_idle_delay_ms(0).unwrap();
     server
         .vault()

@@ -4,7 +4,8 @@
 //! - Payloads include conn_id for echo suppression
 //! - conn_id 0 = local/bridge writes (broadcast to all)
 //! - conn_id >= 1 = specific connection (skip sender)
-//! - Lossy broadcast: on `Lagged`, trigger per-window SyncStep resync
+//! - Lossy broadcast: on `Lagged`, the socket is resynced, never closed for
+//!   lag (rule 5; `handler::lag_resync`)
 
 use tokio::sync::broadcast;
 
@@ -19,8 +20,6 @@ pub(crate) struct BroadcastSubscriber {
     conn_id: u32,
     /// Receiver end of the broadcast channel.
     rx: broadcast::Receiver<BroadcastPayload>,
-    /// Count of consecutive lag events for disconnect escalation.
-    lag_count: u32,
 }
 
 impl BroadcastSubscriber {
@@ -29,15 +28,14 @@ impl BroadcastSubscriber {
         Self {
             conn_id,
             rx: tx.subscribe(),
-            lag_count: 0,
         }
     }
 
     /// Receives the next broadcast message, skipping echoes.
     ///
     /// Returns `Ok(Some(data))` for a message to forward, `Ok(None)` if the channel
-    /// is closed, or `Err(BroadcastError::Lagged)` if the receiver fell behind.
-    /// After 3 lags in rapid succession, returns `Err(BroadcastError::TooManyLags)`.
+    /// is closed, or `Err(BroadcastError::Lagged)` each time the receiver fell
+    /// behind, however often: lag alone never ends a connection.
     pub(crate) async fn recv(&mut self) -> Result<Option<Vec<u8>>, BroadcastError> {
         loop {
             match self.rx.recv().await {
@@ -46,9 +44,6 @@ impl BroadcastSubscriber {
                 }
                 Ok(BroadcastPayload::LocalDocs(_)) => continue,
                 Ok(BroadcastPayload::Frame(sender_conn_id, data)) => {
-                    // Reset lag counter on successful receive
-                    self.lag_count = 0;
-
                     // Echo suppression: skip if this message originated from us
                     if sender_conn_id == self.conn_id {
                         continue;
@@ -57,18 +52,11 @@ impl BroadcastSubscriber {
                     return Ok(Some(data));
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    self.lag_count += 1;
                     tracing::warn!(
                         conn_id = self.conn_id,
                         missed = n,
-                        lag_count = self.lag_count,
                         "broadcast subscriber lagged"
                     );
-
-                    if self.lag_count >= 3 {
-                        return Err(BroadcastError::TooManyLags);
-                    }
-
                     return Err(BroadcastError::Lagged(n));
                 }
                 Err(broadcast::error::RecvError::Closed) => {
@@ -82,11 +70,9 @@ impl BroadcastSubscriber {
 /// Errors from broadcast subscriber.
 #[derive(Debug)]
 pub(crate) enum BroadcastError {
-    /// Receiver fell behind; n messages were skipped.
-    /// Connection should trigger per-window SyncStep resync.
+    /// Receiver fell behind; n messages were skipped. The connection resyncs
+    /// every subscription it holds.
     Lagged(u64),
-    /// Too many lag events (>= 3 consecutive) — disconnect and force full reconnection.
-    TooManyLags,
 }
 
 /// Subscriber that turns broadcast frames into persistent-change notices for
@@ -94,10 +80,10 @@ pub(crate) enum BroadcastError {
 /// also its only caller, so it inherits that module's dead-code posture in the
 /// non-test build.
 ///
-/// Unlike [`BroadcastSubscriber`], which stays exactly as it is for WebSocket
-/// forwarding, lag here surfaces as [`ReactiveChange::InvalidateAll`] so the
-/// query re-reads coarsely instead of escalating to a disconnect: staleness is
-/// a data-freshness problem, not a connection fault.
+/// Unlike [`BroadcastSubscriber`], whose lag resyncs a WebSocket's
+/// subscriptions, lag here surfaces as [`ReactiveChange::InvalidateAll`] so the
+/// query re-reads coarsely: staleness is a data-freshness problem, not a
+/// connection fault.
 pub(crate) struct ReactiveChangeSubscriber {
     /// Receiver end of the broadcast channel.
     rx: broadcast::Receiver<BroadcastPayload>,

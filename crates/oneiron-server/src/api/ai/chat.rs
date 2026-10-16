@@ -20,8 +20,8 @@ use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, TerminalSink};
 use oneiron::memory::{
-    MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason,
-    StreamSyncVisibility, WitnessAuthor, WitnessMessage, WitnessTurn,
+    MessageStreamError, MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence,
+    StreamCancelReason, StreamSyncVisibility, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
@@ -361,21 +361,36 @@ fn start_turn(
         ))
         .map_err(|error| engine(&error))?;
     server.ai.turn_landed(&vault, WakeTurnSubject::Vault);
-    let handle = vault
-        .memory(agent, EdgeActorClass::Agent)
-        .begin_message_stream(
-            &witness_turn(
-                &request.conversation_ref,
-                WitnessAuthor::Companion,
-                String::new(),
-                at,
-            ),
-            Some(MessageWriteMode::Streamed {
-                visibility: StreamSyncVisibility::AllDevices,
-                cadence: StreamCadence::PerToken,
-            }),
-        )
-        .map_err(|error| engine(&error))?;
+    // Past the vault's message-stream row the stream waits its turn (rule 5),
+    // so it waits off the runtime's workers.
+    let turn = witness_turn(
+        &request.conversation_ref,
+        WitnessAuthor::Companion,
+        String::new(),
+        at,
+    );
+    let begun = crate::server::blocking(|| {
+        vault
+            .memory(agent, EdgeActorClass::Agent)
+            .begin_message_stream(
+                &turn,
+                Some(MessageWriteMode::Streamed {
+                    visibility: StreamSyncVisibility::AllDevices,
+                    cadence: StreamCadence::PerToken,
+                }),
+            )
+    });
+    let handle = match begun {
+        Ok(handle) => handle,
+        Err(MessageStreamError::WaitedOut(waited)) => {
+            return Err(refused(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "turn_waited_out",
+                waited.to_string(),
+            ));
+        }
+        Err(error) => return Err(engine(&error)),
+    };
 
     // The turn is a run on the vault's budget policy for this actor, one line
     // per turn. Each rung the call reaches is admitted on its own permit and

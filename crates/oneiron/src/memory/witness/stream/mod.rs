@@ -1,4 +1,5 @@
-//! Ephemeral MESSAGE streams, bounded per vault, with transactional finality.
+//! Ephemeral MESSAGE streams, waiting their turn past the vault's row, with
+//! transactional finality.
 mod admission;
 mod lifecycle;
 mod policy;
@@ -22,6 +23,8 @@ pub use types::*;
 /// append/finalize transaction; no storage callback acquires that lock.
 pub(crate) struct MessageStreamRuntime {
     entries: Mutex<BTreeMap<EntityId, Arc<Mutex<State>>>>,
+    /// The fair line past the vault's message-stream row.
+    line: crate::live_rows::LiveLine,
     #[cfg(feature = "sync")]
     pub(crate) presence: presence::StreamPresence,
 }
@@ -29,6 +32,7 @@ impl Default for MessageStreamRuntime {
     fn default() -> Self {
         Self {
             entries: Mutex::new(BTreeMap::new()),
+            line: crate::live_rows::LiveLine::new(crate::live_rows::LiveRow::MessageStreams),
             #[cfg(feature = "sync")]
             presence: presence::StreamPresence::default(),
         }
@@ -43,6 +47,9 @@ struct State {
     emitted_chars: usize,
     dirty: bool,
     terminal: bool,
+    /// The stream's turn under the vault's row, held until the stream's
+    /// state goes; none for a seed recovered at open.
+    _turn: Option<crate::live_rows::LivePermit>,
 }
 impl State {
     fn text(&self) -> String {
@@ -75,6 +82,11 @@ impl MessageStreamRuntime {
             .get(&handle.message)
             .cloned()
             .ok_or(MessageStreamError::StreamNotFound)
+    }
+    /// Streams waiting for a turn past the vault's row.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> usize {
+        self.line.waiting()
     }
     fn remove(&self, handle: MessageStreamHandle) -> MessageStreamResult<()> {
         // This function is reached while the corresponding State remains locked.

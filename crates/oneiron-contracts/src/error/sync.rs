@@ -382,6 +382,12 @@ pub enum SyncError {
         window_key: String,
         outstanding_handles: usize,
     },
+    /// Opening a text document waited for its turn past the vault's live
+    /// document row and its deadline (rule 5: a deadline, never a refusal
+    /// for count). Nothing was opened; the open may be retried.
+    #[cfg(feature = "sync")]
+    #[error("a live document waited for its turn past its deadline")]
+    LiveDocumentWaitedOut,
     /// Sync protocol violation.
     #[cfg(feature = "sync")]
     #[error("sync protocol error: {context}")]
@@ -544,6 +550,8 @@ impl SyncError {
             Self::WindowNotFound { .. } => ErrorKind::WindowNotFound,
             #[cfg(feature = "sync")]
             Self::WindowBusy { .. } => ErrorKind::WindowBusy,
+            #[cfg(feature = "sync")]
+            Self::LiveDocumentWaitedOut => ErrorKind::LiveDocumentWaitedOut,
             #[cfg(feature = "sync")]
             Self::SyncProtocolError { .. } => ErrorKind::SyncProtocolError,
             #[cfg(feature = "sync")]

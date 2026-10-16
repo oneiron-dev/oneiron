@@ -1,82 +1,58 @@
-//! Retained app state has both a session ceiling and a shared hub ceiling.
+//! Retained app state is charged to the server's retained-memory line
+//! (`limits.retained_memory_bytes`), never capped per session or per hub
+//! (rule 5). State larger than the whole line runs alone; past the line, an
+//! open meets the memory floor and a retained ring falls back to a resync.
 use super::AppError;
+use crate::byte_line::{ByteLine, HeldBytes};
+use crate::wire_telemetry::LimitQuestions;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub(super) const SESSION_BYTES: usize = 8 * 1024 * 1024;
-pub(super) const HUB_BYTES: usize = 64 * 1024 * 1024;
-
-pub(super) struct Budget {
-    used: AtomicUsize,
-    limit: usize,
+/// The line live-query retention is charged to, and where its crossing asks.
+pub(crate) struct Budget {
+    line: Arc<ByteLine>,
+    questions: Arc<LimitQuestions>,
 }
 impl Budget {
-    pub(super) fn new(limit: usize) -> Arc<Self> {
-        Arc::new(Self {
-            used: AtomicUsize::new(0),
-            limit,
-        })
+    pub(crate) fn new(line: Arc<ByteLine>, questions: Arc<LimitQuestions>) -> Arc<Self> {
+        Arc::new(Self { line, questions })
     }
-    fn take(&self, bytes: usize) -> bool {
-        self.used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|next| *next <= self.limit)
-            })
-            .is_ok()
-    }
-    fn release(&self, bytes: usize) {
-        self.used.fetch_sub(bytes, Ordering::AcqRel);
+
+    /// A line of its own of `total` bytes.
+    #[cfg(test)]
+    pub(super) fn of(total: usize) -> Arc<Self> {
+        Self::new(
+            Arc::new(ByteLine::new(
+                crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
+                total,
+            )),
+            Arc::default(),
+        )
     }
 }
 
 pub(super) struct Reservation {
-    session: Arc<Budget>,
-    hub: Arc<Budget>,
-    bytes: usize,
+    budget: Arc<Budget>,
+    held: HeldBytes,
 }
 impl Reservation {
-    pub(super) fn new(
-        session: Arc<Budget>,
-        hub: Arc<Budget>,
-        bytes: usize,
-    ) -> Result<Self, AppError> {
-        let mut reservation = Self {
-            session,
-            hub,
-            bytes: 0,
-        };
-        reservation.resize(bytes)?;
-        Ok(reservation)
+    pub(super) fn new(budget: Arc<Budget>, bytes: usize) -> Result<Self, AppError> {
+        let held = budget
+            .line
+            .try_reserve_alone(bytes, &budget.questions)
+            .ok_or_else(AppError::memory_floor)?;
+        Ok(Self { budget, held })
     }
     pub(super) fn resize(&mut self, bytes: usize) -> Result<(), AppError> {
-        if bytes > self.bytes {
-            let extra = bytes - self.bytes;
-            if !self.session.take(extra) {
-                return Err(exhausted());
-            }
-            if !self.hub.take(extra) {
-                self.session.release(extra);
-                return Err(exhausted());
-            }
+        if self
+            .budget
+            .line
+            .try_resize(&mut self.held, bytes, &self.budget.questions)
+        {
+            Ok(())
         } else {
-            self.session.release(self.bytes - bytes);
-            self.hub.release(self.bytes - bytes);
+            Err(AppError::memory_floor())
         }
-        self.bytes = bytes;
-        Ok(())
     }
-}
-impl Drop for Reservation {
-    fn drop(&mut self) {
-        self.session.release(self.bytes);
-        self.hub.release(self.bytes);
-    }
-}
-fn exhausted() -> AppError {
-    AppError::bad_request(
-        "live-query retention byte budget exceeded",
-        Some("scopedView"),
-    )
 }
 
 /// Conservative heap estimate, including Value slots and map-node overhead.

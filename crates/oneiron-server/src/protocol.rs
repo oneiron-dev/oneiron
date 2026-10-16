@@ -336,6 +336,12 @@ pub(crate) enum ProtocolError {
     /// `close_codes::VERSION_MISMATCH`, never answered with history it cannot apply.
     #[error("window replacement requires a newer protocol")]
     ReplacementUnsupported,
+    /// A document's open waited for its turn past the live-document row to
+    /// its deadline (`limits.queue_wait_timeout_ms`, rule 5). Nothing was
+    /// opened or applied, and the frame may be sent again. Closed with
+    /// `close_codes::TRY_AGAIN_LATER`, never as a persistence failure.
+    #[error("waited for its turn past its deadline")]
+    WaitedOut,
 }
 
 impl ProtocolError {
@@ -351,6 +357,7 @@ impl ProtocolError {
             Self::VvDecode(_) => "version_vector_decode_failed",
             Self::Persistence(_) => "sync_persistence_failed",
             Self::ReplacementUnsupported => "replacement_unsupported",
+            Self::WaitedOut => "waited_out",
         }
     }
 }
@@ -379,4 +386,7 @@ pub(crate) mod close_codes {
     pub(crate) const CLOSE_RPC_VERSION_MISMATCH: u16 = 4007;
     /// Missing, invalid, revoked, or repeated in-band bind.
     pub(crate) const CLOSE_RPC_NO_PRINCIPAL: u16 = 4008;
+    /// RFC 6455 "Try Again Later": a frame waited for its turn past its
+    /// deadline (rule 5); nothing was applied, and it may be sent again.
+    pub(crate) const TRY_AGAIN_LATER: u16 = 1013;
 }

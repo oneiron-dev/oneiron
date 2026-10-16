@@ -14,7 +14,7 @@ use super::app_tier::{
     handle_app_message_with_connection, handle_sync_message, require_bound_app_auth,
 };
 use super::conn_state::ConnState;
-use super::ephemeral::encode_late_join_ephemeral_snapshot;
+use super::ephemeral::late_join_presence;
 use super::hello::{HelloOutcome, await_protocol_hello};
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 
@@ -187,11 +187,11 @@ async fn handle_connection(
     }
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
-    if let Some(msg) = encode_late_join_ephemeral_snapshot(&server, conn_id)
-        && !transport.send_binary(msg).await
-    {
-        tracing::warn!(conn_id, "failed to send ephemeral snapshot");
-        return;
+    for msg in late_join_presence(&server, conn_id) {
+        if !transport.send_binary(msg).await {
+            tracing::warn!(conn_id, "failed to send ephemeral snapshot");
+            return;
+        }
     }
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
@@ -295,14 +295,19 @@ async fn handle_connection(
                             Some(&oneiron::sync::transport::TAG_DOCUMENT)
                                 | Some(&oneiron::sync::transport::TAG_BATCH)
                         ) {
-                            let Ok(frames) =
-                                super::documents::document_delivery(&server, &conn_state, &data)
-                            else {
+                            let mut retry = Vec::new();
+                            let Ok(frames) = super::documents::document_delivery_retrying(
+                                &server,
+                                &conn_state,
+                                &data,
+                                &mut retry,
+                            ) else {
                                 break;
                             };
                             for frame in frames {
                                 let _ = direct_tx.send(frame);
                             }
+                            super::documents::retry_later(&direct_tx, retry);
                             continue;
                         }
                         if protocol::is_residence_version(protocol_version)
@@ -371,22 +376,13 @@ async fn handle_connection(
                     }
                     Ok(None) => break,
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
-                        // Reconnect replays persisted document subscriptions and VVs.
-                        // App replay alone cannot repair a missed text-document notice.
-                        if !conn_state.documents.is_empty()
-                            || conn_state.window_sync_mode
-                                == super::conn_state::WindowSyncMode::FullWindow
-                        {
-                            transport.close().await;
-                            break;
+                        // Rule 5: lag never closes a socket. Each subscription it
+                        // holds is told again, through the direct queue's doors.
+                        for frame in super::lag_resync::lag_resync_frames(&server, &conn_state) {
+                            let _ = direct_tx.send(frame);
                         }
                         app_connection.replay_after_lag();
-                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resync needed");
-                    }
-                    Err(crate::broadcast::BroadcastError::TooManyLags) => {
-                        tracing::warn!(conn_id, "too many lags — disconnecting");
-                        transport.close().await;
-                        break;
+                        tracing::warn!(conn_id, missed = n, "subscriber lagged — resynced");
                     }
                 }
                 continue;
@@ -451,7 +447,15 @@ async fn handle_connection(
                     Some(&oneiron::sync::transport::TAG_DOCUMENT)
                         | Some(&oneiron::sync::transport::TAG_BATCH)
                 ) {
-                    match super::documents::document_delivery(&server, &conn_state, &data) {
+                    let mut retry = Vec::new();
+                    let delivered = super::documents::document_delivery_retrying(
+                        &server,
+                        &conn_state,
+                        &data,
+                        &mut retry,
+                    );
+                    super::documents::retry_later(&direct_tx, retry);
+                    match delivered {
                         Ok(mut frames) if frames.len() == 1 => data = frames.remove(0),
                         Ok(frames) if frames.is_empty() => continue,
                         _ => break,
@@ -537,6 +541,15 @@ async fn handle_connection(
                         oneiron_vault_contract::now_ts(),
                     );
                 }
+                // Rule 5: a new session or subscription waits its turn here,
+                // before the synchronous app tier runs it; only a live bound
+                // credential that may read joins a line.
+                if let SyncMessage::Sub(payload) = &msg
+                    && let Ok(auth) = super::app_tier::require_bound_app_auth(&server, &conn_state)
+                    && auth.require(crate::auth::CoreScope::Read).is_ok()
+                {
+                    app_connection.admit(Some(auth), payload).await;
+                }
                 let handle_result = match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(
                         &server,
@@ -581,6 +594,22 @@ async fn handle_connection(
                                     code: close_codes::VERSION_MISMATCH,
                                     reason: Utf8Bytes::from_static(
                                         "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
+                                    ),
+                                })))
+                                .await;
+                            break;
+                        }
+                        ProtocolError::WaitedOut => {
+                            tracing::warn!(
+                                conn_id,
+                                reason = "waited_out",
+                                "document waited for its turn past its deadline — closing"
+                            );
+                            transport
+                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                    code: close_codes::TRY_AGAIN_LATER,
+                                    reason: Utf8Bytes::from_static(
+                                        "waited for its turn past its deadline: nothing was applied",
                                     ),
                                 })))
                                 .await;

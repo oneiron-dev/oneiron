@@ -29,9 +29,9 @@ fn reply_with_cache(
     test_wire::reply(&answer.queued(0))
 }
 
-#[tokio::test]
-async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item() {
-    let (_dir, server) = production_tests::server();
+/// A window holding two PERSON rows, `[item, other]`, whose bodies carry an unsynced canary, and
+/// the actor's credential and encoded selector under a member grant on it.
+async fn granted_window(server: &SyncServer) -> (CoreAuth, WindowKey, String, [EntityId; 2]) {
     let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
     let item = EntityId::now();
     let other = EntityId::now();
@@ -73,7 +73,14 @@ async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item
     let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(encode_sync_selector(&selector).unwrap());
-    let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
+    let auth = crate::test_credentials::authenticate(server, &production_tests::token("human"));
+    (auth, window, encoded, [item, other])
+}
+
+#[tokio::test]
+async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item() {
+    let (_dir, server) = production_tests::server();
+    let (auth, window, encoded, [item, other]) = granted_window(&server).await;
     let index = reply(
         &server,
         &auth,
@@ -126,6 +133,34 @@ async fn first_join_index_is_thin_and_first_touch_returns_only_the_selected_item
         }),
     );
     assert!(denied.get("error").is_some());
+}
+
+/// Bug repro (rule 5, found beside Bugbot's on #1483): a touch whose document export waited past
+/// the live-document row to its deadline was answered a 500 "item document unavailable", after
+/// waiting on the runtime worker. Done-means: it is answered the typed WAITED_OUT.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_touch_past_the_live_document_row_is_waited_out() {
+    let (_dir, server) = production_tests::server_with_limits(crate::config::LimitsConfig {
+        live_documents: 1,
+        queue_wait_timeout_ms: 200,
+        ..crate::config::LimitsConfig::default()
+    });
+    let (auth, window, encoded, [item, other]) = granted_window(&server).await;
+    // Another opener holds the vault's one live document past the wait.
+    let _held = server
+        .reassert_manager
+        .documents()
+        .open_for(other, b"another opener")
+        .unwrap();
+    let touch = reply(
+        &server,
+        &auth,
+        "residence.touch",
+        json!({
+            "window": window.as_str(), "selector": encoded, "entityId": item.to_hex()
+        }),
+    );
+    assert_eq!(touch["error"]["code"], "WAITED_OUT", "{touch}");
 }
 
 #[tokio::test]
@@ -206,4 +241,99 @@ async fn home_search_requires_a_bound_grant_and_never_claims_local_completeness(
     server.vault.delete_entity(&grant_id).unwrap();
     let revoked = reply(&server, &actor, "residence.search", request(&encoded));
     assert!(revoked.get("error").is_some(), "{revoked:?}");
+}
+
+/// Crosses a residence index row (rule 5, rows 22 and 23): budgets of one
+/// page of one entry and one byte of projection, read `callers` pages deep.
+/// Every page is served, charged to the retained-memory line.
+pub(crate) async fn cross_the_index(
+    row: crate::wire_telemetry::LimitRow,
+    callers: usize,
+) -> crate::admission::Crossing {
+    let (_dir, server) = production_tests::server();
+    let actor = EntityId::from_hex(production_tests::ACTOR).unwrap();
+    let grant_id = EntityId::now();
+    oneiron::sync::put_selector_test_federation_grant(
+        &server.vault,
+        &grant_id,
+        &FederationGrant::new(
+            crate::handler::selector_grant_scope(),
+            actor,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        ),
+        production_tests::AT,
+    )
+    .unwrap();
+    let body = rmp_serde::to_vec_named(&json!({"title":"Window title"})).unwrap();
+    for _ in 0..=callers {
+        let at = TimeRange {
+            start: production_tests::AT,
+            end: production_tests::AT,
+        };
+        server
+            .vault
+            .put_entity(
+                &EntityId::now(),
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                at,
+                production_tests::AT,
+                &body,
+            )
+            .unwrap();
+    }
+    let window = WindowKey::from_timestamp(production_tests::AT);
+    server.get_or_create_window(&window).await.unwrap();
+    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let encoded =
+        base64::engine::general_purpose::STANDARD.encode(encode_sync_selector(&selector).unwrap());
+    let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
+    let budgets = ResidenceOperationBudgets {
+        index_page_limit: 1,
+        max_index_pages: 1,
+        index_cache_bytes: 1,
+        ..ResidenceOperationBudgets::default()
+    };
+    let (mut cache, mut after, mut revision) = (None, Value::Null, Value::Null);
+    let mut refused = 0;
+    for _ in 0..callers {
+        let params = json!({
+            "window": window.as_str(), "selector": encoded, "limit": 1,
+            "after": after, "revision": revision,
+        });
+        match index(&server, &auth, params, &mut cache, budgets) {
+            Ok((page, _)) => {
+                after = page["nextCursor"].clone();
+                revision = page["revision"].clone();
+            }
+            Err(_) => refused += 1,
+        }
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: server
+            .wire_telemetry
+            .limit_questions()
+            .latest(row)
+            .is_some(),
+    }
+}
+
+/// Bug repro (rule 5, rows 22 and 23): a socket's index read was refused
+/// past 1,024 pages and past its projection's byte row. Done-means: every
+/// page is served and each row asks.
+#[tokio::test]
+async fn an_index_read_past_its_rows_is_served_and_asks() {
+    use crate::wire_telemetry::LimitRow;
+    for row in [LimitRow::ResidenceIndexPages, LimitRow::ResidenceIndexBytes] {
+        assert_eq!(
+            cross_the_index(row, 4).await,
+            crate::admission::Crossing {
+                refused: 0,
+                asked: true
+            },
+            "{}",
+            row.key()
+        );
+    }
 }

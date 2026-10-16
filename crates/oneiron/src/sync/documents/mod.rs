@@ -35,12 +35,12 @@ pub(crate) const QD_E: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_t
 /// bytes (the optional middle segment is never parsed by this door).
 pub(crate) const AD_E: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_AD_E);
 
-/// Maximum concurrent live-edit documents. Idle documents are evicted immediately.
-const MAX_RESIDENTS: usize = 256;
-
 pub struct DocumentRegistry {
     vault: Arc<Vault>,
     residents: Mutex<HashMap<EntityId, Weak<EntityDocument>>>,
+    /// Past the vault's live document row, the next opener waits its turn
+    /// here (rule 5). Idle documents leave at once, and so do their turns.
+    line: crate::live_rows::LiveLine,
     notices: broadcast::Sender<Vec<u8>>,
 }
 
@@ -49,22 +49,35 @@ impl DocumentRegistry {
         Self {
             vault,
             residents: Mutex::new(HashMap::new()),
+            line: crate::live_rows::LiveLine::new(crate::live_rows::LiveRow::LiveDocuments),
             notices: broadcast::channel(256).0,
         }
     }
 
     /// Only callers holding this edit handle keep the document resident.
     pub fn open(&self, id: EntityId) -> Result<Arc<EntityDocument>> {
-        let mut residents = self
-            .residents
-            .lock()
-            .map_err(|_| Error::InvariantViolation("document registry poisoned"))?;
-        residents.retain(|_, doc| doc.strong_count() > 0);
-        if let Some(doc) = residents.get(&id).and_then(Weak::upgrade) {
+        self.open_for(id, &[])
+    }
+
+    /// [`Self::open`] for `opener`'s work (a principal's id, or nothing for
+    /// this vault's own): past the vault's row, openers wait their turn
+    /// round-robin across openers, up to the wait row, and are never refused
+    /// for the count ([`crate::live_rows`]).
+    pub fn open_for(&self, id: EntityId, opener: &[u8]) -> Result<Arc<EntityDocument>> {
+        if let Some(doc) = self.resident(id)? {
             return Ok(doc);
         }
-        if residents.len() >= MAX_RESIDENTS {
-            return Err(Error::InvariantViolation("live document limit reached"));
+        // The wait holds no transaction, lock or lease.
+        let turn = self
+            .line
+            .enter(&self.vault, opener)
+            .map_err(|_| Error::Sync(crate::error::SyncError::LiveDocumentWaitedOut))?;
+        let mut residents = self.residents()?;
+        residents.retain(|_, doc| doc.strong_count() > 0);
+        // Another opener may have made it resident while this one waited;
+        // its turn goes back.
+        if let Some(doc) = residents.get(&id).and_then(Weak::upgrade) {
+            return Ok(doc);
         }
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, id)?;
@@ -76,10 +89,24 @@ impl DocumentRegistry {
                 vault: self.vault.clone(),
                 doc: Mutex::new(doc),
                 notices: self.notices.clone(),
+                _turn: turn,
             });
             residents.insert(id, Arc::downgrade(&handle));
             Ok(handle)
         })
+    }
+
+    fn residents(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<EntityId, Weak<EntityDocument>>>> {
+        self.residents
+            .lock()
+            .map_err(|_| Error::InvariantViolation("document registry poisoned"))
+    }
+
+    /// The document while some caller keeps it resident.
+    fn resident(&self, id: EntityId) -> Result<Option<Arc<EntityDocument>>> {
+        Ok(self.residents()?.get(&id).and_then(Weak::upgrade))
     }
 
     /// The one text-plane export door. Authorization and entity selection use
@@ -93,6 +120,10 @@ impl DocumentRegistry {
         selector: &super::selector::SyncSelector,
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
+        // The document's turn comes first: a wait past the row must not
+        // outlast the grant and selection that admit the export, so both are
+        // read after it.
+        let document = self.open_for(id, selector.member_ref.as_bytes())?;
         let selected =
             super::selector::filtered_window_doc(&self.vault, ledger, window, scope, selector)?;
         if !super::loro_support::map_contains_binary(&selected.get_map("entities"), &id.to_hex()) {
@@ -100,7 +131,7 @@ impl DocumentRegistry {
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
-        self.open(id)?.export(
+        document.export(
             &super::selector::encode_sync_selector(selector)?,
             remote_vv,
             scope,
@@ -219,9 +250,15 @@ impl DocumentRegistry {
         }
     }
     pub fn resident_count(&self) -> usize {
-        self.residents.lock().map_or(MAX_RESIDENTS, |r| {
-            r.values().filter(|v| v.strong_count() > 0).count()
-        })
+        self.residents
+            .lock()
+            .map_or(0, |r| r.values().filter(|v| v.strong_count() > 0).count())
+    }
+
+    /// Openers waiting for a turn past the vault's live document row.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> usize {
+        self.line.waiting()
     }
 
     pub(crate) fn compact_closed(&self, id: EntityId, erased: bool) -> Result<bool> {
@@ -244,6 +281,9 @@ pub struct EntityDocument {
     vault: Arc<Vault>,
     doc: Mutex<LoroDoc>,
     notices: broadcast::Sender<Vec<u8>>,
+    /// The document's turn under the vault's live document row, held while
+    /// it is resident.
+    _turn: crate::live_rows::LivePermit,
 }
 
 impl EntityDocument {

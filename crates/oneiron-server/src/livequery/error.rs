@@ -71,6 +71,26 @@ impl AppError {
         ApiError::internal_server_error(message).into()
     }
 
+    /// State kept between frames met the machine's memory floor, the line
+    /// `limits.retained_memory_bytes` sizes: the one refusal past that row.
+    pub(super) fn memory_floor() -> Self {
+        Self::new(
+            "MEMORY_FLOOR",
+            "retained state reached the memory floor (limits.retained_memory_bytes)",
+            ["Retry once other state is released, or raise limits.retained_memory_bytes."],
+        )
+    }
+
+    /// Work waited for its turn past a row and reached its deadline
+    /// (`limits.queue_wait_timeout_ms`). Nothing was opened.
+    pub(super) fn waited_out() -> Self {
+        Self::new(
+            "WAITED_OUT",
+            "the request waited for its turn past its deadline",
+            ["Retry: nothing was opened."],
+        )
+    }
+
     /// A read whose result changed before all of it was sent.
     pub(super) fn result_changed() -> Self {
         Self::new(

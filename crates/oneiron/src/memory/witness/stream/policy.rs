@@ -4,6 +4,9 @@ use crate::edge::EdgeActorClass;
 use crate::memory::support::verify_owner_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
 
+/// Per-actor mode overrides one policy may carry: a bound on the policy
+/// object's own size.
+const MAX_AGENT_OVERRIDES: usize = 256;
 /// Vault default message-streaming policy. Key: `()`.
 const POLICY: SideTable<(), MessageStreamPolicy, Named> =
     SideTable::new(&side_table::MESSAGE_STREAM_POLICY);
@@ -25,7 +28,7 @@ impl MessageWriteMode {
 }
 impl MessageStreamPolicy {
     fn validate(&self) -> MessageStreamResult<()> {
-        if self.idle_timeout_ms == 0 || self.agent_overrides.len() > MAX_MESSAGE_STREAMS {
+        if self.idle_timeout_ms == 0 || self.agent_overrides.len() > MAX_AGENT_OVERRIDES {
             return Err(MessageStreamError::InvalidRequest(
                 "invalid idle timeout or override count",
             ));

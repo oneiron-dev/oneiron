@@ -5,7 +5,7 @@ use loro::VersionVector;
 use super::conn_state::ConnState;
 use super::connection::session_credential_revoked;
 use super::ephemeral::{
-    canonical_ephemeral_frames, ensure_ephemeral_hub_budget, validate_ephemeral_payload,
+    canonical_ephemeral_frames, ephemeral_hub_candidate, validate_ephemeral_payload,
 };
 use super::window_sync::handle_window_sync;
 use crate::auth::CoreAuth;
@@ -62,14 +62,25 @@ pub(super) async fn handle_sync_message(
             Ok(())
         }
         SyncMessage::Ephemeral(payload) => {
-            server.ephemeral_store.remove_outdated();
+            // One change to the hub at a time: read, checked, charged to the
+            // retained-memory line and applied under the presence guard
+            // (rule 5, row 19).
+            let mut presence = server.presence.lock();
+            presence.expire(&server.ephemeral_store);
             let states = validate_ephemeral_payload(server, &payload)?;
-            ensure_ephemeral_hub_budget(server, &payload, &states)?;
+            if !presence.fit(ephemeral_hub_candidate(server, &payload, &states)?) {
+                tracing::warn!(
+                    conn_id,
+                    kind = "memory_floor",
+                    "presence frame not kept: retained memory is full"
+                );
+                return Ok(());
+            }
             server
                 .ephemeral_store
                 .apply(&payload)
                 .map_err(|_| ProtocolError::InvalidPayload("invalid ephemeral payload"))?;
-            server.ephemeral_store.remove_outdated();
+            drop(presence);
             for encoded in canonical_ephemeral_frames(server, &states)? {
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             }
