@@ -1,11 +1,14 @@
 //! Typed Context Board render projections.
 //!
-//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, SCRATCHPAD, session read-set riders and stream projections.
+//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, INBOX, SCRATCHPAD, session read-set riders and stream
+//! projections.
 
 mod agents;
 mod agents_fanout;
 pub(crate) use agents_fanout::fanout_agent_rows;
 mod capabilities;
+mod inbox;
+pub use inbox::assemble_inbox_section;
 mod observations;
 #[cfg(test)]
 mod observations_tests;

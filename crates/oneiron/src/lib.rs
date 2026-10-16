@@ -158,6 +158,7 @@ pub mod engine_executor;
 pub mod failure_ladder;
 pub mod failure_signals;
 pub mod run_tree;
+pub mod runtime_hooks;
 pub mod self_heal;
 pub mod session_lifecycle;
 pub mod wave_orchestration;
@@ -293,7 +294,7 @@ pub use crate::calendar::{
 };
 pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, EmailThreadHeaders,
 };
 pub use crate::channel_identity_selection::{
     ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
@@ -364,7 +365,8 @@ pub use crate::deletion::{
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
-    ConsolidationExecutor, ConsolidationSink, plan_partitions, read_watermark, scan_dirty_turns,
+    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, plan_partitions,
+    read_watermark, scan_dirty_turns,
 };
 pub use crate::dreamer_prefilter::{
     NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,
