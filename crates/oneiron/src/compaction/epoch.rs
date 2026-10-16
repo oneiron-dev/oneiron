@@ -15,6 +15,7 @@ use crate::write_envelope::WriteActor;
 
 use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage, WindowLog};
 use super::stored_epoch::{StoredEpoch, stored_epoch_in};
+use super::withdrawn::WithdrawnKeyframe;
 use crate::error::OffRecordError;
 
 /// Pinned body keys for an epoch summary, in encode order.
@@ -469,12 +470,14 @@ pub(super) fn validate_epoch_boundary(prior: Option<PriorEpoch>, turn_start: u64
 /// ordinary witness SUMMARY is a different kind of row that happens to share
 /// the type byte, and it carries no epoch to compare. An identifiable malformed
 /// epoch candidate for this session is refused rather than losing its lineage.
+/// A withdrawn epoch counts by the keyframe it keeps, so numbering never
+/// restarts under a scrubbed one.
 pub(super) fn prior_epoch_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     session_ref: &EntityId,
 ) -> Result<Option<PriorEpoch>> {
-    let mut best: Option<EpochSummaryBody> = None;
+    let mut best: Option<(WithdrawnKeyframe, Option<String>)> = None;
     let mut conflicting = false;
     for row in store.port_entity_records(rtxn)? {
         let (_, row) = row?;
@@ -482,29 +485,28 @@ pub(super) fn prior_epoch_in_txn(
             continue;
         }
         let bytes = &row.body;
-        let body = match decode_epoch_summary_body(bytes) {
-            Ok(body) => body,
-            Err(error) if is_epoch_candidate_for_session(bytes, session_ref) => return Err(error),
-            Err(_) => continue,
+        let (keyframe, text) = match decode_epoch_summary_body(bytes) {
+            Ok(body) => (WithdrawnKeyframe::of_body(&body)?, Some(body.text)),
+            Err(error) => match WithdrawnKeyframe::decode(bytes) {
+                Ok(keyframe) => (keyframe, None),
+                Err(_) if is_epoch_candidate_for_session(bytes, session_ref) => return Err(error),
+                Err(_) => continue,
+            },
         };
-        if EntityId::from_hex(&body.session)? != *session_ref {
+        if keyframe.session != *session_ref {
             continue;
         }
         match best.as_ref() {
-            Some(prior) if body.epoch < prior.epoch => {}
-            Some(prior) if body.epoch == prior.epoch => {
-                // Session IDs and epoch numbers already match. Compare actor
-                // IDs semantically too, without changing the codec's spelling.
-                // Different keyframes at the highest epoch remain conflicts.
-                conflicting |= body.v != prior.v
-                    || body.turn_start != prior.turn_start
-                    || body.turn_end != prior.turn_end
-                    || body.level != prior.level
-                    || body.text != prior.text
-                    || EntityId::from_hex(&body.actor)? != EntityId::from_hex(&prior.actor)?;
+            Some((prior, _)) if keyframe.epoch < prior.epoch => {}
+            Some((prior, prior_text)) if keyframe.epoch == prior.epoch => {
+                // Session IDs and epoch numbers already match; actor IDs
+                // compare as IDs, not as the codec spells them. Different
+                // keyframes at the highest epoch remain conflicts, and so do
+                // words beside none: a withdrawn one keeps nothing to compare.
+                conflicting |= keyframe != *prior || text != *prior_text;
             }
             _ => {
-                best = Some(body);
+                best = Some((keyframe, text));
                 conflicting = false;
             }
         }
@@ -516,9 +518,9 @@ pub(super) fn prior_epoch_in_txn(
             "conflicting summaries at the highest compaction epoch",
         ));
     }
-    Ok(best.map(|body| PriorEpoch {
-        epoch: body.epoch,
-        turn_end: body.turn_end,
+    Ok(best.map(|(keyframe, _)| PriorEpoch {
+        epoch: keyframe.epoch,
+        turn_end: keyframe.turn_end,
     }))
 }
 
@@ -625,9 +627,10 @@ pub(super) fn mint_epoch_summary_with(
         );
         // A source erased or withdrawn before this mint has already run its
         // invalidation, so the summary is born withdrawn, as it would be had
-        // the erasure come after it: never indexed, never embedded. Such a
-        // source takes no new dependency row; the summary is stale for good,
-        // withdrawn for where that source's words sat.
+        // the erasure come after it: never indexed, never embedded, its row
+        // left with only its keyframe. Such a source takes no new dependency
+        // row; the summary is stale for good, withdrawn for where that
+        // source's words sat.
         let mut born_withdrawn = None::<crate::settings::CarriedWorlds>;
         for target in derived {
             let state =
@@ -675,6 +678,7 @@ pub(super) fn mint_epoch_summary_with(
         if let Some(worlds) = &born_withdrawn {
             crate::ports::record_withdrawn_in_txn(&vault.store, wtxn, &summary_id, worlds)?;
             crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, wtxn, &summary_id)?;
+            super::withdrawn::scrub_withdrawn_epoch_in_txn(&vault.store, wtxn, &summary_id)?;
         }
         Ok(epoch)
     })?;

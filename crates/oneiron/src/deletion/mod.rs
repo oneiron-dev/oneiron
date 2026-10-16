@@ -63,8 +63,9 @@ pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use sweep_queue::{
-    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
+    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WithdrawnReplacement, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
+    enqueue_withdrawn_generation_in_txn,
 };
 pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
 #[cfg(all(test, feature = "sync"))]
