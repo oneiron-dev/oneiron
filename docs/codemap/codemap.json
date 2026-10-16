@@ -4103,6 +4103,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "BornFromArtifact",
+      "BornFromSource"
+     ],
+     "path": "src/blob_artifact/born_from.rs",
+     "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/artifact_actor.rs",
      "purpose": "Vault-local machine identity for capability uploads and verified seal output",
@@ -4560,6 +4576,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ArtifactExport",
+      "ArtifactKind",
+      "ArtifactVersionView",
+      "ArtifactView"
+     ],
+     "path": "src/blob_artifact/family.rs",
+     "purpose": "The artifact family contract (ARCH-0078): every deliverable is an artifact, and every kind gives the same…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/holders.rs",
      "purpose": "Which records hold one record's bytes, read for a delete's impact preview",
@@ -4581,12 +4615,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/blob_artifact/made_by.rs",
+     "purpose": "The made_by receipt every blob version carries (ARCH-0078 \"The provenance receipt\", ARCH-0035 Rule A): what…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
-      "re-export": 4
+      "re-export": 7
      }
     },
     {
@@ -4651,7 +4696,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BlobArtifactVersion",
@@ -4662,8 +4707,8 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
-      "fn": 15,
+      "crate-vis": 26,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -13042,7 +13087,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 62,
+      "fn": 63,
       "struct": 1
      }
     },
@@ -17430,7 +17475,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 3,
       "re-export": 11
      }
@@ -17733,7 +17778,24 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
       "crate-vis": 1,
-      "re-export": 3
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "NativeOutput",
+      "PendingProposalKind",
+      "PendingProposalView"
+     ],
+     "path": "src/edit_settle/pending.rs",
+     "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -17776,7 +17838,8 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "fn": 6
+      "crate-vis": 2,
+      "fn": 7
      }
     },
     {
@@ -17802,6 +17865,20 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KeepUndo",
+      "KeepUndoOutcome"
+     ],
+     "path": "src/edit_settle/undo.rs",
+     "purpose": "Undo after Keep (ARCH-0077 \"Post-settle undo\"): a new operation, never a reversal",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -17819,10 +17896,10 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 8,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 4,
       "trait": 2
      }
@@ -17874,6 +17951,40 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaEmbedReport",
+      "MediaEmbedder",
+      "MediaEmbeddingInput"
+     ],
+     "path": "src/embed/media.rs",
+     "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
+     "surface": {
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddingSpace",
+      "InputKind",
+      "KindSlotBindings"
+     ],
+     "path": "src/embed/space.rs",
+     "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 12,
+      "struct": 2
      }
     },
     {
@@ -28765,7 +28876,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15,
-      "fn": 41,
+      "fn": 42,
       "struct": 1
      }
     },
@@ -29013,6 +29124,16 @@
      "purpose": "Unranked, explicitly addressed L2 subject evidence through the retrieval gates",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/media_channel.rs",
+     "purpose": "Typed media retrieval over declared embedding spaces (OF-370; ARCH-0004 `#embedding-spaces`)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -35373,7 +35494,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 8,
-      "re-export": 8
+      "re-export": 10
      }
     },
     {
@@ -35417,20 +35538,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GoalAxisKind",
       "GoalAxisScore",
-      "GoalAxisSpec"
+      "GoalAxisSpec",
+      "SkillEditGoal"
      ],
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -35442,6 +35564,17 @@
      "surface": {
       "crate-vis": 6,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/gate/live.rs",
+     "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -35466,6 +35599,22 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ProjectGoalRevisionProposal",
+      "TradeoffRole"
+     ],
+     "path": "src/skill_optimize/gate/project_goal.rs",
+     "purpose": "The join between a skill's goal and a project's goal record (ARCH-0053 \"The goal record\")",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
       "JevTradeoffVerdict",
       "SkillTradeoffAsk",
       "SkillTradeoffPreferences",
@@ -35476,7 +35625,7 @@
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
       "crate-vis": 7,
-      "fn": 5,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -35515,7 +35664,7 @@
       "OnlineAxisSample"
      ],
      "path": "src/skill_optimize/goal_axes.rs",
-     "purpose": "Goal-axis measurements for the future goal-record admission door",
+     "purpose": "Goal-axis measurements for the goal-record admission door",
      "surface": {
       "enum": 2,
       "fn": 1,
@@ -41240,7 +41389,7 @@
      "path": "src/workspace_roster/project/goal.rs",
      "purpose": "Human-authenticated project goal intake; proposals never write this record",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "re-export": 1,
       "struct": 4
@@ -42981,9 +43130,9 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 46,
+     "files": 49,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files"
     },
@@ -43429,14 +43578,14 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 8,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 11,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -43814,7 +43963,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 56,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44094,7 +44243,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 22,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44311,9 +44460,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 56,
+   "over_bar": 58,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2657,
+   "source_files": 2667,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51800,11 +51949,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/landing.rs",
+     "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/lib.rs",
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -51997,6 +52156,13 @@
      "layout": "file",
      "purpose": "The organ host: install, call, unload, revoke"
     },
+    "landing": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…"
+    },
     "process": {
      "files": 1,
      "impl_vault": false,
@@ -52049,7 +52215,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 15,
+   "source_files": 16,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -53822,6 +53988,16 @@
      "purpose": "One typed codec for artifact bundle entry and canonical file URLs",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/blob_artifacts.rs",
+     "purpose": "The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind",
+     "surface": {
+      "crate-vis": 19
      }
     },
     {
@@ -59527,7 +59703,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 215,
+     "files": 216,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59767,7 +59943,7 @@
    },
    "over_bar": 15,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 386,
+   "source_files": 387,
    "test_files": 182
   },
   "oneiron-spawn": {
