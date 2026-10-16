@@ -1,9 +1,9 @@
 //! What one served exchange may cost the machine: how long it may sit idle,
-//! and the memory and disk floors its door scan keeps.
+//! how long a push waits for its repository, and the memory and disk floors
+//! its door scan keeps.
 
 use std::time::Duration;
 
-use super::paths::SERVE_IDLE_TIMEOUT;
 use crate::error::{Error, Result};
 
 /// The per-blob bound when the machine's memory cannot be read.
@@ -12,25 +12,18 @@ const DOOR_SCAN_BLOB_BYTES_FALLBACK: u64 = 256 * 1024 * 1024;
 /// The free disk the hook leaves when it frames a push's blobs, by default.
 const DOOR_SCAN_DISK_FLOOR_BYTES: u64 = 1024 * 1024 * 1024;
 
-/// The bounds one exchange is served under. They come from trusted host
-/// configuration, never from the request, and are fixed before the backend
-/// is spawned.
+/// The bounds a transport that admits exchanges by permit serves one under.
+/// They come from trusted host configuration, never from the request, and
+/// are fixed before the backend is spawned.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ServeBounds {
+pub struct ExchangeBounds {
     /// How long the exchange may move no byte, in either direction, before
-    /// its backend is killed.
+    /// its backend is ended.
     pub idle: Duration,
+    /// How long a push waits for the repository another writer holds.
+    pub repository_wait: Duration,
     /// The floors the door's scan keeps.
     pub scan: ScanBounds,
-}
-
-impl Default for ServeBounds {
-    fn default() -> Self {
-        Self {
-            idle: SERVE_IDLE_TIMEOUT,
-            scan: ScanBounds::default(),
-        }
-    }
 }
 
 /// The floors a push's door scan keeps. The door holds one blob at a time, so

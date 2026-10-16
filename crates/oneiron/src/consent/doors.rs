@@ -41,6 +41,9 @@ pub struct AuthenticatedOwner {
     /// The vault that authenticated this principal. A proof from a different
     /// vault must never authorize reading or acting on this vault's records.
     vault_path: std::path::PathBuf,
+    /// The open of that vault (`StoreCore::open_nonce`): a path names a
+    /// place, and another vault may open there after a close.
+    vault_open: [u8; 16],
     /// The verified capability that carried this owner's request, when a
     /// transport bound one ([`Vault::bind_owner_credential`]). Every
     /// revalidation then also requires that capability to be live and the
@@ -49,16 +52,81 @@ pub struct AuthenticatedOwner {
 }
 
 impl AuthenticatedOwner {
-    /// The authenticated human actor.
+    /// The authenticated human actor, for tests that inspect a proof. A door
+    /// takes it from [`Self::revalidate_in_txn`] or [`Self::actor_for_read`].
+    #[cfg(test)]
     #[must_use]
     pub const fn actor(&self) -> EntityId {
         self.actor
     }
 
-    /// The authenticated principal reference.
+    /// The authenticated principal reference, for tests that inspect a proof.
+    #[cfg(test)]
     #[must_use]
     pub fn principal_ref(&self) -> &str {
         &self.principal_ref
+    }
+
+    /// The actor for a pure read: this proof belongs to `vault`. Never for an
+    /// act of owner authority, which takes its actor from
+    /// `revalidate_in_txn` inside the acting transaction.
+    pub fn actor_for_read(&self, vault: &Vault) -> Result<EntityId> {
+        self.check_vault(vault)?;
+        Ok(self.actor)
+    }
+
+    /// [`Self::actor_for_read`] for the principal reference: never for an
+    /// act of owner authority.
+    pub fn principal_ref_for_read(&self, vault: &Vault) -> Result<&str> {
+        self.check_vault(vault)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate`] for a door that names its actor by principal
+    /// reference and has no transaction of its own.
+    pub fn revalidate_principal_ref(&self, vault: &Vault) -> Result<&str> {
+        self.revalidate(vault)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate_person`] for a door that names its actor by
+    /// principal reference.
+    pub fn revalidate_person_principal_ref(&self, vault: &Vault) -> Result<&str> {
+        self.revalidate_person(vault)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate_in_txn`], for a door that names its actor by
+    /// principal reference.
+    pub(crate) fn principal_ref_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<&str> {
+        self.revalidate_in_txn(vault, txn)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate_person_in_txn`], for a door that names its actor
+    /// by principal reference.
+    pub(crate) fn person_principal_ref_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<&str> {
+        self.revalidate_person_in_txn(vault, txn)?;
+        Ok(&self.principal_ref)
+    }
+
+    fn check_vault(&self, vault: &Vault) -> Result<()> {
+        if self.vault_path.as_path() != vault.store.env.path()
+            || self.vault_open != vault.store.open_nonce
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner proof belongs to another vault",
+            )));
+        }
+        Ok(())
     }
 
     /// The Gate decision this AUTHENTICATION is bound to.
@@ -73,12 +141,57 @@ impl AuthenticatedOwner {
         self.decision_id
     }
 
-    pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        if self.vault_path.as_path() != vault.store.env.path() {
+    /// `revalidate_in_txn` in its own read transaction, for a door that
+    /// checks its owner before it opens its writer. A door never rebuilds a
+    /// proof from its public fields instead: a proof another vault
+    /// authenticated for the same PERSON id would pass that.
+    pub fn revalidate(&self, vault: &Vault) -> Result<EntityId> {
+        let txn = vault.store.env.read_txn()?;
+        self.revalidate_in_txn(vault, &txn)
+    }
+
+    /// `revalidate_person_in_txn` in its own read transaction.
+    pub fn revalidate_person(&self, vault: &Vault) -> Result<EntityId> {
+        let txn = vault.store.env.read_txn()?;
+        self.revalidate_person_in_txn(vault, &txn)
+    }
+
+    /// The actor of an act of owner authority: this proof belongs to `vault`,
+    /// its person is live and owns this vault, and the credential it carried
+    /// is still live, all in the acting transaction. A native host's proof
+    /// shows a live person, not whose vault this is, so every door asks for
+    /// both unless it is one of the few a person uses on their own behalf
+    /// ([`Self::revalidate_person_in_txn`]).
+    pub(crate) fn revalidate_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<EntityId> {
+        let actor = self.revalidate_person_in_txn(vault, txn)?;
+        // A bound credential's check above already asked for an owner.
+        if self.credential.is_none()
+            && !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
+        {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "owner proof belongs to another vault",
+                "authenticated actor is not an owner of this vault",
             )));
         }
+        Ok(actor)
+    }
+
+    /// The actor of a door a live person uses on their own behalf, owner of
+    /// this vault or not: their own refusal, preference, feedback label,
+    /// saved digest, assigned answer or private session, or a door whose own
+    /// membership and named-grant check is the authorization. This proof
+    /// belongs to `vault`, its person is live, and a credential it carried is
+    /// still live and still an owner's, all in the acting transaction. Every
+    /// other door takes [`Self::revalidate_in_txn`].
+    pub(crate) fn revalidate_person_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<EntityId> {
+        self.check_vault(vault)?;
         if !person_is_live_in_txn(vault, txn, &self.actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated owner is no longer active",
@@ -99,25 +212,17 @@ impl AuthenticatedOwner {
                 )));
             }
         }
-        Ok(())
+        Ok(self.actor)
     }
 
-    /// [`Self::revalidate_in_txn`], and the actor owns this vault even when
-    /// no transport bound a credential. A native host's proof shows a live
-    /// person, not whose vault this is, so a door that writes the talk of a
-    /// room into this vault asks for both.
+    /// [`Self::revalidate_in_txn`], under the name the doors that asked for
+    /// the owner tier before it was every door's default still call.
     pub(crate) fn revalidate_as_vault_owner_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-    ) -> Result<()> {
-        self.revalidate_in_txn(vault, txn)?;
-        if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &self.actor)? {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "authenticated actor is not an owner of this vault",
-            )));
-        }
-        Ok(())
+    ) -> Result<EntityId> {
+        self.revalidate_in_txn(vault, txn)
     }
 
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
@@ -245,6 +350,7 @@ impl Vault {
             principal_ref,
             decision_id,
             vault_path: self.store.env.path().to_path_buf(),
+            vault_open: self.store.open_nonce,
             credential: None,
         })
     }
@@ -279,8 +385,8 @@ impl Vault {
     }
 
     /// Rechecks `owner` against the vault as it stands now: the person is
-    /// live and, for a bound credential, the capability is live and the actor
-    /// still owns this vault. For an act that keeps no row of its own to
+    /// live and still owns this vault and, for a bound credential, the
+    /// capability is live. For an act that keeps no row of its own to
     /// recheck in, so it runs only if the proof still holds when it starts.
     ///
     /// # Errors
@@ -288,7 +394,8 @@ impl Vault {
     /// when the proof no longer holds.
     pub fn recheck_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(())
     }
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
@@ -453,7 +560,10 @@ impl Vault {
             decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             effect_digest,
         };
-        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        // A refusal is the owner's decision: self-heal reads each denial as
+        // an owner signal, so it takes the owner tier like every receipt.
+        owner.revalidate_in_txn(self, &*wtxn)?;
+        self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), &receipt, None)?;
         Ok(receipt)
     }
 

@@ -407,6 +407,57 @@ fn symbol_blame_lookup_skips_orphaned_index_after_code_artifact_delete() -> Resu
 }
 
 #[test]
+fn deleting_a_code_artifact_drops_its_symbol_manifest_rows() -> Result<()> {
+    // H41: the manifest and its revision index name the artifact's symbols;
+    // both go with the artifact on the soft and the hard tier.
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let repo_ref = repo_ref();
+    let manifest = manifest_with_blame(None, None)?;
+    let symbol = &manifest.symbols[0];
+    for (index, reason) in [
+        crate::deletion::DeleteReason::UserDelete,
+        crate::deletion::DeleteReason::UserHardDelete,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = entity(0xB4 + index as u8);
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_ref),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_code_symbol_manifest(&id, &manifest)?;
+        let key = code_symbol_revision_index_key(
+            &manifest.repo_ref,
+            &symbol.path,
+            &symbol.name,
+            &symbol.fingerprint,
+            &id,
+        );
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(MANIFEST.get(&vault.store, &rtxn, &id)?.is_some());
+            assert!(REVISION_INDEX.get(&vault.store, &rtxn, &key)?.is_some());
+        }
+
+        vault.delete_entity_with_reason(&id, reason)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            MANIFEST.get(&vault.store, &rtxn, &id)?.is_none(),
+            "{reason:?} left the symbol manifest"
+        );
+        assert!(
+            REVISION_INDEX.get(&vault.store, &rtxn, &key)?.is_none(),
+            "{reason:?} left the revision index row"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn symbol_blame_lookup_fails_closed_after_code_artifact_repo_ref_overwrite() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = entity(0xB4);

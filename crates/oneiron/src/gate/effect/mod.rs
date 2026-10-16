@@ -139,7 +139,7 @@ pub(crate) fn evaluate_external_effect_policy(
     approval_context: ApprovalContext,
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
-    let (mut hydrated_effect, counterparty_send_override) =
+    let (mut hydrated_effect, counterparty_send_override, counterparty_contact_revoked) =
         hydrate_external_effect_contact(store, &*wtxn, effect, policy)?;
     // Send eligibility is checked with the Gate's writer snapshot. A sender
     // released after dispatch preparation cannot authorize even a known
@@ -322,6 +322,7 @@ pub(crate) fn evaluate_external_effect_policy(
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
         effect.counterparty_send_override = counterparty_send_override;
+        effect.counterparty_contact_revoked = counterparty_contact_revoked;
     }
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
@@ -763,6 +764,31 @@ pub(crate) fn check_external_effect_policy(
     }
     let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
     Ok((decision_id, decision, effector_charge))
+}
+
+/// Records governance for an effect held BEFORE admission, such as a count
+/// ceiling reached under the admission writer lock. The decision stays as
+/// evidence, but nothing was admitted: no approve-once authorization is spent
+/// and no standing grant is touched as used, so the held effect can still
+/// run on its approval once the ceiling clears.
+pub(crate) fn record_held_external_effect_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<(GateDecisionId, GateDecision)> {
+    let mut governance = evaluate_external_effect_policy(
+        store,
+        wtxn,
+        effect,
+        policy,
+        None,
+        None,
+        ApprovalContext::Observe,
+    )?;
+    governance.approve_once = None;
+    governance.matched_grant = None;
+    record_external_effect_policy(store, wtxn, governance)
 }
 
 /// Debits the governance-selected connector key exactly once for an admitted

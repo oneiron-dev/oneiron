@@ -236,26 +236,23 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
         format!("recipient:cold_external:{}", id.to_hex()),
         actor.to_hex(),
     )?;
-    for _ in 0..crate::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
-        vault.record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)?;
-    }
-    assert_eq!(vault.ramp_scope_state(&scope)?, RampState::Offered);
-    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
-    assert!(!vault.graduation_offers()?.contains(&scope));
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:owner",
         true,
         crate::store::GateDecisionId::now(),
     )?;
+    for _ in 0..crate::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault.record_proposal_outcome_for_ramp(
+            &owner,
+            &scope,
+            ProposalOutcome::ApprovedUntouched,
+        )?;
+    }
+    assert_eq!(vault.ramp_scope_state(&scope)?, RampState::Offered);
+    assert!(adapter.cold_send_graduation_offer(&vault, id)?.is_none());
+    assert!(!vault.graduation_offers()?.contains(&scope));
     assert!(vault.accept_graduation_offer(&owner, &scope).is_err());
 
     let reputation = IdentityReputation {
@@ -528,7 +525,7 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = std::rc::Rc::new(Vault::open(dir.path(), crate::VaultConfig::default())?);
     let actor = EntityId::now();
-    let owner_id = EntityId::now();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     for id in [actor, owner_id] {
         vault.put_entity(
             &id,

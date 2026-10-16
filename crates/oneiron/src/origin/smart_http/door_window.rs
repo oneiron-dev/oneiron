@@ -232,7 +232,7 @@ fn scan_window(
     // because the hook is still blocked and the backend has moved no ref. A
     // push whose names the landing could not journal is refused whole and
     // goes unscanned; nothing about a legal batch changes.
-    let unlandable = unlandable_ref_reasons(&request.ref_updates);
+    let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
     let door = CredentialDoorService::new(Arc::clone(vault));
     let mut scan = (unlandable.is_empty() && context.seam == DoorSeam::Landed)
         .then(|| BlobScan::new(&door, repo));
@@ -261,11 +261,20 @@ fn scan_window(
             }
         },
     )?;
+    // The same rule for a move a publication already made: a push needing more
+    // than that publication certified could never be certified once the
+    // backend moved it. It reads the tip pointers, so it decides once the
+    // streams are read, ahead of the scan's verdict.
+    if unlandable.is_empty() {
+        unlandable = vault
+            .receive_pack_owner_shortfalls(repo, &request.ref_updates, &lfs_pointers)
+            .unwrap_or_else(|_| vec![InputRefused::Unverified.reason().to_owned()]);
+    }
     let verdict = match scan {
-        Some(scan) => scan.verdict(),
-        None if !unlandable.is_empty() => DoorWindowVerdict::Rejected {
+        _ if !unlandable.is_empty() => DoorWindowVerdict::Rejected {
             reasons: unlandable,
         },
+        Some(scan) => scan.verdict(),
         None => DoorWindowVerdict::Rejected {
             reasons: vec!["publication requires the landed scan".to_owned()],
         },

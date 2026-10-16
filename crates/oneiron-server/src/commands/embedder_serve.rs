@@ -7,14 +7,14 @@ use zeroize::Zeroizing;
 
 use crate::cli::EmbedderServeArgs;
 use crate::config::{
-    EmbedderConfig, EmbedderProvider, EnvConfig, ServeArgs, default_config_path,
+    EmbedderConfig, EmbedderProvider, EnvConfig, LimitsConfig, ServeArgs, default_config_path,
     layer_serve_config, resolve_serve_config_with_sources,
 };
 use crate::embedder::serve::{Listen, run};
 
 pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
     super::init_tracing(&args.log_level);
-    let config = served_config(&args)?;
+    let (config, limits) = served_config(&args)?;
     let key = args
         .api_key_env
         .as_deref()
@@ -31,15 +31,16 @@ pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
             addr: (args.host, args.port).into(),
             key,
             aliases: args.model_aliases,
+            limits,
         },
     )
     .await
 }
 
 /// The `[embedder]` section `serve` would resolve from the same file, flags
-/// and environment. A local section is served as it stands; with none at all,
-/// the default local model is.
-fn served_config(args: &EmbedderServeArgs) -> anyhow::Result<EmbedderConfig> {
+/// and environment, and the `[limits]` beside it. A local section is served
+/// as it stands; with none at all, the default local model is.
+fn served_config(args: &EmbedderServeArgs) -> anyhow::Result<(EmbedderConfig, LimitsConfig)> {
     served_config_from(args, &EnvConfig::from_process()?, default_config_path())
 }
 
@@ -47,7 +48,7 @@ fn served_config_from(
     args: &EmbedderServeArgs,
     env: &EnvConfig,
     default_config_path: Option<PathBuf>,
-) -> anyhow::Result<EmbedderConfig> {
+) -> anyhow::Result<(EmbedderConfig, LimitsConfig)> {
     let serve_args = |dimensions: Option<usize>| ServeArgs {
         config: args.config.clone(),
         embedder: args.embedder.clone(),
@@ -69,8 +70,8 @@ fn served_config_from(
         env.clone(),
         default_config_path,
     )?;
-    match resolved.embedder {
-        Some(embedder) if embedder.provider == EmbedderProvider::Local => Ok(embedder),
+    let embedder = match resolved.embedder {
+        Some(embedder) if embedder.provider == EmbedderProvider::Local => embedder,
         Some(embedder) if embedder.provider == EmbedderProvider::Endpoint => anyhow::bail!(
             "the resolved [embedder] section is an endpoint; embedder serve runs a local model \
              (pass --embedder-provider local, or a --config whose [embedder] provider is local)"
@@ -79,12 +80,13 @@ fn served_config_from(
             tracing::info!(
                 "no local [embedder] section configured; serving the default local model"
             );
-            Ok(EmbedderConfig {
+            EmbedderConfig {
                 provider: EmbedderProvider::Local,
                 ..EmbedderConfig::default()
-            })
+            }
         }
-    }
+    };
+    Ok((embedder, resolved.limits))
 }
 
 #[cfg(test)]

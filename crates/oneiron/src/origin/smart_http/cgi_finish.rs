@@ -13,7 +13,7 @@ use super::paths::{SERVE_MAX_CGI_HEADER_BYTES, SERVE_STREAM_CHUNK_BYTES, serve_f
 use super::serve::{ServeExchange, ServeReport, ServeSink};
 use super::serve_cmd::ServeRequest;
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitRefName, GitWire};
 
 /// Parses the CGI header block, then streams the body through untouched.
@@ -189,9 +189,7 @@ pub(super) fn finish_serve(
         .as_ref()
         .ok_or_else(|| receive_pack_provenance_refused("admission is absent"))?;
     let (key, mut intent) = vault
-        .receive_pack_intents(repo_dir)?
-        .into_iter()
-        .find(|(_, intent)| intent.operation_id == stamp.operation_id.to_hex())
+        .receive_pack_intent(repo_dir, stamp.operation_id)?
         .ok_or_else(|| receive_pack_provenance_refused("pre-effect intent is absent"))?;
     // Never replace the counters of an already-observed operation. Commit the
     // measured totals before the observer so every recovery uses the same bytes.
@@ -202,9 +200,15 @@ pub(super) fn finish_serve(
     }
     intent.transport_bytes = Some((exchange.request_bytes, exchange.response_bytes));
     vault.save_receive_pack_intent(&key, &intent)?;
-    (report.outcome, report.landing) = vault
-        .resume_receive_pack_intent(&key, &mut intent)
-        .unwrap_or_default();
+    (report.outcome, report.landing) = match vault.resume_receive_pack_intent(&key, &mut intent) {
+        Ok(resumed) => resumed,
+        // Nothing was decided: the push is told to retry, and its refs
+        // stay Pending for whoever next finds the repository free.
+        Err(Error::Code(CodeError::LfsReadRoomWaitedOut)) => {
+            return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+        }
+        Err(_) => Default::default(),
+    };
     report.ref_results = intent
         .refs
         .iter()

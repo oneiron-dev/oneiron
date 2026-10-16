@@ -284,9 +284,18 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_counterparty_contact_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::get_counterparty_contact`] in the caller's snapshot.
+    pub(crate) fn get_counterparty_contact_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<CounterpartyContactRecord>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -316,13 +325,11 @@ impl Vault {
         counterparty: &str,
     ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
         let index_key = counterparty_contact_index_key_parts(identity_ref, counterparty)?;
-        if let Some(id) = CONTACT_INDEX.get(&self.store, rtxn, &index_key)? {
-            let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
-                return Err(Error::CorruptedIndex(
-                    "counterparty contact lookup index entity row",
-                ));
-            };
-
+        // A leg naming a deleted row (a delete before H105 left it) is no
+        // answer: the scan below is.
+        if let Some(id) = CONTACT_INDEX.get(&self.store, rtxn, &index_key)?
+            && let Some(raw) = self.store.port_entity_record(rtxn, &id)?
+        {
             if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index entity type",
@@ -393,6 +400,7 @@ impl Vault {
         let index_key = counterparty_contact_index_key_for_record(record)?;
         if let Some(existing_id) = CONTACT_INDEX.get(&self.store, txn, &index_key)?
             && existing_id != *id
+            && self.store.port_entity_record(txn, &existing_id)?.is_some()
         {
             return Ok(true);
         }
@@ -431,6 +439,10 @@ impl Vault {
         let new_index_key = counterparty_contact_index_key_for_record(&record)?;
         if let Some(existing_id) = CONTACT_INDEX.get(&self.store, &*wtxn, &new_index_key)?
             && existing_id != *id
+            && self
+                .store
+                .port_entity_record(&*wtxn, &existing_id)?
+                .is_some()
         {
             return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
         }

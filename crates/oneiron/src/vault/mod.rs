@@ -68,8 +68,14 @@ pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// World privacy P6b: this install's this-device-only keystore, the world
+    /// keys this machine opened, and their OF-520 questions. In memory only,
+    /// never persisted, and never shared across vaults.
+    pub(crate) world_keys: crate::world_keys::WorldKeySession,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
+    /// One housekeeping pass at a time on this handle.
+    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
@@ -127,6 +133,10 @@ pub struct Vault {
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
     pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    /// The room a host lends the origin for reading whole LFS manifests
+    /// ([`Vault::set_lfs_read_room`]); none until it lends one.
+    pub(crate) lfs_read_room:
+        std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

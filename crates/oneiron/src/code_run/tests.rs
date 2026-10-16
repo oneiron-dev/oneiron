@@ -802,6 +802,71 @@ fn code_run_put_claim_trap_ignores_guest_source_and_g2_sees_generated() -> Resul
     Ok(())
 }
 
+/// H83: a code-run claim overwrite drops the query hints the prior claim
+/// carried, as the batch door's overwrite does.
+#[test]
+fn code_run_claim_overwrite_drops_the_prior_query_hints() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    install_self_memory_allow_policy(&vault, actor)?;
+    let subject = seed_person(&vault, 0xB5);
+    let claim = EntityId::from_bytes([0xD6; 16]).expect("claim id");
+    let candidate = |value: &str| {
+        ClaimCandidate::new(
+            "profile.favorite_drink",
+            ClaimSubject::Entity(subject),
+            Value::from(value),
+            0.8,
+        )
+    };
+    // The run's own earlier claim, written with hints through the batch door:
+    // a self-overwrite is the one a code run may make.
+    let envelope = crate::write_envelope::WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        ClaimSource::Generated,
+        crate::write_envelope::WriteProvenance::new(Value::from("fixture"))?,
+        crate::claim::ClaimApprovalStatus::Proposed,
+    );
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            candidate("sencha"),
+            &envelope,
+            range(10),
+            11,
+            &["staleuniquegamma"],
+        )
+        .commit()?;
+    assert_eq!(vault.claims_for_subject(&claim)?.len(), 1);
+    assert_eq!(
+        vault
+            .search_text("staleuniquegamma", 10)?
+            .first()
+            .map(|hit| hit.id),
+        Some(claim)
+    );
+
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-hint-overwrite",
+    )?;
+    dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+        claim,
+        candidate("matcha"),
+        range(12),
+        13,
+    )))?;
+
+    assert!(
+        vault.claims_for_subject(&claim)?.is_empty(),
+        "the prior claim's hint records outlive its overwrite"
+    );
+    assert!(vault.search_text("staleuniquegamma", 10)?.is_empty());
+    Ok(())
+}
+
 #[test]
 fn code_run_full_access_write_traps_route_per_op_through_gate_and_receipts() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1189,6 +1254,210 @@ fn self_memory_put_edge_refuses_same_as() -> Result<()> {
         vault.targets(&subject, EdgeKind::SameAs, None)?.is_empty(),
         "a refused trap must leave no link behind"
     );
+    Ok(())
+}
+
+/// A host door that admits every call a run serves itself on one key's lane.
+struct LaneDoor(crate::claim::ScopedReadActorKey);
+
+impl AgentVerbDoor for LaneDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &crate::memory::HostWriteOrigin,
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
+        Err(AgentVerbRefusal {
+            code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+        })
+    }
+
+    fn admit_run_call(
+        &self,
+        _: RunCall,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+/// `holder`'s agent credential, narrowed to `facets`, as the key a door
+/// admits a run's calls with. Each `name` mints its own slip: the authority
+/// log refuses a second slip under one id.
+fn facet_reader(
+    vault: &Vault,
+    holder: EntityId,
+    name: &str,
+    facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
+) -> Result<crate::claim::ScopedReadActorKey> {
+    let tag = b"code-run facet placement";
+    let issuer = crate::authority::HostSlipIssuer::from_secret(tag)?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(name.as_bytes()).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope.facets = facets;
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let binding = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &binding)?;
+    Ok(crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read credential"))
+}
+
+/// Astra on #1432 F2, the local door: a facet stamp puts its source in front
+/// of every reader narrowed to the facet, so a run whose door binds a
+/// credential over {work, home} places only a row that credential reads, in
+/// one of its own facets. It stamps a work EVENT into home, and neither a
+/// private EVENT into work nor the work EVENT into private. Each refusal
+/// names no endpoint type, alike for a stored target and a missing one, so
+/// it tells the run nothing about a row its lane may not read (Astra R9 F2,
+/// R10 F2, R11 F1, R12 F1, R13 F1; Sol R13 F1).
+#[test]
+fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xAD);
+    install_self_memory_allow_policy(&vault, actor)?;
+    let [work, home, private, shared, held] =
+        [0xB4, 0xC4, 0xD4, 0xB5, 0xC5].map(|seed| EntityId::from_bytes([seed; 16]).expect("id"));
+    for (id, kind) in [
+        (work, crate::registry::ENTITY_TYPE_FACET),
+        (home, crate::registry::ENTITY_TYPE_FACET),
+        (private, crate::registry::ENTITY_TYPE_FACET),
+        (shared, crate::registry::ENTITY_TYPE_EVENT),
+        (held, crate::registry::ENTITY_TYPE_EVENT),
+    ] {
+        vault.put_entity(&id, kind, range(1), 1, b"row")?;
+    }
+    vault.put_edge(&shared, EdgeKind::FacetOf, &work, 1.0)?;
+    vault.put_edge(&held, EdgeKind::FacetOf, &private, 1.0)?;
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-facet-placement",
+    )?
+    .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
+        &vault,
+        actor,
+        "work and home",
+        [work, home]
+            .into_iter()
+            .map(crate::federation::ScopeId)
+            .collect(),
+    )?)));
+    let stamp = |src, tgt| {
+        dispatcher.dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            src,
+            EdgeKind::FacetOf,
+            tgt,
+            1.0,
+        )))
+    };
+
+    stamp(shared, home)?;
+    let absent = EntityId::from_bytes([0xD5; 16]).expect("id");
+    for (src, tgt) in [
+        (held, work),
+        (shared, private),
+        (absent, work),
+        (absent, absent),
+    ] {
+        let refused = stamp(src, tgt).expect_err("an unplaceable stamp is refused");
+        assert!(
+            matches!(
+                refused,
+                Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
+                    src_type: None,
+                    tgt_type: None,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    // A credential that holds every facet reads `shared`; its stamp onto a
+    // stored row that is no facet, or onto a missing id, is refused alike
+    // before the type table can name the target (Astra R11 F1).
+    let wide = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-facet-placement-wide",
+    )?
+    .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
+        &vault,
+        actor,
+        "every facet",
+        crate::federation::ScopeAxis::All,
+    )?)));
+    // The wide key reads a NOTE its holder wrote, and may place it again in
+    // its birth facet.
+    let memo = vault
+        .create_note(
+            "research",
+            "born",
+            WriteActor::new(actor, EdgeActorClass::Agent),
+        )
+        .expect("NOTE birth");
+    wide.dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+        memo,
+        EdgeKind::FacetOf,
+        vault.default_facet()?,
+        1.0,
+    )))?;
+    let custody = vault.register_secret(crate::secret_custody::SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "placement_probe".to_owned(),
+        class: crate::secret_custody::CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"custody-value-never-read-here".to_vec(),
+        status: crate::secret_custody::SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
+    })?;
+    // An off-table source (a FACET stamps nothing) onto a stored facet is
+    // refused as onto a missing id, so the refusal never tells a FACET apart
+    // (Astra R12 F1). So is the NOTE's restamp into another facet (Astra R13
+    // F1), and a custody row, which no lane reads (Sol R13 F1).
+    for (src, tgt) in [
+        (shared, held),
+        (shared, absent),
+        (work, home),
+        (work, absent),
+        (memo, work),
+        (memo, absent),
+        (custody, work),
+        (custody, absent),
+    ] {
+        let refused = wide
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::FacetOf,
+                tgt,
+                1.0,
+            )))
+            .expect_err("an unplaceable stamp is refused");
+        assert!(
+            matches!(
+                refused,
+                Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
+                    src_type: None,
+                    tgt_type: None,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    let only = |facet| {
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            crate::federation::ScopeId(facet),
+        ]))
+    };
+    assert!(vault.row_in_facets(&shared, &only(home))?);
+    assert!(!vault.row_in_facets(&held, &only(work))?);
+    assert!(!vault.row_in_facets(&shared, &only(private))?);
     Ok(())
 }
 

@@ -209,6 +209,16 @@ pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, r
 /// schema-1.2 `core:read` grant per reader. A plain scoped-read key reads
 /// nothing until a trusted manifest grants it.
 pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
+    authorize_readers_with(vault, readers, Vec::new());
+}
+
+/// [`authorize_readers`] with `rows` replacing the shipped manifest's rows
+/// under the same keys.
+pub(crate) fn authorize_readers_with(
+    vault: &Vault,
+    readers: &[&str],
+    rows: Vec<(rmpv::Value, rmpv::Value)>,
+) {
     let authority = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
     )
@@ -236,11 +246,14 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
     else {
         panic!("manifest map");
     };
-    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    entries.retain(|(key, _)| {
+        key.as_str() != Some("scoped_grants") && rows.iter().all(|(row, _)| row != key)
+    });
     entries.push((
         rmpv::Value::from("scoped_grants"),
         rmpv::Value::Array(grants),
     ));
+    entries.extend(rows);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries)).expect("manifest encodes");
     put_policy_manifest_bytes(
@@ -327,6 +340,162 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
     vault
         .bind_host_owner_for_test(&test_host_issuer(), owner)
         .expect("owner binding");
+}
+
+/// A proof this vault authenticated, with no credential, for a live PERSON
+/// who does not own it: what a native host can mint for any person it knows.
+/// An owner door refuses it; a person-tier door takes it for that person's
+/// own rows.
+pub(crate) fn non_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("a live person");
+    vault
+        .authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("a non-owner person's proof")
+}
+
+/// A second live owner's proof on `vault`: an Owner-role member once the
+/// vault is shared under its embedded owner. It shares the vault, so a test
+/// calls it once per vault.
+pub(crate) fn co_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    use crate::federation::{FederationGrantRole, InitialSharedMember};
+    let owner = embedded_owner_proof(vault);
+    let co_owner = EntityId::now();
+    vault
+        .put_entity(
+            &co_owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"co-owner",
+        )
+        .expect("a live person");
+    vault
+        .initialize_shared_vault(
+            &owner,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner.actor(),
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: co_owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault");
+    vault
+        .authenticate_owner(
+            co_owner,
+            &co_owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("the co-owner's proof")
+}
+
+/// An owner proof another vault authenticated for `actor` under `principal`,
+/// with `actor` a live PERSON there as in the vault under test: what a door
+/// of that vault must refuse. The other vault's `TempDir` and handle come
+/// back with it, for the proof's lifetime.
+pub(crate) fn foreign_owner_proof(
+    actor: EntityId,
+    principal: &str,
+) -> (tempfile::TempDir, Vault, crate::consent::AuthenticatedOwner) {
+    let (dir, other) = open_test_vault_with(VaultConfig::device());
+    other
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("the shared person");
+    let proof = other
+        .authenticate_owner(actor, principal, true, crate::store::GateDecisionId::now())
+        .expect("the other vault's proof");
+    (dir, other, proof)
+}
+
+/// The vault owner's proof bound to a full owner slip the test host minted
+/// for it under `context`, as an owner route carries one, with that slip's
+/// id. Roots the vault under the test host first.
+pub(crate) fn credentialed_owner_proof(
+    vault: &Vault,
+    context: &[u8],
+) -> (crate::consent::AuthenticatedOwner, [u8; 32]) {
+    let issuer = test_host_issuer();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("root slip")
+        .claims;
+    if !crate::authority::actor_binding_is_active(
+        &vault.authority_fold().expect("authority fold"),
+        &owner,
+        "human",
+    ) {
+        bind_test_owner(vault, owner);
+    }
+    claims.slip_id = *blake3::hash(context).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault
+        .mint_capability_slip(&issuer, claims)
+        .expect("the owner's slip");
+    let verified = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            context,
+            &issuer.binding_proof(&slip, context).expect("binding proof"),
+        )
+        .expect("verify the slip");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("authenticate the owner");
+    let bound = vault
+        .bind_owner_credential(proof, verified)
+        .expect("bind the owner's slip");
+    (bound, slip.claims.slip_id)
+}
+
+/// Revokes `slip_id` when this thread next opens a write transaction, after
+/// the door's own early checks and before it takes LMDB's writer: the
+/// revocation commits while the act waits for the writer.
+pub(crate) fn revoke_before_the_next_write(vault: &std::rc::Rc<Vault>, slip_id: [u8; 32]) {
+    let vault = std::rc::Rc::clone(vault);
+    crate::store::arm_after_seal_check(move || {
+        vault
+            .revoke_capability_slip(&test_host_issuer(), slip_id)
+            .expect("revoke the owner's slip");
+    });
 }
 
 /// Roots the vault under the test host and binds `agent` as one of the

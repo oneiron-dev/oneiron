@@ -50,7 +50,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
         (IntentState::Pending, None) if !record.idempotency_supported => {
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -74,7 +74,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
             // BEFORE a resumed no-wire failure can replace its retry marker.
-            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            let uncertain = record_possible_delivery(vault, record.id)?;
             send_pending_with_gate(
                 vault, authority, uncertain, prepared, now_ms, true, transport,
             )
@@ -120,7 +120,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
     if requires_frozen_call_validation
         && !matches!(
-            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            authority.validate_frozen_call_grant(vault, &call)?,
             FrozenCallValidation::Valid
         )
     {
@@ -166,10 +166,8 @@ fn send_pending_with_gate<T: OutboundTransport>(
             &prepared.payload,
             prepared.gate.provenance.actor_entity_ref,
         )?;
-        let required_grant_id = match &prepared.authorization {
-            PreparedAuthorization::None => None,
-            PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
-        };
+        let required_grant_id =
+            super::admission::required_grant_id(vault, &wtxn, &prepared.authorization);
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         let governance = gate::evaluate_external_effect_policy(
@@ -180,7 +178,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             required_grant_id,
             match &prepared.authorization {
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-                PreparedAuthorization::None => None,
+                PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => {
+                    None
+                }
             },
             record
                 .admitted_approval
@@ -194,6 +194,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.dispatch.state = Some(record.state);
             result.dispatch.replayed = replayed;
             return Ok(result);
+        }
+        // Governance lets this Pending send out; only now does an aged
+        // admission meet its ceiling, under this same writer lock.
+        if let Some(mut held) =
+            super::admission::aged_admission_ceiling(vault, wtxn, prepared, &record, now_ms)?
+        {
+            held.dispatch.replayed = replayed;
+            return Ok(held);
         }
     } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
         // Engine-owned Resume has no PreparedEffect. Its frozen step identity
@@ -216,7 +224,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
         && !matches!(
-            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            authority.validate_frozen_call_grant(vault, &call)?,
             FrozenCallValidation::Valid
         )
     {
@@ -268,11 +276,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             Ok(effect_result(&done, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
-            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            let uncertain = record_possible_delivery(vault, record.id)?;
             Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -411,6 +419,7 @@ pub(super) fn effect_result(
         budget_charge: None,
         dedupe_suppressed: false,
         suppression_receipt: None,
+        ceiling_count: None,
     }
 }
 
@@ -444,6 +453,7 @@ pub(super) fn gate_rejection(
         budget_charge: None,
         dedupe_suppressed: false,
         suppression_receipt: None,
+        ceiling_count: None,
     }
 }
 

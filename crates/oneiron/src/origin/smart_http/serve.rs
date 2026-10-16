@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::advertise::AdvertisedRefGate;
-use super::bounds::ServeBounds;
+use super::bounds::{ExchangeBounds, ScanBounds};
 use super::cgi_finish::{finish_serve, stream_response};
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
@@ -21,9 +21,9 @@ use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, ORIGIN_MAX_COMMAND_SECTION_BYTES, SERVE_MAX_STDERR_BYTES,
-    SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir, origin_serving_root, push_refused,
-    repository_busy, serve_failed, serve_idle,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_MAX_COMMAND_SECTION_BYTES, SERVE_IDLE_TIMEOUT,
+    SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
+    origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
 use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
@@ -31,7 +31,7 @@ use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{lock_repository, try_lock_repository};
+use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
@@ -120,15 +120,18 @@ pub fn serve(
 
 /// [`serve`] for a transport that admits exchanges by permit.
 ///
-/// It runs under its host's [`ServeBounds`]: its own idle limit in place of
-/// [`SERVE_IDLE_TIMEOUT`](super::SERVE_IDLE_TIMEOUT), and the floors its door scan keeps. A transport
+/// It runs under its host's [`ExchangeBounds`]: its own idle limit in place of
+/// [`SERVE_IDLE_TIMEOUT`], and the floors its door scan keeps. A transport
 /// whose body and sink bound their own waits passes the same idle limit, so
-/// whichever side sees the stall first ends the exchange the same way. And
-/// it never waits for the repository: a push that finds the coordinator taken
-/// fails at once with [`CodeError::GitHttpRepositoryBusy`], so an admitted
-/// exchange never sits queued behind another push. A read is never refused
-/// for it: it recovers and projects its ref list under the coordinator only
-/// when it finds it free.
+/// whichever side sees the stall first ends the exchange the same way. A
+/// push that finds the repository coordinator taken waits for it, for
+/// `repository_wait` at most, and only then fails with
+/// [`CodeError::GitHttpRepositoryBusy`]; the transport queues its own pushes
+/// to one repository before this, so the wait is for a writer outside it.
+/// The host's repository maintenance gives the coordinator up to it, within
+/// one of the maintenance's polls, and the push waits that out whatever
+/// `repository_wait` is. A read never waits for the coordinator: it recovers
+/// and projects its ref list under the coordinator only when it finds it free.
 ///
 /// [`CodeError::GitHttpRepositoryBusy`]: crate::error::CodeError::GitHttpRepositoryBusy
 pub fn serve_bounded(
@@ -136,17 +139,26 @@ pub fn serve_bounded(
     repo_name: &str,
     request: &ServeRequest,
     seam: DoorSeam,
-    bounds: ServeBounds,
+    bounds: ExchangeBounds,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
     let terms = ServeTerms {
         seam,
         authority: None,
-        bounds,
+        idle: bounds.idle,
+        scan: bounds.scan,
         wait_for_repository: false,
+        push_wait: Some(bounds.repository_wait),
     };
     serve_request(vault, repo_name, request, terms, body, sink)
+}
+
+/// The key one served repository's pushes queue under: the git common
+/// directory its coordinator is taken on, so two names for one repository
+/// share one line.
+pub fn push_queue_key(vault: &Vault, repo_name: &str) -> Result<PathBuf> {
+    repo_common_dir(&origin_repo_dir(vault, repo_name)?)
 }
 
 /// Compatibility entry point. A new exchange always produces its own evidence;
@@ -169,8 +181,10 @@ pub fn serve_with_provenance(
     let terms = ServeTerms {
         seam,
         authority: None,
-        bounds: ServeBounds::default(),
+        idle: SERVE_IDLE_TIMEOUT,
+        scan: ScanBounds::default(),
         wait_for_repository: true,
+        push_wait: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -190,20 +204,25 @@ pub fn serve_with_authority(
     let terms = ServeTerms {
         seam,
         authority: Some(authority),
-        bounds: ServeBounds::default(),
+        idle: SERVE_IDLE_TIMEOUT,
+        scan: ScanBounds::default(),
         wait_for_repository: true,
+        push_wait: None,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// What one invocation runs under besides its request: the door seam, a lease
-/// from trusted host configuration, the exchange's bounds, and whether a push
-/// waits for a repository another writer holds or is refused.
+/// from trusted host configuration, the exchange's idle limit and scan
+/// floors, whether a read may wait for a repository a writer holds, and how
+/// long a push waits for it (`None`: until it is free).
 struct ServeTerms<'a> {
     seam: DoorSeam,
     authority: Option<&'a OriginAuthorityLease>,
-    bounds: ServeBounds,
+    idle: Duration,
+    scan: ScanBounds,
     wait_for_repository: bool,
+    push_wait: Option<Duration>,
 }
 
 fn serve_request(
@@ -217,8 +236,10 @@ fn serve_request(
     let ServeTerms {
         seam,
         authority,
-        bounds,
+        idle,
+        scan,
         wait_for_repository,
+        push_wait,
     } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
@@ -238,14 +259,15 @@ fn serve_request(
             .checkout_credential(ticket, principal, &unpinned_repo_ref(&repo_dir))
             .map_err(|error| super::paths::door_refused(&error))?;
     }
-    let hooks = DoorHooksDir::materialize_with(&origin_door_root(vault)?, bounds.scan)?;
+    let hooks = DoorHooksDir::materialize_with(&origin_door_root(vault)?, scan)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let coordinator = if request.is_receive_pack() {
         let common_dir = repo_common_dir(&repo_dir)?;
-        if wait_for_repository {
-            Some(lock_repository(&common_dir)?)
-        } else {
-            Some(try_lock_repository(&common_dir)?.ok_or_else(repository_busy)?)
+        match push_wait {
+            None => Some(lock_repository(&common_dir)?),
+            Some(wait) => {
+                Some(lock_repository_within(&common_dir, wait)?.ok_or_else(repository_busy)?)
+            }
         }
     } else {
         // A fetch and an advertisement mutate nothing, so neither queues behind
@@ -313,11 +335,11 @@ fn serve_request(
             context: DoorWindowContext {
                 seam,
                 admission: admission.as_ref(),
-                scan: bounds.scan,
+                scan,
             },
             repo_dir: &repo_dir,
             hooks: &hooks,
-            idle: bounds.idle,
+            idle,
             wait_for_repository,
         },
         &mut child,
@@ -538,7 +560,8 @@ fn run_exchange(
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
         let streamed = if request.is_ref_advertisement() {
-            let mut gate = AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, &mut sink);
+            let mut gate =
+                AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, clock, &mut sink);
             stream_response(stdout, &mut gate)
         } else {
             stream_response(stdout, &mut sink)

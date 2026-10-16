@@ -1,8 +1,9 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize};
-use super::support::lfs_saturated;
-use crate::admission::Permit;
+use super::support::{declared_size, lfs_waited_out, read_whole};
+use crate::api::Transfers;
+use crate::api::transfer::ReadHold;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::body::{Body, Bytes};
@@ -21,21 +22,39 @@ pub(super) async fn exchange(
     State(server): State<Arc<SyncServer>>,
     Path(_repo): Path<String>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, EnvelopedApiError> {
     let auth = authorize(&headers, &server, LfsAccess::Read)?;
     let principal = auth.require_registered_principal()?;
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
-    // An LFS transfer like any other: its worker holds the permit until the
-    // reply is built, whether or not its caller is still there, and hands it
-    // on to the reply.
-    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
-        return Ok(lfs_saturated());
+    // It reads its request, decodes its selector into a tree of values and
+    // builds its reply whole, so it takes room for all of it in the LFS
+    // memory row first, by the length its request declares; then it is an
+    // LFS transfer like any other. Its worker holds both until the reply is
+    // built, whether or not its caller is still there, and hands them on to
+    // the reply. It waits on its headers and reads its body at its turn, so
+    // a request in line holds none of it.
+    let declared = declared_size(&headers);
+    let Some(room) = server
+        .transfers
+        .lfs_read_room(Transfers::exchange_room(declared))
+        .await
+    else {
+        return Ok(lfs_waited_out());
     };
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
+        return Ok(lfs_waited_out());
+    };
+    let permit = (room, permit);
+    let frame = oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME;
+    let limit = declared.map_or(frame, |declared| {
+        usize::try_from(declared).unwrap_or(frame).min(frame)
+    });
+    let body = read_whole(body, limit).await?;
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
-    let (object, bytes, permit) = tokio::task::spawn_blocking(move || {
+    let (object, bytes, permit) = crate::api::transfer::spawn_worker(move || {
         let object = oneiron::sync::chunks::chunk_request_object(&body)?;
         oneiron::sync::chunks::serve_chunk_request(&vault, principal, scope, &body)
             .map(|bytes| (object, bytes, permit))
@@ -71,14 +90,15 @@ pub(super) async fn exchange(
         .into_response())
 }
 
-/// The reply, handed out a piece at a time by a task that holds the transfer
-/// permit until the last piece is taken, or until the client has taken none
-/// for `idle`. Only the pieces already handed out outlive it.
+/// The reply, handed out a piece at a time by a task that holds the memory
+/// room and the transfer permit until the last piece is taken, or until the
+/// client has taken none for `idle`. Only the pieces already handed out
+/// outlive it.
 fn reply(
     vault: Arc<Vault>,
     object: LfsOid,
     bytes: Vec<u8>,
-    permit: Permit<String>,
+    permit: ReadHold,
     idle: Duration,
 ) -> Body {
     let (pieces, receiver) = mpsc::channel::<Bytes>(2);

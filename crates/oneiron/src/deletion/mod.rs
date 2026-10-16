@@ -2,6 +2,7 @@
 
 mod coop_request;
 mod delete;
+mod derived_rows;
 mod erase;
 mod gate;
 mod identity_event_stamps;
@@ -23,6 +24,11 @@ pub use coop_request::{
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
 pub use delete::{DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview};
+// A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
+pub use crate::ports::{
+    DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,
+    DependentWalkPolicy, DependentWalkProgress,
+};
 pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
@@ -34,6 +40,7 @@ pub use tombstone::{
     TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 
+pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use gate::{DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use sweep_queue::{

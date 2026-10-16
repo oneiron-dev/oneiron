@@ -2129,7 +2129,7 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
     // And it clears no consequential action: with a real store-authenticated
     // owner present, the consent door still refuses the voice claim as an
     // unauthenticated actor instead of approving.
-    let owner_actor = test_id(0x6A);
+    let owner_actor = vault.ensure_embedded_owner_actor().unwrap();
     vault.put_entity(
         &owner_actor,
         crate::registry::ENTITY_TYPE_PERSON,
@@ -2160,7 +2160,7 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
         1_000,
     )?;
     assert!(matches!(
-        card.evaluate_action(&request, &owner)
+        card.evaluate_action(&vault, &request, &owner)
             .expect_err("a voice similarity match must not clear a consequential action")
             .kind(),
         ErrorKind::ConsentUnauthenticatedActor,
@@ -2174,14 +2174,7 @@ fn voice_offer_nonce_requires_exact_device_confirm_and_is_single_use() -> Result
     use crate::genui::ConsentSurface;
 
     let (_tmp, vault) = temp_vault();
-    let actor = test_id(0xB1);
-    vault.put_entity(
-        &actor,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     enroll_principal(
         &vault,
         actor,

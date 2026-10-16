@@ -25,16 +25,9 @@ fn at(now: u64) -> TimeRange {
 }
 impl Admission {
     pub(super) fn new(vault: &Vault, hub: EntityId, package: &HubPackage) -> Self {
-        let owner_id = EntityId::now();
-        vault
-            .put_entity(
-                &owner_id,
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                at(1),
-                1,
-                b"owner",
-            )
-            .expect("owner person");
+        let owner_id = vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
         let owner = vault
             .authenticate_owner(
                 owner_id,

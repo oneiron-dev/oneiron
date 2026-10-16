@@ -6,7 +6,7 @@
 
 use super::read_set::{
     ChangedDelivery, ChangedEvent, ConnectorChange, ConnectorMount, MAX_EVENT_REF_BYTES,
-    ProposalChange, ProposalReason, lifecycle_line,
+    ProposalChange, ProposalReason, lifecycle_line, lifecycle_refs,
 };
 use super::{ChangedLine, MAX_BOARD_ROW_BYTES, SessionReadSet};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
@@ -38,16 +38,24 @@ impl SessionReadSet {
     /// delta joins it into. Rejections come first. The fold is read-only:
     /// what it delivers moves only on `acknowledge`. A caller at `locality`
     /// off this device learns no outcome of a claim a device-local world
-    /// keeps (DEC-0005); it stays owed until it may leave.
+    /// keeps (DEC-0005); it stays owed until it may leave. Each outcome and
+    /// connector rides only while `read`, the caller's own read, reads its
+    /// row in the fold's snapshot, whatever the claim's status: a withheld
+    /// outcome stays owed, and a connector whose key it cannot read is none.
     pub fn fold_own_changes(
         &self,
-        vault: &Vault,
+        read: &crate::claim::ScopedRead<'_>,
         actor: Option<EntityId>,
         locality: crate::claim::CallerLocality,
         line: &mut ChangedLine,
         cap: usize,
     ) -> Result<()> {
+        let vault = read.vault();
+        let lane = read.recorded_lane()?;
+        lane.persist_grant_clock()?;
         let txn = vault.store.env.read_txn()?;
+        let policy = lane.live_policy_manifest_in(&txn)?;
+        let admits = |id: &EntityId| lane.is_ref_readable_with_policy_in(&txn, &policy, id);
         let flagged = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
         let mut delivery = ChangedDelivery {
             generation: self.delivery_generation(),
@@ -95,6 +103,8 @@ impl SessionReadSet {
                         &flagged,
                         &claim,
                     )?
+                    // An erased claim has no row left to admit.
+                    && (to == "erased" || admits(&claim)?)
                 {
                     settled.push(Settled {
                         id: id.clone(),
@@ -103,7 +113,7 @@ impl SessionReadSet {
                     });
                 }
             }
-            let mounts = connector_mounts(vault, &txn, actor)?;
+            let mounts = connector_mounts(vault, &txn, actor, &admits)?;
             if let Some(prefix) = self.prefix_connectors() {
                 connectors = connector_changes(prefix, &mounts);
             }
@@ -113,7 +123,13 @@ impl SessionReadSet {
         // off the next wake. Answers are looked up only for what can ride.
         settled.sort_by_key(|proposal| proposal.to != "rejected");
         let mut held = settled.len().saturating_sub(cap);
-        settled.truncate(cap);
+        let past_cap = settled.split_off(cap.min(settled.len()));
+        line.overflow_rows.extend(
+            past_cap
+                .into_iter()
+                .filter(|proposal| proposal.to != "erased")
+                .map(|proposal| proposal.id),
+        );
         let mut events = settled
             .into_iter()
             .map(|proposal| {
@@ -147,6 +163,8 @@ impl SessionReadSet {
                 kept.push(event);
             } else {
                 held += 1;
+                line.overflow_rows
+                    .extend(event.named_row().map(str::to_owned));
             }
         }
         // Install receipts keep their own rows and cap, inside the same row.
@@ -160,6 +178,7 @@ impl SessionReadSet {
                 installs.push(receipt);
             } else {
                 line.install_overflow += 1;
+                line.overflow_rows.push(receipt.entity);
             }
         }
         line.install_rows = installs;
@@ -170,6 +189,7 @@ impl SessionReadSet {
                 fitted.push((id, state));
             } else {
                 held += 1;
+                line.overflow_rows.extend(lifecycle_refs(&id, &state));
             }
         }
         line.rows = fitted;
@@ -308,6 +328,7 @@ fn connector_mounts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
+    admits: &dyn Fn(&EntityId) -> Result<bool>,
 ) -> Result<BTreeMap<String, ConnectorMount>> {
     let mut connectors = BTreeSet::new();
     for row in vault
@@ -333,7 +354,7 @@ fn connector_mounts(
         else {
             continue;
         };
-        if record.status != ConnectorKeyStatus::Active {
+        if record.status != ConnectorKeyStatus::Active || !admits(&key)? {
             continue;
         }
         mounts.insert(

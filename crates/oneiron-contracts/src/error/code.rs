@@ -175,6 +175,12 @@ pub enum CodeError {
     /// was admitted; the push may be retried.
     #[error("git repository is busy with another writer")]
     GitHttpRepositoryBusy,
+    /// A check that a published ref's LFS objects are readable waited for
+    /// the host's room to read one whole manifest past its deadline. Nothing
+    /// was decided: the publication stays as it was, and the call may be
+    /// retried.
+    #[error("no room to read an lfs manifest came within the wait")]
+    LfsReadRoomWaitedOut,
     /// The credential door refused a push inside the quarantine window
     /// (ONE-1908). The refs never moved and the objects never became
     /// reachable. The reason names paths and detector codes only — never a
@@ -191,6 +197,20 @@ pub enum CodeError {
     ReceivePackLandingRefused {
         /// The publication rejection class.
         reason: String,
+    },
+    /// An origin publication asked again for a move an earlier publication
+    /// already made, but needs objects that publication never certified. The
+    /// earlier proof cannot answer it, and the move is consumed, so nothing
+    /// is staged or moved for it.
+    #[error(
+        "origin publication needs objects the publication that owns its move never certified: \
+         git {objects:?}, lfs {lfs_objects:?}"
+    )]
+    OriginPublicationBeyondOwner {
+        /// Git object ids the owner never certified.
+        objects: Vec<String>,
+        /// LFS object ids the owner never certified.
+        lfs_objects: Vec<String>,
     },
     /// A deployment-independent vault-read operation failed (ONE-1433). The
     /// typed taxonomy lives in `code_run::vault_read` and deliberately does not
@@ -245,8 +265,10 @@ impl CodeError {
             Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
             Self::GitHttpExchangeIdle => ErrorKind::GitHttpExchangeIdle,
             Self::GitHttpRepositoryBusy => ErrorKind::GitHttpRepositoryBusy,
+            Self::LfsReadRoomWaitedOut => ErrorKind::LfsReadRoomWaitedOut,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
+            Self::OriginPublicationBeyondOwner { .. } => ErrorKind::OriginPublicationBeyondOwner,
             Self::VaultRead(_) => ErrorKind::VaultRead,
         }
     }

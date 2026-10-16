@@ -608,6 +608,27 @@ mod seam {
             .expect("resolve ramp scope")
     }
 
+    /// The owner whose rulings the propose lane records: a ruling is the
+    /// owner's word, so the door takes the owner's proof.
+    pub(crate) fn ruling_owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
+        let id = vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
+        vault
+            .authenticate_owner(
+                id,
+                "principal:owner",
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("authenticate owner")
+    }
+
+    /// A live agent actor a ramp scope can name, as its hex scope actor.
+    pub(crate) fn ramp_agent(vault: &Vault) -> String {
+        super::put_person(vault, 0x2A).to_hex()
+    }
+
     /// Records one outcome receipt on a propose-lane scope.
     pub(crate) fn record_outcome_receipt(
         vault: &Vault,
@@ -615,7 +636,7 @@ mod seam {
         outcome: ProposalOutcome,
     ) {
         vault
-            .record_proposal_outcome_for_ramp(scope, outcome)
+            .record_proposal_outcome_for_ramp(&ruling_owner(vault), scope, outcome)
             .expect("record ramp outcome");
     }
 
@@ -654,13 +675,13 @@ mod seam {
     }
 
     /// The agent self-demotes an auto scope back to propose (r7: its own
-    /// judgment, said out loud, receipted).
+    /// judgment, said out loud, receipted), through its own facade: only the
+    /// actor the scope names may step it back without the owner.
     pub(crate) fn demote_scope_to_propose(vault: &Vault, scope: &RampScope) {
+        let agent = EntityId::from_hex(&scope.actor).expect("the scope names a vault actor");
         vault
-            .demote_scope_to_propose(
-                scope,
-                oneiron::consent_graduation::DemotionReason::AgentJudgment,
-            )
+            .memory(agent, oneiron::EdgeActorClass::Agent)
+            .demote_own_ramp_scope(scope)
             .expect("self-demote scope");
     }
 
@@ -1225,13 +1246,8 @@ fn ms06_ramp_scope_keys_on_op_class_agent_tuple() {
 /// offer, never standing authority, until the authenticated owner accepts.
 #[test]
 fn ms06_streak_offers_standing_grant_never_auto_grants() {
-    use oneiron::store::GateDecisionId;
-
     let (_dir, vault) = open_vault();
-    let owner_id = put_person(&vault, 0x25);
-    let owner = vault
-        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
-        .expect("authenticate owner");
+    let owner = seam::ruling_owner(&vault);
     let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
 
     assert_eq!(seam::count_graduation_offers(&vault), 0);
@@ -1260,7 +1276,8 @@ fn ms06_streak_offers_standing_grant_never_auto_grants() {
 #[test]
 fn ms06_self_demotion_is_receipted_never_silent() {
     let (_dir, vault) = open_vault();
-    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    let agent = seam::ramp_agent(&vault);
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", &agent);
     assert!(matches!(
         vault
             .ramp_scope_state(&scope)
@@ -1289,14 +1306,10 @@ fn ms06_self_demotion_is_receipted_never_silent() {
 /// anything above.
 #[test]
 fn ms06_demotion_from_graduated_revokes_the_standing_grant() {
-    use oneiron::store::GateDecisionId;
-
     let (_dir, vault) = open_vault();
-    let owner_id = put_person(&vault, 0x25);
-    let owner = vault
-        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
-        .expect("authenticate owner");
-    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    let owner = seam::ruling_owner(&vault);
+    let agent = seam::ramp_agent(&vault);
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", &agent);
 
     for _ in 0..oneiron::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
         seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedUntouched);

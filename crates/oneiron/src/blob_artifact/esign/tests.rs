@@ -112,14 +112,7 @@ fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> 
         ..VaultConfig::default()
     };
     let (_dir, vault, document, doc) = setup_with(config, 200)?;
-    let owner = EntityId::from_bytes([0x42; 16])?;
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
@@ -346,17 +339,7 @@ fn ceremony_setup() -> Result<(
     }
     doc.fields[0].meta = FieldMeta::Date;
     doc.recipients[0].automated = true;
-    let owner = EntityId::now();
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
     doc.recipients[0].principal_ref = Some(owner.to_hex());
     event(
@@ -2253,4 +2236,30 @@ fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
         SigningOutcome::AwaitingSeal
     );
     Ok(())
+}
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_issues_no_signing_credentials() -> Result<()> {
+        let (_dir, vault, id, doc, owner) = ceremony_setup()?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+        assert_eq!(
+            vault
+                .issue_esign_capabilities(&foreign, id)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(
+            vault.issue_esign_capabilities(&owner, id)?.len(),
+            doc.recipients.len(),
+            "the refused call minted no recipient's credential"
+        );
+        Ok(())
+    }
 }

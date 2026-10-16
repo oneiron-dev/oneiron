@@ -79,9 +79,10 @@ fn ends_soon(
                 "demo",
                 &request,
                 DoorSeam::Landed,
-                ServeBounds {
+                ExchangeBounds {
                     idle: Duration::from_secs(120),
-                    ..ServeBounds::default()
+                    repository_wait: Duration::ZERO,
+                    scan: ScanBounds::default(),
                 },
                 &mut io::Cursor::new(bytes),
                 &mut sink,
@@ -135,7 +136,7 @@ fn an_exchange_that_unwinds_ends_its_backend_and_frees_the_repository() {
 }
 
 /// The objects `to` adds over `from`, as one pack.
-fn pack_between(source: &Path, from: &GitOid, to: &GitOid) -> Vec<u8> {
+pub(super) fn pack_between(source: &Path, from: &GitOid, to: &GitOid) -> Vec<u8> {
     let mut packing = std::process::Command::new("git")
         .current_dir(source)
         .args(["pack-objects", "--stdout", "--revs"])
@@ -269,9 +270,10 @@ fn a_push_killed_mid_pack_leaves_no_quarantine_behind() {
         "demo",
         &request,
         DoorSeam::Landed,
-        ServeBounds {
+        ExchangeBounds {
             idle: Duration::from_secs(1),
-            ..ServeBounds::default()
+            repository_wait: Duration::ZERO,
+            scan: ScanBounds::default(),
         },
         &mut body,
         &mut CapturingSink::default(),
@@ -354,9 +356,10 @@ fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
         "demo",
         &request,
         DoorSeam::Landed,
-        ServeBounds {
+        ExchangeBounds {
             idle: Duration::from_secs(5),
-            ..ServeBounds::default()
+            repository_wait: Duration::ZERO,
+            scan: ScanBounds::default(),
         },
         &mut body,
         &mut CapturingSink::default(),
@@ -400,9 +403,10 @@ fn a_backend_that_exits_before_its_body_leaves_another_quarantine_alone() {
         "demo",
         &request,
         DoorSeam::Landed,
-        ServeBounds {
+        ExchangeBounds {
             idle: Duration::from_secs(5),
-            ..ServeBounds::default()
+            repository_wait: Duration::ZERO,
+            scan: ScanBounds::default(),
         },
         &mut body,
         &mut CapturingSink::default(),

@@ -142,6 +142,7 @@ pub(crate) fn capture_before_erase(
     id: &EntityId,
     hard: bool,
 ) -> Result<()> {
+    super::admission::withdraw_body_pin(&vault.store, txn, id)?;
     pin_record(vault, txn, id)?;
     let Some(mut pin) = read(&vault.store, txn, id)? else {
         return Ok(());

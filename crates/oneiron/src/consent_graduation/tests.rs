@@ -34,10 +34,10 @@ fn put_person(vault: &Vault, seed: u8) -> EntityId {
     person
 }
 
-/// The authenticated owner every graduation tap needs. Seeded distinctly from
-/// the merge fixtures so no identity is doing two jobs.
+/// The authenticated owner every graduation tap needs: the vault's embedded
+/// owner, distinct from the merge fixtures so no identity is doing two jobs.
 fn owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
-    let actor = put_person(vault, 0x25);
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     vault
         .authenticate_owner(actor, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner")
@@ -97,11 +97,12 @@ fn scope_key_is_deterministic_and_keys_on_the_exact_tuple() {
 #[test]
 fn clean_streak_surfaces_one_offer_and_never_grants_by_itself() {
     let (_dir, vault) = open_vault();
+    let owner = owner(&vault);
     let scope = eligible_scope();
 
     for approvals in 1..DEFAULT_GRADUATION_STREAK_FLOOR {
         let stats = vault
-            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
             .expect("record");
         assert_eq!(stats.untouched_streak, approvals);
         assert_eq!(stats.state, RampState::Propose);
@@ -109,7 +110,7 @@ fn clean_streak_surfaces_one_offer_and_never_grants_by_itself() {
     }
 
     let stats = vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+        .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
         .expect("record at the floor");
     assert_eq!(stats.untouched_streak, DEFAULT_GRADUATION_STREAK_FLOOR);
     assert_eq!(stats.state, RampState::Offered);
@@ -130,7 +131,7 @@ fn an_amendment_in_a_graduated_scope_demotes_it_receipted() {
     let owner = owner(&vault);
     for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
         vault
-            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
             .expect("record");
     }
     vault
@@ -139,7 +140,7 @@ fn an_amendment_in_a_graduated_scope_demotes_it_receipted() {
     assert!(demotion_receipts_via_public_query(&vault).is_empty());
 
     let stats = vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedAmended)
+        .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedAmended)
         .expect("amended ruling");
 
     assert_eq!(stats.state, RampState::Propose);
@@ -175,10 +176,11 @@ fn an_amendment_in_a_graduated_scope_demotes_it_receipted() {
 #[test]
 fn a_door_recorded_streak_is_witnessed_by_receipts_and_survives_the_rebuild() {
     let (_dir, vault) = open_vault();
+    let owner = owner(&vault);
     let scope = eligible_scope();
     for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
         vault
-            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
             .expect("record");
     }
     assert_eq!(
@@ -223,7 +225,7 @@ fn a_retracted_offer_cannot_be_taken_by_a_stale_tap() {
     let owner = owner(&vault);
     for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
         vault
-            .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
             .expect("record");
     }
     assert_eq!(
@@ -233,7 +235,7 @@ fn a_retracted_offer_cannot_be_taken_by_a_stale_tap() {
 
     // The ruling that retracts the offer lands while the tap is in flight.
     vault
-        .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::Rejected)
+        .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::Rejected)
         .expect("rejection");
     assert!(vault.graduation_offers().expect("offers").is_empty());
 
@@ -273,12 +275,16 @@ fn an_unbuildable_public_scope_never_commits_a_row() {
     ] {
         assert!(
             vault
-                .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+                .record_proposal_outcome_for_ramp(
+                    &owner,
+                    &scope,
+                    ProposalOutcome::ApprovedUntouched
+                )
                 .is_err()
         );
         assert!(
             vault
-                .demote_scope_to_propose(&scope, DemotionReason::AgentJudgment)
+                .demote_scope_to_propose(&owner, &scope, DemotionReason::AgentJudgment)
                 .is_err()
         );
         assert!(vault.set_ramp_streak_floor(&scope, 2).is_err());
@@ -305,7 +311,11 @@ fn identity_topology_op_kinds_never_graduate() {
 
         for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR * 2 {
             vault
-                .record_proposal_outcome_for_ramp(&scope, ProposalOutcome::ApprovedUntouched)
+                .record_proposal_outcome_for_ramp(
+                    &owner,
+                    &scope,
+                    ProposalOutcome::ApprovedUntouched,
+                )
                 .expect("record");
         }
         assert_eq!(
@@ -328,4 +338,162 @@ fn identity_topology_op_kinds_never_graduate() {
             .expect("grants")
             .is_empty()
     );
+}
+
+/// H183: a standing grant the owner approved is taken away by the owner, or by
+/// the scope's own actor stepping back. Another vault's owner proof and
+/// another actor's facade both leave it standing, and record nothing.
+#[test]
+fn only_the_owner_or_the_scope_actor_takes_a_standing_grant_away() {
+    let (_other_dir, other) = open_vault();
+    let foreign = owner(&other);
+    let (_dir, vault) = open_vault();
+    let owner = owner(&vault);
+    let agent = put_person(&vault, 0x31);
+    let scope = RampScope::new("send_email", "client_followup", agent.to_hex()).expect("scope");
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
+            .expect("record");
+    }
+    vault
+        .accept_graduation_offer(&owner, &scope)
+        .expect("owner accepts");
+
+    assert!(
+        vault
+            .demote_scope_to_propose(&foreign, &scope, DemotionReason::Rejected)
+            .is_err()
+    );
+    assert!(
+        vault
+            .record_proposal_outcome_for_ramp(&foreign, &scope, ProposalOutcome::Rejected)
+            .is_err()
+    );
+    let stranger = put_person(&vault, 0x32);
+    assert!(
+        vault
+            .memory(stranger, crate::edge::EdgeActorClass::Agent)
+            .demote_own_ramp_scope(&scope)
+            .is_err()
+    );
+    assert_eq!(
+        vault
+            .active_standing_consent_grants()
+            .expect("grants")
+            .len(),
+        1,
+        "the owner's grant still stands"
+    );
+    assert!(demotion_receipts_via_public_query(&vault).is_empty());
+
+    vault
+        .memory(agent, crate::edge::EdgeActorClass::Agent)
+        .demote_own_ramp_scope(&scope)
+        .expect("the scope's own actor steps back");
+    assert!(
+        vault
+            .active_standing_consent_grants()
+            .expect("grants")
+            .is_empty()
+    );
+    assert_eq!(demotion_receipts_via_public_query(&vault).len(), 1);
+}
+
+/// F24 review (H183): stepping back is a restriction, so it lands for a
+/// shared-vault member whose content grant covers one project, short of the
+/// whole-vault content write an ordinary facade write demands.
+#[test]
+fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+        InitialSharedMember, Scope, ScopeAxis, ScopeId, SharedVaultWrite,
+        encode_federation_grant_body,
+    };
+    // Sharing resolves the default policy manifest, which `open_vault`'s
+    // legacy opener clears.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
+    // Only the vault's owner shares it, and a shared vault whose sharer holds
+    // no Owner membership opens no owner door. 0x25, another Owner member, is
+    // the owner whose proof the ramp doors take.
+    put_person(&vault, 0x25);
+    let sharer = crate::test_util::embedded_owner_proof(&vault);
+    vault
+        .initialize_shared_vault(
+            &sharer,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: sharer.actor(),
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: crate::test_util::entity(0x25),
+                    role: Some(FederationGrantRole::Owner),
+                },
+            ],
+            1,
+        )
+        .expect("share the vault");
+    let owner = vault
+        .authenticate_owner(
+            crate::test_util::entity(0x25),
+            "principal:owner",
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("the Owner member's proof");
+    let agent = put_person(&vault, 0x33);
+    let project = ScopeId(crate::test_util::entity(0x34));
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(42),
+        agent,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.authority_scope =
+        crate::federation::grant_scope::membership_preset(FederationGrantRole::Member);
+    grant.authority_scope.audience = ScopeAxis::Some(std::collections::BTreeSet::from([project]));
+    vault
+        .batch()
+        .put_replicated(
+            &crate::test_util::entity(0x35),
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).expect("encode grant"),
+        )
+        .commit()
+        .expect("install the scoped grant");
+    let writer = crate::WriteActor::new(agent, crate::edge::EdgeActorClass::Agent);
+    assert!(
+        vault
+            .authorize_shared_vault_write(42, &writer, &SharedVaultWrite::Content(Scope::top()))
+            .is_err(),
+        "fixture: the member holds no whole-vault content write"
+    );
+    let scope = RampScope::new("send_email", "client_followup", agent.to_hex()).expect("scope");
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
+            .expect("record");
+    }
+    vault
+        .accept_graduation_offer(&owner, &scope)
+        .expect("owner accepts");
+
+    vault
+        .memory(agent, crate::edge::EdgeActorClass::Agent)
+        .demote_own_ramp_scope(&scope)
+        .expect("a scoped member steps back from its own grant");
+    assert!(
+        vault
+            .active_standing_consent_grants()
+            .expect("grants")
+            .is_empty()
+    );
+    assert_eq!(demotion_receipts_via_public_query(&vault).len(), 1);
 }

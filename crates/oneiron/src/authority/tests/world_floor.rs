@@ -5,11 +5,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::machine_identity::{Host, host, request_for};
+use super::support::RosterHead;
 use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
 use super::*;
+use crate::world_keys::{
+    PolicyRevision, WorldKey, WorldKeyBinding, machine_secret, seal_world_key,
+};
 use crate::{Vault, VaultConfig};
 
 /// A replica of the host's history so far that then stores `rows` in this
@@ -21,9 +25,17 @@ fn replica_storing(host: &Host, rows: &[&AuthorityLogEntry]) -> (tempfile::TempD
         .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
         .unwrap();
     for row in rows {
-        replica
-            .put_authority_log_entry(row, TimeRange { start: 3, end: 3 }, 3)
-            .unwrap();
+        let put = || replica.put_authority_log_entry(row, TimeRange { start: 3, end: 3 }, 3);
+        match put() {
+            // No door stores a row no admitter signed (H72), such as a
+            // false handoff; the fold's reading of it is the subject here.
+            Err(err) if err.kind() == crate::error::ErrorKind::AuthorityLogSignerPending => {
+                crate::authority::with_authority_doors_open_for_test(put).unwrap();
+            }
+            stored => {
+                stored.unwrap();
+            }
+        }
     }
     (dir, replica)
 }
@@ -110,7 +122,7 @@ fn a_narrowing_that_arrives_after_a_refused_row_still_narrows() {
         MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
-            ..fold.machine(laptop).unwrap().profile.clone()
+            ..fold.machine(laptop).unwrap().head().profile.clone()
         },
     );
     let refused = edit_on(
@@ -173,7 +185,7 @@ fn a_demotion_that_arrives_after_a_removal_still_races_a_widening() {
 
     let fold = host.vault.authority_fold().unwrap();
     let seq = fold.append_sequences[&host.issuer.public_key()];
-    let profile = fold.machine(laptop).unwrap().profile.clone();
+    let profile = fold.machine(laptop).unwrap().head().profile.clone();
     let demotion = revision(
         &host,
         &fold,
@@ -327,7 +339,7 @@ fn a_divergent_mark_that_arrives_after_a_removal_still_voids_it() {
 
     let fold = host.vault.authority_fold().unwrap();
     let seq = fold.append_sequences[&host.issuer.public_key()];
-    let profile = fold.machine(laptop).unwrap().profile.clone();
+    let profile = fold.machine(laptop).unwrap().head().profile.clone();
     let remark = |seq, seen: BTreeSet<AuthorityEntryHash>| {
         revision(
             &host,
@@ -455,7 +467,7 @@ fn a_demotion_over_a_divergent_mark_past_the_floor_acknowledges_nothing() {
         let fold = host.vault.authority_fold().unwrap();
         let seq = fold.append_sequences[&host.issuer.public_key()];
         let heads: Vec<_> = fold.append_heads.iter().copied().collect();
-        let profile = fold.machine(laptop).unwrap().profile.clone();
+        let profile = fold.machine(laptop).unwrap().head().profile.clone();
         let remark = |seq, seen| {
             owner_on(
                 &host,
@@ -476,7 +488,7 @@ fn a_demotion_over_a_divergent_mark_past_the_floor_acknowledges_nothing() {
             heads.clone(),
             MachineProfile {
                 revision: 2,
-                ..fold.machine(desk).unwrap().profile.clone()
+                ..fold.machine(desk).unwrap().head().profile.clone()
             },
         );
         let widening = landed.unwrap_or_else(|| {
@@ -541,7 +553,7 @@ fn a_revision_past_the_floor_still_bounds_the_next_number() {
     let fold = host.vault.authority_fold().unwrap();
     let seq = fold.append_sequences[&host.issuer.public_key()];
     let heads: Vec<_> = fold.append_heads.iter().copied().collect();
-    let profile = fold.machine(laptop).unwrap().profile.clone();
+    let profile = fold.machine(laptop).unwrap().head().profile.clone();
     let marked = owner_on(
         &host,
         seq + 1,
@@ -557,7 +569,7 @@ fn a_revision_past_the_floor_still_bounds_the_next_number() {
         heads,
         MachineProfile {
             revision: 2,
-            ..fold.machine(desk).unwrap().profile.clone()
+            ..fold.machine(desk).unwrap().head().profile.clone()
         },
     );
     let demotion = owner_on(
@@ -616,7 +628,7 @@ fn a_rekey_past_the_floor_leaves_both_keys_unknown() {
             machine_key: request.machine_key,
             machine_proof: request.machine_proof,
             revision: 2,
-            ..fold.machine(laptop).unwrap().profile.clone()
+            ..fold.machine(laptop).unwrap().head().profile.clone()
         },
     );
     let other = revision(
@@ -625,7 +637,7 @@ fn a_rekey_past_the_floor_leaves_both_keys_unknown() {
         seq + 2,
         MachineProfile {
             revision: 2,
-            ..fold.machine(desk).unwrap().profile.clone()
+            ..fold.machine(desk).unwrap().head().profile.clone()
         },
     );
     let transcript = machine_connection_transcript(&host.vault_id, laptop, "token", 7, "nonce");
@@ -682,7 +694,7 @@ fn a_removal_past_the_floor_acknowledges_nothing_here() {
             role: MachineRole::Removed,
             revision: 2,
             seen_world_edits: BTreeSet::from([authority_entry_hash(&widening).unwrap()]),
-            ..fold.machine(laptop).unwrap().profile.clone()
+            ..fold.machine(laptop).unwrap().head().profile.clone()
         },
     );
     let other = revision(
@@ -691,11 +703,15 @@ fn a_removal_past_the_floor_acknowledges_nothing_here() {
         seq + 2,
         MachineProfile {
             revision: 2,
-            ..fold.machine(desk).unwrap().profile.clone()
+            ..fold.machine(desk).unwrap().head().profile.clone()
         },
     );
     let (_dir, replica) = replica_storing(&host, &[&other, &removal]);
-    assert!(replica.authority_fold().unwrap().machines[&laptop].removed);
+    assert!(
+        replica.authority_fold().unwrap().machines[&laptop]
+            .head()
+            .removed
+    );
     assert_eq!(
         judged(&replica, world),
         (EffectiveRead::OneMachine(laptop), false)
@@ -767,7 +783,7 @@ impl Start {
         bump: u64,
         seen: BTreeSet<AuthorityEntryHash>,
     ) -> AuthorityOp {
-        let profile = &self.fold.machine(machine).unwrap().profile;
+        let profile = &self.fold.machine(machine).unwrap().head().profile;
         AuthorityOp::MachineProfile(MachineProfile {
             role,
             revision: profile.revision + bump,
@@ -788,7 +804,7 @@ impl Start {
             seq,
             parents,
             AuthorityOp::ReRoot {
-                new_device: next.root_device(),
+                new_device: next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
             },
         )
     }
@@ -836,7 +852,13 @@ impl Start {
         MachineProfile {
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision,
-            ..self.fold.machine(self.laptop.0).unwrap().profile.clone()
+            ..self
+                .fold
+                .machine(self.laptop.0)
+                .unwrap()
+                .head()
+                .profile
+                .clone()
         }
     }
 
@@ -958,7 +980,7 @@ impl MarkPastFloor {
         self.hand_off();
         let fold = self.replica.authority_fold().unwrap();
         if let Some(machine) = self.held {
-            assert!(!fold.machines[&machine].is_live(), "{}", self.name);
+            assert!(!fold.machines[&machine].head().is_live(), "{}", self.name);
         }
         assert_eq!(judged(&self.replica, self.world), held, "{}", self.name);
     }
@@ -978,7 +1000,13 @@ fn ordinary_re_root() -> MarkPastFloor {
         start.seq + 2,
         MachineProfile {
             revision: 2,
-            ..start.fold.machine(start.desk.0).unwrap().profile.clone()
+            ..start
+                .fold
+                .machine(start.desk.0)
+                .unwrap()
+                .head()
+                .profile
+                .clone()
         },
     );
     let widening = start.widening(&marked);
@@ -999,7 +1027,7 @@ fn vouch_over_a_refused_row() -> MarkPastFloor {
         start.seq + 4,
         vec![hash(&later)],
         AuthorityOp::ReRoot {
-            new_device: next.root_device(),
+            new_device: next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
         },
     );
     start.replica(
@@ -1025,7 +1053,7 @@ fn two_step_repair() -> MarkPastFloor {
         start.seq + 6,
         vec![hash(&over_mark), hash(&over_both)],
         AuthorityOp::ReRoot {
-            new_device: next.root_device(),
+            new_device: next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
         },
     );
     start.replica(
@@ -1055,7 +1083,7 @@ fn rescued_successor() -> MarkPastFloor {
         start.seq + 6,
         vec![hash(&successor), hash(&later)],
         AuthorityOp::ReRoot {
-            new_device: next.root_device(),
+            new_device: next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
         },
     );
     start.replica(
@@ -1087,7 +1115,7 @@ fn retired_permission() -> MarkPastFloor {
         start.seq + 4,
         vec![hash(&later), hash(&refused)],
         AuthorityOp::ReRoot {
-            new_device: next.root_device(),
+            new_device: next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
         },
     );
     start.replica(
@@ -1150,7 +1178,7 @@ fn refused_repick(
                 1,
                 vec![over],
                 AuthorityOp::ReRoot {
-                    new_device: next.root_device(),
+                    new_device: next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
                 },
                 authority_key_from_ed(key),
                 2,
@@ -1467,6 +1495,7 @@ pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
             &BTreeMap::new(),
             observations,
             vault.privacy_posture(),
+            None,
         )
     };
     let (vouched, unvouched) = (fold(&observations), fold(&observations.without_vouch()));
@@ -1490,7 +1519,7 @@ pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
     let fresh = |id: &EntityId| {
         vouched
             .machine(*id)
-            .is_some_and(|here| after_handoff(&here.entry))
+            .is_some_and(|here| after_handoff(&here.head().entry))
     };
     let mut widened = Vec::new();
     let machines: BTreeSet<_> = vouched
@@ -1504,10 +1533,10 @@ pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
             continue;
         };
         let there = unvouched.machine(*id);
-        if here.is_live() && !there.is_some_and(FoldedMachine::is_live) {
+        if here.head().is_live() && !there.is_some_and(|there| there.head().is_live()) {
             widened.push(format!("machine {id:?} live"));
         }
-        if here.is_mine() && !there.is_some_and(FoldedMachine::is_mine) {
+        if here.mine() && !there.is_some_and(RosterHead::mine) {
             widened.push(format!("machine {id:?} mine"));
         }
     }
@@ -1581,4 +1610,91 @@ fn a_vouch_never_widens_the_install_view() {
         );
     }
     assert!(widened.is_empty(), "the vouch widened: {widened:?}");
+}
+
+/// A record of a fresh key of the start's world, signed by the laptop at its
+/// first sequence on `parents` and wrapped to a recovery root alone.
+fn laptop_key_record(
+    start: &Start,
+    parents: Vec<AuthorityEntryHash>,
+) -> (AuthorityLogEntry, WorldKeyId) {
+    let vault_id = start.host.vault_id;
+    let key = WorldKey::mint(start.world, FIRST_GENERATION).unwrap();
+    let to = WrapRecipient::RecoveryRoot(RecoveryRootId([9; 32]));
+    let binding = WorldKeyBinding {
+        vault_id,
+        key: *key.id(),
+        owner: start.host.owner.actor(),
+        policy: PolicyRevision::of([hash(&start.mine)]),
+        commitment: key.commitment(),
+    };
+    let secret = machine_secret(
+        &oneiron_keystore::MemoryKeystore::new(),
+        vault_id,
+        *EntityId::now().as_bytes(),
+    )
+    .unwrap();
+    let envelope = seal_world_key(&binding, to, secret.public_key(), &key).unwrap();
+    let record = WorldKeyWrapsRecord {
+        key: *key.id(),
+        commitment: binding.commitment,
+        owner: binding.owner,
+        policy: binding.policy,
+        machine: start.laptop.0,
+        wraps: vec![(to, envelope.to_bytes())],
+    };
+    let entry = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            parents,
+            AuthorityOp::WorldKeyWraps(record),
+            authority_key_from_ed(&start.laptop.1),
+            2,
+        ),
+        &start.laptop.1,
+    );
+    (entry, *key.id())
+}
+
+/// The Engine on Astra #1422d, the key-domain negative control: a "yours"
+/// revision only a vouch admits, a key record under it, then a removal. The
+/// owner revokes slip G, and slip L beside it. P marks the laptop "yours"
+/// over G alone, and the laptop records a world key J under P. The owner
+/// then removes the laptop over P (D) and re-roots over D and L (H). A
+/// replica that stores G before L counts J. One that stores L first keeps G
+/// below its floor, so only H's vouch admits G and P: both folds end the
+/// laptop's chain at D, but P is held where J stands, and J never counts.
+#[test]
+fn a_key_record_under_a_revision_only_a_vouch_admits_never_counts() {
+    let start = Start::new(142);
+    let g = start.revoke(start.seq + 1, start.heads(), 37);
+    let l = start.revoke(start.seq + 2, start.heads(), 38);
+    let p = start.owner_row(
+        start.seq + 3,
+        vec![hash(&g)],
+        AuthorityOp::MachineProfile(start.yours(2)),
+    );
+    let (j, key) = laptop_key_record(&start, vec![hash(&p), hash(&start.mine)]);
+    let d = start.owner_row(
+        start.seq + 4,
+        vec![hash(&p)],
+        start.answer(start.laptop.0, MachineRole::Removed, 2, BTreeSet::new()),
+    );
+    let h = start.re_root(
+        start.seq + 5,
+        vec![hash(&d), hash(&l)],
+        b"world floor key control root",
+    );
+    for (first, counts) in [(&g, true), (&l, false)] {
+        let second = if counts { &l } else { &g };
+        let (_dir, replica) = replica_storing(&start.host, &[first, second, &p, &j, &d, &h]);
+        let fold = replica.authority_fold().unwrap();
+        for row in [&g, &l, &p, &j, &d, &h] {
+            assert!(fold.valid_entries.contains(&hash(row)), "G first: {counts}");
+        }
+        assert!(fold.machines[&start.laptop.0].head().removed);
+        assert_eq!(fold.world_key(&key).is_some(), counts);
+        assert_eq!(!fold.refused_world_keys.contains(&hash(&j)), counts);
+    }
 }

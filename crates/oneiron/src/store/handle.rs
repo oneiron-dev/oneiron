@@ -178,6 +178,14 @@ impl StoreCore {
     pub(in crate::store) fn gate_custody_archived(&self) -> bool {
         self.gate_custody_archived_at_open || self.env.is_sealed()
     }
+
+    /// The page size this store writes in: the creating host's, which LMDB
+    /// keeps with the file. A value too large for a leaf takes whole pages
+    /// of it.
+    pub(crate) fn page_size(&self) -> Result<u64> {
+        let txn = self.env.read_txn()?;
+        Ok(u64::from(self.raw.entities.stat(&txn)?.page_size))
+    }
 }
 
 /// Arc-shared substrate of an open vault (ARCH-0052 store split).
@@ -230,6 +238,10 @@ pub struct StoreCore {
     pub(in crate::store) retrieval_telemetry_capture: bool,
     /// Open-time posture for exact authority scope checks without a Vault handle.
     pub(crate) privacy_posture: crate::HostingPrivacyPosture,
+    /// Drawn at random when this environment opened and shared by every
+    /// handle on it. An owner proof binds to it, so a proof minted before a
+    /// close never acts on another vault opened later at the same path.
+    pub(crate) open_nonce: [u8; 16],
     #[cfg(target_os = "linux")]
     pub(in crate::store) retrieval_telemetry_lease:
         Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,
@@ -239,6 +251,9 @@ pub struct StoreCore {
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// What the authority store doors read of one committed generation.
+    pub(crate) authority_door_view:
+        Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
     /// Rows the authority doors refused because a key a handoff this vault
     /// holds retired signed them (OF-166 evidence). Never persisted.
     pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,

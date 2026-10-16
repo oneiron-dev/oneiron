@@ -854,9 +854,7 @@ fn class_membership_is_resolved_at_check_time_against_the_registry() {
 #[test]
 fn verb_outside_slip_class_asks_until_owner_widens_consent() {
     use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
-    use crate::registry::ENTITY_TYPE_PERSON;
     use crate::store::GateDecisionId;
-    use crate::temporal::TimeRange;
 
     let (_tmp, vault, door) = door_fixture();
     let now = witnessed(&door);
@@ -875,16 +873,7 @@ fn verb_outside_slip_class_asks_until_owner_widens_consent() {
         Box::new(credential.ask_effect("lease", &record, EFFECTOR).unwrap())
     );
 
-    let owner_id = EntityId::from_bytes([0x51; ENTITY_ID_LEN]).unwrap();
-    vault
-        .put_entity(
-            &owner_id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
         .unwrap();

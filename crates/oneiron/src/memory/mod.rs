@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod archive_purge;
+mod asset_resolve;
 mod authorship;
 mod birth_position;
 mod booking;
@@ -64,6 +65,7 @@ mod tests;
 mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use asset_resolve::{AssetConsumer, LandedImage, ResolvedAsset, ServedAssetForm};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
@@ -136,7 +138,7 @@ pub(crate) use witness::{MessageStreamRuntime, message_stream_finality_in_txn};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
-pub(crate) use credential_key::owner_exemption_holds_in_txn;
+pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};
 pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,

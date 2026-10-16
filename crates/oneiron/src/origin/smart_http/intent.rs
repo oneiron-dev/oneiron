@@ -1,10 +1,13 @@
 //! The crash-durable per-ref intent journal and its reconcile/resume path.
 
+use std::ops::Bound;
 use std::path::Path;
 
 use super::cgi_finish::realized_updates;
 use super::door::DoorAdmissionStamp;
-use super::door_window::{DoorWindowReport, DoorWindowVerdict, unlandable_ref_reasons};
+use super::door_window::{
+    DoorWindowReport, DoorWindowVerdict, printable_ref_name, unlandable_ref_reasons,
+};
 use super::evidence::{
     PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, RefUpdate, receive_pack_field,
     receive_pack_provenance_refused,
@@ -14,11 +17,17 @@ use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitWire, lock_repository};
-use crate::origin::lfs::{LfsOid, LfsPushedPointer};
+use crate::error::{CodeError, Error, ErrorKind, Result};
+use crate::git_wire::{GitOid, GitRefName, GitWire, lock_repository};
+use crate::origin::lfs::{
+    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id,
+};
+use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::origin::scan_check::{OriginScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::Store;
+use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 // A local operation journal, not an exported claim or caller-supplied authority.
@@ -30,6 +39,13 @@ use serde::{Deserialize, Serialize};
 const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
     SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_INTENT);
 
+/// Settled intents one write transaction prunes when a scan meets them.
+const PRUNE_BATCH: usize = 4096;
+
+type IntentRows<'txn> =
+    Box<dyn Iterator<Item = Result<(ReceivePackIntentKey, ReceivePackIntent)>> + 'txn>;
+
+#[derive(Clone)]
 pub(super) struct ReceivePackIntentKey {
     repo_identity_hex: String,
     operation_id: EntityId,
@@ -62,6 +78,11 @@ pub enum ReceivePackRefStatus {
     Superseded,
     /// An observed effect still needs publication or attachment recovery.
     Pending,
+    /// The backend applied this ref's move, but a `Published` publication
+    /// had already made that move, and this push needs objects it never
+    /// certified. Terminal: the move is consumed, so no publication of it can
+    /// certify more, and retrying it would only refuse again.
+    Uncertified,
 }
 
 /// One ref's result. A multi-ref operation can contain different results.
@@ -107,6 +128,27 @@ pub(super) struct ReceivePackIntent {
     pointers: Vec<(String, String, u64)>,
 }
 
+impl ReceivePackIntent {
+    /// Whether every ref reached its final status. Nothing reads a settled
+    /// intent again: its results went to the push that settled it.
+    pub(super) fn is_settled(&self) -> bool {
+        self.refs
+            .iter()
+            .all(|entry| entry.status != ReceivePackRefStatus::Pending)
+    }
+}
+
+/// Removes one intent's rows. Every prune of a settled intent goes here, so
+/// a settled push leaves no row behind.
+fn prune_receive_pack_intent_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: &ReceivePackIntentKey,
+) -> Result<()> {
+    INTENTS.delete(store, wtxn, key)?;
+    Ok(())
+}
+
 fn receive_pack_repo_identity_hex(vault: &Vault, repo_root: &Path) -> Result<String> {
     // Authority and the coordinator name the object store, not a worktree.
     // A cutover from any linked root must drain every accepted operation.
@@ -116,6 +158,62 @@ fn receive_pack_repo_identity_hex(vault: &Vault, repo_root: &Path) -> Result<Str
 }
 
 impl Vault {
+    /// Why the push must be refused, for each advancing ref whose move a
+    /// publication owns, `Published` or still `Prepared`, but which needs
+    /// objects that publication does not certify. Decided while the hook
+    /// still blocks the backend: once the ref moves, such a push can only
+    /// end [uncertified](ReceivePackRefStatus::Uncertified). A `Prepared`
+    /// owner's obligations are fixed, so it is held to them before it is
+    /// decided; if it is refused, its move is free and the push can be sent
+    /// again. The large files a push brings count against each of its
+    /// advancing refs, so a push that also brings another ref new large
+    /// files is refused whole.
+    pub(super) fn receive_pack_owner_shortfalls(
+        &self,
+        repo: &RepoRef,
+        updates: &[RefUpdate],
+        pointers: &[LfsPushedPointer],
+    ) -> Result<Vec<String>> {
+        let RepoRef::LocalFolder { path, .. } = repo else {
+            return Err(receive_pack_provenance_refused("intent is not local"));
+        };
+        let root = Path::new(path).canonicalize()?;
+        let repo_id = lfs_repo_id(&receive_pack_repo_identity_hex(self, &root)?)?;
+        let mut lfs_objects = Vec::new();
+        for pointer in pointers {
+            let intent = pointer.intent(repo_id);
+            if self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?
+                == LfsAdmission::StoreInLfs
+            {
+                lfs_objects.push((intent.oid, intent.size_bytes));
+            }
+        }
+        let mut reasons = Vec::new();
+        for update in updates {
+            let Some(next) = update.new_oid.as_ref() else {
+                continue;
+            };
+            let name = GitRefName::parse_full(update.name.clone())?;
+            let Some(owner) =
+                self.origin_move_owner(repo_id, &name, update.old_oid.as_ref(), next)?
+            else {
+                continue;
+            };
+            if !matches!(
+                owner.status,
+                OriginPublicationStatus::Prepared | OriginPublicationStatus::Published
+            ) {
+                continue;
+            }
+            if let Some(refusal) =
+                obligations_beyond_owner(&owner, std::iter::once(next), lfs_objects.iter())
+            {
+                reasons.push(format!("{}: {refusal}", printable_ref_name(&update.name)));
+            }
+        }
+        Ok(reasons)
+    }
+
     pub(super) fn record_receive_pack_intent(
         &self,
         repo: &RepoRef,
@@ -198,12 +296,17 @@ impl Vault {
         })
     }
 
+    /// Saves an intent's progress. The save that settles it prunes it
+    /// instead, in the same transaction, so no settled row outlives it.
     pub(super) fn save_receive_pack_intent(
         &self,
         key: &ReceivePackIntentKey,
         intent: &ReceivePackIntent,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
+            if intent.is_settled() {
+                return prune_receive_pack_intent_in_txn(&self.store, wtxn, key);
+            }
             INTENTS.put(&self.store, wtxn, key, intent)?;
             Ok(())
         })
@@ -221,38 +324,128 @@ impl Vault {
         Ok(())
     }
 
+    /// How many intent rows the repository holds, settled or not, read
+    /// without pruning.
+    #[cfg(test)]
+    pub(super) fn receive_pack_intent_rows_for_test(&self, repo_root: &Path) -> usize {
+        let repo_identity_hex = receive_pack_repo_identity_hex(self, repo_root).expect("identity");
+        let rtxn = self.store.env.read_txn().expect("read txn");
+        INTENTS
+            .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())
+            .expect("intent rows")
+            .count()
+    }
+
+    /// Writes an intent row as given, settled or not: the row a crash leaves
+    /// between a settling save and its prune.
+    #[cfg(test)]
+    pub(super) fn put_receive_pack_intent_for_test(
+        &self,
+        key: &ReceivePackIntentKey,
+        intent: &ReceivePackIntent,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| {
+            INTENTS.put(&self.store, wtxn, key, intent)?;
+            Ok(())
+        })
+    }
+
     pub(in crate::origin) fn has_pending_receive_pack_operations(
         &self,
         repo_root: &Path,
     ) -> Result<bool> {
-        Ok(self
-            .receive_pack_intents(repo_root)?
-            .iter()
-            .any(|(_, intent)| {
-                intent
-                    .refs
-                    .iter()
-                    .any(|entry| entry.status == ReceivePackRefStatus::Pending)
-            }))
+        Ok(!self.receive_pack_intents(repo_root)?.is_empty())
     }
 
+    /// One operation's journaled intent, if it is still pending.
+    pub(super) fn receive_pack_intent(
+        &self,
+        repo_root: &Path,
+        operation_id: EntityId,
+    ) -> Result<Option<(ReceivePackIntentKey, ReceivePackIntent)>> {
+        let key = ReceivePackIntentKey {
+            repo_identity_hex: receive_pack_repo_identity_hex(self, repo_root)?,
+            operation_id,
+        };
+        let rtxn = self.store.env.read_txn()?;
+        Ok(INTENTS
+            .get(&self.store, &rtxn, &key)?
+            .map(|intent| (key, intent)))
+    }
+
+    /// The repository's pending intents, in operation order.
+    ///
+    /// A settled row the scan meets is pruned on the way, a batch per write
+    /// transaction: one a crash left between its settling save and its
+    /// prune, or one journaled before settled intents were pruned. So the
+    /// rows a scan reads are the pending pushes, not the repository's
+    /// history. The scan never refuses for their number (rule 5): past its
+    /// threshold row it raises an origin scan check and reads on. Callers
+    /// hold the repository coordinator.
     pub(super) fn receive_pack_intents(
         &self,
         repo_root: &Path,
     ) -> Result<Vec<(ReceivePackIntentKey, ReceivePackIntent)>> {
         let repo_identity_hex = receive_pack_repo_identity_hex(self, repo_root)?;
-        let rtxn = self.store.env.read_txn()?;
-        let mut rows = Vec::new();
-        for (index, row) in INTENTS
-            .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())?
-            .enumerate()
-        {
-            if index >= super::publication::ORIGIN_PUBLICATION_MAX_ROWS {
-                return Err(Error::IndexOverflow("receive-pack intents"));
+        let mut count = {
+            let rtxn = self.store.env.read_txn()?;
+            ScanCount::start(
+                &self.store,
+                &rtxn,
+                OriginScan::ReceivePackIntents,
+                Some(lfs_repo_id(&repo_identity_hex)?),
+            )?
+        };
+        let mut pending = Vec::new();
+        let mut after: Option<ReceivePackIntentKey> = None;
+        loop {
+            let mut settled = Vec::new();
+            {
+                let rtxn = self.store.env.read_txn()?;
+                let rows: IntentRows<'_> = match &after {
+                    None => Box::new(INTENTS.iter_from(
+                        &self.store,
+                        &rtxn,
+                        repo_identity_hex.as_bytes(),
+                    )?),
+                    Some(key) => Box::new(INTENTS.iter_range(
+                        &self.store,
+                        &rtxn,
+                        Bound::Excluded(key),
+                        Bound::Unbounded,
+                    )?),
+                };
+                for row in rows {
+                    let (key, intent) = row?;
+                    if key.repo_identity_hex != repo_identity_hex {
+                        break;
+                    }
+                    count.row();
+                    if !intent.is_settled() {
+                        pending.push((key, intent));
+                        continue;
+                    }
+                    settled.push(key);
+                    if settled.len() == PRUNE_BATCH {
+                        break;
+                    }
+                }
             }
-            rows.push(row?);
+            if !settled.is_empty() {
+                self.with_write_txn_grouped(|wtxn| {
+                    for key in &settled {
+                        prune_receive_pack_intent_in_txn(&self.store, wtxn, key)?;
+                    }
+                    Ok(())
+                })?;
+            }
+            if settled.len() < PRUNE_BATCH {
+                break;
+            }
+            after = settled.pop();
         }
-        Ok(rows)
+        count.finish(self);
+        Ok(pending)
     }
 
     pub(super) fn resume_receive_pack_intent(
@@ -371,17 +564,31 @@ impl Vault {
                     &attribution,
                 )
             })();
-            if let Ok(receipt) = result {
-                intent.refs[index].status = ReceivePackRefStatus::Published;
-                self.save_receive_pack_intent(key, intent)?;
-                if let Some(previous) = &mut landing {
-                    previous.replayed &= receipt.replayed;
-                } else {
-                    // The exposed replay outcome must name the same ref and
-                    // source as the first receipt, not an uncertified aggregate.
-                    replay_outcome = Some(outcome);
-                    landing = Some(receipt);
+            // A check that waited past the host's room for an LFS read
+            // decided nothing: the ref stays Pending, and the caller hears
+            // so rather than answer as if it had recovered, or wait as long
+            // again for the next ref.
+            if matches!(result, Err(Error::Code(CodeError::LfsReadRoomWaitedOut))) {
+                return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
+            }
+            match result {
+                Ok(receipt) => {
+                    intent.refs[index].status = ReceivePackRefStatus::Published;
+                    self.save_receive_pack_intent(key, intent)?;
+                    if let Some(previous) = &mut landing {
+                        previous.replayed &= receipt.replayed;
+                    } else {
+                        // The exposed replay outcome must name the same ref and
+                        // source as the first receipt, not an uncertified aggregate.
+                        replay_outcome = Some(outcome);
+                        landing = Some(receipt);
+                    }
                 }
+                Err(error) if error.kind() == ErrorKind::OriginPublicationBeyondOwner => {
+                    intent.refs[index].status = ReceivePackRefStatus::Uncertified;
+                    self.save_receive_pack_intent(key, intent)?;
+                }
+                Err(_) => {}
             }
             // Do not stop after a failed ref: retain its Pending disposition
             // and recover the other refs independently.

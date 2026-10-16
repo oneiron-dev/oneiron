@@ -44,6 +44,9 @@ pub(crate) async fn core_context_pack(
     payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // The pack echoes the room's roster and its pre-filter counts, which no
+    // lane judges, so a facet narrowing is refused rather than half kept.
+    auth.require_unnarrowed_facets()?;
     let req = json_payload(payload)?;
     let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
     Ok(Json(response))
@@ -68,6 +71,13 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
+    // Every ref the request names resolves under the caller's own read: a
+    // room or contact it cannot read is one that does not exist. A room's
+    // members read its roster by membership, as their room turns do.
+    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
+    let principal = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok());
     let room_members = req
         .conversation_id
         .as_deref()
@@ -75,7 +85,7 @@ pub(crate) async fn run_context_pack(
             let room = super::super::parse_entity_id_param(room, "conversation_id")?;
             server
                 .vault
-                .room_audience_members(room)
+                .room_audience_members_under(&scoped_read, room, principal)
                 .map_err(|error| core_engine_error("room audience failed", error))
         })
         .transpose()?;
@@ -86,6 +96,7 @@ pub(crate) async fn run_context_pack(
     let interlocutors = resolve_core_interlocutor_set(
         &server.vault,
         auth,
+        &scoped_read,
         req.interlocutors.as_ref(),
         room.as_ref(),
     )?;
@@ -116,7 +127,6 @@ pub(crate) async fn run_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
         // Every row a room reads lies in its members' met world set, as a
         // room turn's ceiling holds it (ARCH-0067 §8).
@@ -555,22 +565,24 @@ pub(crate) fn apply_context_pack_response_retrieval_budget(
     });
 }
 
+/// Every empty pack reads alike, whoever reads it: no key reads every row
+/// (another principal's claims stay private even to the owner's key), so a
+/// reason would tell a match its reader cannot read from no match (F19).
 pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) {
+    // How many claims the scope withheld is a count of rows the caller may
+    // not read: it never leaves as a stat (F19).
+    pack.stats.claims_suppressed = 0;
     pack.stats.candidates_considered = pack.results.len();
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
     if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
-        if let Some(empty) = pack.empty.as_mut() {
-            empty.total_in_scope = 0;
-        } else {
-            pack.empty = Some(oneiron::EmptyContext {
-                retrieval_quality: pack.retrieval_quality.clone(),
-                reason: oneiron::EmptyReason::FilterMatchedNone,
-                total_in_scope: 0,
-                hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
-            });
-        }
+        pack.empty = Some(oneiron::EmptyContext {
+            retrieval_quality: pack.retrieval_quality.clone(),
+            reason: oneiron::EmptyReason::FilterMatchedNone,
+            total_in_scope: 0,
+            hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
+        });
     } else {
         pack.empty = None;
     }

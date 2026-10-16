@@ -75,7 +75,7 @@ impl Vault {
         id: &EntityId,
     ) -> Result<RepresentationReview> {
         let (record, body) = read_proposal(self, id)?;
-        require_owner(self, owner, &record.packet)?;
+        require_recipient(self, owner, &record.packet)?;
         validate_packet(self, &record.packet)?;
         if body.approval != ClaimApprovalStatus::Proposed {
             return Err(invalid());
@@ -123,12 +123,14 @@ impl Vault {
             return Err(invalid());
         }
         validate_packet(self, &current.packet)?;
-        let approval = ApprovalRecord {
-            bundle_id: review.bundle_id,
-            revision: record.revision,
-            owner: owner.actor(),
-        };
         self.with_write_txn_grouped(|txn| {
+            let approval = ApprovalRecord {
+                bundle_id: review.bundle_id,
+                revision: record.revision,
+                owner: crate::dreamer_runner::maintenance::validate_owner_in_txn(
+                    self, &*txn, owner,
+                )?,
+            };
             require_owner_bundle_in(self, txn, review.id, &approval)?;
             // The exact reviewed body must still be live at the local arm.
             let body = self
@@ -202,17 +204,27 @@ impl Vault {
     }
 }
 fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> Result<()> {
-    if owner.actor() != packet.request.owner {
+    // Revalidate the supplied proof itself against this vault's store truth
+    // and lifecycle: a handle minted before its PERSON became a merged/split
+    // shell, or a proof another vault authenticated for the same PERSON id,
+    // never reviews or arms here.
+    let txn = vault.store.env.read_txn()?;
+    if crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, owner)?
+        != packet.request.owner
+    {
         return Err(invalid());
     }
-    // Revalidate store truth and lifecycle instead of trusting an old handle
-    // minted before its PERSON became a merged/split shell.
-    vault.authenticate_owner(
-        owner.actor(),
-        owner.principal_ref(),
-        true,
-        owner.decision_id(),
-    )?;
+    Ok(())
+}
+/// [`require_owner`] for reading the review addressed to the packet's
+/// person, which approves and arms nothing: the person tier.
+fn require_recipient(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    if crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &txn, owner)?
+        != packet.request.owner
+    {
+        return Err(invalid());
+    }
     Ok(())
 }
 fn is_owner_bundle_receipt(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> bool {

@@ -71,6 +71,10 @@ pub(super) fn task_actor_ceiling(
     }))
 }
 
+/// Tags an ask's window key, so asks count on their own key beside the create
+/// window.
+const ASK_WINDOW_KEY_TAG: u64 = 1 << 63;
+
 pub(super) fn record_task_create(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -78,45 +82,59 @@ pub(super) fn record_task_create(
     now: u64,
     rate_limit: TaskCreateRateLimit,
 ) -> Result<u64> {
-    let window_seconds = rate_limit.window_seconds.max(1);
-    let window = now / window_seconds;
-    // One node-local key per (actor, window_seconds), overwritten each window:
-    // value = {window, count}. A stored window other than the current one
-    // resets the count, so elapsed windows overwrite the same key instead of
-    // leaving a per-window residue that grows unbounded over the vault's life.
-    let count = read_window(vault, wtxn, actor, window_seconds, window)?;
-    let next = count.saturating_add(1);
-    TASK_CREATE_RATE_WINDOWS.put(
-        &vault.store,
-        wtxn,
-        &(actor, window_seconds),
-        &RateWindow {
-            window,
-            count: next,
-        },
-    )?;
-    Ok(next)
+    record_window(vault, wtxn, actor, now, rate_limit, 0)
 }
 
-/// Fan-out admission gate on the generic create quota: refuses (without
-/// recording) once the actor's current-window count reaches the limit, else
-/// records one slot and admits. C07 consult fan-out is the only caller; the
-/// generic create lane stays accounting-only (OF-520).
-pub(super) fn consume_create_rate_slot(
+/// [`record_task_create`] for an ask: its own count, the same crossing check.
+pub(super) fn record_task_ask(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     now: u64,
     rate_limit: TaskCreateRateLimit,
-) -> Result<bool> {
+) -> Result<u64> {
+    record_window(vault, wtxn, actor, now, rate_limit, ASK_WINDOW_KEY_TAG)
+}
+
+fn record_window(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    now: u64,
+    rate_limit: TaskCreateRateLimit,
+    key_tag: u64,
+) -> Result<u64> {
     let window_seconds = rate_limit.window_seconds.max(1);
     let window = now / window_seconds;
-    let count = read_window(vault, wtxn, actor, window_seconds, window)?;
-    if count >= rate_limit.limit as u64 {
-        return Ok(false);
-    }
-    record_task_create(vault, wtxn, actor, now, rate_limit)?;
-    Ok(true)
+    let key_seconds = window_seconds | key_tag;
+    // One node-local key per (actor, window_seconds), overwritten each window:
+    // value = {window, count}. A stored window other than the current one
+    // resets the count, so elapsed windows overwrite the same key instead of
+    // leaving a per-window residue that grows unbounded over the vault's life.
+    let count = read_window(vault, wtxn, actor, key_seconds, window)?;
+    let next = count.saturating_add(1);
+    TASK_CREATE_RATE_WINDOWS.put(
+        &vault.store,
+        wtxn,
+        &(actor, key_seconds),
+        &RateWindow {
+            window,
+            count: next,
+        },
+    )?;
+    crate::own_rate::observe_in_txn(
+        &vault.store,
+        wtxn,
+        crate::own_rate::OwnRateKind::TaskCreate,
+        actor,
+        window,
+        next,
+        crate::own_rate::OwnRate {
+            threshold: rate_limit.limit as u64,
+            window_seconds,
+        },
+    )?;
+    Ok(next)
 }
 
 fn read_window(
@@ -177,6 +195,24 @@ impl Vault {
             &txn,
             actor,
             window_seconds,
+            self.now_recorded_at() / window_seconds,
+        )
+    }
+
+    /// [`Self::task_create_count`] for the actor's asks.
+    #[cfg(test)]
+    pub(crate) fn task_ask_count_for_test(
+        &self,
+        actor: EntityId,
+        window_seconds: u64,
+    ) -> Result<u64> {
+        let window_seconds = window_seconds.max(1);
+        let txn = self.store.env.read_txn()?;
+        read_window(
+            self,
+            &txn,
+            actor,
+            window_seconds | ASK_WINDOW_KEY_TAG,
             self.now_recorded_at() / window_seconds,
         )
     }

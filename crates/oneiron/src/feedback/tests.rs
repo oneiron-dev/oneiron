@@ -822,16 +822,7 @@ fn feedback_approval_rejects_every_non_approval() {
 #[test]
 fn feedback_approval_rides_the_landed_consent_surface() {
     let (_dir, vault) = temp_vault();
-    let owner_actor = entity(0x71);
-    vault
-        .put_entity(
-            &owner_actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("seed owner");
+    let owner_actor = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(
             owner_actor,
@@ -858,7 +849,7 @@ fn feedback_approval_rides_the_landed_consent_surface() {
     .expect("consent action request");
 
     let evaluation = card
-        .evaluate_action(&request, &owner)
+        .evaluate_action(&vault, &request, &owner)
         .expect("evaluate approve-once");
     assert_eq!(evaluation.decision, ConsentActionDecision::ApprovedOnce);
     assert!(evaluation.grant_mint_intent.is_none());

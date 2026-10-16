@@ -128,7 +128,7 @@ impl Vault {
         confirmed: AgentCeiling,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_in_txn(self, txn)?;
             if foreign == introducer.entity_ref()
                 || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &foreign)?
                     .is_none()
@@ -154,7 +154,7 @@ impl Vault {
                     introducer: *introducer.entity_ref().as_bytes(),
                     introducer_class: introducer.actor_class() as u8,
                     confirmed_auto: confirmed == AgentCeiling::Auto,
-                    owner: *owner.actor().as_bytes(),
+                    owner: *actor.as_bytes(),
                     widen: None,
                 },
             )
@@ -170,9 +170,9 @@ impl Vault {
         requested: AgentCeiling,
     ) -> Result<bool> {
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let owner_actor = owner.revalidate_in_txn(self, txn)?;
             let mut row = load(&self.store, txn, foreign)?.ok_or(Error::EntityNotFound)?;
-            if row.owner != *owner.actor().as_bytes() {
+            if row.owner != *owner_actor.as_bytes() {
                 return Err(Error::Gate(
                     crate::error::GateError::ConsentOwnerNotAuthenticated(
                         "foreign introduction belongs to another owner",
@@ -189,7 +189,7 @@ impl Vault {
             let input = GateEvaluatorInput {
                 actor: GateActor {
                     actor_class: "human".to_owned(),
-                    actor_ref: Some(owner.actor().to_hex()),
+                    actor_ref: Some(owner_actor.to_hex()),
                     delegation_grant_ref: None,
                 },
                 // A widen request carries no claim candidate or sensitivity.
@@ -200,7 +200,7 @@ impl Vault {
                 criticality: PolicyCriticality::Normal,
                 policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
                 provenance: GateProvenanceHandles {
-                    actor_entity_ref: Some(owner.actor()),
+                    actor_entity_ref: Some(owner_actor),
                     ..Default::default()
                 },
                 external_effect: None,
@@ -232,7 +232,7 @@ impl Vault {
                     receipt_reasons: Vec::new(),
                     system_notices: Vec::new(),
                     actor_class: "human".to_owned(),
-                    actor_ref: Some(owner.actor().to_hex()),
+                    actor_ref: Some(owner_actor.to_hex()),
                     content_kind: "claim".to_owned(),
                     policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
                     claim_id: None,
@@ -322,7 +322,7 @@ impl Vault {
                 && field(ACTOR_REF_KEY) == Some(principal)
         };
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_in_txn(self, txn)?;
             let id = super::default_policy_manifest_id()?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -401,7 +401,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
-                actor_ref: Some(owner.actor().to_hex()),
+                actor_ref: Some(actor.to_hex()),
                 content_kind: GateContentKind::PolicyManifest.as_str().to_owned(),
                 policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,

@@ -79,6 +79,8 @@ fn mint(
                 kind,
                 actor_ref: actor,
                 assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
                 occurred_at: 10,
             },
         )
@@ -136,7 +138,16 @@ pub(super) fn task_authority() -> Result<Case> {
     put_person(&vault, owner)?;
     put_task(&vault, task, owner)?;
     let cancelled = mint(&vault, task, TaskAuthorityFactKind::Cancelled, owner)?;
-    vault.delete_edge(&cancelled, EdgeKind::ScopedTo, &task)?;
+    // No door unlinks a fact: this is its link arriving after its row.
+    vault.with_write_txn(|txn| {
+        crate::ports::EdgeStoreStaging::port_remove_edge_rows(
+            &vault.store,
+            txn,
+            &cancelled,
+            EdgeKind::ScopedTo,
+            &task,
+        )
+    })?;
     Case::after_backup(
         "task owners and cancellations",
         (dir, vault),
@@ -257,8 +268,10 @@ pub(super) fn dispatchable_agents() -> Result<Case> {
 /// would bring the goal back, and the wake with it.
 pub(super) fn resident_wakes() -> Result<Case> {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
-    let (owner, inbox) = (EntityId::now(), EntityId::now());
-    put_person(&vault, owner)?;
+    let (owner, inbox) = (
+        vault.ensure_embedded_owner_actor().map_err(memory)?,
+        EntityId::now(),
+    );
     let agent = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "resident");
     vault.create_channel_identity(
         &inbox,
@@ -337,13 +350,43 @@ pub(super) fn agent_ceilings() -> Result<Case> {
     )
 }
 
+/// An agent id keeps its pin across a delete (H215). A definition narrowed
+/// since the backup and then deleted is one a restore would bring back at
+/// the ceiling it held before; an agent made since changes nothing.
+pub(super) fn agent_id_pins() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let agent = entity(0x94);
+    put_agent(&vault, agent, None, false)?;
+    Case::after_backup(
+        "agent id pins",
+        (dir, vault),
+        |vault| put_agent(vault, entity(0x95), None, false),
+        move |vault| {
+            let mut narrowed = vault
+                .get_agent_definition(&agent)?
+                .ok_or(Error::EntityNotFound)?;
+            narrowed.version = "2".to_owned();
+            narrowed.ceiling = AgentCeiling::Proposed;
+            vault.update_agent_definition(
+                &agent,
+                &narrowed,
+                TimeRange { start: 11, end: 11 },
+                11,
+            )?;
+            vault.batch().delete(&agent).commit()
+        },
+    )
+}
+
 /// A delegate of an action grant holds its authority only while the
 /// delegate's entity is there. A delegate erased since the backup, the
 /// grant unchanged, is one a restore would make a holder again.
 pub(super) fn ask_holders() -> Result<Case> {
     let (dir, vault) = open_vault();
-    let (owner, delegate) = (entity(0x71), entity(0x72));
-    put_person(&vault, owner)?;
+    let (owner, delegate) = (
+        vault.ensure_embedded_owner_actor().map_err(memory)?,
+        entity(0x72),
+    );
     put_person(&vault, delegate)?;
     let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     vault.create_standing_grant(

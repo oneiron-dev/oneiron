@@ -1270,22 +1270,16 @@ fn forged_facet_seed_cannot_move_entities_across_the_disclosure_boundary() {
 
     // Full production ingest, so the filtered doc below is the one this vault
     // would really export.
-    let admitted = admit_federated_window_update(
-        &vault,
-        &window_key,
-        &update,
-        FederationAdmissionRole::Member,
-    )
-    .expect("a forged facet stamp must not fail the admission door closed");
     let local = create_window_doc("local", &window_key);
-    local.import(&admitted).unwrap();
-    crate::sync::window::forward_rematerialize(
+    let sender = (member, grant_id);
+    import_from_peer(
         &vault,
         &local,
-        &crate::sync::bridge::Materializer::new(),
         &window_key,
-    )
-    .unwrap();
+        &update,
+        sender,
+        FederationAdmissionRole::Member,
+    );
     // The local owner verifies these known fixture bodies, not the forged
     // FacetOf edge. With all four records stamped, missing Scope evidence
     // cannot mask a failure of the edge-disclosure boundary under test.
@@ -1416,6 +1410,1151 @@ fn admission_drop_leaves_no_pending_remat_work() {
     );
 }
 
+/// Astra on #1432 F2: a facet-narrowed reader reads a row in ANY of its
+/// facets, so a stamp a peer adds to a row this vault already holds would put
+/// the row in front of readers it was withheld from. The admission door drops
+/// it with typed evidence for either role: a reader narrowed to the added
+/// facet still does not read the row, while the stamp a row is born with in
+/// the same frame still lands.
+#[test]
+fn a_peer_stamp_onto_a_stored_row_puts_it_in_no_new_facet() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0x6B_u8),
+        (FederationAdmissionRole::Guest, 0x73_u8),
+    ] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(seed));
+        let window_key = WindowKey::new("2026-05");
+        let [work, private, held, born] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
+        for (id, kind) in [
+            (work, ENTITY_TYPE_FACET),
+            (private, ENTITY_TYPE_FACET),
+            (held, ENTITY_TYPE_EVENT),
+        ] {
+            vault
+                .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"row")
+                .unwrap();
+        }
+        vault
+            .put_edge(&held, EdgeKind::FacetOf, &private, 1.0)
+            .unwrap();
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        insert_edge(&remote, held, EdgeKind::FacetOf, work);
+        insert_entity(&remote, born, ENTITY_TYPE_EVENT, b"born");
+        insert_edge(&remote, born, EdgeKind::FacetOf, work);
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+        let local = create_window_doc("local", &window_key);
+        let sender = (entity_id(seed), grant_id);
+        import_from_peer(&vault, &local, &window_key, &update, sender, role);
+
+        let only =
+            |facet: EntityId| ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]));
+        assert!(
+            !vault.row_in_facets(&held, &only(work)).unwrap(),
+            "{role:?}: a peer's stamp put a held row in front of a work reader"
+        );
+        assert!(vault.row_in_facets(&held, &only(private)).unwrap());
+        assert!(
+            vault.row_in_facets(&born, &only(work)).unwrap(),
+            "{role:?}: the stamp a row is born with still lands"
+        );
+        assert!(
+            quarantined_records(&vault)
+                .unwrap()
+                .iter()
+                .any(|(_, record)| record.reason_code == "FacetStampImmutable"
+                    && record.container == QuarantineContainer::Edges),
+            "{role:?}: the dropped stamp leaves typed evidence"
+        );
+    }
+}
+
+fn facet_set(facet: EntityId) -> ScopeAxis<ScopeId> {
+    ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]))
+}
+
+fn put_row(vault: &Vault, id: EntityId, kind: u8) {
+    vault
+        .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"row")
+        .unwrap();
+}
+
+fn stamp_stored(vault: &Vault, src: EntityId, facet: EntityId) -> bool {
+    let txn = vault.store.env.read_txn().unwrap();
+    crate::ports::EdgeStoreRead::port_edge_get(&vault.store, &txn, &src, EdgeKind::FacetOf, &facet)
+        .unwrap()
+        .is_some()
+}
+
+fn rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) {
+    crate::sync::window::forward_rematerialize(
+        vault,
+        doc,
+        &crate::sync::bridge::Materializer::new(),
+        window_key,
+    )
+    .unwrap();
+}
+
+/// What the sync client does with an update `peer` sent under `grant`, on
+/// `doc`: admit it, hold the stamps it sends ahead of their rows, import and
+/// materialize it, then release the stamps whose rows it birthed.
+fn import_from_peer(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    update: &[u8],
+    (peer, grant): (EntityId, EntityId),
+    role: FederationAdmissionRole,
+) {
+    let admitted = admit_peer_window_update(vault, window_key, update, role, peer).unwrap();
+    admitted.hold_from_peer(vault, window_key, grant).unwrap();
+    let born = crate::sync::ingest::watch_births(vault, admitted.births(), || {
+        doc.import(admitted.bytes()).unwrap();
+        rematerialize(vault, doc, window_key);
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    if let Some(released) = admitted.release(vault, window_key, &born).unwrap() {
+        if let Some(update) = &released.update {
+            doc.import(update).unwrap();
+            rematerialize(vault, doc, window_key);
+        }
+        released.discard(vault).unwrap();
+    }
+}
+
+/// The owner's other device: a vault that takes `doc`, this window as the
+/// device holding it sent it, as its own.
+fn synced_device(doc: &LoroDoc, window_key: &WindowKey, device: &Vault) -> LoroDoc {
+    let synced = create_window_doc("device", window_key);
+    synced
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    rematerialize(device, &synced, window_key);
+    synced
+}
+
+/// Sol R3 F1 under the Engine's rulings: a peer sends `row -FacetOf-> work`
+/// before this vault has the row. A second writer then brings the row, born
+/// in `private`: a local birth or another peer. The stamp never enters the
+/// window, so neither this vault nor the owner's other device, which takes
+/// the window as its own, puts the row in front of a work reader. The owner's
+/// stamp of the same pair counts.
+#[test]
+fn a_stamp_ahead_of_its_row_stays_out_of_the_window_when_another_writer_brings_the_row() {
+    let window_key = WindowKey::new("2026-05");
+    for (leg, seed) in [("local birth", 0x90_u8), ("another peer", 0xB0_u8)] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(seed));
+        let (_device_dir, device, _) = test_vault_with_grant(entity_id(seed));
+        let [peer, other, work, private, row] = [1, 2, 3, 4, 5].map(|n| entity_id(seed + n));
+        for facet in [work, private] {
+            put_row(&vault, facet, ENTITY_TYPE_FACET);
+            put_row(&device, facet, ENTITY_TYPE_FACET);
+        }
+        let live = create_window_doc("local", &window_key);
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_edge(&ahead, row, EdgeKind::FacetOf, work);
+        ahead.commit();
+        let update = ahead.export(ExportMode::all_updates()).unwrap();
+        let role = FederationAdmissionRole::Member;
+        import_from_peer(&vault, &live, &window_key, &update, (peer, grant_id), role);
+
+        if leg == "local birth" {
+            for born in [&vault, &device] {
+                put_row(born, row, ENTITY_TYPE_EVENT);
+                born.put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+                    .unwrap();
+            }
+        } else {
+            let birth = create_window_doc("federation-peer", &window_key);
+            insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
+            insert_edge(&birth, row, EdgeKind::FacetOf, private);
+            birth.commit();
+            let update = birth.export(ExportMode::all_updates()).unwrap();
+            import_from_peer(&vault, &live, &window_key, &update, (other, grant_id), role);
+        }
+        rematerialize(&vault, &live, &window_key);
+        synced_device(&live, &window_key, &device);
+
+        assert!(
+            map_get_bytes(
+                &live.get_map("edges"),
+                &edge_key(row, EdgeKind::FacetOf, work)
+            )
+            .is_none(),
+            "{leg}: a stamp whose sender never brought its row entered the window"
+        );
+        assert!(!stamp_stored(&vault, row, work), "{leg}");
+        assert!(
+            !vault.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}"
+        );
+        assert!(
+            vault.row_in_facets(&row, &facet_set(private)).unwrap(),
+            "{leg}"
+        );
+        assert!(
+            !device.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}: the owner's other device put the row in front of a work reader"
+        );
+        assert!(
+            device.row_in_facets(&row, &facet_set(private)).unwrap(),
+            "{leg}"
+        );
+        vault.put_edge(&row, EdgeKind::FacetOf, &work, 1.0).unwrap();
+        assert!(
+            vault.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}: the owner's own stamp of the pair counts"
+        );
+    }
+}
+
+/// The positive control, on the production client: the same peer sends the
+/// stamp first and the row second. The stamp enters the window once the
+/// row's birth applies, so a reader narrowed to the stamped facet reads the
+/// row, and the stamp seeds a facet-limited export, on this vault and on the
+/// owner's other device alike (H2).
+#[test]
+fn a_peer_that_brings_its_row_after_the_stamp_puts_it_in_the_stamped_facet() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0xB0_u8),
+        (FederationAdmissionRole::Guest, 0xC0_u8),
+    ] {
+        let window = "2026-05";
+        let window_key = WindowKey::new(window);
+        let member = entity_id(seed);
+        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+        let (_device_dir, device, device_grant) = test_vault_with_grant(member);
+        let [work, row] = [1, 2].map(|n| entity_id(seed + n));
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_entity(&ahead, work, ENTITY_TYPE_FACET, b"work");
+        insert_edge(&ahead, row, EdgeKind::FacetOf, work);
+        ahead.commit();
+        import_federated(&mut client, window, &ahead, role);
+        let birth = create_window_doc("federation-peer", &window_key);
+        insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
+        birth.commit();
+        import_federated(&mut client, window, &birth, role);
+        let live = client.window(window).expect("window still loaded");
+        rematerialize(&vault, &live.doc, &window_key);
+        let synced = synced_device(&live.doc, &window_key, &device);
+
+        for (name, holder, doc, grant) in [
+            ("this vault", &*vault, &live.doc, grant_id),
+            ("the other device", &device, &synced, device_grant),
+        ] {
+            assert!(stamp_stored(holder, row, work), "{role:?} {name}");
+            assert!(
+                holder.row_in_facets(&row, &facet_set(work)).unwrap(),
+                "{role:?} {name}: the peer brought the row it stamped"
+            );
+            stamp_live_rows(holder, doc, &[work, row]);
+            let selector = SyncSelector::new(
+                grant,
+                member,
+                SyncSelectorWorld::All,
+                vec![work],
+                vec![SelectorRange::Semantic, SelectorRange::Core],
+            );
+            let exported =
+                filtered_window_doc(holder, doc, &window_key, test_selector_scope(), &selector)
+                    .unwrap()
+                    .export(ExportMode::all_updates())
+                    .unwrap();
+            assert!(
+                import_ids(&exported).contains(&row),
+                "{role:?} {name}: the released stamp seeds the facet-limited export"
+            );
+        }
+    }
+}
+
+/// Sol R3 F1's staged form: a foreign artifact holds only `row -FacetOf->
+/// work`, staged while this vault lacks the row. The row is then born here in
+/// `private`, and the operator confirms the artifact. The stamp never enters
+/// the window, so a work reader does not read the row.
+#[test]
+fn a_staged_stamp_confirmed_after_its_row_arrived_stays_out_of_reads() {
+    let window = "2026-05";
+    let window_key = WindowKey::new(window);
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0xD0), window);
+    let [work, private, row, actor] = [1, 2, 3, 4].map(|n| entity_id(0xD0 + n));
+    for facet in [work, private] {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+    }
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0xD0; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "elsewhere".into(),
+        },
+        &window_key,
+        &artifact.export(ExportMode::all_updates()).unwrap(),
+    )
+    .unwrap();
+
+    put_row(&vault, row, ENTITY_TYPE_EVENT);
+    vault
+        .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+        .unwrap();
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .unwrap();
+    let live = client.window(window).expect("confirm loads the window");
+    rematerialize(&vault, &live.doc, &window_key);
+
+    assert!(
+        map_get_bytes(
+            &live.doc.get_map("edges"),
+            &edge_key(row, EdgeKind::FacetOf, work)
+        )
+        .is_none(),
+        "an artifact that never brought the row put its stamp in the window"
+    );
+    assert!(!stamp_stored(&vault, row, work));
+    assert!(!vault.row_in_facets(&row, &facet_set(work)).unwrap());
+    assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
+}
+
+/// Sol R5 F4 and Wonder R5 F1: a foreign artifact brings `row` and its
+/// `row -FacetOf-> work` together, staged while this vault lacks the row. The
+/// row is then born here in `private`, and the operator confirms: the
+/// artifact no longer brings the row's birth, so its stamp is not released
+/// and a work reader does not read the row.
+#[test]
+fn a_staged_birth_confirmed_after_another_writer_birthed_the_row_releases_no_stamp() {
+    let window = "2026-05";
+    let window_key = WindowKey::new(window);
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0xD8), window);
+    let [work, private, row, actor] = [1, 2, 3, 4].map(|n| entity_id(0xD8 + n));
+    for facet in [work, private] {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+    }
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0xD8; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "elsewhere".into(),
+        },
+        &window_key,
+        &artifact.export(ExportMode::all_updates()).unwrap(),
+    )
+    .unwrap();
+
+    put_row(&vault, row, ENTITY_TYPE_EVENT);
+    vault
+        .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+        .unwrap();
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .unwrap();
+    let live = client.window(window).expect("confirm loads the window");
+    rematerialize(&vault, &live.doc, &window_key);
+    assert!(
+        map_get_bytes(
+            &live.doc.get_map("edges"),
+            &edge_key(row, EdgeKind::FacetOf, work)
+        )
+        .is_none(),
+        "an artifact whose row another writer birthed released its stamp"
+    );
+    assert!(!stamp_stored(&vault, row, work));
+    assert!(!vault.row_in_facets(&row, &facet_set(work)).unwrap());
+    assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
+}
+
+/// Stages `artifact` under a receipt as a foreign platform's export, while
+/// this vault may lack its rows.
+fn stage_artifact(
+    vault: &Vault,
+    window_key: &WindowKey,
+    artifact: &LoroDoc,
+    digest: u8,
+) -> crate::batch::export::StagedVaultImport {
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [digest; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    crate::batch::export::stage_foreign_vault_import(
+        vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "elsewhere".into(),
+        },
+        window_key,
+        &artifact.export(ExportMode::all_updates()).unwrap(),
+    )
+    .unwrap()
+}
+
+/// `actor` confirms `staged`; the confirmed window is materialized.
+fn confirm_artifact(
+    vault: &Vault,
+    client: &mut SyncClient,
+    window_key: &WindowKey,
+    staged: crate::batch::export::StagedVaultImport,
+    actor: EntityId,
+) {
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .unwrap();
+    let live = client
+        .window(window_key.as_str())
+        .expect("confirm loads the window");
+    rematerialize(vault, &live.doc, window_key);
+}
+
+/// The rows a lane holds.
+fn held_under(vault: &Vault, lane: &str) -> u64 {
+    let txn = vault.store.env.read_txn().unwrap();
+    crate::federation::facet_read::held_rows_under(&vault.store, &txn, lane)
+        .unwrap()
+        .0
+}
+
+/// Rule 5 on #1432: a confirmed staged artifact is the owner's own work, so
+/// no count drops its stamps. One that brings a row and stamps it into 17
+/// facets, one past a peer's per-row cap, places all 17 at its confirmation.
+#[test]
+fn a_confirmed_staged_artifact_places_every_stamp_of_its_row() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0x84), "2026-05");
+    let facets: Vec<EntityId> = (0x85..=0x95).map(entity_id).collect();
+    let [row, actor] = [0x96, 0x97].map(entity_id);
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    for &facet in &facets {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+        insert_edge(&artifact, row, EdgeKind::FacetOf, facet);
+    }
+    artifact.commit();
+    let staged = stage_artifact(&vault, &window_key, &artifact, 0x84);
+    confirm_artifact(&vault, &mut client, &window_key, staged, actor);
+
+    assert_eq!(
+        facets.len(),
+        crate::federation::facet_read::MAX_HELD_PER_ROW + 1
+    );
+    for &facet in &facets {
+        assert!(
+            stamp_stored(&vault, row, facet),
+            "a confirmed artifact's stamp into {} was dropped by count",
+            facet.to_hex()
+        );
+        assert!(vault.row_in_facets(&row, &facet_set(facet)).unwrap());
+    }
+}
+
+/// Astra-c F1 on #1432: an owner's staged stamps stay held while the
+/// receipt is Pending, whatever their age, and the one on the row the
+/// artifact brings lands at its confirmation; a peer's stamp as old retires.
+/// Once the receipt is confirmed, the stamp it held on a row it never
+/// brought leaves with it.
+#[test]
+fn a_pending_staged_stamp_outlives_the_age_a_peer_stamp_retires_at() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, grant_id, mut client) = test_client_with_grant(entity_id(0x98), "2026-05");
+    let [work, row, stray, peer, peer_row, actor] = [1, 2, 3, 4, 5, 6].map(|n| entity_id(0x98 + n));
+    put_row(&vault, work, ENTITY_TYPE_FACET);
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    insert_edge(&artifact, stray, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let staged = stage_artifact(&vault, &window_key, &artifact, 0x98);
+    let ahead = create_window_doc("federation-peer", &window_key);
+    insert_edge(&ahead, peer_row, EdgeKind::FacetOf, work);
+    ahead.commit();
+    import_from_peer(
+        &vault,
+        &create_window_doc("local", &window_key),
+        &window_key,
+        &ahead.export(ExportMode::all_updates()).unwrap(),
+        (peer, grant_id),
+        FederationAdmissionRole::Member,
+    );
+    let peer_lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
+    let staged_lane =
+        crate::federation::facet_read::HeldLane::Staged(staged.receipt.receipt_id).key();
+    assert_eq!(
+        (
+            held_under(&vault, &peer_lane),
+            held_under(&vault, &staged_lane)
+        ),
+        (1, 2),
+        "precondition: both lanes hold their stamps"
+    );
+
+    let aged =
+        vault.store.clock.now_recorded_at() + crate::federation::facet_read::HELD_STAMP_TTL_SECS;
+    let retire = |now| {
+        crate::federation::facet_read::retire_held_stamps(&vault, now, |_, grants| {
+            Ok(grants.clone())
+        })
+        .unwrap()
+    };
+    assert_eq!(retire(aged), 1, "only the peer's stamp ages out");
+    assert_eq!(held_under(&vault, &peer_lane), 0);
+    assert_eq!(held_under(&vault, &staged_lane), 2);
+    confirm_artifact(&vault, &mut client, &window_key, staged, actor);
+    assert!(
+        stamp_stored(&vault, row, work),
+        "the owner's staged stamp lands"
+    );
+    assert!(vault.row_in_facets(&row, &facet_set(work)).unwrap());
+    assert_eq!(
+        retire(vault.store.clock.now_recorded_at()),
+        1,
+        "the stamp on a row the confirmed artifact never brought leaves with it"
+    );
+    assert_eq!(held_under(&vault, &staged_lane), 0);
+}
+
+/// A staged artifact that brings `row` and stamps it into `work`, its record
+/// of that stamp rewritten by `edit` (bound to the receipt when `bind`) and
+/// staged again, then confirmed, which it refuses.
+fn confirm_edited_record(
+    seed: u8,
+    edit: impl FnOnce(&mut Vec<u8>, EntityId),
+    bind: bool,
+) -> (tempfile::TempDir, Arc<Vault>, [EntityId; 3]) {
+    let window_key = WindowKey::new("2026-05");
+    let (dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(seed), "2026-05");
+    let [work, home, row, actor] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
+    for facet in [work, home] {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+    }
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let id = stage_artifact(&vault, &window_key, &artifact, seed)
+        .receipt
+        .receipt_id;
+    let mut record = crate::batch::export::vault_import_staged_stamps(&vault, &id)
+        .unwrap()
+        .expect("the receipt keeps its record");
+    edit(&mut record, home);
+    crate::batch::export::rewrite_staged_stamps_for_test(&vault, &id, &record, bind).unwrap();
+    let staged = stage_artifact(&vault, &window_key, &artifact, seed);
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .expect_err("an edited record refuses the confirmation");
+    assert_eq!(
+        crate::batch::export::vault_import_stage_receipt(&vault, &id)
+            .unwrap()
+            .unwrap()
+            .status,
+        crate::batch::export::VaultImportStageStatus::Pending,
+        "the refused confirmation leaves the receipt Pending"
+    );
+    (dir, vault, [work, home, row])
+}
+
+/// Astra-d F1 on #1432: the receipt binds its record of staged stamps by
+/// digest, so a record whose stamp was moved on disk to another stored facet
+/// refuses the confirmation, and nothing lands.
+#[test]
+fn a_staged_record_moved_to_another_facet_on_disk_refuses_the_confirmation() {
+    let (_dir, vault, [work, home, row]) = confirm_edited_record(
+        0xB3,
+        |record, home| record[16..32].copy_from_slice(home.as_bytes()),
+        false,
+    );
+    assert!(!stamp_stored(&vault, row, home));
+    assert!(!stamp_stored(&vault, row, work));
+    assert!(!vault.row_in_facets(&row, &facet_set(home)).unwrap());
+}
+
+/// Astra-d F1 on #1432: a recorded stamp is decoded at the confirmation as
+/// admission decoded it, so a record whose digest matches but whose weight is
+/// NaN refuses the confirmation, and nothing lands.
+#[test]
+fn a_staged_record_with_a_nan_weight_refuses_the_confirmation() {
+    let (_dir, vault, [work, _, row]) = confirm_edited_record(
+        0xB8,
+        |record, _| record[40..44].copy_from_slice(&f32::NAN.to_le_bytes()),
+        true,
+    );
+    assert!(!stamp_stored(&vault, row, work));
+}
+
+/// Astra-c F1 on #1432, the guard: the held table restores live while the
+/// receipt restores with its content, so a Pending receipt can outlive its
+/// holds. The receipt's own record holds every staged stamp again at the
+/// confirmation, and the stamp lands.
+#[test]
+fn a_staged_stamp_whose_hold_is_gone_lands_from_its_receipt() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0x9F), "2026-05");
+    let [work, row, actor] = [0xB0, 0xB1, 0xB2].map(entity_id);
+    put_row(&vault, work, ENTITY_TYPE_FACET);
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let staged = stage_artifact(&vault, &window_key, &artifact, 0x9F);
+    let lane = crate::federation::facet_read::HeldLane::Staged(staged.receipt.receipt_id).key();
+    vault
+        .with_write_txn_grouped(|wtxn| {
+            crate::federation::facet_read::unpark_released(&vault.store, wtxn, (row, work), &lane)
+        })
+        .unwrap();
+    assert_eq!(
+        held_under(&vault, &lane),
+        0,
+        "precondition: the hold is gone"
+    );
+
+    confirm_artifact(&vault, &mut client, &window_key, staged, actor);
+    assert!(
+        stamp_stored(&vault, row, work),
+        "a staged stamp whose hold was lost never landed"
+    );
+    assert!(vault.row_in_facets(&row, &facet_set(work)).unwrap());
+}
+
+/// Sol R5 F3: a peer's early stamps reach the owner's two devices apart, `row
+/// -FacetOf-> work` on one and `row -FacetOf-> private` on the other. The same
+/// row update then releases a different stamp on each. Each device authors
+/// its release under its own operation ids, so own-device sync carries both
+/// and the devices converge.
+#[test]
+fn one_row_update_releasing_different_stamps_on_two_devices_converges() {
+    let window_key = WindowKey::new("2026-05");
+    let (_one_dir, one, one_grant) = test_vault_with_grant(entity_id(0xC0));
+    let (_two_dir, two, two_grant) = test_vault_with_grant(entity_id(0xC0));
+    let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(0xC0 + n));
+    let role = FederationAdmissionRole::Member;
+    let birth = create_window_doc("federation-peer", &window_key);
+    insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
+    birth.commit();
+    let birth = birth.export(ExportMode::all_updates()).unwrap();
+    let mut docs = Vec::new();
+    for (device, grant, facet) in [(&one, one_grant, work), (&two, two_grant, private)] {
+        put_row(device, work, ENTITY_TYPE_FACET);
+        put_row(device, private, ENTITY_TYPE_FACET);
+        let doc = create_window_doc("local", &window_key);
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_edge(&ahead, row, EdgeKind::FacetOf, facet);
+        ahead.commit();
+        let ahead = ahead.export(ExportMode::all_updates()).unwrap();
+        import_from_peer(device, &doc, &window_key, &ahead, (peer, grant), role);
+        import_from_peer(device, &doc, &window_key, &birth, (peer, grant), role);
+        docs.push(doc);
+    }
+    docs[0]
+        .import(&docs[1].export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    docs[1]
+        .import(&docs[0].export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    for (device, doc) in [(&one, &docs[0]), (&two, &docs[1])] {
+        rematerialize(device, doc, &window_key);
+        for facet in [work, private] {
+            assert!(
+                stamp_stored(device, row, facet),
+                "own-device sync dropped a released stamp"
+            );
+        }
+    }
+}
+
+/// Astra R5 F3 on #1432: an edge value that is not bytes refuses the frame
+/// whether the row it names is stored or not, so the refusal tells the peer
+/// nothing about the row.
+#[test]
+fn an_edge_value_that_is_not_bytes_is_refused_whether_or_not_its_row_is_stored() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(0xD0));
+    let [peer, stored, absent, facet] = [1, 2, 3, 4].map(|n| entity_id(0xD0 + n));
+    let role = FederationAdmissionRole::Member;
+    put_row(&vault, stored, ENTITY_TYPE_EVENT);
+    for kind in [EdgeKind::FacetOf, EdgeKind::AddressedTo] {
+        for (name, src) in [("stored", stored), ("absent", absent)] {
+            let probe = create_window_doc("federation-peer", &window_key);
+            insert_malformed_edge(&probe, src, kind, facet);
+            probe.commit();
+            let update = probe.export(ExportMode::all_updates()).unwrap();
+            let admitted =
+                admit_peer_window_update(&vault, &window_key, &update, role, peer).map(drop);
+            assert!(
+                matches!(admitted, Err(Error::InvalidKey)),
+                "{kind:?} onto the {name} row: {admitted:?}"
+            );
+        }
+    }
+    // Nor does a stamp the peer holds stand in for the value (Astra R7 F1).
+    for (name, src) in [("stored", stored), ("absent", absent)] {
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_edge(&ahead, src, EdgeKind::FacetOf, facet);
+        ahead.commit();
+        let ahead = ahead.export(ExportMode::all_updates()).unwrap();
+        admit_peer_window_update(&vault, &window_key, &ahead, role, peer)
+            .unwrap()
+            .hold_from_peer(&vault, &window_key, grant_id)
+            .unwrap();
+        let birth = create_window_doc("federation-peer", &window_key);
+        insert_entity(&birth, src, ENTITY_TYPE_EVENT, b"row");
+        insert_malformed_edge(&birth, src, EdgeKind::FacetOf, facet);
+        birth.commit();
+        let birth = birth.export(ExportMode::all_updates()).unwrap();
+        let admitted = admit_peer_window_update(&vault, &window_key, &birth, role, peer).map(drop);
+        assert!(
+            matches!(admitted, Err(Error::InvalidKey)),
+            "a held stamp onto the {name} row: {admitted:?}"
+        );
+    }
+}
+
+/// Astra R8 F1 on #1432: a peer's stamp onto a stored row goes no further
+/// than admission whether the row holds it or not, so no later check of the
+/// frame tells the peer which.
+#[test]
+fn a_stamp_onto_a_stored_row_leaves_admission_alike_whether_the_row_holds_it() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x30));
+    let [peer, stamped, unstamped, facet] = [1, 2, 3, 4].map(|n| entity_id(0x30 + n));
+    put_row(&vault, facet, ENTITY_TYPE_FACET);
+    for row in [stamped, unstamped] {
+        put_row(&vault, row, ENTITY_TYPE_EVENT);
+    }
+    vault
+        .put_edge(&stamped, EdgeKind::FacetOf, &facet, 1.0)
+        .unwrap();
+    for (name, row) in [("holds", stamped), ("lacks", unstamped)] {
+        let probe = create_window_doc("federation-peer", &window_key);
+        insert_edge(&probe, row, EdgeKind::FacetOf, facet);
+        probe.commit();
+        let probe = probe.export(ExportMode::all_updates()).unwrap();
+        let role = FederationAdmissionRole::Member;
+        let admitted = create_window_doc("local", &window_key);
+        let update = admit_peer_window_update(&vault, &window_key, &probe, role, peer).unwrap();
+        admitted.import(update.bytes()).unwrap();
+        assert_eq!(
+            admitted.get_map("edges").len(),
+            0,
+            "the stamp left admission when the row {name} it"
+        );
+    }
+}
+
+/// Astra R7 F2 on #1432: release looks up the rows an update brings without
+/// copying a stored one, however many spellings of its key the update carries.
+#[test]
+fn release_copies_no_stored_row_for_the_keys_an_update_names() {
+    const BODY: &[u8] = b"Qx7-release-fixture-body";
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x50));
+    let [peer, row] = [entity_id(0x51), entity_id(0xBC)];
+    vault
+        .put_entity(
+            &row,
+            ENTITY_TYPE_EVENT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            BODY,
+        )
+        .unwrap();
+    let update = create_window_doc("federation-peer", &window_key);
+    let hex = row.to_hex();
+    for upper in 0..hex.len() {
+        let mut alias = hex.clone();
+        alias.replace_range(upper..=upper, &hex[upper..=upper].to_uppercase());
+        map_insert_bytes(&update.get_map("entities"), &alias, b"").unwrap();
+    }
+    update.commit();
+    let update = update.export(ExportMode::all_updates()).unwrap();
+
+    crate::ports::row_copies::watch(BODY);
+    let admitted = admit_peer_window_update(
+        &vault,
+        &window_key,
+        &update,
+        FederationAdmissionRole::Member,
+        peer,
+    );
+    assert!(admitted.is_err(), "a key in another spelling is refused");
+    assert_eq!(
+        crate::ports::row_copies::sites(),
+        Vec::<String>::new(),
+        "the readers that copied the stored row"
+    );
+    assert_eq!(
+        crate::ports::row_copies::wiped_sites(),
+        Vec::<String>::new(),
+        "the readers that copied the stored row into a wiped buffer"
+    );
+}
+
+/// Astra R5 F2 on #1432: the birth of a row releases every stamp its sender
+/// holds on the row, so a sender holds only a bounded number there.
+#[test]
+fn a_sender_holds_a_bounded_number_of_stamps_on_one_row() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(0x60));
+    let [peer, row] = [1, 2].map(|n| entity_id(0x60 + n));
+    let role = FederationAdmissionRole::Member;
+    let local = create_window_doc("local", &window_key);
+    let ahead = create_window_doc("federation-peer", &window_key);
+    for n in 0..40_u8 {
+        insert_edge(&ahead, row, EdgeKind::FacetOf, entity_id(0x70 + n));
+    }
+    ahead.commit();
+    let ahead = ahead.export(ExportMode::all_updates()).unwrap();
+    import_from_peer(&vault, &local, &window_key, &ahead, (peer, grant_id), role);
+    let birth = create_window_doc("federation-peer", &window_key);
+    insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
+    birth.commit();
+    let birth = birth.export(ExportMode::all_updates()).unwrap();
+
+    import_from_peer(&vault, &local, &window_key, &birth, (peer, grant_id), role);
+    let mut released = 0;
+    map_for_each_value_bytes(&local.get_map("edges"), |key, _| {
+        if key.starts_with(&row.to_hex()) {
+            released += 1;
+        }
+    });
+    assert_eq!(
+        released,
+        crate::federation::facet_read::MAX_HELD_PER_ROW,
+        "the row's birth released every stamp its sender sent ahead"
+    );
+}
+
+/// The window as a reload loads it: its persisted snapshot with its pending
+/// updates, or the pending updates on a fresh document.
+fn reloaded_window(vault: &Vault, window_key: &WindowKey) -> LoroDoc {
+    crate::sync::window::load_window_from_state(vault, "local", window_key).unwrap_or_else(|_| {
+        let doc = create_window_doc("local", window_key);
+        crate::sync::window::apply_pending_window_updates(vault, &doc, window_key).unwrap();
+        doc
+    })
+}
+
+/// Astra-b F1 on #1432: a peer's stamp counts only once that peer's birth of
+/// its row has applied here, never on the row's presence in an update. The
+/// peer stamps `row` into `work`, and sends an EVENT at `row` that the write
+/// door refuses (it ends before it starts): after the stamp, or with it. The
+/// owner then writes `row` in `private` only. A reader narrowed to `work`
+/// does not read it, and neither replaying the window nor reloading it
+/// writes the stamp.
+#[test]
+fn a_stamp_whose_row_the_write_door_refused_never_places_a_later_row() {
+    for (leg, seed) in [("stamp ahead", 0x30_u8), ("same frame", 0x38_u8)] {
+        let window = "2026-05";
+        let window_key = WindowKey::new(window);
+        let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(seed), window);
+        let [work, private, row] = [1, 2, 3].map(|n| entity_id(seed + n));
+        for facet in [work, private] {
+            put_row(&vault, facet, ENTITY_TYPE_FACET);
+        }
+        let role = FederationAdmissionRole::Member;
+        let refused = crate::test_util::entity_record(
+            ENTITY_TYPE_EVENT,
+            TimeRange { start: 2, end: 1 },
+            1,
+            b"refused",
+        );
+        let frame = create_window_doc("federation-peer", &window_key);
+        insert_edge(&frame, row, EdgeKind::FacetOf, work);
+        if leg == "stamp ahead" {
+            frame.commit();
+            import_federated(&mut client, window, &frame, role);
+            let birth = create_window_doc("federation-peer", &window_key);
+            insert_blob(&birth, row, &refused);
+            birth.commit();
+            import_federated(&mut client, window, &birth, role);
+        } else {
+            insert_blob(&frame, row, &refused);
+            frame.commit();
+            import_federated(&mut client, window, &frame, role);
+        }
+        assert!(
+            !vault.entity_exists(&row).unwrap(),
+            "{leg}: precondition, the write door refused the peer's row"
+        );
+
+        put_row(&vault, row, ENTITY_TYPE_EVENT);
+        vault
+            .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+            .unwrap();
+        let live = client.window(window).expect("window still loaded");
+        rematerialize(&vault, &live.doc, &window_key);
+        rematerialize(&vault, &reloaded_window(&vault, &window_key), &window_key);
+
+        assert!(
+            map_get_bytes(
+                &live.doc.get_map("edges"),
+                &edge_key(row, EdgeKind::FacetOf, work)
+            )
+            .is_none(),
+            "{leg}: the stamp of a refused row entered the window"
+        );
+        assert!(!stamp_stored(&vault, row, work), "{leg}");
+        assert!(
+            !vault.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}: a work reader reads the owner's row"
+        );
+        assert!(
+            vault.row_in_facets(&row, &facet_set(private)).unwrap(),
+            "{leg}"
+        );
+    }
+}
+
+/// Sol R10 F2 on #1432: between a peer update's admission and its import,
+/// another writer stores the peer's row first, with the very bytes the peer
+/// brings (here the owner's other device relays it), and the owner stamps it
+/// `private`. The peer's copy is then an idempotent skip, not its birth, so
+/// it releases no stamp: not one sent with the row, nor one held from before.
+/// A reader narrowed to `work` does not read the row.
+#[test]
+fn a_peer_copy_of_a_row_another_writer_stored_first_releases_no_stamp() {
+    let window_key = WindowKey::new("2026-05");
+    for (leg, seed) in [("with the row", 0x60_u8), ("held", 0x68_u8)] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(seed));
+        let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
+        for facet in [work, private] {
+            put_row(&vault, facet, ENTITY_TYPE_FACET);
+        }
+        let live = create_window_doc("local", &window_key);
+        let role = FederationAdmissionRole::Member;
+        let blob = entity_blob(ENTITY_TYPE_EVENT, b"row");
+        let frame = create_window_doc("federation-peer", &window_key);
+        insert_edge(&frame, row, EdgeKind::FacetOf, work);
+        let birth = if leg == "held" {
+            frame.commit();
+            let update = frame.export(ExportMode::all_updates()).unwrap();
+            import_from_peer(&vault, &live, &window_key, &update, (peer, grant_id), role);
+            create_window_doc("federation-peer", &window_key)
+        } else {
+            frame
+        };
+        insert_blob(&birth, row, &blob);
+        birth.commit();
+        let update = birth.export(ExportMode::all_updates()).unwrap();
+        let admitted = admit_peer_window_update(&vault, &window_key, &update, role, peer).unwrap();
+        admitted
+            .hold_from_peer(&vault, &window_key, grant_id)
+            .unwrap();
+
+        let relay = create_window_doc("device", &window_key);
+        insert_blob(&relay, row, &blob);
+        relay.commit();
+        rematerialize(&vault, &relay, &window_key);
+        vault
+            .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+            .unwrap();
+        let born = crate::sync::ingest::watch_births(&vault, admitted.births(), || {
+            live.import(admitted.bytes()).unwrap();
+            rematerialize(&vault, &live, &window_key);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert!(
+            born.is_empty(),
+            "{leg}: the peer's copy counted as its birth"
+        );
+        if let Some(released) = admitted.release(&vault, &window_key, &born).unwrap() {
+            if let Some(update) = &released.update {
+                live.import(update).unwrap();
+                rematerialize(&vault, &live, &window_key);
+            }
+            released.discard(&vault).unwrap();
+        }
+
+        assert!(
+            map_get_bytes(
+                &live.get_map("edges"),
+                &edge_key(row, EdgeKind::FacetOf, work)
+            )
+            .is_none(),
+            "{leg}: the peer's copy of a stored row released its stamp"
+        );
+        assert!(!stamp_stored(&vault, row, work), "{leg}");
+        assert!(
+            !vault.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}: a work reader reads the row"
+        );
+        assert!(
+            vault.row_in_facets(&row, &facet_set(private)).unwrap(),
+            "{leg}"
+        );
+    }
+}
+
+/// Astra-b F2 on #1432: a peer sends ten times the cap of stamps onto rows it
+/// never brings, one stamp per row. Each update is charged for the stamps it
+/// holds, so it is deferred, and a deferred update holds nothing. Replayed,
+/// they hold exactly the cap, and the rest are refused with a typed reason.
+/// Revoking the peer's grant retires every one at the next maintain.
+#[test]
+fn a_peer_holds_a_charged_capped_number_of_stamps_until_its_grant_goes() {
+    let window = "2026-05";
+    let window_key = WindowKey::new(window);
+    let member = entity_id(0x26);
+    let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+    let vault = &*vault;
+    let facet = entity_id(0x27);
+    put_row(vault, facet, ENTITY_TYPE_FACET);
+    let lane = format!("p{}", member.to_hex());
+    let held = |vault: &Vault| {
+        let txn = vault.store.env.read_txn().unwrap();
+        let stored =
+            crate::federation::facet_read::held_rows_under(&vault.store, &txn, &lane).unwrap();
+        let counted = crate::federation::facet_read::held_by(&vault.store, &txn, &lane).unwrap();
+        assert_eq!(
+            counted, stored,
+            "the lane's usage row counts its rows and their stored bytes"
+        );
+        stored.0
+    };
+    let cap = crate::federation::facet_read::MAX_HELD_PER_SENDER;
+    for frame in 0..10_u32 {
+        let stamps = create_window_doc("federation-peer", &window_key);
+        for n in 0..cap as u32 {
+            let mut row = [0x5A; 16];
+            row[8..12].copy_from_slice(&frame.to_be_bytes());
+            row[12..].copy_from_slice(&n.to_be_bytes());
+            insert_edge(
+                &stamps,
+                EntityId::from_bytes(row).unwrap(),
+                EdgeKind::FacetOf,
+                facet,
+            );
+        }
+        stamps.commit();
+        let update = stamps.export(ExportMode::all_updates()).unwrap();
+        client
+            .import_federated_window_update(window, &update, FederationAdmissionRole::Member)
+            .unwrap();
+        if frame == 0 {
+            assert!(
+                !vault.federation_burst_review_bundles().unwrap().is_empty(),
+                "an update of held stamps alone is charged for them, so it is deferred"
+            );
+            assert_eq!(held(vault), 0, "a deferred update holds nothing");
+        }
+    }
+    while client.replay_deferred_federation_update().unwrap() {}
+
+    assert_eq!(held(vault), cap, "a peer holds exactly the cap");
+    assert!(
+        quarantined_records(vault)
+            .unwrap()
+            .iter()
+            .any(|(_, record)| record.reason_code == "HeldFacetStampsFull"),
+        "a stamp past the cap is refused with its typed reason"
+    );
+    vault
+        .delete_entity_with_options(
+            &grant_id,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
+    let report = vault.maintain().run().unwrap();
+    assert_eq!(report.held_facet_stamps_retired, cap);
+    assert_eq!(held(vault), 0, "a revoked grant's stamps are retired");
+}
+
+/// Sol R10 F3 on #1432: maintain scans a held stamp while its grant does not
+/// confer, and the grant confers again before the stamp is removed (a pact
+/// healed, the peer holding the stamp again). The removal judges the grant
+/// again in its own transaction, so the live hold stays.
+#[test]
+fn a_hold_whose_grant_confers_again_before_its_removal_stays() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(0x50));
+    let [peer, facet, row] = [1, 2, 3].map(|n| entity_id(0x50 + n));
+    put_row(&vault, facet, ENTITY_TYPE_FACET);
+    let live = create_window_doc("local", &window_key);
+    let ahead = create_window_doc("federation-peer", &window_key);
+    insert_edge(&ahead, row, EdgeKind::FacetOf, facet);
+    ahead.commit();
+    let update = ahead.export(ExportMode::all_updates()).unwrap();
+    let role = FederationAdmissionRole::Member;
+    import_from_peer(&vault, &live, &window_key, &update, (peer, grant_id), role);
+    let lane = format!("p{}", peer.to_hex());
+    let held = || {
+        let txn = vault.store.env.read_txn().unwrap();
+        crate::federation::facet_read::held_rows_under(&vault.store, &txn, &lane)
+            .unwrap()
+            .0
+    };
+    assert_eq!(held(), 1, "precondition: the stamp is held");
+
+    let judged = std::cell::Cell::new(0);
+    let now = vault.store.clock.now_recorded_at();
+    let retired = crate::federation::facet_read::retire_held_stamps(&vault, now, |_, grants| {
+        judged.set(judged.get() + 1);
+        Ok(if judged.get() == 1 {
+            std::collections::BTreeSet::new()
+        } else {
+            grants.clone()
+        })
+    })
+    .unwrap();
+    assert_eq!(retired, 0, "a hold whose grant confers again was retired");
+    assert_eq!(held(), 1);
+}
+
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
 /// the reason the selector needs a read mirror of the write table.
 ///
@@ -1454,8 +2593,10 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
         let event = entity_id(seed + 4);
 
         // Update 1: the stamp lands while its SOURCE is unknowable everywhere
-        // — the H2 defer the admission door must honor. The FACET target rides
-        // along so the row names a facet this peer will select.
+        // — the H2 defer the admission door must honor, now by holding the
+        // stamp out of the window until its sender brings the source. The
+        // FACET target rides along so the row names a facet this peer will
+        // select.
         let first = create_window_doc("federation-peer", &WindowKey::new(window));
         insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
         insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
@@ -1472,13 +2613,13 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
                 &live.doc.get_map("edges"),
                 &edge_key(person, EdgeKind::FacetOf, facet_selected),
             )
-            .is_some(),
-            "{role:?}: precondition — the unknowable-source stamp must SURVIVE \
-             admission, or this test proves nothing about the residue"
+            .is_none(),
+            "{role:?}: precondition — the unknowable-source stamp is held out \
+             of the window until its sender brings the source"
         );
 
-        // Update 2: P arrives typed PERSON. The stamp from update 1 is already
-        // resident and is never revisited.
+        // Update 2: the same sender brings P typed PERSON. Its held stamp is
+        // judged at the release, off-table.
         let second = create_window_doc("federation-peer", &WindowKey::new(window));
         insert_entity(&second, person, ENTITY_TYPE_PERSON, b"person");
         insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
@@ -1491,6 +2632,18 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
             map_get_bytes(&live.doc.get_map("entities"), &person.to_hex()).is_some(),
             "{role:?}: precondition — PERSON P must be present in the live doc, \
              or its absence from the export below would hold vacuously"
+        );
+        assert!(
+            map_get_bytes(
+                &live.doc.get_map("edges"),
+                &edge_key(person, EdgeKind::FacetOf, facet_selected),
+            )
+            .is_none()
+                && quarantined_records(&vault)
+                    .unwrap()
+                    .iter()
+                    .any(|(_, record)| record.reason_code == "InvalidFacetOfEdge"),
+            "{role:?}: the released off-table stamp is dropped with typed evidence"
         );
         // Owner-verified bodies do not endorse the hostile FacetOf residue.
         // Stamp all known fixture records so the negative observes the facet
@@ -3672,6 +4825,53 @@ impl CoreferenceExport {
         .expect("write share consent")
     }
 
+    /// A share consent for `pact_id` with a valid-time window, filed the way
+    /// the consent door files one (Edge subject, `claim_of` to the source).
+    fn windowed_consent(
+        &self,
+        pact_id: &[u8; 32],
+        valid_from: Option<u64>,
+        valid_to: Option<u64>,
+    ) -> EntityId {
+        let mut body = ClaimBody::new(
+            crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT,
+            ClaimSubject::Edge {
+                source: self.person_a,
+                kind: EdgeKind::SameAs,
+                target: self.person_b,
+            },
+            Value::Map(vec![(
+                Value::from(crate::claim::COREFERENCE_SHARE_CONSENT_PACT_KEY),
+                Value::from(crate::entity_id::bytes_to_hex_lower(pact_id)),
+            )]),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.valid_from = valid_from;
+        body.valid_to = valid_to;
+        let claim_id = entity_id(0xC9);
+        self.vault
+            .batch()
+            .put(
+                &claim_id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                TimeRange { start: 2, end: 2 },
+                2,
+                &encode_claim_body(&body).unwrap(),
+            )
+            .edge(
+                &claim_id,
+                EdgeKind::ClaimOf,
+                &self.person_a,
+                crate::vault::CLAIM_OF_DEFAULT_WEIGHT,
+            )
+            .commit()
+            .expect("write windowed share consent");
+        claim_id
+    }
+
     /// The window as the peer would see it: both people, the link, the
     /// control claim, and every claim in `claims` — each facet-stamped so the
     /// pact-bound ⊥ facet reading (ONE-1591) does not withhold everything for
@@ -4481,7 +5681,7 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
 }
 
 #[test]
-fn selector_custody_locality_uses_the_export_read_snapshot() {
+fn selector_never_exports_a_custody_row() {
     use crate::secret_custody::{
         CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
         SecretCustodyStatus,
@@ -4539,8 +5739,9 @@ fn selector_custody_locality_uses_the_export_read_snapshot() {
         .unwrap();
     let ids = import_ids(&update);
     assert!(ids.contains(&seed));
+    // C1: no credential leaves through a selector, portable or not.
     for (id, device_only) in secrets {
-        assert_eq!(ids.contains(&id), !device_only);
+        assert!(!ids.contains(&id), "device_only={device_only}");
     }
 }
 
@@ -4700,6 +5901,7 @@ fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
     edge::copy_admitted_edges(
         &peer,
         &key,
+        &source_doc.get_map("entities"),
         &source_doc.get_map("entities"),
         &source_doc.get_map("edges"),
         &target.get_map("edges"),
@@ -6938,4 +8140,164 @@ fn a_peer_edit_reaches_a_world_born_task_only_through_its_own_world() {
             assert_eq!(result.is_ok(), admitted, "{name}: {result:?}");
         }
     }
+}
+
+/// H212 — a grant bound to two Active pacts exports a `same_as` link only
+/// with consent for BOTH, since either pact's peer may hold the grant. One
+/// pact's consent says nothing about the other, and no consent claim crosses
+/// at all: it names one pact to a peer that may belong to the other.
+#[test]
+fn multi_pact_grant_needs_every_pacts_consent_and_ships_no_consent_claim() {
+    let fixture = coreference_export(false);
+    seed_scoped_pacts_for_grant(
+        &fixture.vault,
+        fixture.grant_id,
+        &[all_direction_scope(), all_direction_scope()],
+    );
+    // The two pacts `seed_scoped_pacts_for_grant` binds, lowest first.
+    let (pact_p, pact_q) = ([0x81; 32], [0x82; 32]);
+    let consent_p = fixture.consent(&pact_p);
+
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_p]);
+    assert!(
+        ids.contains(&fixture.control_claim),
+        "the control claim must cross, else this proves nothing"
+    );
+    assert!(!linked, "consent for one bound pact exported the link");
+    assert!(!ids.contains(&fixture.status_claim));
+    assert!(!ids.contains(&consent_p));
+
+    let consent_q = fixture.consent(&pact_q);
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_p, consent_q]);
+    assert!(linked, "consent for every bound pact exports the link");
+    assert!(ids.contains(&fixture.status_claim));
+    assert!(
+        !ids.contains(&consent_p) && !ids.contains(&consent_q),
+        "a pact's consent claim crossed under a shared grant"
+    );
+}
+
+/// H212 — the export door authorizes the grant on one snapshot and reads
+/// consent on a later one. A divergent binding merged in between leaves pact P
+/// registered under the grant but naming another; the consent read must not
+/// then run under Q alone.
+#[test]
+fn consent_read_after_a_divergent_binding_runs_under_every_registered_pact() {
+    let fixture = coreference_export(false);
+    seed_scoped_pacts_for_grant(
+        &fixture.vault,
+        fixture.grant_id,
+        &[all_direction_scope(), all_direction_scope()],
+    );
+    let (pact_p, pact_q) = ([0x81; 32], [0x82; 32]);
+    fixture.consent(&pact_q);
+    let (a, b) = (fixture.person_a, fixture.person_b);
+    let selector = SyncSelector::new(
+        fixture.grant_id,
+        fixture.member,
+        SyncSelectorWorld::All,
+        vec![fixture.facet],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
+    let rtxn = fixture.vault.store.env.read_txn().unwrap();
+    let allows = |fold: &crate::authority::AuthorityFold| {
+        super::scope::document_coreference_context_in_txn(
+            &fixture.vault,
+            &rtxn,
+            fold,
+            &selector,
+            a,
+            b,
+        )
+        .unwrap()
+        .allows(a, b)
+    };
+    let mut merged = fixture.vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    merged
+        .federation_pacts
+        .get_mut(&pact_p)
+        .expect("pact P is seeded")
+        .grant_ref = entity_id(0x6D);
+    assert!(
+        !allows(&merged),
+        "Q's consent exported the link while P is still registered under the grant"
+    );
+
+    // Control: with P no longer registered under the grant, Q's consent alone
+    // carries the link, so the refusal above is P's registered binding.
+    merged
+        .federation_grant_bindings
+        .get_mut(&fixture.grant_id)
+        .expect("the grant's bindings")
+        .remove(&pact_p);
+    assert!(allows(&merged));
+}
+
+/// H212 — a share consent counts only inside its valid-time window, at every
+/// door that reads one: the federation answer (which the restore comparison
+/// also asks), the export filter, the document writer's context, and whether
+/// the consent row itself travels.
+#[test]
+fn share_consent_counts_only_inside_its_valid_time_window_at_every_reader() {
+    type Window = fn(u64) -> (Option<u64>, Option<u64>);
+    let cases: [(&str, Window, bool); 4] = [
+        ("lapsed", |now| (None, Some(now - 3_600)), false),
+        ("not yet valid", |now| (Some(now + 3_600), None), false),
+        (
+            "inside its window",
+            |now| (Some(now - 3_600), Some(now + 3_600)),
+            true,
+        ),
+        ("unbounded", |_| (None, None), true),
+    ];
+    let mut wrong = Vec::new();
+    for (case, window, live) in cases {
+        let fixture = coreference_export(true);
+        let (valid_from, valid_to) = window(fixture.vault.now_recorded_at());
+        let consent = fixture.windowed_consent(&COREFERENCE_PACT_P, valid_from, valid_to);
+        let (a, b) = (fixture.person_a, fixture.person_b);
+
+        let federation = crate::federation::coreference_shared_for_pact(
+            &fixture.vault,
+            a,
+            b,
+            &COREFERENCE_PACT_P,
+        )
+        .unwrap();
+        let (ids, exported) = fixture.filtered(&[fixture.status_claim, consent]);
+        assert!(
+            ids.contains(&fixture.control_claim),
+            "{case}: the control claim must cross, else this proves nothing"
+        );
+        let document = {
+            let rtxn = fixture.vault.store.env.read_txn().unwrap();
+            let fold = fixture.vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+            let selector = SyncSelector::new(
+                fixture.grant_id,
+                fixture.member,
+                SyncSelectorWorld::All,
+                vec![fixture.facet],
+                vec![SelectorRange::Semantic, SelectorRange::Core],
+            );
+            super::scope::document_coreference_context_in_txn(
+                &fixture.vault,
+                &rtxn,
+                &fold,
+                &selector,
+                a,
+                b,
+            )
+            .unwrap()
+            .allows(a, b)
+        };
+        let answers = [federation, exported, document, ids.contains(&consent)];
+        if answers != [live; 4] {
+            wrong.push((case, answers));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "[federation, export filter, document writer, consent row travels] \
+         disagree with the consent's window: {wrong:?}"
+    );
 }

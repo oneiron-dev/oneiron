@@ -26,7 +26,7 @@ use crate::server::SyncServer;
 use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
 use super::listener::{ManagedCtl, init_managed_tracing};
-use super::vault_gates::open_managed_vault;
+use super::vault_gates::{open_managed_vault, provision_host_authority};
 use oneiron_vault_contract::host::{Host, HostLimits};
 
 /// Machine-readable tag on the refusals a frozen engine serves, so a client can
@@ -546,9 +546,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     );
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
-    vault.ensure_host_root_slip(&issuer)?;
-    // The engine's MACHINE writers sign with host-held keys (ONE-1634).
-    vault.provision_engine_machine_identities(&issuer)?;
+    provision_host_authority(&vault, &issuer, &config.keystore, &managed.data_dir)?;
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
     sync_server.managed_issuer = Some(issuer);
@@ -608,7 +606,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         );
     }
 
-    let background = sync_server.spawn_serve_background();
+    // Housekeeping passes are admitted like a served write: a vault frozen
+    // for reap sweeps nothing, and a pass in flight keeps it from reading
+    // quiescent.
+    let background = sync_server.spawn_serve_background({
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.

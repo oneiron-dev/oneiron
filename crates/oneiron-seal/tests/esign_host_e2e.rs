@@ -149,6 +149,7 @@ fn synthetic_keys() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::
 
 /// The same, whose identity also hands over a chain certificate, which the
 /// assembler embeds beside the leaf.
+#[cfg(feature = "hostile-organ-tests")]
 fn synthetic_keys_with_chain() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::Error>> {
     let (mut keys, cert) = synthetic_keys()?;
     let other = rcgen::KeyPair::generate()?;
@@ -186,7 +187,7 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
         start: now,
         end: now,
     };
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     vault.put_entity(
         &owner,
         oneiron::registry::ENTITY_TYPE_PERSON,
@@ -401,13 +402,14 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         true,
         oneiron::store::GateDecisionId::now(),
     )?;
+    let owner_actor = owner.actor_for_read(&vault)?;
     assert!(
         vault
             .request_esign_reseal(&owner, id, "not-a-grant", None, None)
             .is_err()
     );
     let bound = oneiron::consent::GrantBound::action(
-        oneiron::consent::ActorBound::new(owner.actor().to_hex())?,
+        oneiron::consent::ActorBound::new(owner_actor.to_hex())?,
         oneiron::consent::ActionClass::new("esign.reseal")?,
         oneiron::consent::ActionEnvelope::new([format!("document:{}", id.to_hex())])?,
     )?;
@@ -463,8 +465,8 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         "schema_version":"1.2", "pack_id":"esign-sealed-mail", "pack_version":"v1",
         "min_engine_version":env!("CARGO_PKG_VERSION"),
         "defaults":{"criticality":"normal","sensitivity":"normal"}, "rules":[],
-        "actor_ceilings":[{"actor_class":"human","actor_ref":owner.actor().to_hex(),"ceiling":"auto"}],
-        "scoped_grants":[{"actor_ref":owner.actor().to_hex(),"effector":"external:send",
+        "actor_ceilings":[{"actor_class":"human","actor_ref":owner_actor.to_hex(),"ceiling":"auto"}],
+        "scoped_grants":[{"actor_ref":owner_actor.to_hex(),"effector":"external:send",
             "scope":oneiron::test_support::effect_preset(),"selectors":{"channel":"email"}}]
     });
     oneiron::test_support::put_policy_manifest_bytes(
@@ -478,7 +480,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
             key,
             oneiron::outbound::OutboundIntent::from_trigger(
                 oneiron::outbound::OutboundIntentDraft::new(
-                    owner.actor().to_hex(),
+                    owner_actor.to_hex(),
                     "send",
                     "email",
                     notice.email.clone(),
@@ -489,8 +491,8 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
             ),
             oneiron::outbound::OutboundDispatchActor {
                 actor_class: "human".into(),
-                actor_ref: Some(owner.actor().to_hex()),
-                actor_entity_ref: Some(owner.actor()),
+                actor_ref: Some(owner_actor.to_hex()),
+                actor_entity_ref: Some(owner_actor),
             },
             oneiron::outbound::OutboundDispatchGate::allow_when_policy_grants(),
             unix_seconds_now(),

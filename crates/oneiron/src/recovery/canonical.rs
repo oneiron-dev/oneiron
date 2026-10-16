@@ -113,6 +113,13 @@ pub struct CanonicalSnapshot {
     pub note_proposals: Vec<crate::note::NoteReviewBundle>,
     pub container_manifests: Vec<CanonicalContainerManifest>,
     pub schema_manifest: CanonicalSchemaManifest,
+    /// The window's TASKs one of whose authority facts the source refused,
+    /// the fact's id having been deleted there first. The fact's body never
+    /// reached the store, so this alone names the task, and its facts read
+    /// as a refusal wherever the window is recovered. Absent when empty, so
+    /// an artifact with none encodes as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed_tasks: Vec<[u8; 16]>,
 }
 
 impl CanonicalSnapshot {
@@ -210,6 +217,56 @@ impl CanonicalSnapshot {
     }
 }
 
+/// Marks first, as every local removal does, the task of an authority fact
+/// this vault never admitted that a deleted id's carrier holds: the capture
+/// below leaves that carrier out of the artifact or keeps only its shell, and
+/// the mark is what then carries the refusal in `suppressed_tasks`. An id is
+/// deleted here when the window or a pending marker holds its tombstone, or a
+/// global hard marker names it, as the capture reads them. A build without
+/// sync captures too, so it marks through the same writer.
+fn mark_deleted_carriers_first(
+    vault: &Vault,
+    window: &str,
+    snapshot: &CanonicalSnapshot,
+) -> Result<()> {
+    let mut deleted: std::collections::BTreeSet<_> =
+        snapshot.tombstones.iter().map(|row| row.id).collect();
+    {
+        let txn = vault.store.env.read_txn()?;
+        let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
+        for row in PENDING_TOMBSTONE.iter_from(&vault.store, &txn, &window_prefix)? {
+            deleted.insert(*row?.0.id.as_bytes());
+        }
+        for row in &snapshot.entity_blobs {
+            if HARD_DELETE_MARKER
+                .get(&vault.store, &txn, &HexId(id(row.id)?))?
+                .is_some()
+            {
+                deleted.insert(row.id);
+            }
+        }
+    }
+    let carriers = snapshot
+        .entity_blobs
+        .iter()
+        .filter(|row| {
+            deleted.contains(&row.id)
+                && crate::batch::EntityMetadataHeader::parse(&row.blob)
+                    .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_TASK)
+        })
+        .map(|row| Ok((id(row.id)?, row.blob.clone())))
+        .collect::<Result<Vec<_>>>()?;
+    #[cfg(feature = "sync")]
+    crate::sync::window::mark_removed_carriers_first(
+        vault,
+        crate::sync::window::CarrierRemoval::CanonicalCapture,
+        &carriers,
+    )?;
+    #[cfg(not(feature = "sync"))]
+    crate::task_authority::mark_removed_carriers(vault, &carriers)?;
+    Ok(())
+}
+
 /// Captures a quiescent window plus every NOTE document and head receipt in its scope.
 /// The caller must stop window writers while taking this off-hot-path snapshot.
 pub fn capture_canonical_window(
@@ -281,6 +338,7 @@ pub(crate) fn capture_canonical_window_within(
             )
             .as_bytes(),
         },
+        suppressed_tasks: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -311,6 +369,7 @@ pub(crate) fn capture_canonical_window_within(
             value,
         });
     }
+    mark_deleted_carriers_first(vault, window, &snapshot)?;
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
     let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
@@ -505,6 +564,16 @@ pub(crate) fn capture_canonical_window_within(
     }
     snapshot.entity_documents.sort_by_key(|row| row.entity_id);
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    // Only a TASK row carries a refusal: a forged fact may name any id as its
+    // task, and the artifact's validation refuses a mark on anything else.
+    for entity in &snapshot.entity_blobs {
+        if crate::batch::EntityMetadataHeader::parse(&entity.blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_TASK)
+            && crate::task_authority::fact_suppressed_in(&vault.store, &txn, &id(entity.id)?)?
+        {
+            snapshot.suppressed_tasks.push(entity.id);
+        }
+    }
     let carried: std::collections::BTreeMap<_, _> =
         binary_rows_within(doc, "retained_claim_worlds", budget)?
             .into_iter()

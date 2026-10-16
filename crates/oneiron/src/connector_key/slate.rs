@@ -476,10 +476,11 @@ impl Vault {
         overrides: &BTreeMap<String, SlateOwnerOverride>,
     ) -> Result<ConnectorGrantSlate> {
         self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
             crate::memory::verify_deletion_authority_in_txn(
                 self,
                 txn,
-                owner.actor(),
+                actor,
                 crate::edge::EdgeActorClass::Human,
             )
             .map_err(|_| Error::InvalidConfig("grant slate owner binding required".to_owned()))?;
@@ -504,7 +505,7 @@ impl Vault {
                 .revision
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("slate revision"))?;
-            slate.owner_actor = Some(owner.actor().to_hex());
+            slate.owner_actor = Some(actor.to_hex());
             slate.owner_authentication = Some(owner.decision_id().to_hex());
             GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
             Ok(slate)
@@ -590,14 +591,7 @@ mod tests {
                 .is_err()
         );
         let id = vault.store_connector_slate(&manifest, &serde_json::to_string(&rows).unwrap())?;
-        let owner = EntityId::now();
-        vault.put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )?;
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
         let auth = vault.authenticate_owner(
             owner,
             &owner.to_hex(),
