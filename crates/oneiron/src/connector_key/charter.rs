@@ -19,10 +19,42 @@ const CONNECTOR_CHARTER_COMPILED_DOMAIN: &[u8] = b"oneiron.connector_charter.com
 /// Domain tag for the human-stamped aggregate binding text + compiled policy.
 const CONNECTOR_CHARTER_STAMP_DOMAIN: &[u8] = b"oneiron.connector_charter.stamp.v1";
 
-/// ISO-4217 currencies with exponent 0 (major unit == minor unit); every
-/// other currency compiles major → minor with the default exponent 2.
-/// Pinned by the M8 / R7 resolution (2026-07-10).
-const ISO_4217_ZERO_EXPONENT_CURRENCIES: [&str; 3] = ["JPY", "KRW", "VND"];
+/// ISO-4217 minor-unit exponents, from list one as published 2026-09-17 by
+/// SIX (the ISO 4217 maintenance agency). A three-letter code outside these
+/// lists (unknown, withdrawn, or with no minor unit such as XAU or XDR) is
+/// refused at compile, never assumed to carry two decimals (F28).
+const ISO_4217_EXPONENT_0: [&str; 17] = [
+    "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND",
+    "VUV", "XAF", "XOF", "XPF",
+];
+const ISO_4217_EXPONENT_2: [&str; 139] = [
+    "AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BMD",
+    "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF",
+    "CHW", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DKK", "DOP", "DZD", "EGP", "ERN",
+    "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GTQ", "GYD", "HKD", "HNL",
+    "HTG", "HUF", "IDR", "ILS", "INR", "IRR", "JMD", "KES", "KGS", "KHR", "KPW", "KYD", "KZT",
+    "LAK", "LBP", "LKR", "LRD", "LSL", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU",
+    "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD",
+    "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "QAR", "RON", "RSD", "RUB", "SAR", "SBD", "SCR",
+    "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB",
+    "TJS", "TMT", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "USD", "USN", "UYU", "UZS", "VED",
+    "VES", "WST", "XAD", "XCD", "XCG", "YER", "ZAR", "ZMW", "ZWG",
+];
+const ISO_4217_EXPONENT_3: [&str; 7] = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
+const ISO_4217_EXPONENT_4: [&str; 2] = ["CLF", "UYW"];
+
+/// The ISO-4217 minor-unit exponent of `code`, if it is a listed currency.
+fn iso_4217_exponent(code: &str) -> Option<u32> {
+    [
+        (0, &ISO_4217_EXPONENT_0[..]),
+        (2, &ISO_4217_EXPONENT_2[..]),
+        (3, &ISO_4217_EXPONENT_3[..]),
+        (4, &ISO_4217_EXPONENT_4[..]),
+    ]
+    .into_iter()
+    .find(|(_, codes)| codes.contains(&code))
+    .map(|(exponent, _)| exponent)
+}
 
 /// Output of one deterministic charter compile: same text ⇒ same struct ⇒
 /// same hashes. The compiler is a mechanical parser — no model in the loop.
@@ -485,9 +517,9 @@ fn parse_charter_window(token: &str) -> std::result::Result<EffectorBudgetWindow
 
 /// M8 / R7 (2026-07-10): the cap unit MUST equal the connector's declared
 /// denomination — no conversion in the gate, ever. ISO-4217 currencies
-/// compile MAJOR → minor units via the pinned exponent table (default 2;
-/// explicit exponent-0 list JPY/KRW/VND); provider units pass through as
-/// opaque integers.
+/// compile MAJOR → minor units by their listed exponent (0, 2, 3 or 4); a
+/// three-letter code with no listed exponent is refused; provider units pass
+/// through as opaque integers.
 fn charter_spend_limit(major_units: u64, unit: &str) -> std::result::Result<u64, String> {
     validate_spend_unit(unit).map_err(|error| match error {
         Error::Record(RecordError::InvalidConnectorKeyBody(reason)) => reason.to_owned(),
@@ -498,11 +530,8 @@ fn charter_spend_limit(major_units: u64, unit: &str) -> std::result::Result<u64,
     if !is_iso_currency {
         return Ok(major_units);
     }
-    let exponent: u32 = if ISO_4217_ZERO_EXPONENT_CURRENCIES.contains(&unit) {
-        0
-    } else {
-        2
-    };
+    let exponent = iso_4217_exponent(unit)
+        .ok_or_else(|| "spend unit is not an ISO-4217 currency with a minor unit".to_owned())?;
     major_units
         .checked_mul(10_u64.pow(exponent))
         .ok_or_else(|| "spend cap overflows minor units".to_owned())

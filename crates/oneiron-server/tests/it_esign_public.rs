@@ -29,7 +29,7 @@ async fn public_path_signing_bypasses_hosted_lease_but_not_capability_admission(
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/sign/{token}"))
+                .uri("/sign")
                 .body(Body::empty())
                 .expect("build signing page request"),
         )
@@ -49,6 +49,20 @@ async fn public_path_signing_bypasses_hosted_lease_but_not_capability_admission(
         .await
         .expect("read signing page body");
     assert!(!String::from_utf8_lossy(&body).contains(&token));
+
+    // F37: a capability in the request path is refused, never served.
+    let path_token = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sign/{token}"))
+                .body(Body::empty())
+                .expect("build path-token request"),
+        )
+        .await
+        .expect("serve path-token request");
+    assert_eq!(path_token.status(), StatusCode::NOT_FOUND);
+    assert_eq!(path_token.headers()[header::CACHE_CONTROL], "no-store");
 
     let malformed = app
         .clone()
@@ -335,7 +349,18 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     let address = tcp.local_addr().expect("read TCP listener address");
     let shutdown = ManagedShutdown::new();
     let signal = shutdown.triggered();
-    let app = build_app(Arc::clone(&server));
+    // F37: every request target the server sees, as a URL-logging proxy would.
+    let targets = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let recorded = Arc::clone(&targets);
+    let app = build_app(Arc::clone(&server)).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            recorded
+                .lock()
+                .expect("request targets lock")
+                .push(request.uri().to_string());
+            next.run(request)
+        },
+    ));
     let served = tokio::spawn(async move { listener.serve_until(app, signal).await });
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -343,7 +368,7 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
         .expect("build TCP signing client");
     let url = format!("http://{address}");
     let page = client
-        .get(format!("{url}/sign/{token}"))
+        .get(format!("{url}/sign#{token}"))
         .send()
         .await
         .expect("fetch public signing page");
@@ -421,6 +446,17 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
             .iter()
             .any(|row| row.actor.ip.as_deref() == Some("203.0.113.9"))
     );
+    let targets = targets.lock().expect("request targets lock").clone();
+    assert_eq!(targets.first().map(String::as_str), Some("/sign"));
+    assert_eq!(
+        targets.len(),
+        5,
+        "page, load, save, preview, pdf: {targets:?}"
+    );
+    assert!(
+        targets.iter().all(|target| !target.contains(&token)),
+        "a request target carried the signing capability: {targets:?}"
+    );
     shutdown.trigger();
     served
         .await
@@ -480,7 +516,7 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
     let signal = shutdown.triggered();
     let app = build_app(Arc::clone(&server));
     let served = tokio::spawn(async move { listener.serve_until(app, signal).await });
-    let page = over_unix(&socket, "GET", &format!("/sign/{token}"), "").await;
+    let page = over_unix(&socket, "GET", "/sign", "").await;
     assert!(!http_body(&page).is_empty());
     let load = over_unix(
         &socket,
@@ -586,12 +622,7 @@ async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
     for _ in 0..2 {
         let page = app
             .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/sign/{token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/sign").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(page.status(), StatusCode::OK);
@@ -635,7 +666,7 @@ async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
         .receipt(start, start + window_secs)
         .unwrap()
         .unwrap();
-    assert_eq!(receipt.by_verb["GET /sign/{token}"], 2);
+    assert_eq!(receipt.by_verb["GET /sign"], 2);
     assert_eq!(receipt.by_verb["POST /sign/action"], 2);
     assert_eq!(receipt.by_verb["GET /api/entity/{id}"], 1);
     assert_eq!(receipt.by_actor["unauthenticated"], 5);
@@ -644,7 +675,7 @@ async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
         .question(start, start + window_secs)
         .unwrap()
         .unwrap();
-    assert_eq!(question.evidence.by_verb["GET /sign/{token}"], 2);
+    assert_eq!(question.evidence.by_verb["GET /sign"], 2);
 }
 
 #[tokio::test]
@@ -655,7 +686,7 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/sign/{token}"))
+                .uri("/sign")
                 .body(Body::empty())
                 .expect("page request"),
         )

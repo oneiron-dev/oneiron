@@ -40,7 +40,10 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
 pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/sign", get(page))
-        .route("/sign/{token}", get(page_for_token))
+        // A signing link is `/sign#<token>`: a capability in the request path
+        // reaches server and proxy logs (F37), so a path token is refused,
+        // never served.
+        .route("/sign/{token}", get(path_token_refused))
         .route("/sign/action", post(action))
         .route("/sign/pdf", post(pdf))
         .route("/sign/image", post(image))
@@ -214,11 +217,8 @@ async fn image(
         Err(_) => refused(),
     }
 }
-async fn page_for_token(axum::extract::Path(token): axum::extract::Path<String>) -> Response {
-    if EsignCapability::parse(&token).is_err() {
-        return (StatusCode::NOT_FOUND, "").into_response();
-    }
-    page().await
+async fn path_token_refused() -> Response {
+    (StatusCode::NOT_FOUND, "").into_response()
 }
 
 async fn page() -> Response {
