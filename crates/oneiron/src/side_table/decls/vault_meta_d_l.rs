@@ -2,6 +2,13 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// The creation record of one deck made from a kept outline: born-from, template, slides,
+    /// write set and fit. Key: id16 (artifact).
+    DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
+    /// The design directions compiled from one kept outline. Key: id16 (outline note).
+    DECK_DESIGN_SPEC: VaultMeta b"deck:design_spec:v1:" Named;
+    /// A person's keep of one outline brief: frontier, exact bytes and hash. Key: id16 (note).
+    DECK_OUTLINE_KEEP: VaultMeta b"deck:outline_keep:v1:" Named;
     /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
     /// run. Key: ().
     DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
