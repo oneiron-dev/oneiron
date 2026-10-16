@@ -14,12 +14,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2602 | 885 | 46 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2602 | 886 | 46 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 24 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 14 | 5 | 0 |
+| [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver behind them (feature `driver`) | 5 | 0 | 0 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
+| [oneiron-container](codemap/oneiron-container.md) | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice | 1 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 54 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 15 | 8 | 0 |
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 50 | 14 | 1 |
@@ -307,6 +309,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `strip` | file+dir | 2 | m | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
 | `testing` | file | 1 | s | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |
 
+## oneiron-browser
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `cdp` | file | 1 | s | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `driver` | file | 1 | m | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
+| `outline` | file | 1 | s | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
+| `session` | file | 1 | s | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |
+
 ## oneiron-code-check
 
 | module | layout | files | largest src bucket | purpose |
@@ -315,6 +326,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `microsoft` | file | 1 | s | Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when tsc-rs is… |
 | `output` | file | 1 | s | Reads `tsc --pretty false` output |
 | `tsc_rs` | file | 1 | m | tsc-rs in process: the pinned Wasm build of the checker (`components/tsc-rs`), run on the engine's Wasmtime |
+
+## oneiron-container
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `lib` | file | 1 | s | Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice |
 
 ## oneiron-contracts
 

@@ -22577,7 +22577,7 @@
      "path": "src/lens/validate.rs",
      "purpose": "Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -30018,8 +30018,8 @@
      "path": "src/psych_profile/record.rs",
      "purpose": "Snapshot record types, projections, and constructors/validators",
      "surface": {
-      "const": 2,
-      "crate-vis": 17,
+      "const": 3,
+      "crate-vis": 19,
       "enum": 3,
       "fn": 5,
       "struct": 2
@@ -41390,6 +41390,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/collection_bounds.rs",
+     "purpose": "F05 repros at the SDK surface: a lens tree, a generated-UI segment stream, a client state patch and a…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -43282,7 +43290,7 @@
    "over_bar": 46,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2602,
-   "test_files": 885
+   "test_files": 886
   },
   "oneiron-android": {
    "files": [
@@ -45358,6 +45366,120 @@
    "source_files": 14,
    "test_files": 5
   },
+  "oneiron-browser": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp.rs",
+     "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver.rs",
+     "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrowserDriver",
+      "BrowserError",
+      "ClickInput",
+      "ExpectInput",
+      "ExpectOutput",
+      "FindInput",
+      "FindOutput",
+      "Observation",
+      "ObserveInput",
+      "OpenInput",
+      "Row",
+      "ScreenshotInput",
+      "ScreenshotOutput",
+      "SelectInput",
+      "TypeInput",
+      "WaitForInput",
+      "WaitForOutput"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver behind them (feature `driver`)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 15,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outline.rs",
+     "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrowserGuest",
+      "BrowserSession"
+     ],
+     "path": "src/session.rs",
+     "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    }
+   ],
+   "modules": {
+    "cdp": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
+    },
+    "driver": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
+    },
+    "outline": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
+    },
+    "session": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Browser verbs for code mode (`self.memory.browser.*`), and the CDP driver behind them (feature `driver`)",
+   "source_files": 5,
+   "test_files": 0
+  },
   "oneiron-code-check": {
    "files": [
     {
@@ -45495,6 +45617,45 @@
    "purpose": "An optional type check of code-mode programs before they run",
    "source_files": 6,
    "test_files": 1
+  },
+  "oneiron-container": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContainerRuntime",
+      "Error",
+      "GuestLimits",
+      "GuestSeccomp",
+      "GuestSession",
+      "GuestSpec",
+      "ImageRef",
+      "SessionManifest"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 6,
+      "type": 1
+     }
+    }
+   ],
+   "modules": {
+    "lib": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Container guest sessions for hosts without KVM (OF-318, OSH p4), first slice",
+   "source_files": 1,
+   "test_files": 0
   },
   "oneiron-contracts": {
    "files": [
