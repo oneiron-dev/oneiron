@@ -12,16 +12,18 @@ mod codec;
 mod document_admission;
 mod epoch_egress;
 pub(in crate::sync) use document_admission::{
-    admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
+    admit_document_read_in_txn, admit_document_write_in_txn, admit_promoted_entity_write_in_txn,
 };
 #[cfg(feature = "sync")]
 mod edge;
 mod held_retire;
+mod machine_history;
 mod note_admission;
 mod peer_confidence;
 mod scope;
 mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
+pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
 #[cfg(test)]
 mod tests;
 
@@ -44,7 +46,7 @@ pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
-    guest_share_envelope, guest_share_envelope_body,
+    filtered_window_doc_for_peer, guest_share_envelope, guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;

@@ -36,12 +36,15 @@ mod policy;
 mod status;
 mod step;
 mod step_failure;
+mod stewardship;
 mod sync_wake;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod turn_actions;
 mod turns;
+pub(crate) mod waves;
 mod workflows;
 
 pub(crate) use local_vision::LocalVisionModel;
@@ -247,11 +250,11 @@ impl AiHandle {
 
     /// Tells the Dreamer's session policy what the app saw. A no-op without
     /// a running Dreamer: no session is opened that nothing would close.
-    pub fn session_hint(&self, hint: SessionHint) {
+    pub fn session_hint(&self, key: oneiron::session_lifecycle::SessionKey, hint: SessionHint) {
         let Some(hints) = &self.hints else {
             return;
         };
-        if let Err(error) = hints.push_session_hint(hint, None) {
+        if let Err(error) = hints.push_session_hint(key, hint, None) {
             tracing::warn!(?error, ?hint, "dreamer session hint dropped");
         }
     }
@@ -375,6 +378,7 @@ impl AiHost {
             models,
             server.host_root_provisioned(),
             server.run_receipts(),
+            Some(server.host_account()),
         )
         .await;
         if host.handle.hints.is_some() {
@@ -395,7 +399,7 @@ impl AiHost {
     /// serve. Every model call they make is admitted as a run whose receipts
     /// are written to the log.
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
-        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts)).await
+        Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts), None).await
     }
 
     /// `start`, with the run receipts going to `receipts`.
@@ -404,12 +408,16 @@ impl AiHost {
         models: Option<&ModelsConfig>,
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
+        account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let runtime =
-            Arc::new(ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts));
+        let mut runtime = ModelRuntime::build_hosted(models, Some(keys), rests).with_receipts(receipts);
+        if let Some(account) = account {
+            runtime = runtime.with_host_account(account);
+        }
+        let runtime = Arc::new(runtime);
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
             handle: handle.clone(),
@@ -436,6 +444,7 @@ impl AiHost {
             Err(reason) => status.update(|status| status.workflows = WorkStatus::idle(reason)),
         }
         host.handle = handle;
+        turn_actions::spawn(&vault, &host.handle);
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn. It
         // settles before start returns, so it reads only those turns: one
@@ -712,6 +721,7 @@ impl AiHandle {
                 units,
                 oneiron::BudgetExhaustionPolicy::Suspend,
             ),
+            self.runtime.host_account(),
         ))
     }
 }

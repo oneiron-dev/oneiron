@@ -28,6 +28,10 @@ pub(super) async fn serve_with_config(
     mut config: ServeConfig,
     config_file: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
+        "a relay host never opens a vault; use `oneiron host relay --config <room.json>`"
+    );
     use oneiron_vault_contract::host::Host;
     use oneiron_vault_contract::host_adapters::{ActivatedListener, AwakePolicy, DesktopHost};
 
@@ -202,7 +206,17 @@ pub(super) async fn serve_with_config(
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
+    let mesh_vault = Arc::clone(&sync_server.vault);
     let app = build_app(sync_server).layer(cors_layer);
+    // The paired-machine mesh listener (OF-535): off unless the host names
+    // its bind address.
+    let mesh = crate::handler::mesh::start(
+        mesh_vault,
+        &crate::handler::mesh::MeshConfig::from_env()?,
+        &app,
+        config.limits.connections().header_read_timeout,
+    )
+    .await?;
     host.ready()?;
     // Ready and bound: a client on this host can find it now. The file goes
     // when this returns, a clean stop or a late startup error alike.
@@ -245,6 +259,9 @@ pub(super) async fn serve_with_config(
         } => {
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
+    }
+    if let Some(mesh) = mesh {
+        mesh.stop().await;
     }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
@@ -314,7 +331,7 @@ fn sign_root_project(vault: &oneiron::Vault, secret: Option<&str>) -> anyhow::Re
 
 /// Ctrl-C, or SIGTERM where there is one: the stop an operator or a service
 /// manager sends.
-async fn stop_requested() {
+pub(crate) async fn stop_requested() {
     let interrupt = async {
         if tokio::signal::ctrl_c().await.is_err() {
             std::future::pending::<()>().await;
