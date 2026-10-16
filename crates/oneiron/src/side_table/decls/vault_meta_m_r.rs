@@ -513,6 +513,12 @@ side_tables! {
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
+    /// One offer card (OF-530): who asks, what, the cost, the join it files and its state, with the
+    /// host's answer that settled it. Key: string (hex64 offer id).
+    ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson;
+    /// The offer card current for one agent in one room or thread. Key: string (room hex "/" branch
+    /// hex or "-" "/" agent hex).
+    ROOMS_OFFER_CURRENT: VaultMeta b"rooms.offer_current.v1/" LegacyJson;
     /// One participation fact (OF-529): who took part in a room or one of its threads, how and since
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn

@@ -102,6 +102,9 @@ pub enum AgentVerb {
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
     VaultRoomsConsent,
+    VaultRoomsOffer,
+    VaultRoomsOfferAnswer,
+    VaultRoomsOffers,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
@@ -270,6 +273,9 @@ impl AgentVerb {
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
         Self::VaultRoomsConsent,
+        Self::VaultRoomsOffer,
+        Self::VaultRoomsOfferAnswer,
+        Self::VaultRoomsOffers,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
@@ -443,6 +449,9 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultRoomsOffer => "vault.rooms.offer",
+            Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
+            Self::VaultRoomsOffers => "vault.rooms.offers",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
@@ -610,6 +619,9 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -785,6 +797,9 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -877,6 +892,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultProjectsProposals
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
@@ -999,6 +1015,9 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -1115,6 +1134,8 @@ impl AgentVerb {
                 | Self::VaultProjectsConfirm
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -1268,6 +1289,9 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsOffer => &["spec", "room_ref"],
+            Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1437,6 +1461,9 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsOffer => &["spec", "room_ref"],
+            Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
