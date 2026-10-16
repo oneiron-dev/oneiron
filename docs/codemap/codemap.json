@@ -12361,9 +12361,9 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -12507,17 +12507,50 @@
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
+      "SlateFacetNarrow",
+      "SlateHolderNarrow",
       "SlateOwnerOverride",
       "SlateRow",
       "SlateToolManifest"
      ],
      "path": "src/connector_key/slate.rs",
-     "purpose": "ARCH-0072 typed per-tool grant slates",
+     "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
-      "crate-vis": 4,
+      "const": 1,
+      "crate-vis": 10,
       "enum": 2,
-      "fn": 11,
-      "struct": 5
+      "fn": 27,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorSlateDelta",
+      "ConnectorSlateDrafter",
+      "ConnectorSlateRedraft",
+      "SlatePastRulings",
+      "SlateTrait"
+     ],
+     "path": "src/connector_key/slate_draft.rs",
+     "purpose": "ARCH-0072's memory-informed drafter",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/slate_setting.rs",
+     "purpose": "The four capability settings at call time (DEC-0006 §MCP connector permissions)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -25059,7 +25092,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 17,
+      "const": 18,
       "fn": 1,
       "struct": 1
      }
@@ -28412,7 +28445,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 10,
       "struct": 2
      }
@@ -46541,7 +46574,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47677,7 +47710,7 @@
    },
    "over_bar": 79,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2873,
+   "source_files": 2875,
    "test_files": 903
   },
   "oneiron-android": {
