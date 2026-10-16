@@ -185,3 +185,70 @@ pub(super) fn touch_standing_outbound_grant_in_txn(
 ) -> Result<()> {
     crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(store, wtxn, id, grant, used_at)
 }
+
+/// OF-374: the envelope slot an `email/send` would spend when its sender row's
+/// autonomy resolves `AutonomousWithinEnvelope`, proven on the Gate's writer
+/// snapshot and not yet written. `effect_key` is the canonical mail digest an
+/// owner press would bind, so an exact replay of one send finds its own slot.
+///
+/// The Gate input carries no relationship context or counterparty class, so
+/// only an unambiguous envelope admits: exactly one context on this row at
+/// that rung, with no counterparty-class pin, bound to the effect's own actor.
+/// Anything else is `None` and the send keeps its press.
+pub(super) fn channel_identity_envelope_reservation_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    effect_key: [u8; 32],
+    now: u64,
+) -> Result<Option<crate::outbound_grant::ChannelIdentityGrantReservation>> {
+    use crate::channel_identity_autonomy::{
+        AutonomyReader, ChannelIdentityAutonomyRung, ChannelIdentityEffectCandidate,
+    };
+    use crate::error::GateError;
+
+    if effect.channel != "email" || effect.verb != "send" {
+        return Ok(None);
+    }
+    let (Some(identity), Some(actor)) = (
+        effect.channel_identity_ref,
+        effect.provenance.actor_entity_ref,
+    ) else {
+        return Ok(None);
+    };
+    let reader = AutonomyReader { store };
+    match reader.autonomy_identity_actor(txn, identity) {
+        Ok(bound) if bound == actor => {}
+        Ok(_) | Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    let mut autonomous = None;
+    for context in crate::channel_identity_selection::RelationshipContext::ALL {
+        let mode = match reader.autonomy_mode_in_txn(txn, identity, context, now, now) {
+            Ok(mode) => mode,
+            Err(Error::Gate(GateError::InvalidConsentBound(_))) => continue,
+            Err(error) => return Err(error),
+        };
+        if mode.rung == ChannelIdentityAutonomyRung::AutonomousWithinEnvelope
+            && autonomous.replace(mode).is_some()
+        {
+            return Ok(None);
+        }
+    }
+    let Some(mode) = autonomous else {
+        return Ok(None);
+    };
+    let Some(grant_ref) = mode.action_grant_ref else {
+        return Ok(None);
+    };
+    let candidate = ChannelIdentityEffectCandidate {
+        identity_ref: identity,
+        relationship_context: mode.relationship_context,
+        verb_class: "mail.send".to_owned(),
+        counterparty_class: None,
+        effect_key,
+    };
+    crate::outbound_grant::reserve_channel_identity_grant_in_txn(
+        store, txn, &grant_ref, &candidate, now,
+    )
+}
