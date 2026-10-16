@@ -283,7 +283,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// `store(value, name?)`: the value the program just streamed, stored as
     /// a result of the run and bound to a name. Not gated: the value is the
-    /// run's own, as a file it writes is. A halted bridge stores nothing.
+    /// run's own, as a file it writes is. A halted bridge, or a run whose
+    /// TASK was declined, stores nothing.
     fn store_result(&mut self, name: Option<String>) -> Result<serde_json::Value> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
@@ -294,6 +295,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .ok_or(Error::InvalidConfig("store sent no body".into()))?;
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(result_refusal("host_bridge_halted"));
+        }
+        if self.declined.is_some() {
+            return Ok(result_refusal("task_declined"));
         }
         if name
             .as_deref()
