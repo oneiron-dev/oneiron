@@ -15223,7 +15223,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -18206,7 +18206,7 @@
      "path": "src/failure_ladder/healer_case.rs",
      "purpose": "Durable failure-ladder cases bind healer admission to the fenced failure",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18250,7 +18250,7 @@
      "path": "src/failure_ladder/mod.rs",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 7
      }
@@ -18358,8 +18358,38 @@
       "crate-vis": 2,
       "enum": 4,
       "fn": 9,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CandidateFix",
+      "CandidateFixResult",
+      "CodeFixExport",
+      "CodeFixReplay",
+      "CodeFixVerdict",
+      "CodeFixWithheld",
+      "ExportScrubber",
+      "FixOutcome",
+      "InventedExampleDraft",
+      "InventedFailureExample",
+      "InventedMessage",
+      "InventedRole",
+      "ReplayRun",
+      "ScrubRun",
+      "ShadowRun"
+     ],
+     "path": "src/failure_signals/code_fix.rs",
+     "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
+     "surface": {
+      "const": 5,
+      "enum": 8,
+      "fn": 3,
+      "struct": 5,
+      "trait": 2
      }
     },
     {
@@ -18379,6 +18409,17 @@
      "path": "src/failure_signals/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/verbatim.rs",
+     "purpose": "The FIX6 verbatim-span guard: an invented example shares no run of words with the real chat it was drawn from",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -42881,7 +42922,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 4,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -43695,7 +43736,7 @@
    },
    "over_bar": 52,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2621,
+   "source_files": 2623,
    "test_files": 902
   },
   "oneiron-android": {

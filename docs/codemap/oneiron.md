@@ -1240,7 +1240,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/tests/witnessed_turns/history.rs` | test | s | — | — | A stored citation keeps the MESSAGE history it names |
 | `src/dreamer_consolidation/tests/witnessed_turns/redirty.rs` | test | m | — | — | A finalized continuation brings its consumed TURN back to consolidation even where moving the TURN row… |
 | `src/dreamer_consolidation/tests/witnessed_turns/support.rs` | test | m | — | — | An attachment's Supports edge follows the MESSAGE words that justify it |
-| `src/dreamer_consolidation/turn_text.rs` | src | m | 21 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
+| `src/dreamer_consolidation/turn_text.rs` | src | m | 22 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/wake_plan.rs` | src | m | 2 struct · 20 crate-vis | PreparedConsolidationAttempt, PreparedWake | One frozen read revision and exact preparation of queued consolidation work |
 | `src/dreamer_consolidation/watermark.rs` | src | m | 2 struct · 5 fn · 14 crate-vis | ConsolidationWatermark, WorkingSetTurn | — |
@@ -1477,10 +1477,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/classify.rs` | src | s | 1 struct · 3 enum · 1 fn · 1 const | DetectorTier, FailureClass, TypedFailureEvidence, TypedFailureVerdict | Typed failure vocabulary and classifier (class, verdict, tier, evidence) |
 | `src/failure_ladder/custom_review.rs` | src | s | 2 struct · 2 enum · 3 fn · 1 crate-vis | AgentKind, CustomFailureGroup, FailureSignalClass, TierOneFailureCount | Vault-local custom-agent failure index and content-free health projection |
 | `src/failure_ladder/drill.rs` | src | s | 1 struct · 1 fn | CustomFailureDrill | Owner-only vault-local drill-in to a custom-agent failure's tier-0 attempt trace and terminal pack receipt |
-| `src/failure_ladder/healer_case.rs` | src | s | 2 crate-vis | — | Durable failure-ladder cases bind healer admission to the fenced failure |
+| `src/failure_ladder/healer_case.rs` | src | s | 3 crate-vis | — | Durable failure-ladder cases bind healer admission to the fenced failure |
 | `src/failure_ladder/ladder.rs` | src | s | 1 struct · 4 fn | FailureLadder | FailureLadder entry point, surface context, healer routing, and correlation refs |
 | `src/failure_ladder/lineage.rs` | src | s | 4 struct · 4 enum · 2 crate-vis | FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerOutcome, HealerRepairRoute, RetryLineagePathology, RetryOrdinal, SurfacedFailure | Retry-lineage walk/ordinal, healer case/route, and surfaced-failure outcome types |
-| `src/failure_ladder/mod.rs` | src | s | 1 mod · 7 re-export · 3 crate-vis | — | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
+| `src/failure_ladder/mod.rs` | src | s | 1 mod · 7 re-export · 4 crate-vis | — | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
 | `src/failure_ladder/oversight.rs` | src | s | 2 struct · 1 enum · 5 fn · 1 crate-vis | OversightCounts, OversightKind, OversightReceipt | Per-vault signed oversight over healer proposals and review decisions |
 | `src/failure_ladder/scope.rs` | src | s | 2 struct · 1 enum · 1 fn | FailureEscalationMode, FailureScope, FailureScopePolicy | Escalation mode, failure scope, and per-scope consecutive-transient policy |
 | `src/failure_ladder/tests.rs` | test | L | — | — | ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry… |
@@ -1489,9 +1489,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/tests/drill.rs` | test | m | — | — | Retrospective owner drill-in binds the caller, group, trace and receipt |
 | `src/failure_ladder/tests/failure_integrity.rs` | test | s | — | — | — |
 | `src/failure_ladder/transitions.rs` | src | s | 8 crate-vis | — | Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once) |
-| `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 9 fn · 1 re-export · 2 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
+| `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 9 fn · 3 re-export · 2 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
+| `src/failure_signals/code_fix.rs` | src | m | 5 struct · 8 enum · 2 trait · 3 fn · 5 const | CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FixOutcome +7 | FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2) |
 | `src/failure_signals/policy.rs` | src | s | 10 crate-vis | — | Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows |
 | `src/failure_signals/tests.rs` | test | m | — | — | — |
+| `src/failure_signals/verbatim.rs` | src | s | 2 const · 1 crate-vis | — | The FIX6 verbatim-span guard: an invented example shares no run of words with the real chat it was drawn from |
 | `src/failure_signals/witness.rs` | src | s | 1 struct · 1 fn · 8 crate-vis | Tier1Observation | Vault-local, non-serializable producer observations |
 | `src/fanout_auto.rs` | src | m | 5 struct · 5 enum · 1 trait · 6 fn · 3 crate-vis | AppliedFanoutEscalationRuling, FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `src/fanout_auto/tests.rs` | test | s | — | — | ONE-1720 (ES-07) unit tests: the closed verdict vocabulary, the fixed evaluation order (blank-context floor… |
