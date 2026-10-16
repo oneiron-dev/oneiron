@@ -60365,25 +60365,59 @@
      "path": "src/lib/host_adapters.rs",
      "purpose": "Host adapters",
      "surface": {
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActivatedListener",
+      "AwakeGuard",
+      "AwakePolicy",
+      "DesktopHost",
+      "KeepAwake",
+      "LaunchdHost",
+      "SecretSource",
+      "SystemdHost"
+     ],
+     "path": "src/lib/host_adapters/desktop.rs",
+     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "surface": {
+      "enum": 4,
+      "fn": 13,
+      "struct": 4
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "InProcessHost",
-      "LaunchdHost",
-      "SystemdHost"
+      "AppHost",
+      "EmbeddedHost"
+     ],
+     "path": "src/lib/host_adapters/embedded.rs",
+     "purpose": "The in-process adapter for an engine embedded in a mobile app (NAPI or FFI)",
+     "surface": {
+      "fn": 4,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InProcessHost"
      ],
      "path": "src/lib/host_adapters/native.rs",
      "purpose": "Native socket ownership, secret lookup, and cooperative idle wakeup",
      "surface": {
-      "fn": 8,
-      "re-export": 1,
-      "struct": 3
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -60518,7 +60552,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 15,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60527,7 +60561,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 14,
+   "source_files": 16,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
