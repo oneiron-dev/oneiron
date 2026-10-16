@@ -184,7 +184,7 @@ fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
 }
 /// The directory beside the image at `path` its result bodies are in.
-fn checkpoint_bodies_path(path: &Path) -> PathBuf {
+pub(crate) fn checkpoint_bodies_path(path: &Path) -> PathBuf {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."))
@@ -828,4 +828,10 @@ fn malformed_entity_row(blob: &[u8]) -> bool {
             )
             .is_err()
     })
+}
+
+/// The result bodies the image at `path` names, the image read and checked
+/// whole, for a backup prune's reachability (OF-597).
+pub(crate) fn checkpoint_image_bodies(path: &Path) -> Result<Vec<([u8; 32], u64)>> {
+    Ok(read_image(path)?.0.bodies)
 }
