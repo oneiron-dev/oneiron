@@ -3,10 +3,6 @@ use super::*;
 use crate::store::Store;
 
 const PAGE_LIMIT: usize = 256;
-/// History rows one page reads at most, across all its windows. A page that
-/// would read more refuses, rather than return a short page that claims the
-/// history ended.
-const HISTORY_SCAN_CEILING: usize = 100_000;
 
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
@@ -214,23 +210,33 @@ impl Memory<'_> {
             Some(_) => return Err(MemoryError::from(invalid())),
             None => None,
         };
+        // A page reads on until it fills or the history ends, however many
+        // rows it passes over (rule 5): a withheld turn never ends a page
+        // early, so a short page always means the history ended (DEC-0005).
+        // Past the threshold row the owner's check is raised for the room.
+        let mut count = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            crate::scan_check::ScanCount::start(
+                &self.vault().store,
+                &txn,
+                crate::scan_check::EngineScan::RoomPageRows,
+                room.as_bytes(),
+            )?
+        };
         let mut rows = Vec::new();
         let mut window = limit + 1;
-        let mut read = 0;
         loop {
             let scanned = self.history_after(room, start, window)?;
             let exhausted = scanned.len() < window;
-            read += scanned.len();
+            scanned.iter().for_each(|_| count.row());
             start = scanned.last().map(|(key, _)| *key).or(start);
             rows.extend(self.admitted_turns(scanned.into_iter().map(|(_, turn)| turn).collect())?);
             if rows.len() > limit || exhausted {
                 break;
             }
-            if read >= HISTORY_SCAN_CEILING {
-                return Err(Error::IndexOverflow("room history page").into());
-            }
             window = window.saturating_mul(2).min(PAGE_LIMIT * 16);
         }
+        count.finish(self.vault());
         let has_more = rows.len() > limit;
         rows.truncate(limit);
         let next_after = if has_more {
@@ -317,15 +323,22 @@ impl Memory<'_> {
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
+        // Every turn is read, however many (rule 5); past the threshold row
+        // the owner's check is raised for the room.
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.vault().store,
+            &txn,
+            crate::scan_check::EngineScan::RoomHistoryRows,
+            room.as_bytes(),
+        )?;
         let mut turns = Vec::new();
         for row in HISTORY.iter_from(&self.vault().store, &txn, room.as_bytes())? {
+            count.row();
             let (_, turn_id) = row?;
-            if turns.len() == 100_000 {
-                return Err(Error::IndexOverflow("room thread history").into());
-            }
             turns.push(turn_in(self.vault(), &txn, turn_id)?);
         }
         drop(txn);
+        count.finish(self.vault());
         Ok(answer_closed(self.admitted_turns(turns)?))
     }
 

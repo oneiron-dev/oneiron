@@ -6,8 +6,8 @@ use super::types::{
     AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES, AGENT_VERSION_MAX_BYTES, AgentDefinition,
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, KEY_DEP_MIN_VERSION,
     KEY_DEP_SKILL_ID, KEY_MCP_KEY, KEY_MCP_MIN_VERSION, KEY_PROFILE_BUDGET_SPLIT,
-    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
-    MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
+    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_OPTIONAL_MEMORY,
+    KEY_PROFILE_WINDOW_TOKEN_BUDGET, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
 };
 use crate::claim::ClaimSource;
 use crate::error::{ArtifactError, Error, Result};
@@ -30,6 +30,7 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
     let mut budget_split = None;
     let mut compaction_backend = None;
     let mut compaction = None;
+    let mut optional_memory = None;
     let mut seen = [false; MEMORY_PROFILE_KEYS.len()];
 
     for (entry_key, value) in entries {
@@ -49,6 +50,13 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
         if seen[index] {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "duplicate memory_profile key",
+            )));
+        }
+        // The added key is encoded last, so a body that carries it re-encodes
+        // to its own bytes only when nothing follows it.
+        if optional_memory.is_some() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "memory_profile optional_memory must be the last key",
             )));
         }
         seen[index] = true;
@@ -80,6 +88,11 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
                         )))?;
                 compaction = Some(CompactionOwnership::parse(text)?);
             }
+            KEY_PROFILE_OPTIONAL_MEMORY => {
+                optional_memory = Some(super::optional_memory::decode_optional_memory_profile(
+                    value,
+                )?);
+            }
             _ => unreachable!("index resolved from MEMORY_PROFILE_KEYS"),
         }
     }
@@ -99,6 +112,7 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
         compaction: compaction.ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "missing required memory_profile key compaction",
         )))?,
+        optional_memory,
     })
 }
 

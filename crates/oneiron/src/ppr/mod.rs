@@ -15,9 +15,9 @@ pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
 };
-#[cfg(test)]
-pub(crate) use self::policy::lambda_for_kind;
 pub(crate) use self::policy::{SeedWeighting, canonical_vad_alpha};
+#[cfg(test)]
+pub(crate) use self::policy::{lambda_for_kind, specificity_seed_weights};
 pub(crate) use self::query::{
     DeferredPprCacheWrite, ppr_query_in_txn_with_diagnostics,
     ppr_query_in_txn_with_vad_deferred_cache, ppr_query_scoped_in_txn,
@@ -40,7 +40,7 @@ thread_local! {
 mod tests;
 
 #[cfg(test)]
-use self::{cache_store::*, policy::*, query::*, walk::*};
+use self::{cache_store::*, query::*, walk::*};
 #[cfg(test)]
 use crate::config::VaultConfig;
 #[cfg(test)]
