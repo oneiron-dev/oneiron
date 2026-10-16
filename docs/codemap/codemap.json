@@ -1613,7 +1613,7 @@
      "path": "src/authority/causal_write.rs",
      "purpose": "Causal authorization across actor revoke/regrant windows",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1
      }
@@ -1661,7 +1661,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum predicates",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -1702,8 +1702,28 @@
      "path": "src/authority/fold_engine/entry_points.rs",
      "purpose": "The fold's entry points: the reference, seen-time, posture, peer and local-observation variants over…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/fold_project.rs",
+     "purpose": "The fold's projection: from the raw merge of the surviving rows' states to the folded authority",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/fold_resume.rs",
+     "purpose": "A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -1822,7 +1842,7 @@
      "path": "src/authority/install_fold.rs",
      "purpose": "The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -1832,10 +1852,10 @@
       "AuthorityLogCheck"
      ],
      "path": "src/authority/log_budget.rs",
-     "purpose": "Pinned bounds on authority-fold work, and the store-door checks that keep a stored log inside them (H72)",
+     "purpose": "The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72)",
      "surface": {
-      "const": 6,
-      "crate-vis": 13,
+      "const": 7,
+      "crate-vis": 15,
       "fn": 3,
       "struct": 1
      }
@@ -1976,7 +1996,7 @@
      "path": "src/authority/observation_policy.rs",
      "purpose": "Device-local authority observation policy and its versioned duration row",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 1,
       "fn": 2,
       "struct": 1
@@ -2257,6 +2277,24 @@
      "path": "src/authority/tests/fold_budget.rs",
      "purpose": "Authority-fold work stays bounded, and the store doors keep a log inside the bounds (H72, W2-T3)",
      "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/fold_resume.rs",
+     "purpose": "The resumed fold against the whole fold, its oracle (exactness is the named high-risk invariant): a chain of…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/fold_scale.rs",
+     "purpose": "The fold's measured cost on a long log: the table behind the memory floor's coefficients and the headroom…",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "s",
@@ -2683,7 +2721,7 @@
      "path": "src/authority/tier_floor.rs",
      "purpose": "Causal floor updates: softenings clear only observed restrictions",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -6738,7 +6776,7 @@
      "path": "src/campaign/claims/store.rs",
      "purpose": "Store-aware claim reads: stage CAS, live-head scans, and DNC matching",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -10569,7 +10607,7 @@
      "path": "src/comm/consent.rs",
      "purpose": "Human consent gates, send overrides and standing opt-out folds",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 12
      }
     },
@@ -10588,7 +10626,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 4
      }
     },
@@ -10642,6 +10680,16 @@
      "purpose": "COMM_RECORD event/gate/receipt storage, MessagePack codec and shared value helpers",
      "surface": {
       "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/comm/stop_hold.rs",
+     "purpose": "The send hold of an inbound STOP (F06): the external-effect gate's read of a STOP's standing opt-out, and…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -13661,7 +13709,7 @@
      "path": "src/counterparty_contact/storage.rs",
      "purpose": "Counterparty contact lookup and party-channel index keys and helpers",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -19175,7 +19223,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/effect_contacts.rs",
@@ -27199,7 +27247,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/connector_qualification.rs",
@@ -41972,7 +42020,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 118,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42175,7 +42223,7 @@
      "purpose": "—"
     },
     "comm": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43290,8 +43338,8 @@
    },
    "over_bar": 46,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2602,
-   "test_files": 886
+   "source_files": 2605,
+   "test_files": 888
   },
   "oneiron-android": {
    "files": [
