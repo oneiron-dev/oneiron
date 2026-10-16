@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use oneiron::llm::media::wav::pcm16_wav;
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaUsage,
+    MediaVoice,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId};
 use serde_json::{Value as JsonValue, json};
@@ -59,8 +60,8 @@ impl HostedSpeech {
         // A typed voice, or a raw provider voice id as the `voice` param;
         // never both, and these wires speak in no default voice.
         let raw = request.params.remove("voice");
-        let voice = match (&request.voice, raw) {
-            (Some(voice), None) => voice.wire_id().to_owned(),
+        let voice = match (request.voice.as_ref().map(MediaVoice::wire_id), raw) {
+            (Some(Some(id)), None) => id.to_owned(),
             (None, Some(JsonValue::String(id))) => id,
             _ => return Err(FatalLlmError::InvalidRequest.into()),
         };

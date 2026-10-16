@@ -333,9 +333,11 @@ pub struct MediaRequest {
 }
 
 /// The voice of one speech call. A banked identity (ARCH-0061 §5, the
-/// render-target law) lives in the vault's reference bank; a provider only
-/// ever sees its target's recorded voice id for it, which the host resolved
-/// from the bank for this call's rung.
+/// render-target law) lives in the vault's reference bank. A cloning
+/// provider only ever sees its target's recorded voice id for it; a target
+/// that keeps no clone (an own-server VoxCPM2 worker) gets the identity's
+/// reference clip with each call. The host resolved either from the bank
+/// for this call's rung.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MediaVoice {
@@ -344,15 +346,33 @@ pub enum MediaVoice {
     /// A banked identity's clone on this call's target: the provider's
     /// disposable id for it.
     Clone { id: String },
+    /// A banked identity's own source clip and its transcript, fenced by
+    /// the host at the bank's revision of the identity's refs. The clip is
+    /// the person's raw voice: only a wire that renders from a reference
+    /// takes it, and every other wire refuses the call.
+    Reference {
+        voice_id: String,
+        /// The identity's owner, as the bank records it (hex).
+        owner: String,
+        register: String,
+        /// The bank's revision of the identity's refs (hex): it changes
+        /// when the refs change or the identity is banked again.
+        revision: String,
+        media_type: String,
+        audio: Vec<u8>,
+        transcript: String,
+    },
 }
 
 impl MediaVoice {
-    /// The name or id the provider's wire carries.
+    /// The name or id the provider's wire carries; `None` for a reference,
+    /// which no wire names by id.
     #[must_use]
-    pub fn wire_id(&self) -> &str {
+    pub fn wire_id(&self) -> Option<&str> {
         match self {
-            Self::Stock { name } => name,
-            Self::Clone { id } => id,
+            Self::Stock { name } => Some(name),
+            Self::Clone { id } => Some(id),
+            Self::Reference { .. } => None,
         }
     }
 }

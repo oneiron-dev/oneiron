@@ -105,8 +105,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
-`local-openai-compat`, `oneironer`, and the speech-only `cartesia` and
-`elevenlabs`), `base_url`, `key_env` or `key_secret`, `headers`
+`local-openai-compat`, `oneironer`, and the speech-only `cartesia`,
+`elevenlabs` and `voxcpm2`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
@@ -814,6 +814,28 @@ tiers = { "tts-live" = "cartesia:sonic-3.6" }
 
 The shipped `tts_live` voice row is `own_server`, so a vault that speaks live
 on Cartesia sets that row's locality to `third_party`.
+
+A `voxcpm2` provider is the own-server VoxCPM2 worker (`deploy/voxcpm2`). It
+keeps no clones. A banked voice renders on it from the identity's own source
+clip and transcript: the named register's clip in the cascade, or the
+identity's first source clip for an `ai.speech` call. Generated refs are
+never used. The bank fences the clip at its revision of the identity's refs,
+and checks it again before the clip is sent and before the audio comes back.
+The worker speaks in no stock voice. Its `base_url` must be
+`http://127.0.0.1:<port>`, it is never reached through an environment proxy,
+and `key_env` names the worker's `VOXCPM_TOKEN`. A reference never goes to a
+`third_party` route.
+
+```toml
+[models.providers.voxcpm2]
+kind = "voxcpm2"
+base_url = "http://127.0.0.1:8769"
+key_env = "VOXCPM_TOKEN"
+
+[models.media.speech]
+rungs = ["voxcpm2:voxcpm2", "cartesia:sonic-3.6"]
+tiers = { "tts-live" = "voxcpm2:voxcpm2" }
+```
 
 The two-way voice cascade speaks and hears on these seats too. Bind voice
 tiers to rungs on the speech and transcribe seats:

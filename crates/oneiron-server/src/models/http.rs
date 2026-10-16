@@ -70,6 +70,8 @@ pub(super) enum MediaSend {
     Delete,
     Json(JsonValue),
     Multipart(reqwest::multipart::Form),
+    /// A framed binary body (`application/octet-stream`).
+    Octets(Vec<u8>),
 }
 
 /// A finished, non-streamed exchange.
@@ -90,6 +92,16 @@ impl ProviderHttp {
     /// Builds the client. A configured `key_env` that is unset or empty is a
     /// refusal here, so a seat never runs half-authenticated.
     pub(super) fn new(provider: &ProviderConfig, style: KeyStyle) -> anyhow::Result<Self> {
+        Self::build(provider, style, false)
+    }
+
+    /// Builds a client that never goes through an environment proxy: a
+    /// loopback URL is only a loopback destination when no proxy applies.
+    pub(super) fn direct(provider: &ProviderConfig, style: KeyStyle) -> anyhow::Result<Self> {
+        Self::build(provider, style, true)
+    }
+
+    fn build(provider: &ProviderConfig, style: KeyStyle, direct: bool) -> anyhow::Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         for (name, value) in &provider.headers {
             headers.insert(
@@ -116,13 +128,16 @@ impl ProviderHttp {
         // One request per call (`SingleSend`): a redirect is answered, never
         // followed, and nothing is sent twice. reqwest's default policy would
         // resend a request an HTTP/2 server refused at the protocol level.
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(provider.timeout_secs.min(30)))
-            .timeout(Duration::from_secs(provider.timeout_secs))
-            .build()?;
+            .timeout(Duration::from_secs(provider.timeout_secs));
+        if direct {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build()?;
         Ok(Self {
             client,
             base_url: provider.base_url.clone(),
@@ -215,6 +230,11 @@ impl ProviderHttp {
             MediaSend::Delete => self.client.delete(url),
             MediaSend::Json(body) => self.client.post(url).json(&body),
             MediaSend::Multipart(form) => self.client.post(url).multipart(form),
+            MediaSend::Octets(body) => self
+                .client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .body(body),
         };
         let response = request.send().await?;
         let status = response.status().as_u16();

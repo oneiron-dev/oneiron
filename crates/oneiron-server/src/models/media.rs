@@ -36,6 +36,7 @@ use super::ladder::{LadderRung, OfferLadder};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
 use super::status::{RungStatus, SeatState, SeatStatus};
+use super::voxcpm2_speech::VoxCpm2Speech;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
 /// The run every media call is admitted under, one run per call.
@@ -234,6 +235,9 @@ pub struct MediaRuntime {
     receipts: Arc<dyn RunReceiptSink>,
     host: Option<Arc<HostAccount>>,
     jobs: Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<HeldJob>>>>,
+    /// The render targets (provider names) that render from a banked
+    /// identity's reference clip on each call and keep no clone.
+    reference_targets: BTreeSet<String>,
 }
 
 impl MediaRuntime {
@@ -244,7 +248,15 @@ impl MediaRuntime {
             receipts: Arc::new(LoggedReceipts),
             host: None,
             jobs: Mutex::default(),
+            reference_targets: BTreeSet::new(),
         }
+    }
+
+    /// Whether `target` renders from a banked identity's reference clip on
+    /// each call (a `voxcpm2` worker) rather than from a recorded clone.
+    #[must_use]
+    pub fn renders_from_refs(&self, target: &str) -> bool {
+        self.reference_targets.contains(target)
     }
 
     /// Builds each `[models.media]` seat. A rung whose provider cannot
@@ -263,6 +275,12 @@ impl MediaRuntime {
             config.media.budget_units,
             BudgetExhaustionPolicy::Suspend,
         ));
+        runtime.reference_targets = config
+            .providers
+            .iter()
+            .filter(|(_, provider)| provider.kind.renders_from_refs())
+            .map(|(name, _)| name.clone())
+            .collect();
         let backends = media_backends(config);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
@@ -650,6 +668,25 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
                         models: wire_models,
                     }) as Arc<dyn MediaBackend>
                 }),
+            ProviderKind::Voxcpm2 => {
+                // The worker's paths sit at its root, and it takes no call
+                // without its bearer credential. It is on loopback, so no
+                // environment proxy may carry the refs elsewhere.
+                let mut provider = provider.clone();
+                provider.base_url = provider.base_url.trim_end_matches('/').to_owned();
+                if provider.key_env.is_none() {
+                    Err(anyhow::anyhow!(
+                        "a voxcpm2 worker takes a bearer credential; set key_env"
+                    ))
+                } else {
+                    ProviderHttp::direct(&provider, KeyStyle::Bearer).map(|http| {
+                        Arc::new(VoxCpm2Speech {
+                            http,
+                            models: wire_models,
+                        }) as Arc<dyn MediaBackend>
+                    })
+                }
+            }
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
                 Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
                     as Arc<dyn MediaBackend>
