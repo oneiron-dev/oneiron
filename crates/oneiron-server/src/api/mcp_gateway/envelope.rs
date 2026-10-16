@@ -64,6 +64,13 @@ pub(crate) struct McpGatewayError {
     // The indirection is private — `mcp_error_response` moves the same `Value`
     // back out under the same key, so nothing on the wire moves.
     pub(super) effective_scope: Option<Box<Value>>,
+    /// The bound a request field passed and the bytes it carried, surfaced
+    /// as `error.data.max_bytes` and `error.data.received_bytes`. Boxed for
+    /// size, as `effective_scope` is.
+    pub(super) byte_bound: Option<Box<(usize, usize)>>,
+    /// A `WRONG_ROOT` refusal's correction, surfaced as `error.data.attempted`,
+    /// `error.data.replacement` and `error.data.schemaRef`.
+    pub(super) wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
 }
 
 impl McpGatewayError {
@@ -76,7 +83,26 @@ impl McpGatewayError {
             vault_read: None,
             successor_short_id: None,
             effective_scope: None,
+            byte_bound: None,
+            wrong_root: None,
         }
+    }
+
+    /// A request field past a byte bound (`[limits]`): the typed tool error
+    /// names the field, the bound and the bytes received.
+    pub(super) fn payload_too_large(
+        field: impl Into<String>,
+        max_bytes: usize,
+        received_bytes: usize,
+    ) -> Self {
+        let mut error = Self::new(
+            -32602,
+            "payload_too_large",
+            "a request field exceeds its byte bound",
+        )
+        .with_field(field);
+        error.byte_bound = Some(Box::new((max_bytes, received_bytes)));
+        error
     }
 
     pub(super) fn with_field(mut self, field: impl Into<String>) -> Self {

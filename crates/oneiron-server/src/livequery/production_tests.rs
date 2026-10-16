@@ -25,10 +25,20 @@ const READ_GRANT: &str = "66666666666666666666666666666666";
 pub(super) const AT: u64 = 1_772_000_000;
 
 pub(super) fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
-    server_with_config(oneiron::VaultConfig::device())
+    server_with_limits(crate::config::LimitsConfig::default())
 }
 
-fn server_with_config(config: oneiron::VaultConfig) -> (tempfile::TempDir, Arc<SyncServer>) {
+/// [`server`] with `limits` for its `[limits]` rows.
+pub(super) fn server_with_limits(
+    limits: crate::config::LimitsConfig,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
+    server_with_config(oneiron::VaultConfig::device(), limits)
+}
+
+fn server_with_config(
+    config: oneiron::VaultConfig,
+    limits: crate::config::LimitsConfig,
+) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     for (id, kind) in [
@@ -72,6 +82,7 @@ fn server_with_config(config: oneiron::VaultConfig) -> (tempfile::TempDir, Arc<S
             SyncServerConfig {
                 auth_secret: Some(SECRET.to_owned()),
                 max_messages_per_sec: 10000,
+                limits,
                 ..Default::default()
             },
         )
@@ -434,25 +445,38 @@ async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved(
     ] {
         assert_eq!(rpc(&server, &auth, "receipts", value)["result"], json!([]));
     }
-    for method in ["recall", "receipts"] {
-        for limit in [0, 1001] {
-            let reply = rpc(
-                &server,
-                &auth,
-                method,
-                json!({"query":"solar","limit":limit}),
-            );
-            assert_error(&reply, "BAD_REQUEST");
-            assert_eq!(
-                reply["error"]["message"],
-                "limit must be between 1 and 1000"
-            );
-            assert_eq!(
-                reply["error"]["suggestions"],
-                json!(["Request a smaller page and paginate."])
-            );
-        }
+    for limit in [0, 1001] {
+        let reply = rpc(
+            &server,
+            &auth,
+            "receipts",
+            json!({"query":"solar","limit":limit}),
+        );
+        assert_error(&reply, "BAD_REQUEST");
+        assert_eq!(
+            reply["error"]["message"],
+            "limit must be between 1 and 1000"
+        );
+        assert_eq!(
+            reply["error"]["suggestions"],
+            json!(["Request a smaller page and paginate."])
+        );
     }
+    // Recall serves a limit past the ceiling at it and says so (F21 H46); a
+    // zero limit is still refused.
+    let reply = rpc(
+        &server,
+        &auth,
+        "recall",
+        json!({"query":"solar","limit":1001}),
+    );
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["limit_clamped"], true,
+        "{reply}"
+    );
+    let reply = rpc(&server, &auth, "recall", json!({"query":"solar","limit":0}));
+    assert_error(&reply, "BAD_REQUEST");
+    assert_eq!(reply["error"]["message"], "limit must be at least 1");
     for value in [
         Value::Null,
         json!({}),
@@ -1202,7 +1226,7 @@ async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
 
     let mut config = oneiron::VaultConfig::device();
     config.embedding_model = Some("test/indexed-publication@v1".into());
-    let (_dir, server) = server_with_config(config);
+    let (_dir, server) = server_with_config(config, crate::config::LimitsConfig::default());
     server.vault().set_indexed_idle_delay_ms(0).unwrap();
     server
         .vault()

@@ -78,16 +78,26 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// OF-520 questions retrieval queries past `config.limits` raised.
+    pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The line app-tier state kept between frames is charged to, sized by
+    /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
+    pub(crate) retained: Arc<crate::byte_line::ByteLine>,
+    /// The presence hub's charge on `retained`.
+    pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// The `[browser]` guest each code run starts for its own browser verbs.
+    /// `None` answers every browser call `browser_unbound`.
+    pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -114,6 +124,12 @@ pub struct SyncServer {
     pub(crate) tagger: Option<TaggerSlot>,
     /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
     pub(crate) llm: Option<crate::models::RawInference>,
+    /// The house model's decision read the owner probes at
+    /// `/v1/llm/decision_read`, and the meter its reads are admitted on;
+    /// `None` turns the route off.
+    pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
+    /// Reads that route holds at once (`limits.decision_reads`).
+    pub(crate) decision_reads: crate::admission::Admission<()>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -129,9 +145,42 @@ pub struct SyncServer {
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// Where the owner's feedback goes; `None` until configured.
     pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
+    /// The open feedback inbox's flood cap, counted while the inbox is on.
+    pub(crate) feedback_flood: crate::api::FloodCap,
+    /// The port of the artifact-only listener on the API's host, set by the
+    /// serve path once it is bound. `None` where none serves.
+    artifact_port: Option<u16>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
+    /// With the override set, the runtime instant it holds from: the booking
+    /// clock then moves with the runtime's (paused) time.
+    #[cfg(test)]
+    pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
+}
+
+/// Sets the vault's live rows from `[limits]` and points their crossings at
+/// this server's questions.
+fn live_rows(
+    vault: &oneiron::Vault,
+    limits: &crate::config::LimitsConfig,
+    questions: &Arc<crate::wire_telemetry::LimitQuestions>,
+) {
+    use crate::wire_telemetry::LimitRow;
+    use oneiron::live_rows::{LiveRow, LiveRows};
+    vault.set_live_rows(LiveRows {
+        message_streams: limits.message_streams,
+        live_documents: limits.live_documents,
+        wait: limits.queue_wait(),
+    });
+    let questions = Arc::clone(questions);
+    vault.set_live_row_crossing(Some(Arc::new(move |row, bound, observed| {
+        let row = match row {
+            LiveRow::MessageStreams => LimitRow::MessageStreams,
+            LiveRow::LiveDocuments => LimitRow::LiveDocuments,
+        };
+        questions.ask(row, bound, observed);
+    })));
 }
 
 impl SyncServer {
@@ -233,21 +282,48 @@ impl SyncServer {
         // with it the outbound sink holding the sender) drops with this server.
         spawn_local_change_producer(&reassert_manager, &broadcast_tx);
 
+        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
+        let retained = Arc::new(crate::byte_line::ByteLine::new(
+            crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
+            usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),
+        ));
+        let presence = Arc::new(super::presence::PresenceCharge::new(
+            Arc::clone(&retained),
+            Arc::clone(wire_telemetry.limit_questions()),
+        ));
         let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
         super::message_stream::spawn_message_stream_producer(
             &vault,
             &ephemeral_store,
+            &presence,
             &broadcast_tx,
             &config,
         );
-        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        // The engine's `[limits]` rows on this vault ask where the server's do.
+        let questions: Arc<crate::wire_telemetry::LimitQuestions> =
+            Arc::clone(wire_telemetry.limit_questions());
+        vault.set_limit_ask(questions);
+        let decision_reads = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::DecisionReads,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.decision_reads,
+            config.limits.queue_wait(),
+        );
+        let feedback_flood = crate::api::FloodCap::new(
+            config.feedback_inbox.notes_per_sender,
+            config.feedback_inbox.notes_per_hour,
+            std::time::Instant::now(),
+        );
         Ok(Self {
+            retained,
+            presence,
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
-            ),
+            )?,
             wire_telemetry,
             vault,
             root_doc,
@@ -264,24 +340,32 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
+            query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
             mcp_registry,
             mcp_code_host: None,
+            browser_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
             tagger: None,
             llm: None,
+            decision_read: None,
+            decision_reads,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
             extraction_egress: None,
             owner_host: None,
             feedback: None,
+            feedback_flood,
+            artifact_port: None,
             #[cfg(test)]
             booking_test_now_secs: None,
+            #[cfg(test)]
+            booking_test_clock_from: None,
         })
     }
 
@@ -336,6 +420,17 @@ impl SyncServer {
         self
     }
 
+    /// Gives code runs a browser guest, from the `[browser]` section.
+    #[must_use]
+    pub fn with_browser_guest(mut self, guest: Option<oneiron_browser::BrowserGuest>) -> Self {
+        self.browser_guest = guest;
+        self
+    }
+
+    pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
+        self.browser_guest.as_ref()
+    }
+
     pub(crate) fn code_execution_host(&self) -> Option<&Arc<dyn crate::mcp::McpCodeExecutionHost>> {
         self.mcp_code_host
             .as_ref()
@@ -381,6 +476,18 @@ impl SyncServer {
         self
     }
 
+    /// Serves `door` at `/v1/llm/decision_read`, each read admitted as a run
+    /// on `meter`.
+    #[must_use]
+    pub fn with_decision_read(
+        mut self,
+        door: crate::models::DecisionReadDoor,
+        meter: oneiron::BudgetGuard,
+    ) -> Self {
+        self.decision_read = Some((door, meter));
+        self
+    }
+
     /// Writes every model call's run receipts to `receipts` instead of the
     /// log, including the calls of models and providers attached before.
     #[must_use]
@@ -403,6 +510,10 @@ impl SyncServer {
     pub fn with_ai(mut self, ai: crate::ai_host::AiHandle) -> Self {
         if let Some(raw) = ai.raw_inference() {
             self.llm = Some(raw);
+        }
+        // Its reads go on the raw routes' meter.
+        if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
+            self.decision_read = Some((door, raw.meter().clone()));
         }
         self.ai = ai;
         self
@@ -452,6 +563,20 @@ impl SyncServer {
     ) -> Self {
         self.feedback = host.map(Arc::new);
         self
+    }
+
+    /// Records that the artifact-only router ([`crate::build_artifact_app`])
+    /// serves this server's `/a/` on `port` of the API's host. Health then
+    /// advertises the port, and the API's own `/a/` sandboxes code bundles,
+    /// whose scripts would otherwise run on the API's origin.
+    #[must_use]
+    pub fn with_artifact_listener(mut self, port: u16) -> Self {
+        self.artifact_port = Some(port);
+        self
+    }
+
+    pub(crate) fn artifact_port(&self) -> Option<u16> {
+        self.artifact_port
     }
 
     /// Returns the vault backing this server (used by integration tests to

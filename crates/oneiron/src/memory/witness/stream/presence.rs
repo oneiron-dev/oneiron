@@ -3,6 +3,8 @@ use super::*;
 use crate::sync::{EphemeralStore, LoroValue, transport};
 use tokio::sync::broadcast;
 const FRAME_BUDGET: usize = 64 * 1024;
+/// Frames the lossy channel buffers for a socket that has not read them.
+const PRESENCE_FRAMES: usize = 256;
 /// The socket consumes this lossy bounded channel directly, never SyncQueue.
 pub(crate) struct StreamPresence {
     pub(crate) store: EphemeralStore,
@@ -11,7 +13,7 @@ pub(crate) struct StreamPresence {
 }
 impl Default for StreamPresence {
     fn default() -> Self {
-        let (sender, _) = broadcast::channel(MAX_MESSAGE_STREAMS);
+        let (sender, _) = broadcast::channel(PRESENCE_FRAMES);
         Self {
             store: EphemeralStore::new(DEFAULT_MESSAGE_STREAM_IDLE_MS as i64),
             sender,

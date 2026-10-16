@@ -53,6 +53,8 @@ fn batch_requires_logged_owner_instruction_with_matching_request_hash() {
 #[test]
 fn owner_instruction_row_is_lane_owned_and_content_keyed() {
     let (dir, vault) = open_test_vault_with(VaultConfig::default());
+    // Root and bind first, so the one new row is the instruction's.
+    crate::test_util::bind_test_owner(&vault, id(OWNER));
     let before = meta(&vault);
     let req = logged(&vault);
     let rows = meta(&vault);

@@ -5,6 +5,9 @@ use super::claims::{
     PREDICATE_COMM_OPT_OUT, PREDICATE_COMM_SEND_OVERRIDE, PREDICATE_COMM_THREAD_MEMBER,
     SendOverrideMatch, SendOverrideScope, validate_comm_claim_structure,
 };
+use super::opt_out_slots::{
+    consume_clear_gates_in_txn, opt_out_slot_heads_in_txn, pending_clear_request_at,
+};
 use super::parties::{
     active_comm_party_key_in_txn, resolve_or_create_party_in_txn, resolve_party,
     resolve_party_ref_in_txn,
@@ -19,9 +22,7 @@ use super::records::{
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimBody;
-use crate::counterparty_contact::{
-    CounterpartyOptOutReason, normalize_channel_class, rematerialize_contact_cache_in_txn,
-};
+use crate::counterparty_contact::{CounterpartyOptOutReason, normalize_channel_class};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -31,6 +32,7 @@ use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
+use std::collections::BTreeSet;
 
 /// The `comm.opt_out` reason vocabulary is the RECEIPT vocabulary
 /// (`CounterpartyOptOutReason::receipt_reason`), never the `as_str()` one: the
@@ -116,34 +118,18 @@ pub fn request_opt_out_clear(
     };
     vault.try_with_write_txn_grouped(|wtxn| {
         let records = comm_records_in_txn(vault, &*wtxn)?;
-        let active = matching_claims_in_txn(
-            vault,
-            &*wtxn,
-            party_ref,
-            PREDICATE_COMM_OPT_OUT,
-            Some(channel_class),
-            None,
-            true,
-        )?;
-        require_at_most_one(&active)?;
-        let Some((claim_ref, _)) = active.into_iter().next() else {
+        let subjects = opt_out_subjects_in_txn(vault, &*wtxn, party_ref)?;
+        // A merged shell's head holds the party's sends as the party's own
+        // does, so a clear request must find it (F06 R2-F1).
+        let active = opt_out_slot_heads_in_txn(vault, &*wtxn, &subjects, channel_class)?;
+        let Some(claim_ref) = active.first().map(|head| head.claim_ref) else {
             return Err(CommError::ActiveOptOutNotFound);
         };
-        let pending_count = records
+        if records
             .iter()
-            .filter(|(_, record)| {
-                matches!(record, CommRecord::Gate {
-                    party_ref: candidate_party,
-                    channel_class: candidate_channel,
-                    pending: true,
-                    ..
-                } if *candidate_party == party_ref && candidate_channel == channel_class)
-            })
-            .count();
-        match pending_count {
-            0 => {}
-            1 => return Ok(CommClearOptOutOutcome::PendingHumanRuling),
-            _ => return Err(CommError::InvalidRecord),
+            .any(|(_, record)| pending_clear_request_at(record, &subjects, channel_class).is_some())
+        {
+            return Ok(CommClearOptOutOutcome::PendingHumanRuling);
         }
         let gate = CommRecord::Gate {
             party_ref,
@@ -193,132 +179,94 @@ pub fn approve_pending_opt_out_clear(
         if actor.actor_class() != EdgeActorClass::Human {
             return Err(CommError::HumanApprovalRequired);
         }
+        let subjects = opt_out_subjects_in_txn(vault, &*wtxn, party_ref)?;
         let records = comm_records_in_txn(vault, &*wtxn)?;
-        let mut gates = records.into_iter().filter(|(_, record)| {
-            matches!(record, CommRecord::Gate {
-                party_ref: candidate_party,
-                channel_class: candidate_channel,
-                pending: true,
-                ..
-            } if *candidate_party == party_ref && candidate_channel == channel_class)
-        });
-        let gate = gates.next();
-        if gates.next().is_some() {
-            return Err(CommError::InvalidRecord);
-        }
-        let Some((gate_id, gate)) = gate else {
+        // Twins that each held a request before their merge leave one gate
+        // per subject. The ruling answers all of them, and the OLDEST request
+        // is the one judged stale, so a STOP after any of them refuses it.
+        let gates: Vec<(EntityId, &CommRecord, u64)> = records
+            .iter()
+            .filter_map(|(gate_id, record)| {
+                pending_clear_request_at(record, &subjects, channel_class)
+                    .map(|requested_at| (*gate_id, record, requested_at))
+            })
+            .collect();
+        let (Some(oldest_request), Some(newest_request)) = (
+            gates.iter().map(|(_, _, at)| *at).min(),
+            gates.iter().map(|(_, _, at)| *at).max(),
+        ) else {
             return Err(CommError::PendingGateNotFound);
         };
-        let CommRecord::Gate {
-            claim_ref,
-            created_at,
-            ..
-        } = gate
-        else {
-            unreachable!("filtered to gate")
-        };
-        if ruled_at < created_at {
+        if ruled_at < newest_request {
             return Err(CommError::RulingPredatesGate);
         }
-        let active = matching_claims_in_txn(
-            vault,
-            &*wtxn,
-            party_ref,
-            PREDICATE_COMM_OPT_OUT,
-            Some(channel_class),
-            None,
-            true,
-        )?;
-        require_at_most_one(&active)?;
-        let live_claim = active.into_iter().next();
+        // Every head on the slot, the merged shells' included: each holds the
+        // party's sends, so a clear that left one standing would clear nothing
+        // (F06 R2-F1). Each head stays on the subject it was said about.
+        let heads = opt_out_slot_heads_in_txn(vault, &*wtxn, &subjects, channel_class)?;
         // Fail-closed on a stale gate. The gate records a clear REQUEST;
         // approval authorizes that request, not the current state — a request
         // that predates the party's restrictive assertion is stale, and the
-        // restriction forces a fresh request. Refuse (consume the stale gate,
+        // restriction forces a fresh request. Refuse (consume the stale gates,
         // no receipt) if the opt-out was (re-)asserted at or after the request:
-        //   (a) the STOP that established the live head postdates the request
+        //   (a) the STOP that established a live head postdates the request
         //       (gate.created_at < head_valid_from), or
-        //   (b) a later projected InboundStop re-asserted this (party, channel)
-        //       past the head, at or after the request.
+        //   (b) a later projected InboundStop on any of the party's subjects
+        //       re-asserted this channel past the heads, at or after the
+        //       request. The event keeps its source spelling, so it is
+        //       compared normalized, as the projector read it (F06 R3-F3).
         // This is the approve-time half of the restrictive-wins rule the
         // projector enforces at :1013.
-        if let Some((_, matched)) = &live_claim {
-            let head_valid_from = matched.valid_from.unwrap_or(0);
-            let superseded = created_at < head_valid_from
-                || comm_records_in_txn(vault, &*wtxn)?
-                    .iter()
-                    .any(|(_, record)| {
-                        matches!(record, CommRecord::Event {
+        if let Some(newest_head) = heads.iter().map(|head| head.valid_from).max() {
+            let superseded = heads.iter().any(|head| oldest_request < head.valid_from)
+                || records.iter().any(|(_, record)| {
+                    matches!(record, CommRecord::Event {
                         kind: CommEventKind::InboundStop,
                         party_ref: event_party,
                         channel_class: Some(event_channel),
                         occurred_at,
                         projected: true,
                         ..
-                    } if *event_party == party_ref
-                        && event_channel == channel_class
-                        && *occurred_at >= created_at
-                        && *occurred_at > head_valid_from)
-                    });
+                    } if subjects.contains(event_party)
+                        && normalize_channel_class(event_channel) == channel_class
+                        && *occurred_at >= oldest_request
+                        && *occurred_at > newest_head)
+                });
             if superseded {
-                let consumed = CommRecord::Gate {
-                    party_ref,
-                    channel_class: channel_class.to_owned(),
-                    claim_ref,
-                    created_at,
-                    pending: false,
-                };
-                put_comm_record_in_txn(vault, wtxn, gate_id, &consumed)?;
-                // Commit the consumed gate, then refuse after the txn — returning
-                // Err here would roll the consume back.
+                consume_clear_gates_in_txn(vault, wtxn, &gates)?;
+                // Commit the consumed gates, then refuse after the txn —
+                // returning Err here would roll the consume back.
                 return Ok(ClearRuling::Superseded);
             }
         }
-        if let Some((live_claim_ref, matched)) = &live_claim {
-            let close_at = ruled_at.max(matched.valid_from.unwrap_or(ruled_at));
-            vault.retract_claim_in_txn(wtxn, live_claim_ref, close_at)?;
-            // Claims moved; the cache follows in the SAME transaction
-            // (ONE-1752), exactly as the STOP projector does on the way in. A
-            // cleared head that left type-132 saying opted-out would make the
-            // gate keep escalating on cache state the claims no longer carry —
-            // cache as authority, the inversion the claims-first rule forbids.
-            // The sweep is class-scoped like the head it just retracted, so it
-            // re-derives every row that head could have suppressed and no
-            // other; whether a REMAINING head still suppresses each of those
-            // rows stays the fold's decision.
-            if let Some(party_key) = active_comm_party_key_in_txn(vault, &*wtxn, party_ref)? {
-                crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
-                    vault,
-                    wtxn,
-                    &party_key,
-                    Some(channel_class),
-                    ruled_at,
-                )?;
-            }
+        for head in &heads {
+            let close_at = ruled_at.max(head.valid_from);
+            vault.retract_claim_in_txn(wtxn, &head.claim_ref, close_at)?;
         }
-        let consumed = CommRecord::Gate {
+        // Claims moved; the cache follows in the SAME transaction
+        // (ONE-1752), exactly as the STOP projector does on the way in. A
+        // cleared head that left type-132 saying opted-out would make the
+        // gate keep escalating on cache state the claims no longer carry —
+        // cache as authority, the inversion the claims-first rule forbids.
+        // The sweep is class-scoped like the heads it just retracted, so it
+        // re-derives every row those heads could have suppressed and no
+        // other; whether a REMAINING head still suppresses each of those
+        // rows stays the fold's decision.
+        let cleared: BTreeSet<EntityId> = heads.iter().map(|head| head.subject).collect();
+        rematerialize_subject_contacts_in_txn(vault, wtxn, &cleared, channel_class, ruled_at)?;
+        consume_clear_gates_in_txn(vault, wtxn, &gates)?;
+        if heads.is_empty() {
+            return Ok(ClearRuling::NoActiveOptOut);
+        }
+        let receipt = CommRecord::Receipt {
             party_ref,
             channel_class: channel_class.to_owned(),
-            claim_ref,
-            created_at,
-            pending: false,
+            occurred_at: ruled_at,
+            outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
+            actor_ref: actor.entity_ref(),
         };
-        put_comm_record_in_txn(vault, wtxn, gate_id, &consumed)?;
-        if live_claim.is_some() {
-            let receipt = CommRecord::Receipt {
-                party_ref,
-                channel_class: channel_class.to_owned(),
-                occurred_at: ruled_at,
-                outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
-                actor_ref: actor.entity_ref(),
-            };
-            put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &receipt)?;
-        }
-        Ok(if live_claim.is_some() {
-            ClearRuling::Cleared
-        } else {
-            ClearRuling::NoActiveOptOut
-        })
+        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &receipt)?;
+        Ok(ClearRuling::Cleared)
     })?;
     match ruling {
         ClearRuling::Cleared => Ok(()),
@@ -397,39 +345,80 @@ impl StandingOptOutHead {
     }
 }
 
+/// The subjects whose `comm.opt_out` heads stand for one party: the party and
+/// every redirect shell around it.
+///
+/// A twin merge keeps each claim on its own subject, so the party's merged
+/// shells are read through as well: a STOP that landed on a shell before the
+/// merge still stands for the survivor (F06 H170). Split ancestry is read too;
+/// for a restriction the wider set is the safe one. The fold, the human clear
+/// and the contact refresh all take this one set, so a head that holds a send
+/// is always one a clear can reach.
+fn opt_out_subjects_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_ref: EntityId,
+) -> CommResult<BTreeSet<EntityId>> {
+    parties_opt_out_subjects_in_txn(&vault.store, rtxn, BTreeSet::from([party_ref]))
+}
+
+/// [`opt_out_subjects_in_txn`] for several parties at once, with a `Store`.
+pub(super) fn parties_opt_out_subjects_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    parties: BTreeSet<EntityId>,
+) -> CommResult<BTreeSet<EntityId>> {
+    let mut subjects =
+        crate::identity_redirect::inbound_redirect_shells_in_txn(store, rtxn, &parties)?;
+    subjects.extend(parties);
+    Ok(subjects)
+}
+
+/// The standing `comm.opt_out` head one claim body is, if it is one.
+pub(super) fn standing_opt_out_head(body: &ClaimBody) -> CommResult<Option<StandingOptOutHead>> {
+    if body.predicate != PREDICATE_COMM_OPT_OUT {
+        return Ok(None);
+    }
+    let claim = CommClaim::from_claim_body(body)?;
+    if !claim.is_standing() {
+        return Ok(None);
+    }
+    let CommClaimValue::OptOut {
+        channel_class,
+        reason,
+        occurred_at,
+        ..
+    } = claim.value
+    else {
+        return Ok(None);
+    };
+    Ok(Some(StandingOptOutHead {
+        channel_class,
+        reason,
+        occurred_at,
+    }))
+}
+
 /// Every standing `comm.opt_out` head for one party, on the caller's
 /// transaction. Channel-less and channel-scoped alike: the caller decides which
 /// apply, and no caller may be handed a filtered set that already dropped one.
+/// The heads are read on every subject of `opt_out_subjects_in_txn`.
 pub(crate) fn standing_opt_out_heads_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     party_ref: EntityId,
 ) -> CommResult<Vec<StandingOptOutHead>> {
+    let subjects = opt_out_subjects_in_txn(vault, rtxn, party_ref)?;
     let mut heads = Vec::new();
-    for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
+    let claim_ids = subjects
+        .iter()
+        .map(|subject| vault.claims_for_subject_in_txn(rtxn, subject))
+        .collect::<crate::error::Result<Vec<_>>>()?;
+    for claim_id in claim_ids.into_iter().flatten() {
         let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
             continue;
         };
-        if body.predicate != PREDICATE_COMM_OPT_OUT {
-            continue;
-        }
-        let claim = CommClaim::from_claim_body(&body)?;
-        if !claim.is_standing() {
-            continue;
-        }
-        if let CommClaimValue::OptOut {
-            channel_class,
-            reason,
-            occurred_at,
-            ..
-        } = claim.value
-        {
-            heads.push(StandingOptOutHead {
-                channel_class,
-                reason,
-                occurred_at,
-            });
-        }
+        heads.extend(standing_opt_out_head(&body)?);
     }
     Ok(heads)
 }
@@ -562,6 +551,7 @@ pub(crate) fn send_override_for_send_in_txn(
         // owner's ruling.
         if body.predicate != PREDICATE_COMM_SEND_OVERRIDE
             || body.source == Some(crate::claim::ClaimSource::Imported)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &claim_id)?
         {
             continue;
         }
@@ -608,7 +598,7 @@ pub(crate) fn send_override_for_send_in_txn(
 
 /// CLAIM ids attached to `subject` through inbound `claim_of` edges, read with
 /// a `Store` alone.
-fn subject_claim_ids_in_txn(
+pub(super) fn subject_claim_ids_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
@@ -629,7 +619,7 @@ fn subject_claim_ids_in_txn(
 
 /// The CLAIM body stored at `id`, or `None` when the row is absent or is not a
 /// type-0 CLAIM.
-fn claim_body_in_txn(
+pub(super) fn claim_body_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -714,10 +704,7 @@ pub(crate) fn supersede_party_opt_out_head_in_txn(
 /// `channel_class`, inside the projector's own write transaction.
 ///
 /// Claims moved; the cache follows in the SAME transaction, so the gate's
-/// type-132-fed fold can never observe the old suppression state. The
-/// party-channel index (ONE-1868) names the contacts, which keeps an
-/// email-scoped STOP from re-deriving a telegram contact: channel scope is
-/// decided by which contacts are enumerated here.
+/// type-132-fed fold can never observe the old suppression state.
 pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -725,17 +712,59 @@ pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
     channel_class: &str,
     now: u64,
 ) -> CommResult<()> {
-    let Some(party_key) = active_comm_party_key_in_txn(vault, &*wtxn, party_ref)? else {
-        return Ok(());
-    };
-    let contacts = crate::counterparty_contact::counterparty_contacts_by_party_channel(
+    rematerialize_subject_contacts_in_txn(
+        vault,
+        wtxn,
+        &BTreeSet::from([party_ref]),
+        channel_class,
+        now,
+    )
+}
+
+/// Re-derives the type-132 cache of every contact that folds a
+/// `channel_class` head standing on one of `subjects`.
+///
+/// A contact folds the heads of the ACTIVE party its key resolves to, and that
+/// party reads its shells through, so a head on a shell reaches the contacts of
+/// every active party the shell points at: a twin's survivor shares its key
+/// (F06 H170), and a merge of two different keys puts the survivor's contacts
+/// under the shell's heads (F06 R2-F3). Those parties come from the witnesses
+/// the fold's inbound walk reads, not the redirect table alone, and the walk
+/// has no depth or cycle error, so a dropped table or a long chain can neither
+/// narrow the refresh nor refuse the STOP (F06 R3-F1, R3-F2). A merged
+/// entity's own key is skipped: no active party answers it, so a rebuild there
+/// folds none of the heads it still carries and would drop its STOP (F06
+/// R4-F1). That also keeps a chain at one refresh per active head (R4-F2).
+/// Each key's contacts come from the full scan the send gate also uses:
+/// the party-channel index (ONE-1868) cannot prove it lists every contact.
+/// Channel scope stays the fold's class match, so an email STOP never
+/// re-derives a telegram contact.
+fn rematerialize_subject_contacts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    subjects: &BTreeSet<EntityId>,
+    channel_class: &str,
+    now: u64,
+) -> CommResult<()> {
+    let mut parties = subjects.clone();
+    parties.extend(crate::identity_redirect::outbound_redirect_heads_in_txn(
         &vault.store,
         &*wtxn,
-        &party_key,
-        &normalize_channel_class(channel_class),
-    )?;
-    for (contact_id, _) in contacts {
-        rematerialize_contact_cache_in_txn(vault, wtxn, &contact_id, now)?;
+        subjects,
+    )?);
+    let mut party_keys = BTreeSet::new();
+    for party in parties {
+        party_keys.extend(active_comm_party_key_in_txn(vault, &*wtxn, party)?);
+    }
+    let channel_class = normalize_channel_class(channel_class);
+    for party_key in party_keys {
+        crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
+            vault,
+            wtxn,
+            &party_key,
+            Some(&channel_class),
+            now,
+        )?;
     }
     Ok(())
 }

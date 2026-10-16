@@ -93,6 +93,8 @@ mod sessions;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+mod feedback_inbox;
+pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
@@ -112,6 +114,7 @@ mod openapi;
 mod openapi_registry;
 // OF-559/OF-202/OF-211/OF-296: the owner's own actions — backups, the secret
 // scan switch, whole-batch import consent and whole-run agent consent.
+mod owner_origin;
 mod owner_routes;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
@@ -354,9 +357,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
-        .route("/a/{artifact}", get(serve_artifact_root))
-        .route("/a/{artifact}/", get(serve_artifact_root))
-        .route("/a/{artifact}/{*path}", get(serve_artifact_path))
+        .merge(artifact_routes())
         // ONE-1704: two SEPARATELY REGISTERED MCP endpoints, each pinned to one
         // immutable surface mode by its route entry. Nothing on the wire moves a
         // connection between them.
@@ -417,12 +418,53 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Published anonymous booking capabilities validate a live owner publication
         // and scoped tokens; they do not authorize access to private vault routes.
         .merge(self::booking::public_booking_router())
+        // The open feedback inbox: keyless, and mounted only when its
+        // config section turns it on (ARCH-0056 #open-inbox).
+        .merge(self::feedback_inbox::routes(&server))
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
         // owner's own off-record routes sit out here for the same reason.
         .nest("/v1/core/off-record", self::off_record_rooms::routes())
         .nest("/v1/owner", self::owner_routes::off_record_routes())
+        .with_state(server.clone())
+        .layer(middleware::from_fn_with_state(
+            server,
+            crate::auth::admit_http_binding,
+        ))
+}
+
+/// The `/a/` routes, which the API and the artifact-only listener both serve.
+fn artifact_routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/a/{artifact}", get(serve_artifact_root))
+        .route("/a/{artifact}/", get(serve_artifact_root))
+        .route("/a/{artifact}/{*path}", get(serve_artifact_path))
+}
+
+/// The artifact-only listener's router: this vault's `/a/`, and under each
+/// configured artifact domain, this vault at its own subdomain
+/// (`<vault>.<domain>/<artifact>/…`). No API route is reachable on it.
+pub(crate) fn artifact_app(server: Arc<SyncServer>) -> Router {
+    let local = vault_artifact_app(server.clone());
+    let mut hosts = ArtifactHosts::new(&server.config.artifact_domains);
+    if let Some(name) = server.config.artifact_vault_name.as_deref() {
+        hosts = hosts.with_vault_app(name, local.clone());
+    }
+    hosts.into_app(local)
+}
+
+/// One vault's artifact routes: `/a/` and nothing else, on an origin of its
+/// own. It keeps the API's wire receipts and its binding admission, which
+/// spends each holder proof's nonce, so a member's proof replays on neither
+/// listener.
+pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
+    artifact_routes()
+        .layer(axum::Extension(self::artifacts::ArtifactOnlyListener))
+        .layer(middleware::from_fn_with_state(
+            server.clone(),
+            crate::wire_telemetry::observe_http,
+        ))
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,
@@ -482,6 +524,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
         ai: server.ai.status().health(),
+        artifact_port: server.artifact_port(),
     })
 }
 
@@ -507,6 +550,13 @@ struct HealthResponse {
     runtime: RuntimeHealthStatus,
     /// Background AI state, redacted: states and reasons, never model names.
     ai: crate::ai_host::AiHealth,
+    /// The port on this host whose origin serves `/a/` with nothing else
+    /// beside it. Open artifacts there: on the API's origin a code bundle is
+    /// sandboxed, and its module scripts and fonts do not load. Absent where
+    /// no artifact listener serves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = 49152)]
+    artifact_port: Option<u16>,
 }
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────

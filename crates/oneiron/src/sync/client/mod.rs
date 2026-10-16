@@ -27,8 +27,9 @@
 //!   pending `u:root:*` replay (startup step 1).
 //! - `m:client_id` — this device's CRDT client id (u64 LE, 8 bytes), minted
 //!   once and stable per install (mint lives in `crate::identity`, OD-2).
-//! - `m:device_sk` / `m:device_pk` — this device's Ed25519 attestation
-//!   keypair (32 B each; ONE-1140, OD-2), minted alongside the client id.
+//! - `m:device_pk` — the public half of this device's Ed25519 attestation
+//!   key (32 B; ONE-1140, OD-2). Its seed is in the install's keystore slot
+//!   (world privacy P6c), never in LMDB.
 //! - `ls:{vault_id_hex}:{client_id_hex}` — device-lease registry mirror rows
 //!   (66 B pinned record, ONE-1140 OD-3/OD-4): full-mirrored from the root
 //!   doc's `leases` map in the SAME txn as every root persist.
@@ -40,6 +41,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+mod artifacts;
 mod base;
 mod documents;
 mod federated;

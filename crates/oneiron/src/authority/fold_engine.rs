@@ -50,6 +50,8 @@ pub(super) struct FoldContext<'a> {
     /// Only verified pre-handoff ancestry can use retired device-key ops.
     /// None is the legacy-only reference fold, never the posture-aware vault door.
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// The bytes this fold may project to hold at its peak.
+    pub(super) memory_floor_bytes: u64,
     /// This install's pin on a fold of its own vault's log: which world-key
     /// records count here. It decides no entry's validity.
     pub(super) pin: Option<&'a PinnedRoot>,
@@ -74,6 +76,9 @@ pub(super) struct FoldLocalInputs<'a> {
     /// This install's pin, on a fold of its own vault's log. It moves trust
     /// only, never which entries are valid; a peer's log folds with none.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// Where the strict fold leaves what a resumed fold starts from; never
+    /// handed to a probe.
+    pub(super) capture: Option<&'a super::fold_resume::FoldCapture>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -85,6 +90,7 @@ impl FoldLocalInputs<'_> {
         machine_standing: None,
         handoff_candidates: None,
         pin: None,
+        capture: None,
     };
 }
 
@@ -96,9 +102,6 @@ pub(super) fn fold_authority_log_inner(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
-    if let Some(refused) = super::log_budget::refuse_over_budget(entries) {
-        return refused;
-    }
     if local.retire_device_ops {
         // An unrelated retired sibling must not vote in a handoff probe:
         // its tier floor could otherwise disqualify a valid rotation before
@@ -112,7 +115,9 @@ pub(super) fn fold_authority_log_inner(
             consent_arm,
             local,
         );
+        let mut rounds = 0_usize;
         loop {
+            rounds += 1;
             let handoffs: BTreeSet<_> = candidates.keys().copied().collect();
             let allowed = verified_handoff_ancestors(entries, &handoffs);
             // Each candidate's line settles as it probed, under no local
@@ -135,6 +140,7 @@ pub(super) fn fold_authority_log_inner(
                     machine_standing: local.machine_standing,
                     handoff_candidates: Some(&handoffs),
                     pin: local.pin,
+                    capture: local.capture,
                 },
             );
             // A handoff in conflict keeps its standing here: its fence stays
@@ -144,6 +150,11 @@ pub(super) fn fold_authority_log_inner(
                     || result.closed_handoffs.contains(candidate)
             });
             if candidates.len() == handoffs.len() {
+                if let Some(capture) = local.capture
+                    && rounds > 1
+                {
+                    capture.spoil();
+                }
                 return result;
             }
         }
@@ -220,6 +231,7 @@ fn verified_handoff_candidates(
                 observations: observations.as_ref(),
                 retire_device_ops: false,
                 pre_handoff_entries: None,
+                capture: None,
                 ..local
             },
         );
@@ -322,7 +334,7 @@ pub(super) fn causal_floors_of(
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
     let (by_hash, _) = judged_entries(entries);
-    let ancestors = entry_ancestor_index(&by_hash).ok()?;
+    let (ancestors, _) = entry_ancestor_index(&by_hash, context.memory_floor_bytes)?;
     super::sequence_ancestry::causal_sequence_floors(&by_hash, &ancestors, context)
 }
 
@@ -330,11 +342,14 @@ pub(super) fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
+    capture: Option<&super::fold_resume::FoldCapture>,
 ) -> AuthorityFold {
+    let original_floors = context.sequence_floors;
     let (by_hash, mut issues) = judged_entries(entries);
-    let entry_ancestors = match entry_ancestor_index(&by_hash) {
-        Ok(index) => index,
-        Err(signer) => return super::log_budget::over_budget_fold(signer),
+    let Some((entry_ancestors, counted_ancestor_pairs)) =
+        entry_ancestor_index(&by_hash, context.memory_floor_bytes)
+    else {
+        return super::log_budget::memory_floor_fold(context.memory_floor_bytes);
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
@@ -423,6 +438,7 @@ pub(super) fn fold_authority_log_once(
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
             install: InstallBound::default(),
+            counted_ancestor_pairs,
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
             issues,
@@ -432,6 +448,7 @@ pub(super) fn fold_authority_log_once(
     revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
+    revoke_facts.forget_below_concurrent_floors(&states, &by_hash, &entry_ancestors, context);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {
@@ -442,145 +459,53 @@ pub(super) fn fold_authority_log_once(
         });
     }
 
-    // Collision poison is part of the externally auditable fold result, not
-    // merely a settlement-time guard. Emit one deterministic issue per id.
-    if let Some(state) = &merged {
-        issues.extend(
-            state
-                .conflicted_critical_write_confirms
-                .iter()
-                .map(
-                    |confirm_id| AuthorityFoldIssue::CriticalWriteConfirmConflict {
-                        confirm_id: *confirm_id,
-                    },
-                ),
-        );
+    let kept = capture.map(|_| {
+        (
+            merged.clone(),
+            valid_entries.clone(),
+            retired_keys.clone(),
+            issues.clone(),
+        )
+    });
+    let (fold, final_merged) = super::fold_project::project_once(
+        super::fold_project::Settled {
+            merged,
+            valid_entries,
+            by_hash: &by_hash,
+            revoke_facts: &revoke_facts,
+            retired_keys,
+            closed_handoffs: retirements.handoffs(),
+            unsettled: retirements.unsettled(),
+            counted_ancestor_pairs,
+            issues,
+        },
+        &super::fold_project::AllStates {
+            by_hash: &by_hash,
+            states: &states,
+        },
+        context,
+    );
+    if let (Some(capture), Some((Some(merged), valid_entries, retired_keys, issues))) =
+        (capture, kept)
+    {
+        capture.record(super::fold_resume::OnceParts {
+            by_hash: &by_hash,
+            states: &states,
+            entry_ancestors: &entry_ancestors,
+            original_floors,
+            merged,
+            valid_entries,
+            revoke_facts,
+            retired_keys,
+            closed_handoffs: retirements.handoffs(),
+            unsettled: retirements.unsettled(),
+            counted_ancestor_pairs,
+            issues,
+            final_merged: final_merged.as_ref(),
+            fold: &fold,
+        });
     }
-    if let Some(state) = &mut merged {
-        revoke_facts.apply_to(state);
-        for key in &retired_keys {
-            if let Some(device) = state.roster.get_mut(key) {
-                device.revoked = true;
-            }
-        }
-    }
-    let machines = merged.as_ref().map_or_else(BTreeMap::new, |state| {
-        super::machine_claims::folded_machines(state, retirements.unsettled())
-    });
-    // A key is judged in this install's final trust set: the pin while the
-    // fold holds its root, as the install sets it, else the roster.
-    let world_keys = merged.as_ref().map_or_else(BTreeMap::new, |state| {
-        let local = context
-            .pin
-            .filter(|pin| {
-                state
-                    .root_anchors
-                    .get(&pin.anchor_key)
-                    .is_some_and(|ids| ids.contains(&pin.id))
-            })
-            .map_or(MachineAdmitter::Roster, |pin| {
-                MachineAdmitter::Anchor(pin.anchor_key)
-            });
-        let stands = |machine: crate::EntityId| {
-            machines
-                .get(&machine)
-                .is_some_and(|folded: &FoldedMachine| {
-                    folded
-                        .trust_chains(&local)
-                        .iter()
-                        .all(|(_, chain)| !chain.removed)
-                })
-        };
-        super::world_key_fold::folded_world_keys(state, &by_hash, &stands)
-    });
-    let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
-        folded_actor_bindings(state, context.consent_arm)
-    });
-
-    let accepted_roster_marks = merged.as_ref().map_or_else(BTreeSet::new, |state| {
-        super::stale_roster::accepted_roster_marks(state, &by_hash, &states, &valid_entries)
-    });
-    AuthorityFold {
-        append_heads: BTreeSet::new(),
-        anchor_heads: BTreeMap::new(),
-        scope_heads: BTreeMap::new(),
-        append_sequences: BTreeMap::new(),
-        actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
-            &states,
-            merged.as_ref(),
-        ),
-        actor_write_frontiers: super::causal_write::causal_actor_frontiers(
-            &states,
-            merged.as_ref(),
-            &actor_bindings,
-            |hash| {
-                by_hash
-                    .get(hash)
-                    .is_some_and(|entry| super::world_privacy::side_world(&entry.op).is_none())
-            },
-        ),
-        revoked_actor_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
-            state.actor_revocation_hashes.keys().cloned().collect()
-        }),
-        slips: merged
-            .as_ref()
-            .map_or_else(SlipAuthorityState::default, |state| state.slips.clone()),
-        vault_id: merged.as_ref().map(|state| state.vault_id),
-        valid_entries,
-        roster: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.roster.clone()),
-        retired_keys,
-        closed_handoffs: retirements.handoffs(),
-        tier_floor: merged.as_ref().map(|state| state.tier_floor),
-        genesis_fragile: merged.as_ref().is_some_and(|state| {
-            state.genesis_recovery_dismissed && !state.recovery_redundancy_established
-        }),
-        federation_pacts: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
-        federation_confirms: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_confirms.clone()),
-        critical_write_confirms: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.critical_write_confirms.clone()),
-        consumed_critical_write_confirm_nonces: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| {
-                state.consumed_critical_write_confirm_nonces.clone()
-            }),
-        conflicted_critical_write_confirms: merged.as_ref().map_or_else(BTreeSet::new, |state| {
-            state.conflicted_critical_write_confirms.clone()
-        }),
-        federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            state.federation_grant_bindings.clone()
-        }),
-        actor_bindings,
-        machines,
-        pinned_root: None,
-        root_anchors: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.root_anchors.clone()),
-        anchor_entries: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.anchor_entries.clone()),
-        accepted_roster_marks,
-        worlds: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            super::world_privacy::folded_worlds(state, context.pin, context.machine_standing)
-        }),
-        refused_world_edits: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
-        install: merged.as_ref().map_or_else(InstallBound::default, |state| {
-            super::install_fold::held_back(state, context.pin, context.machine_standing)
-        }),
-        world_keys,
-        refused_world_keys: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.refused_world_keys.clone()),
-        issues,
-    }
+    fold
 }
 
 /// The confirmations that lose a collision among the rows `present` keeps,

@@ -48,24 +48,21 @@ pub(crate) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
 }
 
 impl Vault {
-    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
-    // was removed — both sync replay surfaces now route through the
-    // reason-aware `apply_replayed_tombstone`, and a bare purge entry point
-    // would be an invitation to bypass the ARCH-0038 reason semantics.
+    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper was removed — both sync
+    // replay surfaces now route through the reason-aware `apply_replayed_tombstone`, and a bare
+    // purge entry point would be an invitation to bypass the ARCH-0038 reason semantics.
 
     // -----------------------------------------------------------------
     // ARCH-0050 R6 L2 code-memory doors (ONE-1608).
     //
-    // Every wrapper here opens ONE transaction, delegates to the internal
-    // `crate::code_memory` implementation, and commits exactly once on
-    // success. None exposes `Store`, `RoTxn`, or `RwTxn`; the public
-    // contract suite reaches only these methods.
+    // Every wrapper here opens ONE transaction, delegates to the internal `crate::code_memory`
+    // implementation, and commits exactly once on success. None exposes `Store`, `RoTxn`, or
+    // `RwTxn`; the public contract suite reaches only these methods.
     // -----------------------------------------------------------------
 
-    // Read/write/list helpers intentionally remain behind `feature = "sync"`
-    // instead of `cfg(test)` because the sync bridge regression suite is an
-    // integration test crate. Production bridge code still uses direct
-    // transactional `sync_state` access when multiple keys must update
+    // Read/write/list helpers intentionally remain behind `feature = "sync"` instead of `cfg(test)`
+    // because the sync bridge regression suite is an integration test crate. Production bridge code
+    // still uses direct transactional `sync_state` access when multiple keys must update
     // atomically.
 
     // ─── Tree Query API ───────────────────────────────────────
@@ -107,7 +104,33 @@ impl Vault {
         std::fs::create_dir_all(path.as_ref())?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire(&canonical)?;
-        let store = Store::open_with_writer_lease(&canonical, &config, &lease)?;
+        Self::open_leased(&canonical, config, lease)
+    }
+
+    /// [`Self::open_owned`] on `directory`, a vault root the caller already
+    /// holds open, as a managed host's isolation probe does. The writer lease
+    /// and, on Linux, the LMDB environment bind that descriptor, so a
+    /// directory renamed in under `path` after the caller's checks is refused,
+    /// never opened. Refuses unless `path` still names `directory`.
+    #[cfg(unix)]
+    pub fn open_owned_held(
+        directory: std::fs::File,
+        path: impl AsRef<Path>,
+        config: VaultConfig,
+    ) -> Result<Self> {
+        validate_open_config(&config)?;
+        let canonical = path.as_ref().canonicalize()?;
+        let lease = VaultWriterLease::acquire_held(directory, &canonical)?;
+        Self::open_leased(&canonical, config, lease)
+    }
+
+    fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
+        let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
+        // Only the lease holder writes bodies, so what a writer left half
+        // done is debris now: unfinished temp files and the bodies of
+        // off-record sessions, none of which outlived its process.
+        #[cfg(unix)]
+        store.sweep_body_debris()?;
         let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
         vault.writer_lease = Some(lease);
         Ok(vault)
@@ -544,8 +567,10 @@ impl Vault {
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
             message_streams: Default::default(),
+            live_rows: Default::default(),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
+            trusted_contact_send_order: Default::default(),
             housekeeping: Default::default(),
             #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
@@ -565,7 +590,10 @@ impl Vault {
         // the authority a restore carried in; the stored shell edges follow
         // it before any caller observes this vault (H161).
         vault.reconcile_identity_topology_on_open()?;
-        vault.with_write_txn_grouped(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
+        vault.with_write_txn_grouped(|txn| {
+            vault.dreamer_authority_in_txn(txn, 0)?;
+            vault.coach_authority_in_txn(txn)
+        })?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now

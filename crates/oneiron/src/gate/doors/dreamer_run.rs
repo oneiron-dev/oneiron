@@ -13,7 +13,9 @@ use crate::gate::constants::{
 };
 use crate::gate::decision::{GateDecision, GateReasonCode};
 use crate::gate::dreamer_precommit::{DreamerPrecommitInput, validate_dreamer_precommit};
-use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteEnvelope};
@@ -112,15 +114,39 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 /// transaction is what keeps a ref written earlier in the SAME write
 /// transaction resolvable, so the miner's write-then-gate order still holds;
 /// a live zero-byte payload, which carries no deletion metadata, also still
-/// resolves. Liveness is the whole question here: the floor stays
-/// type-agnostic.
+/// resolves.
+///
+/// A live PERSON or SESSION resolves but is not evidence: it names who spoke or
+/// where, not anything said. A CLAIM counts only once any critical owner
+/// confirmation on it is settled. Every other live row a Dreamer writer cites
+/// (a TURN, an edit record, a commitment instance, an imported source) still
+/// counts: this door serves every Dreamer writer, and promotion adds GATE-11's
+/// claim admissibility on top.
 pub(super) fn dreamer_precommit_denial(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     body: &ClaimBody,
 ) -> Option<GateReasonCode> {
-    let resolves =
-        |id: &EntityId| -> Result<bool> { Ok(live_entity_row_in_txn(store, txn, id)?.is_live()) };
+    let resolves = |id: &EntityId| -> Result<bool> {
+        Ok(match live_entity_row_in_txn(store, txn, id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PERSON | ENTITY_TYPE_SESSION,
+                ..
+            }
+            | LiveEntityRow::Absent
+            | LiveEntityRow::DeletedShell => false,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_CLAIM,
+                ..
+            } => crate::gate::claim_consolidation_eligible_in_txn(
+                store,
+                txn,
+                id,
+                crate::gate::ConsolidationReader::PrecommitEvidence,
+            )?,
+            LiveEntityRow::Live { .. } => true,
+        })
+    };
 
     validate_dreamer_precommit(
         &DreamerPrecommitInput {
@@ -252,4 +278,15 @@ fn live_entity_row_has_type(
         live_entity_row_in_txn(store, txn, id),
         Ok(LiveEntityRow::Live { entity_type: found, .. }) if found == entity_type
     )
+}
+
+impl crate::Vault {
+    #[cfg(test)]
+    pub(crate) fn dreamer_precommit_denial_for_test(
+        &self,
+        body: &ClaimBody,
+    ) -> Result<Option<GateReasonCode>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(dreamer_precommit_denial(&self.store, &txn, body))
+    }
 }

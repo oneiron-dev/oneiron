@@ -64,9 +64,10 @@ impl Memory<'_> {
         before_txn();
         let (approval, consent_decision_id) = self
             .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn| {
+            // A retraction only restricts: it reads a held history whole.
             let body = self
                 .vault
-                .get_claim_in_txn(wtxn, &id)?
+                .claim_for_restriction_in_txn(wtxn, &id)?
                 .ok_or(Error::EntityNotFound)?;
             // This door does not own `companion.expression.*`, whoever is
             // asking. Closing one of those heads means restoring the
@@ -135,7 +136,7 @@ impl Memory<'_> {
                 Some(WriteActor::new(self.actor, self.actor_class)),
             )?;
             super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
-            let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
+            let approval = self.vault.claim_for_restriction_in_txn(wtxn, &id)?.map_or_else(
                 || "retracted".to_owned(),
                 |body| body.approval.as_str().to_owned(),
             );

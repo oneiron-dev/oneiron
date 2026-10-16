@@ -1,9 +1,9 @@
 ---
 name: oneiron-http-memory-api
-description: "Use this skill when an external agent needs to discover Oneiron's current HTTP memory API, fetch the static skill pack from a running server, choose the right endpoint, and understand how read, retrieval, context-pack, discovery, and lease-revocation calls relate to Oneiron MCP tools."
+description: "Use this skill when an external agent needs to discover Oneiron's current HTTP memory API, fetch the static skill pack from a running server, choose the right endpoint, and understand how read, retrieval, context-pack, conversation, discovery, and receipt-key revocation calls relate to Oneiron MCP tools."
 when_to_use:
   - "An agent needs route-level awareness of the existing Oneiron HTTP API."
-  - "An agent must decide whether to search memory, read one entity, inspect edges, assemble context, hydrate the context board, discover vault capabilities, fetch the skill pack, inspect the OpenAPI schema, or revoke a device lease."
+  - "An agent must decide whether to search memory, read one entity, inspect edges, list or read conversations, assemble context, hydrate the context board, discover vault capabilities, fetch the skill pack, inspect the OpenAPI schema, or revoke a device's receipt-attestation binding."
   - "A connector needs the static skill layer: how to think about memory before it calls MCP or HTTP tools."
 trigger_phrases:
   - "query Oneiron memory"
@@ -19,11 +19,11 @@ trigger_phrases:
 
 # Oneiron HTTP Memory API Skill Pack
 
-> **Fetch by tier, not whole-file.** This document is ~43KB, past most agents' single-read
+> **Fetch by tier, not whole-file.** This document is over 70 KB, past most agents' single-read
 > truncation threshold. Read Tier-1 (endpoint index) first; fetch Tier-2 (endpoint detail) or
 > Tier-3 (schemas/error catalog) only for the specific endpoints in play.
 
-This pack is a static, agentskills.io-compatible progressive disclosure artifact for the currently exposed Oneiron HTTP routes. The pack content is documentation only; the HTTP distribution endpoint serves this committed artifact without adding storage, mutation behavior, MCP tools, or activation logic.
+This pack is a static, agentskills.io-compatible progressive disclosure artifact for the Oneiron HTTP routes indexed in Tier-1. It is not a census of every route the server registers; `GET /api/openapi.json` is the machine-readable schema. The pack content is documentation only; the HTTP distribution endpoint serves this committed artifact without adding storage, mutation behavior, MCP tools, or activation logic.
 
 The boundary is dual-layer:
 
@@ -31,8 +31,6 @@ The boundary is dual-layer:
 - MCP tools are what to call: the executable capability surface advertised by MCP `initialize.instructions`, tool listings, and tool schemas.
 
 Keep those layers aligned but not duplicated. This pack names the live HTTP route semantics once. MCP initialization should advertise callable tools, scopes, safety hints, and handles. Any AGENTS.md-style discovery artifact should point to this pack and the MCP advertisement rather than carrying a second divergent endpoint catalog.
-
-ARCH-0006a/b conversation endpoints are design documents, not live routes in the current server route table. They are intentionally excluded from the live endpoint catalog until the server registers them.
 
 ## Agent Onramp: Choose One Lane
 
@@ -214,7 +212,7 @@ Every paired slip carries a slip id, its identity. Two pairings of identical cla
 **Rotating credentials.** Rotate or revoke the logged slips. The issuer key is not a bearer token; replacing it alone is not a device-lease rotation ceremony. Receipt-attestation device keys remain verification records, not access credentials (ONE-2294 tracks slip-backed receipt attestation).
 ## Tier-1: Endpoint Activation Index
 
-Fetch Tier-1 first. It contains one endpoint block per live route literal and no Tier-2 parameters or Tier-3 schemas.
+Fetch Tier-1 first. It contains one endpoint block per route this pack covers and no Tier-2 parameters or Tier-3 schemas.
 
 #### openapi-json - `GET /api/openapi.json`
 
@@ -286,6 +284,14 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "edit ASR or TTS route"
 - safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present. Extraction defaults on-device; a nonlocal extraction default needs an owner-edited `extraction_max_locality` bound and a host-installed request egress predicate. Voice overrides follow the editable `voice_precedence` policy and cannot widen the vault lane. The owner manifest and explicit model pins still govern actual routes.
 
+#### decision-read-probe - `POST /v1/llm/decision_read`
+
+- when-to-use: Probe the house model's decision read: the label probabilities, P(more thinking) and P(ask a person) it gives one question over state the caller built, from one forward pass. A probe only; every typed decision still goes through decide() in process.
+- trigger phrases:
+  - "what does the house model read for this question?"
+  - "probe the decision read"
+- safety: Writes and decides nothing; requires an owner-grade bearer. Each probe is a paid model call on the raw inference meter; past `limits.decision_reads` it waits its turn.
+
 #### mcp-gateway - `POST /mcp`
 
 - when-to-use: Call Oneiron MCP JSON-RPC methods when a connector needs the executable MCP tool layer for initialized tools, tool listings, or tool calls.
@@ -347,7 +353,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "semantic search this vault"
   - "find memories about"
   - "search by meaning"
-- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` above 8 KB of query text.
+- safety: Read-only; the server embeds the query itself, in the vault's own embedding space. Refuses with `EMBEDDER_UNAVAILABLE` when no embedder is serving and with `PAYLOAD_TOO_LARGE` when the query text passes `[limits].retrieval_query_bytes` (1 MiB unless set).
 
 #### search-text - `GET /api/search/text`
 
@@ -412,6 +418,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "cancel this subagent run"
 - safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state.
 
+#### core-context-pack - `POST /v1/core/context-pack`
+
+- when-to-use: Retrieve and assemble a context pack for one query in a single call: ranked entities with optional edge hops, time filters, and token budgets.
+- trigger phrases:
+  - "get context pack"
+  - "assemble context for this query"
+  - "retrieve memories within a budget"
+- safety: Read-only retrieval with a POST body; requires core read auth. Retrieval is scoped to the caller; the context board runs the same pipeline.
+
 #### core-context-board - `POST /v1/core/context-board`
 
 - when-to-use: Hydrate the assembled context in one call: the session prefix, pending notifications, unprocessed items, the token meter, this turn's retrieval with its MEMORIES projection, and the per-session cursor.
@@ -420,6 +435,24 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "assemble this turn's context"
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
+
+#### core-conversations-list - `GET /v1/core/conversations`
+
+- when-to-use: List the conversations the reader may read, each with a preview of the latest message it may read, before choosing one to read in full.
+- trigger phrases:
+  - "list my conversations"
+  - "which conversations can I read?"
+  - "find the conversation for this external id"
+- safety: Read-only; requires `core:read` and a credential that names a principal and actor class. Reads as that principal: a conversation it may not read is left out, and a preview quotes only a message it may read. Refused inside a room turn. The response carries the read's `narrowing` receipt.
+
+#### core-conversation-transcript - `GET /v1/core/conversations/{conversation_id}/transcript`
+
+- when-to-use: Read one conversation's turns and their messages in order, a page at a time, when the caller needs the transcript itself rather than recalled memory.
+- trigger phrases:
+  - "read this conversation's transcript"
+  - "show the turns of this conversation"
+  - "page through a conversation"
+- safety: Read-only; requires `core:read` and a credential that names a principal and actor class. Returns exactly the messages recall may quote to that reader; a conversation it may not read is `NOT_FOUND`. Refused inside a room turn. The response carries the read's `narrowing` receipt.
 
 #### usage-event - `POST /v1/usage/events`
 
@@ -441,11 +474,11 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
 
 #### lease-revoke - `POST /api/lease/revoke`
 
-- when-to-use: Owner recovery path for revoking a lost or stolen device's lease binding by 16-character lowercase hex client id.
+- when-to-use: Revoke one device's receipt-attestation binding by its 16-character lowercase hex client id, so that device's key no longer attests receipts. This does not revoke HTTP or WebSocket access; to cut off a lost or stolen client, revoke its logged slip (`oneiron token revoke --jti <hex64>`, see Authentication).
 - trigger phrases:
   - "revoke device lease"
-  - "lost device recovery"
-  - "disable this client id"
+  - "revoke receipt-attestation binding"
+  - "stop this client id attesting receipts"
 - safety: Mutating and terminal for the binding. Requires an owner-grade credential; scoped bearers are refused. Use an `Idempotency-Key` header when retrying after transport failure.
 
 #### booking-agent-instructions - `GET /api/booking/{page_token}/agent-instructions`
@@ -550,6 +583,7 @@ Response fields:
 - `capabilities.modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
+- `artifact_port`: present when an artifact-only listener serves `/a/`; open artifacts at this server's scheme and host with this port.
 
 Example response:
 
@@ -583,6 +617,18 @@ Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core 
 
 `PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. An override cannot widen its vault voice lane. Nonlocal extraction also needs an installed host egress predicate to admit the actual request before budget or provider work. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
 
+### Decision Read Probe
+
+Method: `POST` on the Tier-1 decision-read route.
+
+Authentication: `Authorization: Bearer <owner-grade credential>`; scoped credentials get `403 owner_required`.
+
+Body (JSON, at most 256 KiB): `{ "question": "...", "options": ["...", "..."], "state": { ... } }`. `options` (2 to 64 distinct labels, in order) is absent for a yes/no question. `state` is an object of at most 65,536 bytes that the caller built; the probe reads nothing from the vault. The model, its endpoint, the read recipe and the paired and person questions are the host's configuration (`[models.decision_read]`); a request cannot choose them.
+
+`200` returns `{ "model", "revision", "primary": [...], "paired_yes", "person_yes", "usage" }`. `primary` holds the options' probabilities in order (yes, then no, for a yes/no question), `paired_yes` is P(more thinking), and `person_yes`, present when the recipe asks the person question, is P(ask a person). `revision` names the served weights and the recipe.
+
+Errors: `400 invalid_request` (a bad question, options or state); `402 budget_denied`; `502 label_read`, whose `error.llm` names the failed check (`EmittedText`, `NotEosStop`, `MissingLabels` or `Malformed`; a failed read is never a probability of zero); `503 decision_read_unavailable` (no `[models.decision_read]`, or its recipe has no `[probe]`); `503 decision_read_waited_out` (the probe waited past `limits.queue_wait_timeout_ms` for its turn, and nothing was started).
+
 ### OpenAPI Schema
 
 Method: `GET`
@@ -615,7 +661,9 @@ Response:
 
 Method: `GET`
 
-Authentication: configured API bearer credential, unless the server explicitly allows unauthenticated development access.
+Authentication: none for a public pin or a link-token URL; a world-member pin needs a verified read credential (see the serving tiers below).
+
+Origins: ordinary serve answers `/a/` on a second listener of its own, at the port `/api/health` reports as `artifact_port`, which serves nothing else. Open bundles there: a code bundle keeps that origin, so its module scripts and fonts load. The API's own `/a/` still answers, but there a code bundle is sandboxed into an opaque origin, where module scripts and fonts do not load. A server with no artifact listener (managed serve) answers `/a/` on the API's origin as before.
 
 Path parameters:
 
@@ -735,8 +783,8 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: comma-separated `f32` values, for example `0.1,0.2,0.3`.
-- `limit` optional: max returned items, default `10`.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
@@ -774,9 +822,9 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 
 Request body:
 
-- `text` required: the natural-language question, at most 8 KB. The server prepends the model's query instruction and embeds it; the caller sends no vector.
-- `limit` optional: max returned items, default `10`.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `text` required: the natural-language question, at most `[limits].retrieval_query_bytes` (1 MiB unless set). The server prepends the model's query instruction and embeds it; the caller sends no vector.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 - `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
@@ -789,7 +837,7 @@ Response:
 Refusals:
 
 - `BAD_REQUEST` (400): `text` is empty, or the body does not parse.
-- `PAYLOAD_TOO_LARGE` (413): `text` is over 8 KB. A query is a question; a document belongs on the write path.
+- `PAYLOAD_TOO_LARGE` (413): `text` is past `[limits].retrieval_query_bytes`; the error names the field, the bound and the bytes received. A query is a question; a document belongs on the write path.
 - `EMBEDDER_UNAVAILABLE` (503): no embedder is configured, or the configured one is not serving yet. Writes still land and text search still answers; retry later, or send your own vector to `GET /api/search/vector`.
 
 Example request:
@@ -828,8 +876,8 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: natural language, exact phrase, identifier fragment, or keyword string.
-- `limit` optional: max returned items, default `10`.
-- `view` optional: `summary`, `standard`, or `full`; default `summary`.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
 - `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
@@ -969,11 +1017,12 @@ Request body:
 
 - `query` optional: retrieval text.
 - `query_vector` optional: numeric vector as an array of `f32` values.
-- `limit` optional: maximum entities to retrieve, default `10`.
+- `limit` optional: maximum entities to retrieve, default `10`; past `1000` it is served at `1000` and `limit_clamped` says so.
 - `depth` optional: `edge_hop` and `max_neighbors` controls.
 - `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.
 - `time` optional: `since`, occurred range, or learned range filters.
 - `budget` optional: `max_item_tokens`, `max_field_chars`, and retrieval item budgets.
+- `reader` optional: `definition` (hex agent-definition id the caller can read) and `task_family`. The definition's memory profile picks this reader's optional memory for the family (absent: its default). It only narrows: the smaller token budget and the narrower view win. A reader set to no optional memory gets an empty pack with `state.kind` `skipped` and `state.reason` `skipped_by_profile`; pinned rows and the standing prefix stay.
 
 Current response:
 
@@ -982,12 +1031,17 @@ Current response:
   "results": [],
   "neighbors": [],
   "stats": { "candidates_considered": 0 },
-  "state": { "kind": "missing_data", "reason": "no_data" },
+  "state": {
+    "kind": "missing_data",
+    "reason": "filter_matched_none",
+    "total_in_scope": 0,
+    "hint": "Try removing filters or widening the world, type, or time scope"
+  },
   "evidence": { "telemetry_persisted": true, "result_ids": [], "scores": [] }
 }
 ```
 
-Agent note: Treat `state.kind` and `state.reason` as the typed missing-data or low-confidence signal when no usable context is returned.
+Agent note: Treat `state.kind` and `state.reason` as the typed missing-data, low-confidence or skipped signal when no usable context is returned.
 
 ### Context Board
 
@@ -1044,6 +1098,42 @@ Example response for an empty request body:
   }
 }
 ```
+
+### Conversations
+
+Method: `GET` for both the list and the transcript.
+
+Authentication: `Authorization: Bearer <credential>` with `core:read`, and a credential that names a principal and an actor class (`403 FORBIDDEN` otherwise). Both read as that principal on the lane recall uses. A request sent inside a room turn is refused with `BAD_REQUEST`.
+
+List query parameters:
+
+- `limit` optional: default `10`.
+- `after` optional: the `nextCursor` of the previous page.
+- `view` optional: `summary`, `standard`, or `full`.
+- `countMode` optional: `none`, `estimate`, or `exact` (default).
+- `kind` optional: `direct`, `agent`, `group`, `channel`, or `mirror`.
+- `external_id` optional: match one external id.
+
+List response: a paginated response (Tier-3) whose rows are conversation projections, each with an optional `lastMessageSnippet`, plus the read's `narrowing` receipt.
+
+Transcript path parameter:
+
+- `conversation_id` required: 32-character hex conversation id.
+
+Transcript query parameters:
+
+- `limit` optional: turns per page, `1` to `200`; default `50`.
+- `after` optional: the `next` cursor of the previous page.
+
+Transcript response:
+
+- `conversation`: the 32-hex conversation id.
+- `turns`: in order, each with `id`, `occurred_start`, `occurred_end` (Unix seconds) and `messages`. A turn appears only with at least one message the reader may read.
+- Each message: `id`, `short_id` (the ref recall cites, when it has one), `role` (`user`, `companion`, or `system`), `message_type`, `occurred` (Unix seconds), and `text`.
+- `next`: the cursor for the next page; `null` on the last page.
+- `narrowing`: the read's receipt.
+
+A `409 INVALID_STATE` means the conversation's turns moved in time while the page was read; read the page again. A conversation the reader may not read is `404 NOT_FOUND`.
 
 ### Receipt-Key Revocation
 
@@ -1438,11 +1528,13 @@ Fully specified entries:
 ]
 ```
 
-Closed code catalog currently emitted by server API code:
+Codes the server's HTTP error type defines:
 
 - `BAD_REQUEST`
 - `UNAUTHORIZED`
+- `FORBIDDEN`
 - `NOT_FOUND`
+- `NOT_IMPLEMENTED`
 - `INTERNAL_SERVER_ERROR`
 - `STALE_EPOCH`
 - `IDEMPOTENCY_REPLAY_CONFLICT`
@@ -1453,7 +1545,10 @@ Closed code catalog currently emitted by server API code:
 - `UNSUPPORTED_FORMAT`
 - `NOT_ACCEPTABLE`
 - `INVALID_HEADER`
+- `UNSUPPORTED_CAPABILITY`
+- `DEEP_RETRIEVAL_UNAVAILABLE`
 - `EMBEDDER_UNAVAILABLE`
+- `SUMMARY_WRITER_UNAVAILABLE`
 - `PAYLOAD_TOO_LARGE`
 - `4001`
 - `4002`
@@ -1463,7 +1558,7 @@ Closed code catalog currently emitted by server API code:
 
 ### Recovery Rules
 
-- Auth failures: add or correct the `Authorization: Bearer` credential, then retry once.
+- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof; the server's `UNAUTHORIZED` suggestion names only the bearer.
 - Bad path ids: validate 32 lowercase hex characters before retrying entity or edge reads.
 - Bad vector query: send comma-separated `f32` values with no empty segments.
 - Invalid view: use `summary`, `standard`, or `full`.

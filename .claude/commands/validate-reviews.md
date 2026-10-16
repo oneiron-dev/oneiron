@@ -1,89 +1,66 @@
-Validate and triage all review feedback for the current PR.
+Triage the review feedback on the current PR.
 
-**Repo:** Detect from `git remote get-url origin` — works in any repo (eiri, oneiron, etc.).
+Under the vibe build no review blocks a merge and bot comments need no answer (see `AGENTS.md`). Use this command only when you choose to triage comments.
 
 ## Review sources
 
-There is no local reviewer harness in this repo — `scripts/review-pr.sh` does not exist and any
-reference to it is stale. Reviews come from GitHub (bot and human comments on the PR) plus any
-agent review outputs a caller has already dropped under `.reviews/{branch}/latest/`, which is
-gitignored and may be absent. Never fabricate a run; triage what is actually there, and note in
-the report which sources were empty.
+There is no local reviewer harness in this repo; `scripts/review-pr.sh` does not exist. Feedback comes from GitHub (bot and human comments on the PR) and from any agent review output a caller has left under `.reviews/{branch}/latest/`. `.reviews/` is gitignored and may be absent. Never invent a review run: triage what is there, and say in the report which sources were empty.
 
-## Rounds
+## Gather
 
-This skill supports multiple triage rounds. Each run creates a versioned triage file:
-`.reviews/{branch}/triage-r1.md`, `triage-r2.md`, etc.
+1. **Local agent reviews** (optional): if `.reviews/{branch}/latest/` exists, read every file in it. Skip a file that holds only an error log (auth failure, empty output).
 
-On startup, check for existing `triage-r*.md` files to determine the current round number. Read previous rounds to understand what was already addressed — skip findings that match items already fixed or dismissed in earlier rounds. Only triage NEW findings.
+2. **GitHub feedback.** Find the repo and PR:
+   ```bash
+   gh repo view --json owner,name --jq '"\(.owner.login)/\(.name)"'
+   gh pr view --json number --jq .number
+   ```
+   Fetch every page:
+   - `gh api --paginate repos/{owner}/{repo}/issues/{number}/comments` for top-level comments
+   - `gh api --paginate repos/{owner}/{repo}/pulls/{number}/comments` for inline comments
+   - `gh api --paginate repos/{owner}/{repo}/pulls/{number}/reviews` for review summaries
 
-## Inputs to gather
+   The thread query in `/respond-reviews` shows which threads are resolved.
 
-1. **Local agent reviews** (optional): If `.reviews/{current-branch}/latest/` exists, read all files in it. Check each file for actual content vs error logs (auth failures, empty output = skip that reviewer). If the directory is absent, GitHub comments are the only source.
+3. **Earlier triage**: read `.reviews/{branch}/triage.md` if it exists.
 
-2. **Previous triage rounds**: Read any existing `.reviews/{current-branch}/triage-r*.md` files to know what was already handled.
+Triage every finding in an unresolved thread, and every review summary and top-level finding, on the current head. An earlier reply or triage row does not show that a finding is fixed; use it only as a hint about where to look.
 
-3. **GitHub PR comments**: Detect repo owner/name from `git remote get-url origin`, then use `gh` to fetch all feedback:
-   - `gh pr view {number} --comments --repo {owner}/{repo}` for top-level comments
-   - `gh api repos/{owner}/{repo}/pulls/{number}/comments` for inline code comments
-   - `gh api repos/{owner}/{repo}/pulls/{number}/reviews` for review summaries
+## Triage
 
-   Determine the PR number from the current branch: `gh pr list --head $(git branch --show-current) --json number --jq '.[0].number' --repo {owner}/{repo}`
+For each finding:
 
-   Skip GH comments that were already replied to (have reply threads). Only triage unreplied comments.
+1. **Check the code.** Read the file and line it names. Do not take the reviewer's word for it: reviewers misplace line numbers, misread control flow, and flag code that a later commit already fixed. If the code does not match the description, dismiss the finding.
 
-## Triage process
+2. **Decide if it is real**, against the conventions in `AGENTS.md` and `CLAUDE.md`.
 
-For every NEW finding (not already in a previous round):
+3. **If real, classify it:**
+   - **Fix now**: in scope for this PR. Group these by file and severity.
+   - **Follow-up**: out of scope. Add one line to the fix list (see `AGENTS.md`).
 
-1. **Validate against actual code**: For EVERY finding, read the file and line referenced. Do NOT take reviewer claims at face value — verify the issue exists in the current code. Reviewers frequently hallucinate line numbers, misread control flow, or flag code that was already fixed in a later commit. If the reviewer says "line 42 has a bug", READ line 42 and confirm. If the code doesn't match what the reviewer describes, dismiss it.
-
-2. **Evaluate if real**: Is this an actual issue, or a false positive / misunderstanding of the codebase? Consider project conventions in CLAUDE.md and architecture in ROADMAP.md.
-
-3. **If real, classify**:
-   - **This PR** — fix now. Group these by file and severity.
-   - **Follow-up** — out of scope for this PR. Note which ROADMAP wave/PR it belongs to.
-
-4. **If not real**: Briefly explain why it's dismissed.
+4. **If not real**, give the reason in one line.
 
 ## Output
 
-Produce a triage report with these sections:
+Save the report to `.reviews/{branch}/triage.md`, replacing any older copy, and show it to the user:
 
-### Round N — New Findings
-
-### Fix in This PR
+### Fix now
 | # | Source | Severity | File:Line | Issue | Fix |
 |---|--------|----------|-----------|-------|-----|
 
-### Follow-up (add to ROADMAP)
-| # | Source | Issue | Suggested ROADMAP location |
-|---|--------|-------|---------------------------|
+### Follow-up (fix list)
+| # | Source | Issue | Fix-list line |
+|---|--------|-------|---------------|
 
 ### Dismissed
 | # | Source | Issue | Reason |
 |---|--------|-------|--------|
 
 ### Summary
-- Round: N (previous rounds: N-1)
-- New findings: X
+- Findings: X
 - Fix now: X (critical: X, major: X, minor: X)
 - Follow-up: X
 - Dismissed: X
-- Already addressed in prior rounds: X (skipped)
+- Empty sources: [list]
 
-## Actions
-
-1. **Save triage** to `.reviews/{current-branch}/triage-rN.md`.
-
-2. **APPROVAL GATE — PR comment**: Draft a summary comment for the PR with:
-   - Round number
-   - What's being fixed in this PR (with brief descriptions)
-   - What's tracked as follow-up (with ROADMAP references)
-   - What's dismissed (with reasons)
-
-   **Show the draft to the user and ask for explicit approval before posting.** Per CLAUDE.md policy: "Ready to comment: [preview]. Post now?" Only post via `gh pr comment` after the user says yes.
-
-3. **Add follow-up items** to ROADMAP.md under the appropriate wave/PR.
-
-Do NOT reply to individual GH comments yet — that happens in `/respond-reviews` after fixes are pushed.
+Do not reply on GitHub here. If you choose to answer, `/respond-reviews` posts the replies after the fixes are pushed.

@@ -259,6 +259,11 @@ pub enum ImportCommand {
     ClaudeCode(Box<ImportSourceArgs>),
     /// Codex history: `~/.codex/sessions`, any folder under it, or one rollout.
     Codex(Box<ImportSourceArgs>),
+    /// A coding agent's session log a hook handed over (its
+    /// `transcript_path`): GitHub Copilot's (VS Code's transcript or the CLI's
+    /// `events.jsonl`) or a Cursor agent transcript. One file, under a folder
+    /// listed in `[import] hook_transcript_roots`.
+    HookTranscript(Box<ImportSourceArgs>),
     /// A folder of linked markdown notes (an Obsidian vault, an agent's
     /// memory folder): writes the batch of new notes and links to `--out` and
     /// prints the digest that approves or declines it.

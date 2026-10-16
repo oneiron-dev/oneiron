@@ -254,6 +254,16 @@ impl Vault {
                 }
             }
             let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
+            // The first-party model catalog activates its rows for inference
+            // admission here; rows the prior pack shipped follow the update.
+            let model_catalog = receipt.pack_name == crate::skill_hub::MODEL_PACK_NAME
+                && receipt.hub_id == crate::skill_hub::default_skill_hub_id()?.to_hex()
+                && receipt.hub_ref == crate::skill_hub::MODEL_PACK_SUBTREE;
+            let prior_catalog = if model_catalog && prior.is_some() {
+                crate::llm::registry::CatalogSeed::from_installed_pack_in_txn(self, txn).ok()
+            } else {
+                None
+            };
             if let Some(old) = &prior {
                 for predicate in &old.predicates {
                     PACK_PREDICATE.delete(&self.store, txn, predicate)?;
@@ -264,6 +274,9 @@ impl Vault {
             }
             PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
             PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
+            if model_catalog {
+                self.activate_installed_model_catalog_in_txn(txn, prior_catalog.as_ref())?;
+            }
             if let Some(old) = prior
                 && old.content_hash != receipt.content_hash
             {
@@ -448,7 +461,7 @@ impl Vault {
         }
         self.installed_pack_in_txn(txn, name)
     }
-    fn installed_pack_in_txn(
+    pub(crate) fn installed_pack_in_txn(
         &self,
         txn: &RoTxn<'_>,
         name: &str,

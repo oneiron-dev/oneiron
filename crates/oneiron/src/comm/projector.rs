@@ -7,12 +7,15 @@ use super::claims::{
 use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_cache_in_txn};
 use super::parties::{reconcile_comm_party_twins, resolve_or_create_party_in_txn};
 use super::projection_writes::{
-    latest_claim_transition_boundary, matching_claims_in_txn, put_projected_comm_claim_in_txn,
-    require_at_most_one,
+    latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
+    put_projected_comm_claim_in_txn,
 };
 use super::records::{
     CommEventKind, CommRecord, comm_records_in_txn, decode_comm_record, next_event_sequence_in_txn,
     put_comm_record_in_txn, read_comm_record_in_txn, validate_channel_class, validate_key_string,
+};
+use super::stop_hold::{
+    holds_pending_stop_in_txn, pending_stop_ids_in_txn, release_pending_stop_in_txn,
 };
 use super::thread_membership::apply_thread_membership_in_txn;
 use super::{
@@ -22,7 +25,7 @@ use super::{
 use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, ErrorKind};
 use crate::ports::{EntityStoreRead, TombstoneStore};
 use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
@@ -78,12 +81,16 @@ const PROJECTOR_RULES: [ProjectorRule; 5] = [
 /// next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     import_delivered_send_receipts(vault)?;
-    let records = {
+    let (records, pending_stops) = {
         let rtxn = vault.store.env.read_txn()?;
-        comm_records_in_txn(vault, &rtxn)?
+        (
+            comm_records_in_txn(vault, &rtxn)?,
+            pending_stop_ids_in_txn(&vault.store, &rtxn)?,
+        )
     };
-    let mut index = CommProjectorIndex::from_records(&records);
+    let mut index = CommProjectorIndex::from_records(&records, &pending_stops);
     drop(records);
+    let mut first_refusal = None;
     for event_id in index.pending_event_ids() {
         // Each event keeps its own write transaction, so a later bad event
         // cannot roll back what earlier events already projected.
@@ -95,11 +102,27 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
                 // retries after the party syncs.
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(CommError::Engine(error)) if storage_failure(&error) => {
+                return Err(CommError::Engine(error));
+            }
+            Err(error) => {
+                index.forget_accounted_txn();
+                // One event's refusal stays with that event: it keeps waiting
+                // and the pass reports it, but the events behind it (a later
+                // STOP for another party above all) still project (F06 H415).
+                first_refusal.get_or_insert(error);
+            }
         }
     }
     reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
-    Ok(())
+    first_refusal.map_or(Ok(()), Err)
+}
+
+fn storage_failure(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull
+    )
 }
 
 /// Folds durable connector receipts into this projector. TASK identity fixes the
@@ -347,7 +370,10 @@ pub(super) fn project_event(
     event_id: EntityId,
     index: &CommProjectorIndex,
 ) -> CommResult<ProjectorIndexDelta> {
-    vault.try_with_write_txn_grouped(|wtxn| {
+    // A write group of its own, so the index can tell its own commit from
+    // any other writer's (`CommProjectorIndex::begin_event_txn`).
+    vault.try_with_write_txn(|wtxn| {
+        index.begin_event_txn(vault);
         let Some(raw) = vault.store.port_entity_record(&*wtxn, &event_id)? else {
             return Ok(ProjectorIndexDelta::default());
         };
@@ -368,7 +394,11 @@ pub(super) fn project_event(
         else {
             return Err(CommError::InvalidRecord);
         };
-        if projected {
+        // A STOP another replica projected still holds sends here until this
+        // replica's pass finds that projection's restriction (F06).
+        let pending_stop = kind == CommEventKind::InboundStop
+            && holds_pending_stop_in_txn(&vault.store, &*wtxn, &event_id)?;
+        if projected && !pending_stop {
             // A peer pass already committed this snapshotted event. A join or
             // leave is a durable membership boundary even when its commit
             // mutated no claim (a join while a member claim already stands, a
@@ -400,31 +430,83 @@ pub(super) fn project_event(
         // build; project their recipient class through the same rule as new
         // events, without changing the original audit event bytes.
         let recipient_class = channel_class.as_deref().map(normalize_channel_class);
-        let delta = apply_projector_rule_in_txn(
-            vault,
-            wtxn,
-            index,
-            &ProjectedCommEvent {
-                rule: *rule,
-                source_event_id: event_id,
-                party_ref,
-                channel_class: recipient_class.as_deref(),
-                thread_ref: thread_ref.as_deref(),
-                occurred_at,
-            },
-        )?;
-        let consumed = CommRecord::Event {
-            sequence,
-            kind,
+        let event = ProjectedCommEvent {
+            rule: *rule,
+            source_event_id: event_id,
             party_ref,
-            channel_class,
-            thread_ref,
+            channel_class: recipient_class.as_deref(),
+            thread_ref: thread_ref.as_deref(),
             occurred_at,
-            projected: true,
         };
-        put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
+        let delta = if projected {
+            match peer_stop_projection_in_txn(vault, &*wtxn, &event)? {
+                // Still in flight: the event keeps holding and waits.
+                None => return Ok(ProjectorIndexDelta::default()),
+                Some(true) => apply_projector_rule_in_txn(vault, wtxn, index, &event)?,
+                Some(false) => ProjectorIndexDelta::default(),
+            }
+        } else {
+            apply_projector_rule_in_txn(vault, wtxn, index, &event)?
+        };
+        if !projected {
+            let consumed = CommRecord::Event {
+                sequence,
+                kind,
+                party_ref,
+                channel_class,
+                thread_ref,
+                occurred_at,
+                projected: true,
+            };
+            put_comm_record_in_txn(vault, wtxn, event_id, &consumed)?;
+        }
+        if pending_stop {
+            release_pending_stop_in_txn(&vault.store, wtxn, &event_id)?;
+        }
+        index.expect_own_commit();
         Ok(delta)
     })
+}
+
+/// What a peer's projection of a STOP left on this replica: `Some(true)`
+/// when the STOP's own opt-out stands here, so the rule only consumes gates
+/// and refreshes contacts; `Some(false)` when that opt-out arrived closed, or
+/// a head after the STOP moved the slot; `None` until one of them arrives.
+///
+/// The rule never mints for a peer's STOP. Its own opt-out, or the later head
+/// that answers it, arrives with the peer's state, and a copy minted here
+/// first could stand against a clear the peer's human already made. An older
+/// head standing here is no answer: its clear may be in flight (R1-F1).
+fn peer_stop_projection_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event: &ProjectedCommEvent<'_>,
+) -> CommResult<Option<bool>> {
+    let channel = event.channel_class.ok_or(CommError::InvalidRecord)?;
+    let own = projected_comm_claim_id(
+        event.source_event_id,
+        &CommClaimValue::OptOut {
+            party_ref: event.party_ref,
+            channel_class: Some(channel.to_owned()),
+            reason: OPT_OUT_REASON_STOP.to_owned(),
+            occurred_at: event.occurred_at,
+        },
+    )?;
+    let history = matching_claims_in_txn(
+        vault,
+        rtxn,
+        event.party_ref,
+        PREDICATE_COMM_OPT_OUT,
+        Some(channel),
+        None,
+        false,
+    )?;
+    if let Some((_, claim)) = history.iter().find(|(id, _)| *id == own) {
+        return Ok(Some(claim.is_standing()));
+    }
+    let answered_later = latest_claim_transition_boundary(&history)
+        .is_some_and(|boundary| event.occurred_at < boundary);
+    Ok(answered_later.then_some(false))
 }
 
 fn apply_projector_rule_in_txn(
@@ -453,7 +535,6 @@ fn apply_projector_rule_in_txn(
                 None,
                 true,
             )?;
-            require_at_most_one(&active)?;
             let value = CommClaimValue::LastTouch {
                 party_ref,
                 channel_class: channel.to_owned(),
@@ -464,14 +545,26 @@ fn apply_projector_rule_in_txn(
             if !minted {
                 return Ok(ProjectorIndexDelta::default());
             }
-            if let Some((old_head_id, old_head)) = active.into_iter().find(|(id, _)| *id != new_id)
-            {
-                let head_at = old_head.valid_from.unwrap_or(occurred_at);
-                let close_at = occurred_at.max(head_at);
-                if occurred_at >= head_at {
-                    vault.supersede_claim_in_txn(wtxn, &new_id, &old_head_id, close_at)?;
-                } else {
-                    vault.supersede_claim_in_txn(wtxn, &old_head_id, &new_id, close_at)?;
+            // Provider spellings normalize to one slot, so the slot can hold
+            // more than one live head (F06 H415). The newest touch stays live
+            // and supersedes every other; this touch wins a tie, and among
+            // older heads the lowest id does.
+            let mut older: Vec<(EntityId, u64)> = active
+                .into_iter()
+                .filter(|(id, _)| *id != new_id)
+                .map(|(id, head)| (id, head.valid_from.unwrap_or(occurred_at)))
+                .collect();
+            older.sort_unstable_by_key(|(id, _)| *id);
+            let mut heads = vec![(new_id, occurred_at)];
+            heads.extend(older);
+            let (winner, close_at) = heads
+                .iter()
+                .copied()
+                .reduce(|best, head| if head.1 > best.1 { head } else { best })
+                .unwrap_or((new_id, occurred_at));
+            for (id, _) in heads {
+                if id != winner {
+                    vault.supersede_claim_in_txn(wtxn, &winner, &id, close_at)?;
                 }
             }
             Ok(ProjectorIndexDelta::default())
@@ -487,7 +580,9 @@ fn apply_projector_rule_in_txn(
                 None,
                 true,
             )?;
-            require_at_most_one(&active)?;
+            // Any live head on the normalized slot is a standing opt-out; two
+            // provider-spelled heads are restrictive OR, not a conflict
+            // (F06 H415).
             if active.is_empty() {
                 let history = matching_claims_in_txn(
                     vault,
@@ -570,6 +665,16 @@ fn apply_projector_rule_in_txn(
                     put_comm_record_in_txn(vault, wtxn, candidate.id, &consumed)?;
                     consumed_gate_ids.push((key.clone(), candidate.id));
                 }
+                // The heads may have landed without the cache (replicated,
+                // or written beside the projector), so a STOP on a standing
+                // slot still leaves the contact row saying opted out.
+                rematerialize_party_channel_contact_cache_in_txn(
+                    vault,
+                    wtxn,
+                    party_ref,
+                    channel,
+                    occurred_at,
+                )?;
                 Ok(ProjectorIndexDelta {
                     consumed_gate_ids,
                     projected_thread_transition: None,

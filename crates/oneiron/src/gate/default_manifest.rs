@@ -168,7 +168,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from("retry_source_policy"),
             Value::Array(vec![Value::Map(vec![
                 (Value::from("selector"), Value::from("vault")),
-                (Value::from("max_sources"), Value::from(1_024_u64)),
+                // No cap a vault meets: a holder's own row narrows it, and
+                // a retry past its scan row raises the OF-520 question.
+                (Value::from("max_sources"), Value::from(u64::from(u32::MAX))),
                 (Value::from("precedence"), Value::from("nested_narrowing")),
             ])]),
         ),
@@ -385,6 +387,38 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(crate::comm::PREDICATE_COMM_LAST_TOUCH),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // The origin's own record of what it published and admitted.
+                // Only engine doors write it (`repo.*` is reserved), and a
+                // publication still needs its grant, lease, measured outcome
+                // and ref CAS, so an owner review is not its barrier.
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("repo.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A shared vault's admin ruling is decided by its own ruling
+                // law: a live admin grant and the holder's human envelope,
+                // checked at the claim put seam for every door. An owner
+                // review on top would strand a ruling that law decided.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::federation::RULING_PREDICATE),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (

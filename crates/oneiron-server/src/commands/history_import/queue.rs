@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
 use super::{
-    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, own_second,
+    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, no_hook_root, own_second,
     queue_dreamer, queued_stamp, read_queued,
 };
 use crate::config::{ImportConfig, ServeConfig};
@@ -99,13 +99,17 @@ pub(super) fn enqueue(
         "the import queue is off; set `queue = true` under `[import]` in the serve config and \
          restart `serve`"
     );
-    let root = config.import.root_for(source).ok_or_else(|| {
-        anyhow::anyhow!(
-            "a {} export is not a session log; import it with `serve` stopped",
-            source.source_id()
-        )
-    })?;
     let path = std::path::absolute(path)?;
+    let root = config
+        .import
+        .root_for_path(source, &path)
+        .ok_or_else(|| match source {
+            HistorySource::HookTranscript => no_hook_root(&path),
+            _ => anyhow::anyhow!(
+                "a {} export is not a session log; import it with `serve` stopped",
+                source.source_id()
+            ),
+        })?;
     below(&root, &path)?;
     let dir = config.import.queue_dir_for(&config.vault_path);
     fs::DirBuilder::new()
@@ -310,6 +314,7 @@ impl ImportQueue {
             conversations = totals.conversations,
             new = totals.new,
             skipped = totals.skipped,
+            unreadable = totals.not_kept.unreadable,
             changed = totals.changed,
             refused = totals.refused,
             too_large = landed.left_out.len(),
@@ -467,7 +472,7 @@ impl ImportQueue {
     /// be found, which a read then says.
     fn stamp(&self, entry: &Entry) -> Option<String> {
         let source = HistorySource::parse(&entry.source)?;
-        let root = self.config.root_for(source)?;
+        let root = self.config.root_for_path(source, &entry.path)?;
         queued_stamp(source, &root, &entry.path).ok()
     }
 
@@ -480,9 +485,15 @@ impl ImportQueue {
         let read = HistorySource::parse(&entry.source)
             .ok_or_else(|| anyhow::anyhow!("unknown source {:?}", entry.source))
             .and_then(|source| {
-                let root = self.config.root_for(source).ok_or_else(|| {
-                    anyhow::anyhow!("{} logs are not imported from the queue", entry.source)
-                })?;
+                let root = self
+                    .config
+                    .root_for_path(source, &entry.path)
+                    .ok_or_else(|| match source {
+                        HistorySource::HookTranscript => no_hook_root(&entry.path),
+                        _ => {
+                            anyhow::anyhow!("{} logs are not imported from the queue", entry.source)
+                        }
+                    })?;
                 let session = read_queued(source, &root, &entry.path)?;
                 Ok(Log { source, session })
             });

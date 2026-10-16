@@ -8,6 +8,10 @@
 mod agent_credentials;
 mod ai_serve;
 mod api_cli;
+// Runs the shipped binary through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod artifact_listener;
+mod artifact_origin_browser;
 mod booking_agent_api;
 // The broker runs as a second user through a user namespace: Linux only.
 #[cfg(target_os = "linux")]
@@ -21,6 +25,9 @@ mod dreamer_live;
 mod fake_llm;
 mod first_owner_bootstrap;
 mod history_import;
+// Runtime files, owner-only modes and SIGTERM are Unix-only.
+#[cfg(unix)]
+mod hook;
 // The secret file's owner-only mode and SIGTERM are Unix-only.
 #[cfg(unix)]
 mod host_re_root;

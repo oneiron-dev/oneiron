@@ -3,7 +3,6 @@
 
 use super::super::*;
 use super::BatchBuilder;
-#[cfg(any(feature = "sync", test))]
 use super::ops::replicated_put_op;
 
 use crate::Vault;
@@ -15,8 +14,8 @@ use crate::temporal::TimeRange;
 /// A check the committing terminal runs before it opens its transaction, on
 /// the put op at the index it names.
 ///
-/// The type byte of a public put, and the envelope of a replicated fixture
-/// put, were always judged at call time on the committing builder, so a bad
+/// The type byte of a public put, and the envelope of a replicated (fixture
+/// or engine-history) put, were always judged at call time on the committing builder, so a bad
 /// byte there refuses before its transaction opens. The caller-transaction
 /// terminal never ran them: its puts meet the same gates inside the
 /// transaction (`validate_put_type` and `apply_put`), because a runtime pack
@@ -25,7 +24,6 @@ use crate::temporal::TimeRange;
 /// terminals exactly where they were.
 pub(super) enum CommitCheck {
     PublicType(usize),
-    #[cfg(any(feature = "sync", test))]
     Replicated(usize),
 }
 
@@ -39,7 +37,6 @@ impl CommitCheck {
                     let (entity_type, _) = put_envelope(ops, index)?;
                     vault.store.validate_public_entity_type(entity_type)?;
                 }
-                #[cfg(any(feature = "sync", test))]
                 Self::Replicated(index) => {
                     let (entity_type, occurred) = put_envelope(ops, index)?;
                     if crate::registry::zone_of(entity_type)
@@ -161,6 +158,35 @@ impl BatchBuilder<'_> {
             body,
             RawPutDoor::WitnessMessage,
         )
+    }
+
+    /// Facet rule C's birth door: puts ASSET_TEXT `id`, written from each
+    /// ASSET of `sources`, with a `DerivedFrom` edge to every one. A text
+    /// this put births is stamped, in the same transaction, with the one
+    /// facet its sources were born under, never the batch mask or the vault
+    /// default; sources that are not placed ASSETs, or sit under two facets,
+    /// refuse the batch. A put over a stored text places nothing.
+    pub(crate) fn asset_text_birth(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+        sources: &[(EntityId, f32)],
+    ) -> Self {
+        self.text_births
+            .insert(*id, sources.iter().map(|(source, _)| *source).collect());
+        let mut batch = self.put(
+            id,
+            crate::registry::ENTITY_TYPE_ASSET_TEXT,
+            occurred,
+            learned_at,
+            data,
+        );
+        for (source, weight) in sources {
+            batch = batch.edge(id, crate::edge::EdgeKind::DerivedFrom, source, *weight);
+        }
+        batch
     }
 
     fn put_through(
@@ -370,6 +396,34 @@ impl BatchBuilder<'_> {
         ) {
             self.federated_puts.push(self.ops.len());
         }
+        if self.validation_error.is_none() {
+            self.commit_checks
+                .push(CommitCheck::Replicated(self.ops.len()));
+        }
+        self.ops.push(replicated_put_op(
+            id,
+            entity_type,
+            occurred,
+            learned_at,
+            data,
+        ));
+        self
+    }
+}
+
+impl BatchBuilder<'_> {
+    /// Stages a row of the engine's own signed project history through the
+    /// replicated-shape admission: a captured revision companion (the arm
+    /// re-derives its id from its bytes, decision 8), or a sealed PROJECT row
+    /// the owner's seal door already verified. No public door reaches it.
+    pub(crate) fn put_engine_history(
+        mut self,
+        id: &EntityId,
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
         if self.validation_error.is_none() {
             self.commit_checks
                 .push(CommitCheck::Replicated(self.ops.len()));

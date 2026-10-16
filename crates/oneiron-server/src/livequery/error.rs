@@ -17,6 +17,9 @@ pub(crate) struct AppError {
     /// boxed so the refusal stays small on every `Result` that carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
+    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
+    #[serde(flatten)]
+    wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
 }
 
 impl AppError {
@@ -33,6 +36,7 @@ impl AppError {
             request_id: format!("ws-facade-req-{id:016x}"),
             suggestions: suggestions.into_iter().map(Into::into).collect(),
             narrowing: None,
+            wrong_root: None,
         }
     }
 
@@ -71,6 +75,26 @@ impl AppError {
         ApiError::internal_server_error(message).into()
     }
 
+    /// State kept between frames met the machine's memory floor, the line
+    /// `limits.retained_memory_bytes` sizes: the one refusal past that row.
+    pub(super) fn memory_floor() -> Self {
+        Self::new(
+            "MEMORY_FLOOR",
+            "retained state reached the memory floor (limits.retained_memory_bytes)",
+            ["Retry once other state is released, or raise limits.retained_memory_bytes."],
+        )
+    }
+
+    /// Work waited for its turn past a row and reached its deadline
+    /// (`limits.queue_wait_timeout_ms`). Nothing was opened.
+    pub(super) fn waited_out() -> Self {
+        Self::new(
+            "WAITED_OUT",
+            "the request waited for its turn past its deadline",
+            ["Retry: nothing was opened."],
+        )
+    }
+
     /// A read whose result changed before all of it was sent.
     pub(super) fn result_changed() -> Self {
         Self::new(
@@ -97,6 +121,7 @@ impl From<MemoryError> for AppError {
         // fields; a read refusal keeps its receipt, as the HTTP envelope does.
         Self {
             narrowing: error.read_receipt,
+            wrong_root: error.wrong_root,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

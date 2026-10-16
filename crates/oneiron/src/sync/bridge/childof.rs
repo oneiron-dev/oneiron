@@ -10,9 +10,10 @@ use super::{format_edge_key, parse_edge_key};
 use crate::batch::{self, BatchOp};
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::sync::loro_support::map_for_each_bytes;
+use crate::sync::loro_support::map_for_each_value_bytes;
 use crate::sync::quarantine::remote_rejection_reason;
 use crate::{Result, Vault};
 
@@ -159,8 +160,16 @@ pub(super) fn replayed_child_of_candidates(
         return Ok(Vec::new());
     }
 
+    // Every edge in the map is read, so each unseated child is arbitrated
+    // over all its live candidates: past the threshold row the walk raises
+    // one check and reads on.
+    let mut rows = ScanCount::start(&vault.store, rtxn, EngineScan::ChildOfMapEntries, &[])?;
     let mut keys = Vec::<String>::new();
-    map_for_each_bytes(edges_map, |key, value| {
+    map_for_each_value_bytes(edges_map, |key, value| {
+        rows.row();
+        let Some(value) = value else {
+            return;
+        };
         let Some((child, EdgeKind::ChildOf, parent)) = parse_edge_key(key) else {
             return;
         };
@@ -173,6 +182,7 @@ pub(super) fn replayed_child_of_candidates(
         }
         keys.push(key.to_string());
     });
+    rows.finish(vault);
     // Neither walk has an order; the batch they feed must have one.
     displaced.sort_unstable();
     keys.sort_unstable();
@@ -192,6 +202,31 @@ pub(super) struct PendingEdgeOp {
     src: EntityId,
     tgt: EntityId,
     op: BatchOp,
+}
+
+/// Applies one ChildOf attempt inside a savepoint. LWW resolution stages the
+/// stored loser's delete before later gates (the overlay taint guard) judge the
+/// winner, so a rejected attempt must drop what it staged (F25 H211).
+fn apply_child_of_attempt(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    batch::apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut savepoint,
+        ops,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        false,
+    )?;
+    savepoint.commit()?;
+    Ok(())
 }
 
 /// Applies materialized edge ops. A write-gate rejection quarantines the
@@ -305,41 +340,15 @@ pub(super) fn apply_materialized_edge_ops(
         let mut component_ops = component;
         component_ops.sort_by(cmp_pending_child_of_ops);
         let ops: Vec<BatchOp> = component_ops.iter().map(|entry| entry.op.clone()).collect();
-        let apply_result = batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            ops,
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            false,
-        );
-        match apply_result {
+        match apply_child_of_attempt(vault, wtxn, ops) {
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(_) => {
-                // The component was rejected as a unit (a remote ChildOf cycle
-                // or single-parent violation — both up-front validation gates,
-                // nothing staged). Re-apply per-op in the same deterministic
-                // order so only the ops that individually fail a gate are
-                // quarantined — never falsely recording siblings that are valid
-                // on their own.
+                // The component was rejected as a unit and its savepoint
+                // dropped. Re-apply per-op in the same deterministic order so
+                // only the ops that individually fail a gate are quarantined —
+                // never falsely recording siblings that are valid on their own.
                 for pending in component_ops {
-                    let apply_result = batch::apply_ops(
-                        &vault.store,
-                        &vault.config,
-                        &vault.analyzer,
-                        wtxn,
-                        vec![pending.op],
-                        vault
-                            .text_index_trusted
-                            .load(std::sync::atomic::Ordering::Acquire),
-                        false,
-                        false,
-                    );
-                    match apply_result {
+                    match apply_child_of_attempt(vault, wtxn, vec![pending.op]) {
                         Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
                         Err(e) => {
                             quarantine_edge_apply_failure(

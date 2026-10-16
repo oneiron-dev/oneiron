@@ -276,8 +276,11 @@ pub(super) fn is_edge_reserved_predicate(predicate: &str) -> bool {
 }
 
 /// The predicates whose lifecycle the ENGINE drives (`skill.*`, `actor.*`,
-/// and exactly `person.substrate`), unlike `edge.*`, whose transitions re-stamp
-/// provenance-derived edge state and therefore stay exclusively edge-owned.
+/// `repo.*`, and exactly `person.substrate`), unlike `edge.*`, whose
+/// transitions re-stamp provenance-derived edge state and therefore stay
+/// exclusively edge-owned. `repo.*` is the origin's own record of what it
+/// published and admitted: a generic door that could write it could stand in
+/// for a publication's intent or a push's evidence.
 pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
     let namespace = predicate.split('.').next();
     namespace == Some("machine")
@@ -288,7 +291,17 @@ pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
         || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
         || predicate == crate::subject_model::PREDICATE_PERSON_SUBSTRATE
         || predicate == super::PREDICATE_VAULT_DEFAULT_FACET
-        || matches!(predicate, "repo.proposed_diff" | "repo.session")
+        || namespace == Some("repo")
+}
+
+/// Whether `prefix` is a well-formed predicate prefix: one or more grammar
+/// segments, each followed by a dot (`host.persona.`), within the predicate
+/// byte bound. A host's protected namespace is declared in this shape.
+pub(crate) fn is_predicate_prefix(prefix: &str) -> bool {
+    prefix.len() <= MAX_PREDICATE_BYTES
+        && prefix
+            .strip_suffix('.')
+            .is_some_and(|stem| stem.split('.').all(valid_predicate_segment))
 }
 
 fn valid_predicate_segment(segment: &str) -> bool {

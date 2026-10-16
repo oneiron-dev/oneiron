@@ -247,6 +247,9 @@ impl ManagedArgs {
                 dir: self.keystore_dir.clone(),
                 service: None,
             },
+            // Our cloud sends feedback to our own inbox unless told otherwise
+            // (ARCH-0056 r6); every send still asks the owner first.
+            feedback: crate::config::FeedbackConfig::cloud_default(),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -387,6 +390,21 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "port",
         |args| args.port.is_some(),
+        ArgvUse::Refused(NO_HOST_PORT_REASON),
+    ),
+    (
+        "artifact-port",
+        |args| args.artifact_port.is_some(),
+        ArgvUse::Refused(NO_HOST_PORT_REASON),
+    ),
+    (
+        "artifact-domains",
+        |args| args.artifact_domains.is_some(),
+        ArgvUse::Refused(NO_HOST_PORT_REASON),
+    ),
+    (
+        "artifact-vault-name",
+        |args| args.artifact_vault_name.is_some(),
         ArgvUse::Refused(NO_HOST_PORT_REASON),
     ),
     // The auth layer: the supervisor's, not this child's.

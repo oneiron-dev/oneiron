@@ -2,26 +2,38 @@
 
 use super::invalid_artifact_path;
 use crate::error::{ArtifactError, Error, Result};
+use rand_core::{OsRng, RngCore};
 use std::{
     fs, io,
     path::{Path, PathBuf},
 };
 
+/// Fresh names tried before quarantine fails. Each carries 64 random bits, so
+/// a writer in the artifact directory cannot reserve them ahead (F33); only a
+/// run of collisions reaches the bound.
+const QUARANTINE_NAME_ATTEMPTS: usize = 8;
+
 pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Result<PathBuf> {
     // A changed source is not the artifact we validated. Leave it alone.
-    if !fs::symlink_metadata(path)?.file_type().is_file() || fs::read(path)? != expected {
+    if !fs::symlink_metadata(path)?.file_type().is_file() || !holds_exactly(path, expected)? {
         return Err(Error::ConcurrentWrite(
             "recovery artifact changed before quarantine",
         ));
     }
-    for suffix in 1..=u16::MAX {
-        let candidate = invalid_artifact_path(path, suffix);
+    for _ in 0..QUARANTINE_NAME_ATTEMPTS {
+        let mut suffix = [0_u8; 8];
+        // A failed OS randomness read is an error, never a panic.
+        OsRng
+            .try_fill_bytes(&mut suffix)
+            .map_err(|_| io::Error::other("os randomness unavailable"))?;
+        let candidate =
+            invalid_artifact_path(path, &format!("{:016x}", u64::from_be_bytes(suffix)));
         match rename_no_replace(path, &candidate) {
             Ok(()) => {
                 // Rename consumes exactly one directory entry, not a later
                 // replacement. If a writer raced between read and rename,
                 // preserve the moved bytes, stop recovery and never delete them.
-                if fs::read(&candidate)? != expected {
+                if !holds_exactly(&candidate, expected)? {
                     let _ = rename_no_replace(&candidate, path);
                     return Err(Error::ConcurrentWrite(
                         "recovery artifact changed during quarantine",
@@ -38,6 +50,33 @@ pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Resul
         path: path.to_path_buf(),
     }
     .into())
+}
+
+/// Opens `path` for reading only if it is a regular file, without blocking
+/// on a FIFO swapped in at that name.
+pub(super) fn open_regular(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recovery artifact is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Whether `path` holds exactly `expected`, reading at most one byte more.
+fn holds_exactly(path: &Path, expected: &[u8]) -> io::Result<bool> {
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(
+        &mut io::Read::take(open_regular(path)?, expected.len() as u64 + 1),
+        &mut bytes,
+    )?;
+    Ok(bytes == expected)
 }
 
 #[cfg(unix)]

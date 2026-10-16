@@ -110,6 +110,7 @@ class RetrievalMeta(TypedDict):
     claims_returned: int
     deep_pending: bool | None
     temporal_hints: NotRequired[list[TemporalHint]]
+    limit_clamped: NotRequired[bool]
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
@@ -214,7 +215,14 @@ class OneironError(RuntimeError):
     code: str
     message: str
     suggestions: tuple[str, ...]
-    def __init__(self, code: str, message: str, suggestions: list[str]) -> None: ...
+    wrong_root: dict[str, str] | None
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        suggestions: list[str],
+        wrong_root: dict[str, str] | None = None,
+    ) -> None: ...
 
 class Oneiron:
     tasks: TasksVerbs

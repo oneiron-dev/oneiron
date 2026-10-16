@@ -36,7 +36,10 @@
 //!    Excel-identical, against 2,648 for LibreOffice 25.8, and 809 of the 811
 //!    pinned goldens against LibreOffice's 753. NOW(), TODAY() and the random
 //!    functions read the session's clock ([`EditSession::recalc_clock`]),
-//!    else the host's clock at recalc time. [`EditSession::recalc`] —
+//!    else the host's clock at recalc time; CELL("filename") reads the
+//!    folder and file name the session opened the workbook from
+//!    ([`EditSession::recalc_location`]), else the one Excel last saved in
+//!    the workbook's own CELL("filename") caches. [`EditSession::recalc`] —
 //!    LibreOffice headless in production, a session-image dependency — stays
 //!    the precision fallback for refused workbooks only (unsupported
 //!    features, formulas needing what only the host knows) and keeps the
@@ -68,6 +71,7 @@
 //!   the manifest bytes to receipt.
 
 mod address;
+mod deck;
 mod docx;
 mod formula;
 mod inspect;
@@ -84,6 +88,10 @@ pub mod slides_review;
 mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
+pub(crate) use self::deck::{VaultAssets, deck_op, verify_deck_proposal};
+pub use self::deck::{
+    DeckEditContext, DeckRender, DeckRenderSide, DeckSettleEvidence, run_deck_transaction,
+};
 pub use self::docx::run_docx_revision;
 pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
@@ -96,6 +104,9 @@ pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_round
 pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, RecalcPolicy, ValidationCheck, ValidationReport,
 };
+/// The folder and file name a session gives the in-process recalc
+/// ([`EditSession::recalc_location`]).
+pub use oneiron_xlsx_formula::DocumentLocation;
 /// The clock and seed a session gives the in-process recalc
 /// ([`EditSession::recalc_clock`]).
 pub use oneiron_xlsx_formula::RecalcClock;

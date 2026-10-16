@@ -93,9 +93,38 @@ client, so list proxy hosts only, never a client network. An entry that does
 not parse, a `/0` block, or an address with bits set past its prefix stops
 startup. The default is empty: every caller is keyed by its own connection.
 
-`[limits]` bounds the work a caller can start. Every bound is finite, and a
-zero is a config error. The count rows sit far above fleet scale (each is at
-least ten times the 200 agents a fleet plans for, many of them on one
+`artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
+port of a second listener, on the same host, that serves hosted artifacts
+(`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
+that origin rather than the API's: there it keeps its module scripts and
+fonts, and no route it can reach holds API data. The API still answers `/a/`,
+but sandboxes a code bundle into an opaque origin there, where module scripts
+and fonts do not load. The default `0` takes any free port, which
+`/api/health` reports as `artifact_port`; clients open artifacts at the API's
+scheme and host with that port. Set a fixed port for links that outlive a
+restart. Behind a reverse proxy, publish that port on its own origin as well,
+and never list it in `allowed_origins`. Both listeners share the `[limits]`
+connection floor and each address's unauthenticated share. Managed serve
+(`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
+`/a/` is unchanged until the supervisor routes an artifact origin.
+
+`artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
+comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
+`ONEIRON_ARTIFACT_VAULT_NAME`, a DNS label) put this vault on a subdomain of
+its own on the artifact listener: `<vault>.<domain>/<artifact>/...` serves what
+`/a/<artifact>/...` serves, with the same tiers, pointers and cache headers, on
+an origin per vault. The edge, DNS and certificates stay static config: route
+each domain's subdomains to the artifact port. A subdomain that names no vault
+here answers exactly as a forbidden artifact does (the artifact 404), and so
+does every refusal from this vault there. Other hosts keep plain `/a/`. A
+device publishes to this server by syncing: a pinned pointer reaches it once
+window sync has delivered the bytes and rows it names. Managed serve refuses
+both flags for now.
+
+`[limits]` bounds the work a caller can start. Every bound is finite. A zero is
+a config error on every row except `disk_reserve_bytes`, where zero puts the
+floor at the disk's last byte. The count rows sit far above fleet scale (each
+is at least ten times the 200 agents a fleet plans for, many of them on one
 credential and one address). Past a row, work waits its turn in a fair queue,
 round-robin across credentials and in arrival order within one, and the row
 asks whether everything is okay: a typed `inspect_limit_crossing` question
@@ -114,11 +143,27 @@ lfs_transfers = 2048              # LFS uploads, downloads and verifies at once;
 lfs_memory_bytes = 2147483648     # bytes LFS transfers hold in memory: half reads, half installs (default: an eighth of memory)
 embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
+decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
+projection_body_bytes = 4194304   # body bytes one multi-row read decodes
+git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
+git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
-disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
+disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
+keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
+code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
+code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
+code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor
+code_result_memory_bytes = 8589934592 # result bodies every run holds in memory at once (default: memory / 8, the least of RAM and the container limit)
+code_result_session_memory_bytes = 1073741824 # result bodies one run holds in memory (default: memory / 64); past either, a body is read from its file by range
 ```
+
+The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
+its memory floor per blob, never a cap on the push: a push of any size lands
+while each blob fits and the disk keeps `git_scan_disk_floor_bytes` free. A
+push past either is refused whole, with a reason that names the key.
 
 Only the machine's own floors and the anonymous surface hold work back. Past
 `max_connections` the server stops accepting, so new sockets wait in the
@@ -153,7 +198,19 @@ arrive from its one address. A push to a repository another push holds waits
 its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
 set) lands and the row asks; an upload that would take the vault's disk below
 `disk_reserve_bytes` is refused with 507, by its declared size before any byte
-is read.
+is read. A push holds its command section and status report on that disk past
+memory, and is answered 507 when a write of them would take it below the
+reserve. Each such write asks first and claims nothing, so writes at the same
+moment can each pass the reserve by their own bytes.
+
+The two retrieval rows bound one request's shape, not how much a caller may
+read. A query past `retrieval_query_bytes` is refused with a 413 that names
+the field and the bound, and the first such query from a caller at a door
+leaves a check for the operator. A list, search or query whose decoded bodies
+would pass `projection_body_bytes` serves every row, and the rows past it
+carry `bodyOmitted` in place of their body; reading that row on its own
+returns its body whole. An over-large `limit` is served at 1,000 rows, and
+the response says it was clamped.
 
 ## CJK Dictionaries
 

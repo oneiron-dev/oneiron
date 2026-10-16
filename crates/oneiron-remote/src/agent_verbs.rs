@@ -22,10 +22,14 @@ impl OneironClient {
         if !oneiron::task_verb::sdk::AgentVerb::from_name(verb)
             .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade)
         {
-            return Err(crate::error::bad_request(
-                "unknown SDK agent verb",
-                &["Use a verb from the SDK catalog."],
-            ));
+            return Err(
+                oneiron::task_verb::sdk::wrong_root(verb).unwrap_or_else(|| {
+                    crate::error::bad_request(
+                        "unknown SDK agent verb",
+                        &["Use a verb from the SDK catalog."],
+                    )
+                }),
+            );
         }
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
@@ -267,7 +271,11 @@ impl OneironClient {
             deadline_ms,
         };
         oneiron::memory::caps::check_query(&input.query)?;
-        oneiron::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+        oneiron::memory::caps::check_limit_nonzero(
+            input
+                .limit
+                .unwrap_or(oneiron::task_verb::sdk::RECALL_LIMIT_DEFAULT),
+        )?;
         oneiron::memory::caps::check_as_of(input.as_of)?;
         oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(&input).map_err(|_| {
@@ -300,7 +308,11 @@ impl OneironClient {
         limit: usize,
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::ReceiptsRequest { limit: Some(limit) };
-        oneiron::memory::caps::check_limit(input.limit.unwrap_or(100))?;
+        oneiron::memory::caps::check_limit(
+            input
+                .limit
+                .unwrap_or(oneiron::task_verb::sdk::RECEIPTS_LIMIT_DEFAULT),
+        )?;
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

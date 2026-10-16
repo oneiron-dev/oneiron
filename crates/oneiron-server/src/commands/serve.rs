@@ -9,6 +9,7 @@ use super::{
     weak_auth_secret_warning,
 };
 use crate::build_app;
+use crate::build_artifact_app;
 use crate::config::ServeConfig;
 use crate::managed::{self, ServeListener};
 use crate::server::SyncServer;
@@ -16,7 +17,12 @@ use crate::server::SyncServer;
 /// How long open connections get to finish after a stop is requested.
 const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
-pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
+/// `config_file` is the file `config` was read from, which the server's
+/// runtime file names for a client that queues imports to it.
+pub(super) async fn serve_with_config(
+    config: ServeConfig,
+    config_file: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     use oneiron_vault_contract::host::{Host, HostLimits};
 
     tracing::info!(
@@ -93,6 +99,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         .with_embedder(embedder)
         .with_tagger(tagger)
         .with_owner_host(owner_host)
+        .with_browser_guest(config.browser.as_ref().map(crate::config::BrowserConfig::guest))
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -117,7 +124,17 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         || Ok(()),
     );
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
-    tracing::info!(%addr, "listening");
+    #[cfg(unix)]
+    let bound = listener.local_addr()?;
+    // `/a/` on an origin of its own, so a code bundle's scripts never run on
+    // the API's: same host, its own port. Bound before any worker starts too.
+    let artifact_bind = SocketAddr::new(addr.ip(), config.artifact_port);
+    let artifact_listener = tokio::net::TcpListener::bind(artifact_bind)
+        .await
+        .map_err(|error| anyhow::anyhow!("artifact listener bind {artifact_bind}: {error}"))?;
+    let artifact_addr = artifact_listener.local_addr()?;
+    let sync_server = sync_server.with_artifact_listener(artifact_addr.port());
+    tracing::info!(%addr, artifacts = %artifact_addr, "listening");
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With
     // no section every seat stays empty and the model-free server is whole.
     // A startup error below drops `ai`, which tells its workers to stop.
@@ -136,22 +153,46 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
+    // The API's CORS stays the API's: the artifact origin is never granted.
+    let artifact_app = build_artifact_app(sync_server.clone());
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
+    #[cfg(unix)]
+    let vault_id = super::local_servers::vault_id(sync_server.vault());
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
+    // Ready and bound: a client on this host can find it now. The file goes
+    // when this returns, a clean stop or a late startup error alike.
+    #[cfg(unix)]
+    let _registered =
+        super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
+    #[cfg(not(unix))]
+    let _ = config_file;
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
-    // Connections are admitted, and their headers timed, before any route runs.
-    let serving = crate::http_listener::serve(
-        listener,
-        app,
-        config.limits.connections(),
-        questions,
-        async move {
+    let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
+        let _ = stopped.wait_for(|stop| *stop).await;
+    };
+    let (api_stop, artifact_stop) = (stop(stopped.clone()), stop(stopped.clone()));
+    // Connections are admitted, and their headers timed, before any route
+    // runs. Both listeners draw on one pool, so the descriptor floor and each
+    // address's unauthenticated share hold for the daemon, not per socket.
+    let limits = config.limits.connections();
+    let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
+    let api = crate::http_listener::serve_with_pool(listener, app, &pool, limits, api_stop);
+    let artifacts = crate::http_listener::serve_with_pool(
+        artifact_listener,
+        artifact_app,
+        &pool,
+        limits,
+        artifact_stop,
+    );
+    let serving = async {
+        let stop_on_signal = async {
             stop_requested().await;
             let _ = stopping.send(true);
-        },
-    );
+        };
+        tokio::join!(stop_on_signal, api, artifacts);
+    };
     tokio::select! {
         () = serving => {}
         () = async {

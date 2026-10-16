@@ -41,6 +41,9 @@ pub(crate) struct WorldKeySession {
     /// This install's this-device-only keystore. The host installs it after
     /// open.
     pub(crate) keystore: Mutex<Option<Arc<dyn DeviceKeystore>>>,
+    /// This install's signing keys, loaded from that keystore outside any
+    /// transaction (P6c). Cleared when another keystore is installed.
+    pub(crate) signer: Mutex<Option<Arc<crate::identity::InstallSigner>>>,
     /// The world keys this machine opened.
     pub(crate) ring: Mutex<HashMap<WorldKeyId, Arc<WorldKey>>>,
     /// Each world's question, at its latest crossing.

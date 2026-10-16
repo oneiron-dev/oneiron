@@ -235,6 +235,20 @@ pub struct PendingAuthorityAct {
     pub starter_may_object: bool,
     pub objections: BTreeSet<String>,
     pub completed: bool,
+    /// The one effect this completed act authorized, once its door claimed it.
+    /// Absent on every act no door has executed, so such a row keeps the bytes
+    /// earlier builds wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ActExecution>,
+}
+/// The request that carried a completed act's effect, claimed in that effect's
+/// own linearizing write, and its receipt once the effect wrote one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActExecution {
+    pub request: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
 }
 /// Durable, recipient-specific notification for a holder at the instant the act starts.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -459,7 +473,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         setting: SharedActPolicy,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -467,18 +480,17 @@ impl Vault {
             act,
             payload,
             SettingChoice::Holder(setting),
-            now,
         )
     }
     /// Start an arbitrary host-defined authority act. The host must execute only
     /// when `completed` is true; every named live role holder gets one durable event.
+    /// The window starts at the store clock, never at a time the starter names.
     pub fn start_authority_act(
         &self,
         starter: &AuthenticatedOwner,
         vault_id: u64,
         act: &str,
         payload: Vec<u8>,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -486,7 +498,6 @@ impl Vault {
             act,
             payload,
             SettingChoice::Stored,
-            now,
         )
     }
 
@@ -500,7 +511,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         setting: Option<SharedActPolicy>,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         self.start_authority_act_with_policy_selection(
             starter,
@@ -508,7 +518,6 @@ impl Vault {
             act,
             payload,
             SettingChoice::Host(setting),
-            now,
         )
     }
 
@@ -519,7 +528,6 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         selection: SettingChoice,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         if !valid_name(act) {
             return Err(invalid());
@@ -556,6 +564,9 @@ impl Vault {
         if act.len() > policy.max_act_name_bytes || payload.len() > policy.max_payload_bytes {
             return Err(invalid());
         }
+        // The window runs on the store clock: a starter's own time could open
+        // it already past its deadline.
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let holders = self.live_act_holders(&txn, vault_id, now)?;
         if !holders.iter().any(|holder| {
             holder.member == starter_actor
@@ -579,6 +590,7 @@ impl Vault {
             starter_may_object: policy.starter_may_object,
             objections: BTreeSet::new(),
             completed: wait == 0,
+            execution: None,
         };
         self.store
             .vault_meta
@@ -607,13 +619,74 @@ impl Vault {
         Ok(record)
     }
     pub fn pending_authority_act(&self, id: &str) -> Result<Option<PendingAuthorityAct>> {
-        let id = EntityId::from_hex(id)?;
         let txn = self.store.env.read_txn()?;
+        self.pending_authority_act_in_txn(&txn, id)
+    }
+    pub(crate) fn pending_authority_act_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &str,
+    ) -> Result<Option<PendingAuthorityAct>> {
+        let id = EntityId::from_hex(id)?;
         self.store
             .vault_meta
-            .get(&txn, &key(ACT_PREFIX, &id.to_hex()))?
+            .get(txn, &key(ACT_PREFIX, &id.to_hex()))?
             .map(|raw| decode(&raw))
             .transpose()
+    }
+    /// Whether `record` has completed on the store clock: its deadline has
+    /// passed there and no live holder still objects. A completion a host
+    /// recorded at its own earlier-than-deadline time does not count.
+    pub(crate) fn authority_act_completed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        record: &PendingAuthorityAct,
+    ) -> Result<bool> {
+        let now = self.store.clock.now_recorded_at();
+        let mut record = record.clone();
+        if !record.completed {
+            let holders = self.live_act_holders(txn, record.vault_id, now)?;
+            reconcile(&mut record, &holders, now);
+        }
+        Ok(record.completed && now >= record.deadline)
+    }
+    /// Claims completed act `id` for the effect `request` carries, inside that
+    /// effect's linearizing write, so the act's effect runs at most once: an
+    /// act another request claimed refuses, and so does one not completed on
+    /// the store clock. The same request may claim again to add its `receipt`.
+    pub(crate) fn claim_completed_authority_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &str,
+        request: String,
+        receipt: Option<String>,
+    ) -> Result<()> {
+        let k = key(ACT_PREFIX, &EntityId::from_hex(id)?.to_hex());
+        let raw = self.store.vault_meta.get(txn, &k)?.ok_or_else(invalid)?;
+        let mut record: PendingAuthorityAct = decode(&raw)?;
+        match &mut record.execution {
+            Some(execution) if execution.request != request => {
+                return Err(Error::ConcurrentWrite("authority act already executed"));
+            }
+            Some(execution) => {
+                if receipt.is_some() {
+                    execution.receipt = receipt;
+                }
+            }
+            None => {
+                let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+                if !record.completed {
+                    let holders = self.live_act_holders(txn, record.vault_id, now)?;
+                    reconcile(&mut record, &holders, now);
+                }
+                if !record.completed || now < record.deadline {
+                    return Err(Error::ConcurrentWrite("authority act not completed"));
+                }
+                record.execution = Some(ActExecution { request, receipt });
+            }
+        }
+        self.store.vault_meta.put(txn, &k, &encode(&record)?)?;
+        Ok(())
     }
     pub fn pending_act_started_events(
         &self,
@@ -644,18 +717,21 @@ impl Vault {
         Ok(events)
     }
     /// Objections are live only while their holder still carries a named role.
-    /// Once the deadline has passed, withdrawing the last live objection releases the act.
+    /// Once the deadline has passed on the store clock, withdrawing the last
+    /// live objection releases the act.
     pub fn change_authority_objection(
         &self,
         holder: &AuthenticatedOwner,
         id: &str,
         object: bool,
-        now: u64,
     ) -> Result<PendingAuthorityAct> {
         let id = EntityId::from_hex(id)?;
         let mut txn = self.store.env.write_txn()?;
         // Person tier, own holder check: the objector's named role.
         let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
+        // The store clock, not the holder's own time, says whether the
+        // deadline has passed.
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let k = key(ACT_PREFIX, &id.to_hex());
         let raw = self.store.vault_meta.get(&txn, &k)?.ok_or_else(invalid)?;
         let mut record: PendingAuthorityAct = decode(&raw)?;

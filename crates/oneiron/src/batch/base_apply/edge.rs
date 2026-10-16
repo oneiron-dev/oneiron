@@ -101,11 +101,15 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
         }
         BatchOp::DeleteEdge { src, kind, tgt } => {
             // Deleting or purging the source removes its stamp with it;
-            // a live NOTE or ASSET keeps the one it was born with.
+            // a live NOTE, ASSET or ASSET_TEXT keeps the one it was born with.
             if kind == crate::edge::EdgeKind::FacetOf
                 && matches!(
                     stored_entity_type(store, wtxn, &src)?,
-                    Some(crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_ASSET)
+                    Some(
+                        crate::registry::ENTITY_TYPE_NOTE
+                            | crate::registry::ENTITY_TYPE_ASSET
+                            | crate::registry::ENTITY_TYPE_ASSET_TEXT
+                    )
                 )
             {
                 return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
@@ -113,9 +117,10 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             let deleted = apply_delete_edge(store, wtxn, src, kind, tgt)?;
             if deleted {
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
-                // An epoch summary keeps the words of a source whose edge
-                // goes: losing it withdraws the summary, at this door and at
-                // the sync bridge's, which applies a peer's removal here.
+                // An epoch summary or an ASSET_TEXT keeps the words of a
+                // source whose edge goes: losing it withdraws the dependent,
+                // at this door and at the sync bridge's, which applies a
+                // peer's removal here.
                 if kind == crate::edge::EdgeKind::DerivedFrom {
                     crate::ports::withdraw_from_lost_source_in_txn(store, wtxn, &src, &tgt)?;
                 }

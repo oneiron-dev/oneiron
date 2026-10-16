@@ -108,6 +108,22 @@ pub struct ServeArgs {
     #[arg(long)]
     pub port: Option<u16>,
 
+    /// Port, on the same host, of the listener that serves artifacts (`/a/`)
+    /// on an origin of their own. Defaults to any free port.
+    #[arg(long = "artifact-port")]
+    pub artifact_port: Option<u16>,
+
+    /// Comma-separated domains whose subdomains name vaults on the artifact
+    /// listener: `<vault>.<domain>/<artifact>/…` serves that vault's synced,
+    /// pinned artifacts. DNS, certificates and the edge stay static config.
+    #[arg(long = "artifact-domains", value_delimiter = ',', num_args = 1..)]
+    pub artifact_domains: Option<Vec<String>>,
+
+    /// The subdomain label (a DNS label) this server's vault answers to
+    /// under every artifact domain.
+    #[arg(long = "artifact-vault-name")]
+    pub artifact_vault_name: Option<String>,
+
     /// Host issuer key material (never a bearer credential) and input for
     /// minted `v2` tokens. Rotating it invalidates all minted tokens.
     #[arg(long)]
@@ -307,6 +323,9 @@ impl fmt::Debug for ServeArgs {
             .field("keystore_dir", &self.keystore_dir)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
+            .field("artifact_domains", &self.artifact_domains)
+            .field("artifact_vault_name", &self.artifact_vault_name)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field(
                 "insecure_allow_unauthenticated",

@@ -99,6 +99,9 @@ pub(super) fn mail_reputation() -> Result<Case> {
     let (dir, vault) = open_vault();
     let sender = entity(0x3A);
     crate::test_util::put_native_mail_sender(&vault, sender, entity(0x3B), &[])?;
+    // With no rule naming them, the reputation heads resolve critical and wait
+    // for the owner's confirmation, so no head would earn the offer either side.
+    crate::test_util::declare_predicates_normal(&vault, &["channel_identity.reputation."])?;
     let healthy = IdentityReputation {
         complaint_rate: 0.0,
         bounce_rate: 0.0,
@@ -266,7 +269,9 @@ pub(super) fn booking_publications() -> Result<Case> {
     let (dir, vault) = open_seeded()?;
     let page = entity(0x81);
     vault.put_entity(&page, ENTITY_TYPE_ASSET, AT, 1, b"page")?;
-    let owner = person(&vault, 0x82)?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     put_event_type(&vault, entity(0x85), page, event_type(0))?;
     let key = EventTypeKey("intro".to_owned());
     let publication = BookingPagePublication {

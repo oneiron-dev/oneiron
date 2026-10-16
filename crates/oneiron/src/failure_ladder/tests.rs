@@ -17,6 +17,7 @@ use crate::dreamer_runner::{
 use crate::temporal::TimeRange;
 use crate::test_util::entity as test_id;
 
+mod coach_wake;
 mod custom_review;
 mod drill;
 mod failure_integrity;
@@ -482,13 +483,22 @@ fn handle_attempt_failure_composes_queue_healer_and_surface() -> Result<()> {
     assert_ne!(case.case_ref, failure_card_ref(rows[2].id));
     assert_eq!(case.evidence_ref, test_id(0x53).to_hex());
     assert_eq!(case.scope.agent_ref, agent_ref.to_hex());
-    assert_eq!(slot, &HealerSlotOutcome::Reserved { case: case.clone() });
+    let HealerSlotOutcome::Coach {
+        case: slot_case,
+        attempt: coach_heal,
+    } = slot
+    else {
+        panic!("the default slot wakes the Coach");
+    };
+    assert_eq!(slot_case, case);
     assert_eq!(surface.consecutive_transients, 3);
     assert_eq!(surface.evidence_ref, Some(test_id(0x53)));
     assert_eq!(surface.pre_fail_checkpoint_ref, test_id(0x51));
 
-    // Exactly one row per try: three tries, no fourth.
-    assert_eq!(queue.list()?.len(), 3);
+    // Exactly one row per try: three tries, no fourth, and the Coach's heal.
+    let rows_now = queue.list()?;
+    assert_eq!(rows_now.len(), 4);
+    assert!(rows_now.iter().any(|row| row.id == *coach_heal));
     Ok(())
 }
 

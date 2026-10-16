@@ -3,6 +3,7 @@
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, GatedActorWrite};
 use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
+use crate::result_memory::{ResultHold, ResultShare};
 use crate::entity_id::EntityId;
 use crate::llm::seat::ModelSeat;
 use crate::memory::WitnessReceipt;
@@ -22,6 +23,11 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) output_context: OutputWorkingContext,
     pub(super) output_run: Option<EntityId>,
     pub(super) output_decay: OutputDecayPolicy,
+    /// This run's share of the result-memory pool (OF-190 B++).
+    pub(super) result_share: ResultShare,
+    /// What the context this run built last holds of its share: the bodies
+    /// its Full views carry, given back when the next context is built.
+    pub(super) context_holds: Vec<ResultHold>,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
     /// Shadow mode: each program is type-checked before it runs, and the
@@ -48,6 +54,8 @@ impl<'a> EngineNativeExecutor<'a> {
         gated_write: &'a GatedActorWrite<'a>,
     ) -> Self {
         Self {
+            result_share: vault.result_share(),
+            context_holds: Vec::new(),
             storage: ExecutorStorage::Canonical(vault),
             backend,
             seat: None,
@@ -89,8 +97,11 @@ impl<'a> EngineNativeExecutor<'a> {
         runtime: &'a mut dyn JsCodeModeRuntime,
         gated_write: &'a GatedActorWrite<'a>,
     ) -> EngineExecutorResult<Self> {
+        let storage = ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?;
         Ok(Self {
-            storage: ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?,
+            result_share: storage.result_share(),
+            context_holds: Vec::new(),
+            storage,
             backend,
             seat: None,
             lease,

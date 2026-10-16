@@ -11,9 +11,10 @@ use super::record::{
     validate_executor_config_marker,
 };
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
-    implicit_speak_output_path, load_utf8_output, observation_output_path, record_output,
-    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
+    implicit_speak_output_path, load_utf8_output, observation_output_path, observation_ref,
+    record_output, record_text_output, recoverable_chunk_path, script_output_path,
+    validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -22,8 +23,8 @@ use super::types::{
 };
 use super::wire::{HealedExecutorReply, heal_executor_reply};
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunReplayGeneration, CodeRunReplayRecord,
-    CodeRunStepCheckpoint, SelfDurableWait,
+    CodeRunBridgeCall, CodeRunHistoryTurn, CodeRunRawOutput, CodeRunReplayGeneration,
+    CodeRunReplayRecord, CodeRunStepCheckpoint, SelfDurableWait,
 };
 use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputWorkingContext};
 use crate::off_record::ExecutorUtterance;
@@ -166,6 +167,7 @@ impl EngineNativeExecutor<'_> {
             // dispatch; the dispatcher owns the history-to-lineage mapping.
             self.gated_write
                 .observe_bridge_history(&record.bridge_calls);
+            let recoverable = self.observation_refs(&record)?;
             let mut host = RecordingJsHost::new(
                 self.gated_write,
                 config.run_id,
@@ -173,7 +175,7 @@ impl EngineNativeExecutor<'_> {
                 config.determinism,
                 self.legibility,
             )
-            .with_recoverable_outputs(&self.storage, &record)?;
+            .with_recoverable_outputs(&self.storage, &record, recoverable)?;
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -661,10 +663,17 @@ impl EngineNativeExecutor<'_> {
         let OutputAffordance::Reexpand(source) = action else {
             return Err(Error::InvalidConfig("expected reexpand action".into()).into());
         };
+        // The manifest names the body: no other observation is read.
         for seq in 0..completed_step_count(record)? {
-            let bytes = load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
-            if OutputRef::from_bytes(bytes.as_bytes()) == source {
-                return Ok(bytes.into_bytes());
+            let path = observation_output_path(seq);
+            let Some(output) = record.outputs.iter().find(|output| output.path == path) else {
+                continue;
+            };
+            if output.output_ref() == source {
+                return Ok(self
+                    .storage
+                    .get_code_run_raw_output(output)?
+                    .ok_or(Error::CorruptedIndex("executor replay output bytes"))?);
             }
         }
         Err(Error::CorruptedIndex("missing recoverable executor observation").into())
@@ -672,11 +681,11 @@ impl EngineNativeExecutor<'_> {
 
     /// Sync every durably completed observation before either a model request
     /// or a compaction mint. No uncommitted runtime output enters context.
+    /// Returns the step that holds each source, for the views that expand it.
     pub(super) fn sync_output_context(
         &mut self,
         record: &CodeRunReplayRecord,
-    ) -> EngineExecutorResult<HashMap<OutputRef, String>> {
-        let completed_steps = completed_step_count(record)?;
+    ) -> EngineExecutorResult<HashMap<OutputRef, u64>> {
         // Reconstruct references from the routed durable replay record. No
         // observation is copied into the base vault for off-record sessions.
         // Working flags are projections of committed typed coverage. Rebuild
@@ -689,20 +698,35 @@ impl EngineNativeExecutor<'_> {
             }
             crate::code_run::ExecutorStorage::Session(_) => Vec::new(),
         };
-        let mut raw = HashMap::new();
-        for seq in 0..completed_steps {
-            let observation =
-                load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
-            let source = OutputRef::from_bytes(observation.as_bytes());
-            let overview: String = observation.chars().take(128).collect();
+        let mut steps = HashMap::new();
+        for (seq, _, observation) in self.observation_refs(record)? {
             self.output_context
-                .record_referenced(seq, source, overview)?;
+                .record_referenced(seq, observation.source, observation.overview)?;
             if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
                 self.output_context.compact_span(seq, seq);
             }
-            raw.insert(source, observation);
+            steps.insert(observation.source, seq);
         }
-        Ok(raw)
+        Ok(steps)
+    }
+
+    /// Every completed step's observation reference, from its manifest: no
+    /// past body is read to build a turn's context.
+    pub(super) fn observation_refs(
+        &self,
+        record: &CodeRunReplayRecord,
+    ) -> EngineExecutorResult<Vec<(u64, CodeRunRawOutput, ObservationRef)>> {
+        let mut refs = Vec::new();
+        for seq in 0..completed_step_count(record)? {
+            let path = observation_output_path(seq);
+            let output = record
+                .outputs
+                .iter()
+                .find(|output| output.path == path)
+                .ok_or(Error::CorruptedIndex("executor replay output path"))?;
+            refs.push((seq, output.clone(), observation_ref(output)));
+        }
+        Ok(refs)
     }
 
     fn build_llm_request(
@@ -731,14 +755,33 @@ impl EngineNativeExecutor<'_> {
             }],
         });
 
-        let raw = self.sync_output_context(record)?;
-        let views =
+        let steps = self.sync_output_context(record)?;
+        // Only a Full view expands its body; older steps cost their reference.
+        // A Full body is held against the run's share of the result-memory
+        // pool first: one that does not fit stays in its file, and its view
+        // falls back to the reference the run reads it by.
+        self.context_holds.clear();
+        let mut holds = Vec::new();
+        let mut left = Vec::new();
+        let views = {
+            let share = &self.result_share;
+            let watch = self.storage.limit_watch();
             self.output_context
                 .assemble_with(completed_steps, self.output_decay, |source| {
-                    raw.get(&source)
-                        .map(|text| text.as_bytes().to_vec())
-                        .ok_or(Error::CorruptedIndex("missing executor observation"))
-                })?;
+                    let seq = steps
+                        .get(&source)
+                        .ok_or(Error::CorruptedIndex("missing executor observation"))?;
+                    let Some(hold) = share.hold(source.byte_len, watch) else {
+                        left.push((*seq, source));
+                        return Ok(None);
+                    };
+                    holds.push((source, hold));
+                    load_utf8_output(&self.storage, record, &observation_output_path(*seq))
+                        .map(|text| Some(text.into_bytes()))
+                })?
+        };
+        let memory_note = result_memory_note(&self.result_share, &holds, &left);
+        self.context_holds = holds.into_iter().map(|(_, hold)| hold).collect();
         let epochs = self.compaction_epochs(record.run_id)?;
         if !epochs.is_empty() {
             self.admit_compaction_read()?;
@@ -782,6 +825,12 @@ impl EngineNativeExecutor<'_> {
             });
         }
 
+        if let Some(note) = memory_note {
+            messages.push(LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text { text: note }],
+            });
+        }
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
@@ -825,4 +874,47 @@ impl EngineNativeExecutor<'_> {
         }
         Ok(request)
     }
+}
+
+/// Past 60% of the run's result-memory share, a line naming the biggest
+/// bodies held; and one line for every body that stayed in its file because
+/// it did not fit, naming why and how to read it.
+fn result_memory_note(
+    share: &crate::result_memory::ResultShare,
+    held: &[(OutputRef, crate::result_memory::ResultHold)],
+    left: &[(u64, OutputRef)],
+) -> Option<String> {
+    let mut lines = Vec::new();
+    let share_bytes = share.bytes();
+    let held_bytes = share.held();
+    if held_bytes.saturating_mul(10) > share_bytes.saturating_mul(6) {
+        let mut biggest: Vec<_> = held.iter().map(|(source, _)| *source).collect();
+        biggest.sort_by_key(|source| std::cmp::Reverse(source.byte_len));
+        let names: Vec<_> = biggest
+            .iter()
+            .take(3)
+            .map(|source| {
+                format!(
+                    "output:blake3:{}:{}",
+                    crate::entity_id::bytes_to_hex_lower(&source.hash),
+                    source.byte_len
+                )
+            })
+            .collect();
+        lines.push(format!(
+            "Result memory: {held_bytes} of this run's {share_bytes} bytes held \
+             (limits.code_result_session_memory_bytes); biggest: {}.",
+            names.join(", ")
+        ));
+    }
+    for (seq, source) in left {
+        lines.push(format!(
+            "Result of step {seq} ({} bytes) left context memory: it would pass \
+             limits.code_result_session_memory_bytes or limits.code_result_memory_bytes. \
+             It is stored whole; read it with sandbox.fs.read_file(\"{}\").",
+            source.byte_len,
+            recoverable_chunk_path(*seq, *source, 0)
+        ));
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }

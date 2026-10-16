@@ -89,6 +89,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL, LIVE),
     (&t::SKILL_HUB_ORIGIN, CONTENT),
     (&t::SKILL_HUB_PACKAGE, CONTENT),
+    (&t::SKILL_HUB_REF_SYNC, CONTENT),
     (&t::SKILL_HUB_REFINEMENT_BINDING, CONTENT),
     (&t::SKILL_HUB_REFINEMENT_CLAIM_ORIGIN, CONTENT),
     (&t::SKILL_HUB_REFINEMENT_CONTROL, CONTENT),
@@ -152,6 +153,12 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TEXT_ANALYZER_MANIFEST, CONTENT),
     (&t::TEXT_BM25_FIELD_SCHEMA_HASH, CONTENT),
     (&t::TEXT_INDEX_SCHEMA_VERSION, CONTENT),
+    // Consent and the owner's tiers stand on their own: a restore never brings
+    // back a relation either side has since revoked, or an ask already answered.
+    (&t::TRUSTED_CONTACT_ASK, LIVE),
+    (&t::TRUSTED_CONTACT_FIRE, LIVE),
+    (&t::TRUSTED_CONTACT_RELATION, LIVE),
+    (&t::TRUSTED_CONTACT_TIER, LIVE),
     (&t::TYPED_QUESTION_PENDING, CONTENT),
     (&t::TYPED_QUESTION_UNIT_WATCH, CONTENT),
     (&t::TYPED_QUESTION, CONTENT),

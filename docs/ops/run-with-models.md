@@ -74,12 +74,17 @@ key_env = "ANTHROPIC_API_KEY"
 
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
-the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
-tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at
+depth 7, the owner's ruling of 2026-10-16 for every workload), served by an
+exllamav3 OpenAI-compatible server with no schema:
 its provider sets `response_format = "none"`, so a JSON call goes out with
 no `response_format`. The fallback is llama.cpp `llama-server` on
 `Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
-(`--spec-type draft-simple --spec-draft-n-max 8`). The Dreamer's extraction
+(`--spec-type draft-simple --spec-draft-n-max 8`). `deploy/house-model/`
+ships both servers, one per GPU, as systemd units, and the `[models]` block
+that binds them (`models.toml`): the generative seats try EXL3 first and fall
+back to llama.cpp, and `local_reasoner` is the llama.cpp server alone, so the
+decision read (section 9) runs on the house weights. The Dreamer's extraction
 call sends no schema on any provider: a grammar built from one can strip the
 claim fields, so the engine checks the answer against the extraction
 contract itself, and an answer that breaks it is refused. Other JSON calls,
@@ -89,7 +94,9 @@ way. A ladder sends a schema in `response_format` only when every rung declares
 `json_response`. A rung without it, such as the Anthropic-compatible one in
 the DETAILED example, makes the engine put the schema in a system message on
 every rung instead, so keep a schema-constrained llama.cpp fallback in a
-ladder of OpenAI-compatible rungs. Typed decisions stay on `vllm-sr/d3-flash`.
+ladder of OpenAI-compatible rungs. Typed decisions go through decide()
+(ARCH-0076): the System One slot answers first, and its escalation rung reads
+the `local_reasoner` model in decision-read mode (section 9).
 
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
@@ -156,9 +163,8 @@ path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture 
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
 for the user that runs it, and `newuidmap`. A Linux host that is meant to prove the
 broker runs it; there, a missing prerequisite fails the run instead of skipping it.
-The full gate (`SCOPE_FULL=true scripts/ci/run_scoped.sh test`) runs it after the
-workspace tests, so the host that runs the full gate needs the range and
-`newuidmap`.
+`SCOPE_FULL=true scripts/ci/run_scoped.sh test` runs it after the workspace
+tests, so a host that runs that command needs the range and `newuidmap`.
 
 `max_output_tokens` is a ceiling on every call to that provider: it is sent
 when a call names no limit, and a larger limit is cut down to it. An
@@ -207,8 +213,9 @@ policy: extraction and narrative under `extraction`, the verdict under
 (`own_server`) OpenAI-compatible server is sent the level as
 `reasoning_effort` and in `chat_template_kwargs`, and the budget as
 `reasoning_budget_tokens` (llama.cpp reads all three per request; an
-exllamav3 server that renders `chat_template_kwargs` gets the level, not the
-budget). A hosted provider gets `reasoning_effort` alone. A model whose
+exllamav3 server that renders `chat_template_kwargs` gets the level; the
+house EXL3 server in `deploy/house-model/` reads the budget too, and closes the
+thought at it). A hosted provider gets `reasoning_effort` alone. A model whose
 provider does not declare `reasoning`, or a ladder with a rung that does not,
 takes no reasoning controls, so its calls are pinned to `none`; declare
 `reasoning` on a hosted provider whose model accepts `reasoning_effort`.
@@ -504,3 +511,79 @@ rungs cannot serve (a key variable unset, or a `key_secret` provider: the
 broker sends chat calls only for now) refuses the same way. The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
+
+## 9. The decision read
+
+decide()'s escalation rung reads the `local_reasoner` model in one forward
+pass: the question's labels, "does this need more thinking?" and, when the
+recipe asks it, "ask a person?", as probabilities, with no text generated
+(the read idle-fold tests 4 and 5 measured). The model must be a llama.cpp
+`llama-server` reached on its native API (`/tokenize`, `/completion`; a
+`base_url` ending in `/v1` still reaches them), on the one rung
+`local_reasoner` has:
+
+```toml
+[models.providers.house]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:18134"
+revision = "qwen3.8-27b-q4km"     # part of the read's pinned revision
+
+[models.roles.local_reasoner]
+model = "house:qwen3.8-27b"
+
+[models.decision_read]
+recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
+max_response_bytes = 67108864                  # one read's answer (the default, 64 MiB)
+person_threshold = 0.9                         # the PersonThreshold row's start value
+```
+
+The recipe is yours, not the server's: it names the prompt template (with
+`{question}`, `{labels}`, `{paired}`, `{person}`, `{state}` and
+`{state.<key>}` slots), the joint label table's row wording (`row`, and
+`row_person` for the person question), the `yes` and `no` words, the
+single-token label verbalizers (`tokens`, at least four), the end token
+(`eos`), `n_probs` (how many of the top probabilities come back),
+`n_probs_full` (the whole vocabulary, for the one retry below) and, for the
+owner's probe, `[probe] paired` and `person`. Each label must be
+one distinct token on the served tokenizer, or every read is refused. Option
+`i`, more thinking `j` and ask a person `k` sit at row `4i + 2k + j`
+(`2i + j` without the person question), so a question of `n` options needs
+`4n` tokens with it. The read's revision is the provider's `revision` plus a
+digest of the recipe and its template: change either and decide()'s pins name
+a new read.
+
+The read goes to llama.cpp's raw `/completion`, which applies no chat
+template, and the server adds no text: the rendered template is the whole
+prompt, byte for byte, a trailing newline included. So the template carries
+the chat framing the read was measured with. For the house Qwen model that is
+the system and user turns, then
+`<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n` (each `\n` a
+newline), and the label cue as the template's last bytes. A template without
+that framing is not the calibrated read.
+
+llama.cpp normalizes over the whole vocabulary before it cuts the list, so a
+label among the top `n_probs` reads the same as over the whole vocabulary:
+idle-fold test 6 compared the house model's label numbers at 16,384 and at its
+full 262,144 bit for bit, 20 of 20 identical, and the shorter answer took
+about 1.5 s less to serialize per read. Some labels rank below the top
+16,384, so a read whose labels are not all listed is sent again, once, with
+`n_probs_full`; its time and tokens count in the read (17% of test 6's
+44-label reads needed it). Without `n_probs_full` there is no retry, so set
+`n_probs` to the whole vocabulary then.
+
+Every read checks that no text came back and that generation stopped at the
+forced end token, on the retry as on the first call; a read that fails a
+check, or still misses a label, is refused typed (`LabelRead`: `EmittedText`,
+`NotEosStop`, `MissingLabels`, `Malformed`) and is never read as a
+probability of zero.
+
+`person_threshold` starts the PersonThreshold row high, so "ask a person?"
+stays rare (0.9 asked nobody on test 5's held-out set) until the Coach tunes
+it from the cases where a person changed the answer. A host passes it to
+`DecisionBandPolicy::set_person_threshold`. Without the row, the person
+reading is recorded on every receipt and routes nothing.
+
+The owner can probe the read at `POST /v1/llm/decision_read`
+(`oneiron.skills.md`): it returns the raw read, writes nothing and decides
+nothing. Each probe is a paid call on `models.raw_budget_units`, and past
+`[limits] decision_reads` probes wait their turn.

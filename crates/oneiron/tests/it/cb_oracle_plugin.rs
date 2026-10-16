@@ -1130,7 +1130,7 @@ mod plugin_fixture {
             self.vault
                 .put_entity(
                     &evidence,
-                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    oneiron::registry::ENTITY_TYPE_TURN,
                     TimeRange {
                         start: 1_500,
                         end: 1_500,

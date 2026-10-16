@@ -1,6 +1,6 @@
 //! The recall door: when a recall's clock starts, what it answers when its
 //! door stops waiting, and how it serves high, xhigh and max.
-use super::sdk::RecallRequest;
+use super::sdk::{RECALL_LIMIT_DEFAULT, RecallRequest};
 use crate::memory::{Memory, MemoryResult};
 
 /// When a recall's clock started and what its door does if it stops waiting.
@@ -55,7 +55,41 @@ pub fn recall_with_vector(
 /// and reranker, unreranked and saying so when the host serves none, or
 /// reranked by the host's reranker, whose scores apply only to the block
 /// they scored (see [`crate::memory::RecallRerankHost`]).
+///
+/// A limit past [`MAX_SEARCH_LIMIT`](crate::memory::caps::MAX_SEARCH_LIMIT)
+/// is served at it, and every pack the door answers with, a cut one
+/// included, says so in `retrieval_meta.limit_clamped`.
 pub fn recall_at_door(
+    memory: &Memory<'_>,
+    mut input: RecallRequest,
+    embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+    door: &RecallDoor<'_>,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    let (limit, clamped) =
+        crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(RECALL_LIMIT_DEFAULT));
+    if !clamped {
+        return recall_within_ceiling(memory, input, embed, door);
+    }
+    input.limit = Some(limit);
+    let stamp = |mut pack: crate::memory::MemoryPack| {
+        pack.retrieval_meta.limit_clamped = true;
+        pack
+    };
+    let on_cut = door
+        .on_cut
+        .map(|on_cut| move |pack: crate::memory::MemoryPack| on_cut(stamp(pack)));
+    let stamped = RecallDoor {
+        arrived: door.arrived,
+        on_cut: on_cut
+            .as_ref()
+            .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),
+        rerank: door.rerank,
+    };
+    recall_within_ceiling(memory, input, embed, &stamped).map(stamp)
+}
+
+/// [`recall_at_door`] for a limit at or under the ceiling.
+fn recall_within_ceiling(
     memory: &Memory<'_>,
     input: RecallRequest,
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
@@ -68,9 +102,9 @@ pub fn recall_at_door(
         memory.call_mode_deadline(),
     )?;
     let scope = input.scope.clone().unwrap_or_default();
-    let limit = input.limit.unwrap_or(10);
+    let limit = input.limit.unwrap_or(RECALL_LIMIT_DEFAULT);
     crate::memory::caps::check_query(&input.query)?;
-    crate::memory::caps::check_limit(limit)?;
+    crate::memory::caps::check_limit_nonzero(limit)?;
     let host = match door.rerank {
         RecallRerank::Host(host) if effort.requires_rerank() => Some(host),
         _ => None,

@@ -12,6 +12,8 @@ pub enum DecisionRung {
     Rule,
     Local,
     SystemOne,
+    /// The house model in decision-read mode, between the precision rung and the big model.
+    Escalation,
     Big,
     Human,
 }
@@ -193,6 +195,128 @@ pub struct DecisionReceipt {
     /// Provider-reported cost at the answered rung, when known.
     #[serde(default)]
     pub cost_per_thousand: Option<f64>,
+    /// One row per measurement that read the paired question. A measurement without one
+    /// has no row; a missing reading never stands for P(yes) = 0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paired: Vec<PairedReading>,
+    /// One row per measurement that read the person question ("ask a person?"), kept
+    /// whether or not it routed the decision. A missing reading has no row, as above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub person: Vec<PairedReading>,
+    /// The call's clock: its budget, the time used, why it stopped and the rung that
+    /// answered. Absent on a receipt made off the decision clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<DecisionTime>,
+}
+
+/// What the decision deadline left on a receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionTime {
+    pub budget_ms: u64,
+    pub used_ms: u64,
+    pub stop: StopCause,
+    /// The rung whose answer stands; none when the call abstained or asked a person.
+    pub answered: Option<DecisionRung>,
+    pub reasoning: Reasoning,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopCause {
+    Done,
+    /// The deadline cut work the call still wanted, or the caller took the answer early.
+    Deadline,
+    ProviderFailure,
+}
+
+/// Whether more thinking (a stronger rung, or a required second measurement) ran,
+/// and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", content = "cause", rename_all = "snake_case")]
+pub enum Reasoning {
+    /// A clear answer stopped there.
+    NotNeeded,
+    Ran(ReasoningCause),
+    /// It did not start: no time was left, no rung up to the ceiling could take it, or
+    /// its admission was refused.
+    Skipped(ReasoningCause),
+    /// It started, and the deadline came before its answer.
+    Cut(ReasoningCause),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningCause {
+    /// The paired "does this need more thinking?" reading reached its row.
+    PairedHigh,
+    /// The answer fell inside an enforced band.
+    SmallMargin,
+    /// A confident negative on an accept-type question needs a second measurement.
+    SecondMeasurement,
+}
+
+/// A yes/no reading taken with the answer ("does this need more thinking?" or "ask a
+/// person?"), bound by the engine to the provider that measured it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairedReading {
+    pub provider: ProviderPin,
+    #[serde(with = "super::codec::entity")]
+    pub question: EntityId,
+    pub question_version: u32,
+    /// P(yes).
+    pub probability: f64,
+}
+
+impl PairedReading {
+    /// Rows a host hands in: at most one per measuring provider, each bound to one of
+    /// the answer's own providers.
+    pub(crate) fn rows_valid(rows: &[Self], answered: EntityId, providers: &[ProviderPin]) -> bool {
+        rows.iter().enumerate().all(|(index, row)| {
+            providers.contains(&row.provider)
+                && rows[..index]
+                    .iter()
+                    .all(|earlier| earlier.provider != row.provider)
+                && paired_valid(
+                    answered,
+                    row.question,
+                    row.question_version,
+                    row.probability,
+                )
+        })
+    }
+
+    /// A receipt's paired and person rows: each list valid, and no provider's person row
+    /// reading the question its paired row read.
+    pub(crate) fn readings_valid(
+        paired: &[Self],
+        person: &[Self],
+        answered: EntityId,
+        providers: &[ProviderPin],
+    ) -> bool {
+        Self::rows_valid(paired, answered, providers)
+            && Self::rows_valid(person, answered, providers)
+            && person.iter().all(|asked| {
+                paired
+                    .iter()
+                    .all(|row| row.provider != asked.provider || row.question != asked.question)
+            })
+    }
+}
+
+/// A paired reading reads another question than the one answered, at a real version,
+/// as a probability.
+pub(crate) fn paired_valid(
+    answered: EntityId,
+    question: EntityId,
+    question_version: u32,
+    probability: f64,
+) -> bool {
+    question != answered
+        && question_version != 0
+        && probability.is_finite()
+        && (0.0..=1.0).contains(&probability)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +340,29 @@ pub struct TypedDecision {
     pub human_ask: Option<HumanAskReason>,
 }
 
+/// A person answered differently from the model's prior: the Coach's tuning input for
+/// the person threshold row and the bands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersonChangedAnswer {
+    #[serde(with = "super::codec::entity")]
+    pub question: EntityId,
+    pub question_version: u32,
+    #[serde(with = "super::codec::entity")]
+    pub principal: EntityId,
+    pub reason: HumanAskReason,
+    pub prior: DecisionAnswer,
+    pub prior_probability: Option<f64>,
+    /// The model and revision that read the prior.
+    pub prior_provider: ProviderPin,
+    /// The prior read's "needs more thinking?" and "ask a person?" readings, when it took
+    /// them, each with its question and version.
+    pub prior_paired: Option<PairedReading>,
+    pub prior_person: Option<PairedReading>,
+    pub person: DecisionAnswer,
+    pub queue_pin: ProviderPin,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HumanAskReason {
@@ -223,6 +370,10 @@ pub enum HumanAskReason {
     Uncertain,
     ProviderUnavailable,
     OwnerSelected,
+    /// The read's P(ask a person) reached the owner's threshold row.
+    NeedsPerson,
+    /// The deadline cut the call, and its step cannot take an unfinished answer.
+    Deadline,
 }
 
 pub(super) fn invalid(message: &str) -> Error {

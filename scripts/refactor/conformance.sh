@@ -11,7 +11,7 @@
 #   4 frozen anchors
 #   5 name-uniqueness across api/*.rs (api stages)
 #   6 error-literal inventory (codec stages)
-#   7 WORKFLOW.md gate (cargo fmt/clippy/nextest/doctest/doc/nextest-sync)
+#   7 full cargo gate (cargo fmt/clippy/nextest/doctest/doc/nextest-sync)
 #
 # Checks 1-6 are a self-contained embedded python program (no deps beyond
 # python3 + rustfmt + rg/git/awk). Check 7 shells out to cargo.
@@ -40,8 +40,8 @@ sed -n '/^#PYEOF_BEGIN$/,/^#PYEOF_END$/p' "$0" | sed '1d;$d' | sed 's/^#>//' > "
 echo "== conformance $STAGE (base $BASE) =="
 python3 "$PAYLOAD" checks "$ROOT" "$STAGE" "$BASE" "$MOVES"
 
-# ---- check 7: the WORKFLOW.md gate (WORKFLOW.md:44-49, de-rtk'd) ----
-echo "== check 7: WORKFLOW.md gate =="
+# ---- check 7: the full cargo gate (fmt/clippy/nextest/doctest/doc/nextest-sync) ----
+echo "== check 7: full cargo gate =="
 cd "$ROOT"
 export CARGO_TARGET_DIR="$ROOT/target"
 run() { echo "+ $*"; "$@"; }
@@ -52,7 +52,7 @@ run cargo nextest run --workspace --all-features --profile full
 run cargo test --doc --workspace --exclude oneiron-bench --all-features
 run env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 run cargo nextest run -p oneiron --features sync,test-hooks --profile full
-echo "OK check 7 (WORKFLOW gate)"
+echo "OK check 7 (full cargo gate)"
 
 echo "== CONFORMANCE GREEN for $STAGE =="
 exit 0
@@ -233,7 +233,8 @@ exit 0
 #>    """(token, start, end) stream with comments atomic: a `//` comment runs
 #>    to EOL, a `/* */` comment nests (matching mask()'s lexical reality), a
 #>    string literal is one token. Comment/string interiors are never re-lexed
-#>    as code."""
+#>    as code. A raw string (`r#"…"#`, with an optional b/c prefix) is one
+#>    token as well."""
 #>    out = []
 #>    i, n = 0, len(text)
 #>    while i < n:
@@ -257,6 +258,16 @@ exit 0
 #>                    j += 2
 #>                else:
 #>                    j += 1
+#>            out.append((text[i:j], i, j))
+#>            i = j
+#>            continue
+#>        # a raw string is one token too: include-looking text inside one is
+#>        # never lexed as an include call (F39)
+#>        m = _RAW_OPEN.match(text, i)
+#>        if m:
+#>            close = '"' + m.group(1)
+#>            j = text.find(close, m.end())
+#>            j = n if j < 0 else j + len(close)
 #>            out.append((text[i:j], i, j))
 #>            i = j
 #>            continue
@@ -729,11 +740,37 @@ exit 0
 #>    return "\n".join(lines)
 #>
 #>
+#>_INCLUDE_MACROS = ("include_str", "include_bytes")
+#>
+#>
+#>def _include_depth_swap(toks, i, old_lit, new_lit):
+#>    """True iff toks[i] is the sole argument of include_str!/include_bytes!
+#>    and the new literal names the same relative path at another directory
+#>    depth: only leading `../` (or `./`) segments differ (F39, H137)."""
+#>    if not (i >= 3 and toks[i - 3] in _INCLUDE_MACROS and toks[i - 2] == "!"
+#>            and toks[i - 1] == "(" and i + 1 < len(toks) and toks[i + 1] == ")"):
+#>        return False
+#>    lits = []
+#>    for lit in (old_lit, new_lit):
+#>        if len(lit) < 2 or not (lit.startswith('"') and lit.endswith('"')) or "\\" in lit:
+#>            return False
+#>        lits.append(lit[1:-1])
+#>
+#>    def rest(path):
+#>        while path.startswith(("../", "./")):
+#>            path = path[3:] if path.startswith("../") else path[2:]
+#>        return path
+#>
+#>    old_path, new_path = lits
+#>    return (old_path != new_path and rest(old_path) == rest(new_path)
+#>            and rest(old_path) != "" and not rest(old_path).startswith("/"))
+#>
+#>
 #>def _edit_delta_ok_core(old, new, allow_exceptions=True):
 #>    """True iff old→new is a legal declared edit: every changed region is pure
-#>    `::`-path text, a single string-literal token swapped for a string-literal
-#>    token (relative include_str!/include_bytes! paths broken by a directory-depth
-#>    change), a pure path-segment removal (`crate::types::X` → `crate::X`, the
+#>    `::`-path text, the one string literal of an include_str!/include_bytes!
+#>    whose relative path changed only in directory depth (no other literal
+#>    swap, F39), a pure path-segment removal (`crate::types::X` → `crate::X`, the
 #>    module-un-mount class), or the single visibility-promotion exception
 #>    (empty→`pub(crate)` prepended). Multiple regions are allowed (a line may
 #>    carry more than one `types::X` occurrence re-pointed at once); each must be
@@ -756,8 +793,8 @@ exit 0
 #>            while j < n and old_toks[j] != nt[j]:
 #>                j += 1
 #>            if (allow_exceptions and j - i == 1
-#>                    and old_toks[i].startswith('"') and nt[i].startswith('"')):
-#>                # string-literal → string-literal single-token swap
+#>                    and _include_depth_swap(old_toks, i, old_toks[i], nt[i])):
+#>                # an include path re-pointed by a directory-depth change
 #>                i = j
 #>                continue
 #>            if not (_PATH_RE.match("".join(old_toks[i:j])) and _PATH_RE.match("".join(nt[i:j]))):

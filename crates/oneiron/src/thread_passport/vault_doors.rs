@@ -200,7 +200,9 @@ impl Vault {
         let state = ThreadState::load(self, &rtxn)?;
         let edges = &state.edges;
         let canonical = resolve_thread_alias(edges, thread_ref)?;
-        let rows = state.logical_rows();
+        let mut rows = state.logical_rows();
+        // A held passport routes nothing, but a held first passport still pins.
+        rows.extend(held_passport_rows(self, &rtxn)?);
         let ordered = passports_on_thread(rows, edges, &canonical)?;
         let Some(pinning) = ordered.into_values().next() else {
             return Ok(StickyMaskDecision::Unset);

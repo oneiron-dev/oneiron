@@ -37,6 +37,54 @@ impl BatchBuilder<'_> {
         self.commit_inner(None, |_| Ok(()), |_| Ok(()))
     }
 
+    /// [`Self::commit`] for a writer below owner grade. A put that turns an
+    /// agent definition back on, moves its approval up, makes it active again
+    /// or brings a deleted one back on is the owner's
+    /// ([`Vault::update_agent_definition_as`](crate::Vault::update_agent_definition_as)),
+    /// so it is refused, judged in the transaction the batch writes in. Every
+    /// other put commits as it does through [`Self::commit`], turning a
+    /// definition off included.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// for such a put; otherwise as [`Self::commit`].
+    pub fn commit_below_owner(self) -> Result<()> {
+        let vault = self.vault;
+        let agent_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    ..
+                } if *entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF => {
+                    Some((*id, data.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        self.commit_with_target_guard(move |txn| {
+            for (id, body) in &agent_puts {
+                if crate::agent_def::agent_definition_put_widens_in_txn(
+                    &vault.store,
+                    txn,
+                    id,
+                    body,
+                )? {
+                    return Err(crate::error::Error::Gate(
+                        crate::error::GateError::ConsentOwnerNotAuthenticated(
+                            "only the vault owner turns an agent definition back on",
+                        ),
+                    ));
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Runs an app-door target guard in the same writer snapshot as admission.
     /// The guard runs before policy preflight and mutates nothing. Ordinary
     /// commit semantics, including retained denial receipts, stay unchanged.
@@ -106,8 +154,10 @@ impl BatchBuilder<'_> {
         #[cfg(not(feature = "sync"))]
         let ops = std::mem::take(&mut self.ops);
         let (origin, birth_mask) = (self.origin, self.birth_mask);
+        let text_births = std::mem::take(&mut self.text_births);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
+        let stale_sweep = crate::federation::StaleSweepWatch::begin(vault);
         let committed = vault.store.group_write(Some(announced), |wtxn| {
             if let Err(err) = target_guard(wtxn) {
                 return Rows::Discard(Err(err.into()));
@@ -149,6 +199,7 @@ impl BatchBuilder<'_> {
                     gate_mode: ApplyOpsGateMode::new(false, true)
                         .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
                         .with_birth_mask(birth_mask)
+                        .with_text_births(text_births)
                         .with_prepared(prepared),
                     origin,
                 },
@@ -182,6 +233,7 @@ impl BatchBuilder<'_> {
             vault.store.notify_proactivity_changes();
         }
         vault.store.notify_task_updates(tasks);
+        stale_sweep.finish()?;
         while vault.collect_lfs_garbage(32)? != 0 {}
         // A delete in this batch staged its claim-key retirement.
         vault.finish_gate_decision_retirements_after_commit();

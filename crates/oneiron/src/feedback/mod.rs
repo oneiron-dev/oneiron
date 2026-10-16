@@ -9,7 +9,8 @@
 //! # What ships here
 //!
 //! - [`FeedbackBundle`], the frozen wire contract, encoded as named
-//!   MessagePack under the token [`FEEDBACK_BUNDLE_ENCODING`].
+//!   MessagePack under the token [`FEEDBACK_BUNDLE_ENCODING`], or under
+//!   [`FEEDBACK_BUNDLE_ENCODING_V2`] when it carries a [`FeedbackProposal`].
 //! - The typed local verb family: [`FEEDBACK_SEND_VERB`], [`FEEDBACK_VERBS`],
 //!   [`FeedbackVerb`]. The family is local to this module by design — feedback
 //!   is not an agent-visible board verb and joins no shared verb allowlist.
@@ -47,7 +48,14 @@
 //! Every struct denies unknown fields, unordered collections are ordered maps
 //! and sets, decoding rejects trailing bytes, and the encoder is always the
 //! *named* MessagePack encoder. A reader written against v1 bytes today keeps
-//! working; a v2 shape would take a new encoding token, not a new key.
+//! working; a new shape takes a new encoding token, not a new v1 key.
+//!
+//! A proposal is that new shape: [`FEEDBACK_BUNDLE_ENCODING_V2`] serializes
+//! the six v1 keys in v1 order, then `proposal` (`problem`, `fix`). The token
+//! travels beside the bytes ([`FeedbackPreview::encoding`], the transport
+//! request, the receipt and the export), each token digests under its own
+//! domain, and [`decode_feedback_bundle_as`] refuses an unknown token and any
+//! bytes whose shape disagrees with their token.
 //!
 //! # Trust boundary
 //!
@@ -84,16 +92,18 @@ mod bundle;
 mod consent;
 mod dispatch;
 mod error;
+mod inbox;
 pub mod intake;
 
 pub use self::bundle::{
-    FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_KEYS,
-    FEEDBACK_DAG_MAX_HOPS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
-    FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES, FEEDBACK_SEND_VERB,
-    FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS, FeedbackBundle, FeedbackCategory,
-    FeedbackConfigSnapshot, FeedbackDagHop, FeedbackHealerDiagnosis, FeedbackHnswSnapshot,
-    FeedbackPlatform, FeedbackVerb, decode_feedback_bundle, encode_feedback_bundle,
-    feedback_bundle_digest,
+    FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
+    FEEDBACK_BUNDLE_KEYS, FEEDBACK_DAG_MAX_HOPS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES,
+    FEEDBACK_ENGINE_VERSION_MAX_BYTES, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_PROPOSAL_MAX_BYTES,
+    FEEDBACK_REF_MAX_BYTES, FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS,
+    FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding,
+    FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform, FeedbackProposal,
+    FeedbackVerb, decode_feedback_bundle, decode_feedback_bundle_as, encode_feedback_bundle,
+    feedback_bundle_digest, feedback_bundle_digest_as,
 };
 pub use self::consent::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_LOGICAL_SEND_PREFIX,
@@ -109,6 +119,7 @@ pub use self::dispatch::{
     export_feedback_bundle, feedback_dispatch_request, send_feedback,
 };
 pub use self::error::FeedbackError;
+pub use self::inbox::{FeedbackInboxNote, FeedbackInboxVia};
 
 #[cfg(test)]
 mod tests;

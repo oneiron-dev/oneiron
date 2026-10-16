@@ -1,5 +1,6 @@
 use super::*;
 
+mod agent_definition_doors;
 mod ai_chat;
 mod depth_quality;
 mod memory_reason_repairs;
@@ -16,12 +17,14 @@ mod auth_idempotency;
 mod machine_identity;
 mod off_record_rooms;
 mod org_admin;
+mod owner_authored_writes;
 mod owner_healer;
 mod owner_routes;
 mod owner_secrets;
 mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
+mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
@@ -38,6 +41,7 @@ mod core_memory_conversations;
 mod credential_reads;
 mod device_local_reads;
 mod facet_read;
+mod feedback_inbox;
 mod mcp_booking_publication;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_code_admission;
@@ -53,8 +57,11 @@ mod mcp_tool_endpoints;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod rate_law;
 mod reactive;
+mod reader_optional_memory;
 mod recall_rerank;
 mod relay_widen;
+mod retrieval_bounds;
+mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_gate;

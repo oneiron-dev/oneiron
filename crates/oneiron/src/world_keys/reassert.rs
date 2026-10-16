@@ -153,7 +153,7 @@ impl Vault {
                 self.require_counted_in_txn(txn, &appended)?;
             }
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            self.ensure_world_key_after_edit_in_txn(txn, actor, world, &secret)?;
+            self.world_key_for_edit_in_txn(txn, actor, world, Ok(&secret))?;
             Ok((release, receipt))
         })?;
         Ok(receipt)

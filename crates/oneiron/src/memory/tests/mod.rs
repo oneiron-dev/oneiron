@@ -5,12 +5,15 @@
 //! `Vault::open` (unlike the legacy `test_util` opener) so the write gate is
 //! live — production reality for the bridge.
 
+mod asset_hydrate;
+mod asset_resolve;
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
+mod same_bytes_erase;
 mod seeded_upgrade;
 mod self_grant;
 mod session_recall;
@@ -64,6 +67,12 @@ pub(super) fn put_person(vault: &crate::Vault, seed: u8) -> EntityId {
         .put_entity(&id, ENTITY_TYPE_PERSON, test_time(1), 1, b"facade person")
         .expect("put person");
     id
+}
+
+/// The vault's own embedded owner: on an unrooted vault, the one PERSON
+/// that holds the owner verbs (H149).
+pub(super) fn put_owner(vault: &crate::Vault) -> EntityId {
+    vault.ensure_embedded_owner_actor().expect("embedded owner")
 }
 
 pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> Memory<'_> {
@@ -497,6 +506,19 @@ pub(super) fn session_witness_fixture<'v>(
     (session, actor)
 }
 
+/// The same, with the vault's owner as the actor (H149).
+pub(super) fn session_owner_fixture<'v>(
+    vault: &'v crate::Vault,
+    session_ref: &str,
+) -> (crate::off_record::OffRecordSession<'v>, EntityId) {
+    let actor = put_owner(vault);
+    let session = vault
+        .off_record_session_vault()
+        .enter(session_ref, crate::off_record::OffRecordBackendClass::Local)
+        .expect("enter session");
+    (session, actor)
+}
+
 // ── ONE-1767 second cycle · the overlay witness runs the TURN mint contract ──
 
 // ── ONE-1377 · author_take (ARCH-0032 NOTE · OF-330) ────────────────────
@@ -660,7 +682,7 @@ fn claim_list_and_scoped_get_agree_on_a_claim_outside_the_actors_grant() {
 #[test]
 fn every_memory_read_verb_returns_a_receipt() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0xB1);
+    let owner = put_owner(&vault);
     let agent = put_person(&vault, 0xB2);
     let subject = put_person(&vault, 0xB3);
     let claim = facade_for(&vault, owner)
@@ -845,7 +867,7 @@ fn every_memory_read_verb_returns_a_receipt() {
 #[test]
 fn a_deleted_shell_is_absent_from_every_memory_read() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0xC1);
+    let owner = put_owner(&vault);
     let subject = put_person(&vault, 0xC2);
     let memory = facade_for(&vault, owner);
     let claim = memory

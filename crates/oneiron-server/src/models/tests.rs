@@ -18,7 +18,7 @@ use super::*;
 use crate::fake_llm::{FakeLlm, Reply};
 
 /// A run that declares nothing, on a line wide enough for any call here.
-fn test_run() -> RunAdmission {
+pub(super) fn test_run() -> RunAdmission {
     undeclared_run(
         "models-test",
         BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend),
@@ -39,12 +39,12 @@ fn events(rows: &[RunReceipt]) -> Vec<&'static str> {
         .collect()
 }
 
-fn config(toml_text: &str) -> ModelsConfig {
+pub(super) fn config(toml_text: &str) -> ModelsConfig {
     let file: crate::config::models::ModelsFile = toml::from_str(toml_text).unwrap();
     file.resolve(None).unwrap()
 }
 
-fn request(model: &ModelId, text: &str) -> LlmRequest {
+pub(super) fn request(model: &ModelId, text: &str) -> LlmRequest {
     LlmRequest {
         model: model.clone(),
         envelope: CallEnvelope {
@@ -69,7 +69,7 @@ fn request(model: &ModelId, text: &str) -> LlmRequest {
     }
 }
 
-fn text_of(message: &LlmMessage) -> String {
+pub(super) fn text_of(message: &LlmMessage) -> String {
     message
         .content
         .iter()

@@ -5,13 +5,13 @@ use heed::RoTxn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::scan_check::{EngineScan, ScanCount};
 
 use crate::ports::{EntityTime, TimeAxis, TimelineQuery};
 use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::filters::pipeline_candidate_matches_filters_and_gate;
-use super::population::{indexed_text_population, indexed_vector_population};
 use super::support::{
     combine_proximity, compute_radius, effective_range_width, interval_distance,
     learned_anchor_range, midpoint, point_interval_distance, resolve_sigma_secs, sigmoid,
@@ -327,11 +327,16 @@ pub(super) fn collect_temporal_candidates(
         let mut spanners = Vec::<TemporalCandidateScore>::new();
         let trim_threshold = per_scan_cap.saturating_mul(2);
         let mut spanning = 0_usize;
-        for entry in
-            store.port_entity_long_spanning(rtxn, occurred_window_start, occurred_window_end)?
-        {
-            let (id, _) = entry?;
+        // Every spanner is read, so the exact top-k is kept: past the index's
+        // threshold row the scan raises one check and reads on.
+        let mut scanned = ScanCount::start(store, rtxn, EngineScan::TemporalSpannerRows, &[])?;
+        for entry in store.port_entity_long_ending_after(rtxn, occurred_window_end)? {
+            let (id, range) = entry?;
+            scanned.row();
             checkpoint(deadline)?;
+            if range.start >= occurred_window_start {
+                continue;
+            }
             let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
                 continue;
             };
@@ -354,6 +359,7 @@ pub(super) fn collect_temporal_candidates(
                 SPANNER_TRIMS.with(|trims| trims.set(trims.get() + 1));
             }
         }
+        scanned.defer(store);
 
         sort_temporal_candidate_scores(&mut spanners);
         spanners.truncate(per_scan_cap);
@@ -531,8 +537,12 @@ fn collect_query_occurred_candidates(
     let mut rows = Vec::<TemporalIndexRow>::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
     let trim_threshold = cap.saturating_mul(2).max(1);
     let (mut forward_rows, mut backward_rows) = (0_usize, 0_usize);
+    // Both halves are read whole, so the range's exact top-k is kept: past the
+    // index's threshold row the scan raises one check and reads on.
+    let mut scanned = ScanCount::start(store, rtxn, EngineScan::OccurredRangeRows, &[])?;
     for entry in forward.chain(backward) {
         let time = entry?;
+        scanned.row();
         checkpoint(deadline)?;
         let Some(meta) = metadata_cache.get(store, rtxn, &time.id)? else {
             continue;
@@ -559,6 +569,7 @@ fn collect_query_occurred_candidates(
             rows.truncate(cap);
         }
     }
+    scanned.defer(store);
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
     for row in rows.into_iter().take(cap) {
         out.insert(row.id);
@@ -742,28 +753,28 @@ pub(super) fn fusion_fetch_limit(requested: usize) -> usize {
     }
 }
 
-pub(super) fn scoped_text_channel_limit(
-    store: &StoreRead<'_>,
-    rtxn: &RoTxn<'_>,
-    requested: usize,
-    text_scope_widening_active: bool,
-) -> Result<usize> {
-    if !text_scope_widening_active || requested == 0 {
-        return Ok(requested);
-    }
-    Ok(requested.max(indexed_text_population(store, rtxn)?))
+/// How many rows a text channel fetches for `requested`: never past
+/// [`MAX_SEARCH_LIMIT`], however many rows the index holds. A scoped scan
+/// admits through its scope while it scores, so it needs no wider fetch.
+///
+/// [`MAX_SEARCH_LIMIT`]: crate::memory::caps::MAX_SEARCH_LIMIT
+pub(super) fn scoped_text_channel_limit(requested: usize) -> usize {
+    requested.min(crate::memory::caps::MAX_SEARCH_LIMIT)
 }
 
-pub(super) fn scoped_vector_channel_limit(
-    store: &StoreRead<'_>,
-    rtxn: &RoTxn<'_>,
-    requested: usize,
-    scope_widening_active: bool,
-) -> Result<usize> {
-    if !scope_widening_active || requested == 0 {
-        return Ok(requested);
+/// How many rows a vector walk fetches for `requested`: a `narrowed` walk,
+/// whose scope admits inside it, the whole [`MAX_SEARCH_LIMIT`] window;
+/// any other the request, never past the window. Zero stays zero.
+///
+/// [`MAX_SEARCH_LIMIT`]: crate::memory::caps::MAX_SEARCH_LIMIT
+pub(super) fn scoped_vector_channel_limit(requested: usize, narrowed: bool) -> usize {
+    if requested == 0 {
+        0
+    } else if narrowed {
+        crate::memory::caps::MAX_SEARCH_LIMIT
+    } else {
+        requested.min(crate::memory::caps::MAX_SEARCH_LIMIT)
     }
-    Ok(requested.max(indexed_vector_population(store, rtxn)?))
 }
 
 pub(super) fn truncate_widened_channel_results_to_scope(

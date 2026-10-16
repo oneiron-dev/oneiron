@@ -1,18 +1,25 @@
-//! First-class, replicated immutable terminal outbound receipt record.
+//! First-class, replicated immutable terminal outbound receipt record, and
+//! the served-form receipt record a read writes ([`super::served_form`]).
 //!
 //! The effect ledger remains device-local send authority. The record is
 //! synced audit evidence, never a permit to execute a transport.
 
 use serde::{Deserialize, Serialize};
 
-use super::{MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptRecord, ReceiptScan};
+use super::served_form::{self, ServedForm};
+use super::{
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan,
+    retain_newest_receipt,
+};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result, StoreError};
 use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -56,9 +63,13 @@ pub(crate) fn suppression_receipt_id(id: &IntentId) -> String {
     )
 }
 
+/// One carrier for both records; the inner receipt's kind says which. A
+/// suppression names the intent its id derives from; a served-form record
+/// names none.
 #[derive(Serialize, Deserialize)]
 struct ReceiptRecordEnvelope {
-    intent_id: IntentId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    intent_id: Option<IntentId>,
     receipt: ReceiptRecord,
 }
 
@@ -76,10 +87,19 @@ fn record_id(intent_id: &IntentId) -> Result<EntityId> {
 fn decode(id: EntityId, body: &[u8]) -> Result<ReceiptRecordEnvelope> {
     let asset: ReceiptRecordEnvelope = rmp_serde::from_slice(body)
         .map_err(|_| Error::CorruptedIndex("outbound suppression record"))?;
-    if record_id(&asset.intent_id)? != id
+    if asset.receipt.receipt_kind == ReceiptKind::ServedForm {
+        if asset.intent_id.is_some() || !served_form::binds(&id, &asset.receipt) {
+            return Err(Error::CorruptedIndex("served form record binding"));
+        }
+        return Ok(asset);
+    }
+    let Some(intent_id) = asset.intent_id else {
+        return Err(Error::CorruptedIndex("outbound suppression record binding"));
+    };
+    if record_id(&intent_id)? != id
         || asset.receipt.receipt_kind != ReceiptKind::Outbound
         || asset.receipt.outcome != "suppressed"
-        || asset.receipt.receipt_id != suppression_receipt_id(&asset.intent_id)
+        || asset.receipt.receipt_id != suppression_receipt_id(&intent_id)
         || asset.receipt.fields.get("suppression").map(String::as_str) != Some("dedupe")
         || !asset.receipt.fields.contains_key("dedupe_key")
     {
@@ -120,12 +140,14 @@ pub(crate) fn validated_local_record_for_canonical(
             "canonical receipt record carrier diverged",
         ));
     }
+    // A suppression holds its intent's index row; a served-form record holds
+    // none.
     let decoded = decode(*id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
     if header.occurred_start != header.occurred_end
         || header.occurred_start != header.learned_at
         || header.occurred_start != decoded.receipt.occurred_at
         || index_intent(store, txn, id, "canonical receipt record/index binding")?
-            != Some(decoded.intent_id)
+            != decoded.intent_id
     {
         return Err(Error::CorruptedIndex(
             "canonical receipt record/index binding",
@@ -139,17 +161,20 @@ pub(crate) fn validated_local_record_for_canonical(
 /// which local audit events capture may see. The index is rebuildable from
 /// accepted records and contains no ordinary ASSET rows. `admit` sees each
 /// window record before it is kept, and refuses one the caller cannot hold.
+/// Every index row is read: past its threshold row the walk raises one check
+/// (deferred: `txn` is the caller's) and reads on. A served-form record
+/// holds no index row, so the RECEIPT_RECORD type index names those, each
+/// validated the same way.
 pub(crate) fn canonical_records_in_window(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     window: &str,
     mut admit: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    let mut count = ScanCount::start(store, txn, EngineScan::ReceiptRecordRows, &[])?;
     let mut records = Vec::new();
-    for (count, row) in INDEX.iter_raw_from(store, txn, &[])?.enumerate() {
-        if count >= MAX_RECEIPT_QUERY_SCAN {
-            return Err(Error::IndexOverflow("canonical receipt record scan"));
-        }
+    for row in INDEX.iter_raw_from(store, txn, &[])? {
+        count.row();
         let (key, value) = row?;
         let id_bytes: [u8; 16] = key
             .as_slice()
@@ -173,6 +198,31 @@ pub(crate) fn canonical_records_in_window(
             records.push((id, raw));
         }
     }
+    count.defer(store);
+    let mut count = ScanCount::start(
+        store,
+        txn,
+        EngineScan::TypeIndexRows,
+        &[ENTITY_TYPE_RECEIPT_RECORD],
+    )?;
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_RECEIPT_RECORD, None)? {
+        count.row();
+        let id = id?;
+        // A suppression was read from its index row above.
+        if index_intent(store, txn, &id, "canonical receipt index binding")?.is_some() {
+            continue;
+        }
+        let raw = validated_local_record_for_canonical(store, txn, &id, None)?.ok_or(
+            Error::CorruptedIndex("canonical receipt type index missing record"),
+        )?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("canonical receipt record header"))?;
+        if crate::deletion::window_label_from_timestamp(header.learned_at) == window {
+            admit(raw.as_slice())?;
+            records.push((id, raw));
+        }
+    }
+    count.defer(store);
     Ok(records)
 }
 
@@ -248,7 +298,8 @@ pub(crate) fn validate_receipt_record_put(
 
 /// Rebuildable projection index: the normal RECEIPT_RECORD materializer calls this for
 /// local writes and for every replicated RECEIPT_RECORD it accepts. Its keys enumerate
-/// only suppression observations, never unrelated content RECEIPT_RECORDs.
+/// only suppression observations, never unrelated content RECEIPT_RECORDs; a
+/// served-form record takes no row, and the type index enumerates it.
 pub(crate) fn stage_receipt_record_index(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -260,12 +311,13 @@ pub(crate) fn stage_receipt_record_index(
         return Ok(());
     }
     let asset = decode_incoming(*id, data)?.0;
-    if let Some(previous) = index_intent(store, txn, id, "outbound suppression index binding")?
-        && previous != asset.intent_id
-    {
+    let previous = index_intent(store, txn, id, "outbound suppression index binding")?;
+    if previous.is_some() && previous != asset.intent_id {
         return Err(Error::CorruptedIndex("outbound suppression index binding"));
     }
-    INDEX.put(store, txn, id, &asset.intent_id)?;
+    if let Some(intent_id) = asset.intent_id {
+        INDEX.put(store, txn, id, &intent_id)?;
+    }
     Ok(())
 }
 
@@ -283,7 +335,7 @@ pub(crate) fn put_suppression_in_txn(
         ));
     }
     let body = rmp_serde::to_vec_named(&ReceiptRecordEnvelope {
-        intent_id: *intent_id,
+        intent_id: Some(*intent_id),
         receipt: receipt.clone(),
     })
     .map_err(|_| Error::InvariantViolation("outbound suppression encode"))?;
@@ -292,6 +344,28 @@ pub(crate) fn put_suppression_in_txn(
             "outbound suppression local receipt occupied",
         ));
     }
+    put_carrier_in_txn(vault, txn, id, body, now)?;
+    LOCAL_RECEIPT
+        .put(&vault.store, txn, intent_id, receipt)
+        .map_err(|error| match error {
+            Error::Store(StoreError::SideTableRow { .. }) => {
+                Error::InvariantViolation("outbound suppression receipt encode")
+            }
+            other => other,
+        })?;
+    Ok(())
+}
+
+/// The one maintenance put both records take, in the caller's transaction:
+/// event and learned time are `now`, and the shared RECEIPT_RECORD door
+/// checks the carrier and stages its index.
+fn put_carrier_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    body: Vec<u8>,
+    now: u64,
+) -> Result<()> {
     crate::batch::apply_ops(
         &vault.store,
         &vault.config,
@@ -315,16 +389,29 @@ pub(crate) fn put_suppression_in_txn(
             .load(std::sync::atomic::Ordering::Acquire),
         false,
         true,
-    )?;
-    LOCAL_RECEIPT
-        .put(&vault.store, txn, intent_id, receipt)
-        .map_err(|error| match error {
-            Error::Store(StoreError::SideTableRow { .. }) => {
-                Error::InvariantViolation("outbound suppression receipt encode")
-            }
-            other => other,
-        })?;
-    Ok(())
+    )
+}
+
+/// Writes one served-form receipt record at the fresh `id`, in the caller's
+/// transaction: `served`, served to `holder` at `at`. It takes no intent,
+/// no dedupe and no index row of its own.
+pub(crate) fn put_served_form_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    served: &ServedForm,
+    holder: &ScopedReadActorKey,
+    at: u64,
+) -> Result<()> {
+    if vault.store.port_entity_record(txn, &id)?.is_some() {
+        return Err(Error::CorruptedIndex("served form record id occupied"));
+    }
+    let body = rmp_serde::to_vec_named(&ReceiptRecordEnvelope {
+        intent_id: None,
+        receipt: served_form::served_form_receipt(&id, served, holder, at),
+    })
+    .map_err(|_| Error::InvariantViolation("served form record encode"))?;
+    put_carrier_in_txn(vault, txn, id, body, at)
 }
 
 pub(crate) fn suppression_for_intent(vault: &Vault, intent_id: &IntentId) -> Result<ReceiptRecord> {
@@ -376,10 +463,10 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
             ));
         }
         let asset = decode(id, &stored.body)?;
-        if asset.intent_id != indexed_intent {
+        if asset.intent_id != Some(indexed_intent) {
             return Err(Error::CorruptedIndex("outbound suppression index target"));
         }
-        if let Some(receipt) = local_receipt(&vault.store, &txn, &asset.intent_id)?
+        if let Some(receipt) = local_receipt(&vault.store, &txn, &indexed_intent)?
             && receipt != asset.receipt
         {
             return Err(Error::CorruptedIndex(
@@ -389,4 +476,41 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
         receipts.push(asset.receipt);
     }
     Ok(ReceiptScan::from_complete_records(receipts))
+}
+
+/// The served-form receipts `query` matches, newest first up to its limit,
+/// read from every RECEIPT_RECORD in the type index under `txn`. Each is
+/// matched before it competes for the limit, and the walk reads every row:
+/// past its threshold row it raises one check and reads on. A suppression
+/// row here is the outbound projector's.
+pub(super) fn served_form_receipts(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut count = ScanCount::start(
+        &vault.store,
+        txn,
+        EngineScan::TypeIndexRows,
+        &[ENTITY_TYPE_RECEIPT_RECORD],
+    )?;
+    let mut receipts = Vec::new();
+    for id in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_RECEIPT_RECORD, None)?
+    {
+        count.row();
+        let id = id?;
+        let stored = vault
+            .store
+            .port_entity_record(txn, &id)?
+            .filter(|row| row.entity_type == ENTITY_TYPE_RECEIPT_RECORD)
+            .ok_or(Error::CorruptedIndex("served form record type index"))?;
+        let receipt = decode(id, &stored.body)?.receipt;
+        if receipt.receipt_kind == ReceiptKind::ServedForm && query.matches(&receipt) {
+            retain_newest_receipt(&mut receipts, receipt, query.limit);
+        }
+    }
+    count.finish(vault);
+    Ok(receipts)
 }

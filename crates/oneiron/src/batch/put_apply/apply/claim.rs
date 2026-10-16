@@ -2,11 +2,11 @@ use super::*;
 
 /// A sync replay deliberately bypasses the local claim gate. If it changes a
 /// claim with a persisted critical-confirm attachment, that attachment binds
-/// the old body and cannot authorize the new one. Delete it in this same write
-/// transaction and demote an inbound Auto status; notably, do not derive a
-/// replacement binding from the changed peer body. Returns the demoted body's
-/// bytes, which the put stores instead of `data`, and leaves
-/// `decoded_claim_body` holding the demoted body.
+/// the old body and cannot authorize the new one: it closes in this same write
+/// transaction, and the claim's owner-answer obligation stays open. After a
+/// peer overwrote a confirm this device attached, an inbound Auto status is
+/// demoted. Returns the demoted body's bytes, which the put stores instead of
+/// `data`, and leaves `decoded_claim_body` holding the demoted body.
 pub(super) fn reconcile_replicated_critical_confirm(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -29,7 +29,6 @@ pub(super) fn reconcile_replicated_critical_confirm(
         store,
         wtxn,
         id,
-        data,
         body_changed,
     )? {
         let mut reconciled = decoded_claim_body

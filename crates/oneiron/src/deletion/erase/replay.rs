@@ -38,6 +38,10 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
+        // An apply that erases signs a receipt in the txn: load the device key
+        // first. A re-application is a receipt-free no-op, so an install that
+        // cannot load it still replays; the in-txn signer refuses if it must sign.
+        let _ = self.prepare_install_signing();
         let mut wtxn = self.store.env.write_txn()?;
         let (outcome, _changed) = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
         wtxn.commit()?;
@@ -310,7 +314,12 @@ impl Vault {
             if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
                 return Err(crate::secret_custody::reject_secret_custody_byte());
             }
-            if crate::registry::is_delete_protected_engine_record(header.entity_type) {
+            if crate::registry::is_delete_protected_engine_record(header.entity_type)
+                || crate::workspace_roster::is_project_revision_type(
+                    &self.store,
+                    header.entity_type,
+                )
+            {
                 return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
                     header.entity_type,
                 )));

@@ -58,7 +58,7 @@ pub(super) fn task_entity_census_by_role(
     keep: impl Fn(Option<TaskRole>) -> bool,
 ) -> usize {
     vault
-        .entities_by_type_page(ENTITY_TYPE_TASK, None, TASK_PRESENCE_SCAN_CAP)
+        .entities_by_type_page(ENTITY_TYPE_TASK, None, 4_096)
         .expect("task entities")
         .into_iter()
         .filter(|task_ref| keep(task_entity_role(vault, *task_ref).expect("task role")))
@@ -528,6 +528,25 @@ pub(super) fn other_actor(vault: &Vault) -> EntityId {
     let actor = ladder_id(OTHER_ACTOR_SEED);
     put_person(vault, actor);
     actor
+}
+
+/// One TURN for a Dreamer-surface write to cite: GATE-12 counts what was
+/// said, never the PERSON a claim is about.
+pub(super) fn said_turn(vault: &Vault) -> EntityId {
+    let turn = EntityId::now();
+    vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: LADDER_NOW,
+                end: LADDER_NOW,
+            },
+            LADDER_NOW,
+            b"what was said",
+        )
+        .expect("seed the cited turn");
+    turn
 }
 
 /// Writes one CLAIM through the normal envelope-stamped door so its

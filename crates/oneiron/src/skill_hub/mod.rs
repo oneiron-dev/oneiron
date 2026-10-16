@@ -19,6 +19,7 @@ pub use import_receipt::{
 };
 mod package_codec;
 mod publisher;
+mod ref_sync;
 mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
@@ -36,10 +37,8 @@ pub use claim_refinement::{
 pub(crate) use claim_refinement::{
     claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
-pub(crate) use default_hub::{
-    MODEL_PACK_HASH, MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub,
-};
-pub use default_hub::{default_skill_hub_commit, default_skill_hub_id};
+pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
+pub use default_hub::{ModelCatalogSync, default_skill_hub_commit, default_skill_hub_id};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};
@@ -111,7 +110,8 @@ pub(crate) use self::package::{
     MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES,
 };
 pub(crate) use self::verdict::{
-    scan_verdict_row_risk, skill_scan_verdicts_for_content_hash_in_store,
+    scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
+    skill_scan_verdicts_for_content_hash_in_store,
 };
 
 // The flat skill_hub.rs module used to provide these names to the test module
@@ -125,7 +125,7 @@ use self::index::{
 #[cfg(test)]
 use self::support::{map_text, map_value};
 #[cfg(test)]
-use self::verdict::skill_content_anchor_entity_id;
+pub(crate) use self::verdict::skill_content_anchor_entity_id;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

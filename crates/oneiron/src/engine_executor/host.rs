@@ -1,9 +1,7 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
-use super::record::completed_step_count;
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, decode_text_output, observation_output_path,
-    recoverable_output_path,
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path,
 };
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
@@ -31,7 +29,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
-    recoverable: Vec<(u64, CodeRunRawOutput)>,
+    recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
@@ -73,23 +71,20 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// Bind only committed observations from the current run to the linked
     /// file-read import. A guest cannot turn a hash into another run's output.
+    /// Each reference is its body's manifest digest and length.
     pub(super) fn with_recoverable_outputs(
         mut self,
         storage: &'s ExecutorStorage<'a>,
         record: &CodeRunReplayRecord,
+        observations: Vec<(u64, CodeRunRawOutput, ObservationRef)>,
     ) -> EngineExecutorResult<Self> {
         if record.run_id != self.run_id {
             return Err(Error::InvalidConfig("executor output run mismatch".into()).into());
         }
-        for seq in 0..completed_step_count(record)? {
-            let path = observation_output_path(seq);
-            let output = record
-                .outputs
-                .iter()
-                .find(|entry| entry.path == path)
-                .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-            self.recoverable.push((seq, output.clone()));
-        }
+        self.recoverable = observations
+            .into_iter()
+            .map(|(seq, output, observation)| (seq, output, observation.source))
+            .collect();
         self.storage = Some(storage);
         Ok(self)
     }
@@ -152,16 +147,11 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             self.hard_failure = Some(err);
             return Err(refused);
         }
-        for (seq, output) in &self.recoverable {
+        for (seq, output, source) in &self.recoverable {
             if !path.starts_with(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/")) {
                 continue;
             }
-            let raw = storage
-                .get_code_run_raw_output(output)?
-                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            let text = decode_text_output(&output.path, raw)?;
-            let source = OutputRef::from_bytes(text.as_bytes());
-            let base = recoverable_output_path(*seq, source);
+            let base = recoverable_output_path(*seq, *source);
             let offset = path
                 .strip_prefix(&format!("{base}/chunk/"))
                 .and_then(|value| {
@@ -173,16 +163,24 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
                 .ok_or(Error::InvalidConfig(
                     "invalid recoverable output reference".into(),
                 ))?;
-            let bytes = text.as_bytes();
-            if offset > bytes.len() {
+            if offset as u64 > source.byte_len {
                 return Err(Error::InvalidConfig(
                     "recoverable output offset exceeds source".into(),
                 ));
             }
-            let end = offset
-                .saturating_add(RECOVERABLE_OUTPUT_CHUNK_BYTES)
-                .min(bytes.len());
-            return Ok(Some(bytes[offset..end].to_vec()));
+            // Only the chunk leaves the store: an inline body is read in
+            // place, a file body by range.
+            if output.output_ref() != *source {
+                return Err(Error::CorruptedIndex("recoverable output integrity"));
+            }
+            let chunk = storage
+                .read_code_run_raw_output_range(
+                    output,
+                    offset as u64,
+                    RECOVERABLE_OUTPUT_CHUNK_BYTES,
+                )?
+                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            return Ok(Some(chunk));
         }
         Err(Error::InvalidConfig(
             "recoverable output is outside this run".into(),
@@ -333,7 +331,11 @@ pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
 ];
 
 pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBoundaryContract> {
-    let boundary = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
+    // Generated code reaches the host through `self.*` and its own recorded
+    // outputs alone: a file or credential service a host attached to the
+    // runtime is not part of the executor's contract.
+    let boundary = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer)
+        .without_host_services();
     if boundary.guest_language() != SandboxGuestLanguage::PlainJavaScript {
         return Err(Error::InvariantViolation("executor sandbox is not plain JavaScript").into());
     }

@@ -227,6 +227,9 @@ side_tables! {
     /// Persisted hub package sidecar (custom MAGIC-framed binary envelope) for a skill entity. Key:
     /// id16.
     SKILL_HUB_PACKAGE: VaultMeta b"skill_hub/package/v1\0" Raw;
+    /// One hub ref's sync policy and its seen/trusted revisions (ARCH-0053 §7). Key: id16 +
+    /// string ref.
+    SKILL_HUB_REF_SYNC: VaultMeta b"skill_hub/ref-sync/v1\0" LegacyJson;
     /// Refinement-receipt carrier id to the holder (candidate id, 16 bytes) that owns it. Key: id16.
     SKILL_HUB_REFINEMENT_BINDING: VaultMeta b"skill_hub/refinement-binding/v1\0" Raw;
     /// Permanent claim-refinement origin: blake3 (32 bytes) of the first native Proposed bytes. Key:
@@ -382,6 +385,17 @@ side_tables! {
     TEXT_BM25_FIELD_SCHEMA_HASH: VaultMeta b"text_bm25_field_schema_hash" Raw;
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
+    /// One open, answered or superseded "may I reach your trusted contact?" ask, raised by a
+    /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
+    TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;
+    /// One trusted-contact notice the engine staged, by its fire ref: the witness that claim and
+    /// dispatch require, so a notice queued any other way is never sent. Key: id16(fire).
+    TRUSTED_CONTACT_FIRE: VaultMeta b"trusted_contact.fire.v1:" Named;
+    /// A person's trusted contact: the PERSON named, how to reach them, the fixed notice, the
+    /// dial, and both sides' consent or revocation. Key: id16(person) + id16(contact).
+    TRUSTED_CONTACT_RELATION: VaultMeta b"trusted_contact.relation.v1:" Named;
+    /// The trusted-contact tier the owner gave one `RouteToHelp` policy row. Key: string (row ref).
+    TRUSTED_CONTACT_TIER: VaultMeta b"trusted_contact.tier.v1:" Named;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;

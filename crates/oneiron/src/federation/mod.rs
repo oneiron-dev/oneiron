@@ -32,8 +32,9 @@ pub(crate) use ruling_integrity::{
 mod pending_act;
 mod shared_creation;
 pub use pending_act::{
-    PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+    ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
 };
+pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
@@ -78,6 +79,7 @@ pub use self::stale::{
     decode_world_stale_stamp, encode_world_stale_stamp, foreign_world_stale_stamp,
     world_stale_marker,
 };
+pub(crate) use self::stale::{StaleSweepWatch, note_authority_row};
 
 pub(crate) use self::grant::{
     FEDERATION_GRANT_FIELDS_FULL, FEDERATION_GRANT_FIELDS_MINIMAL,

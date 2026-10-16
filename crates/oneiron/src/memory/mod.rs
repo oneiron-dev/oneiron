@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod archive_purge;
+mod asset_resolve;
 mod authorship;
 mod birth_position;
 mod booking;
@@ -40,6 +41,7 @@ mod conversation_list;
 mod credential_key;
 mod dreamer;
 mod entity_delete;
+mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
@@ -64,6 +66,9 @@ mod tests;
 mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use asset_resolve::{
+    AssetConsumer, HydratedAsset, LandedImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
@@ -84,6 +89,9 @@ pub use claims::{
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use entity_erase::{
+    EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
+};
 pub use export::{ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
@@ -97,8 +105,8 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
-    MemoryPolicyExceptionProposal, MemoryResult,
+    MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial,
+    MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
@@ -127,10 +135,10 @@ pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
 pub use witness::{
-    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
-    MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
-    MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
-    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageStreamError,
+    MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamPump,
+    MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence, StreamCancelReason,
+    StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
 pub(crate) use witness::{MessageStreamRuntime, message_stream_finality_in_txn};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};

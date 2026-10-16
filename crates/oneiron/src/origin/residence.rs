@@ -40,6 +40,27 @@ pub struct OriginAuthorityLease {
     epoch: u64,
     writer: String,
 }
+/// What one host holds of a served repository's origin authority, read from
+/// trusted host configuration and the authority row, never from the pusher.
+#[derive(Debug, Clone)]
+pub enum OriginHostAuthority {
+    /// No authority is configured: this vault is the repository's one origin
+    /// and serves its pushes with no lease.
+    Unconfigured,
+    /// This host writes the current epoch.
+    Held(OriginAuthorityLease),
+    /// The repository is a read-only mirror at the current epoch.
+    Mirror(OriginAuthority),
+    /// Another host writes the current epoch, or this host names none.
+    Elsewhere(OriginAuthority),
+}
+/// The owner's cutover: the epoch it expects and the authority it installs.
+struct Cutover {
+    expected_epoch: Option<u64>,
+    residence: OriginResidence,
+    writer: EntityId,
+    mirror: bool,
+}
 /// Persisted host authorization. This is deliberately not a public deserializer
 /// for `OriginAuthorityLease`: only local admission evidence can restore it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,10 +136,96 @@ impl Vault {
         writer: EntityId,
         mirror: bool,
     ) -> Result<OriginAuthority> {
-        let _guard = lock_repository(repo.common_dir())?;
         let id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
-        self.reconcile_receive_pack_operations(repo.repo_root())?;
-        if self.has_pending_receive_pack_operations(repo.repo_root())?
+        let cutover = Cutover {
+            expected_epoch,
+            residence,
+            writer,
+            mirror,
+        };
+        self.cut_origin_authority(repo.common_dir(), repo.repo_root(), id, cutover)
+    }
+    /// [`Vault::set_origin_authority`] for a repository this vault serves,
+    /// named as its smart-HTTP route names it: the owner's cutover on the
+    /// host itself. It takes the coordinator a push to that name takes.
+    pub fn set_served_origin_authority(
+        &self,
+        repo_name: &str,
+        expected_epoch: Option<u64>,
+        residence: OriginResidence,
+        writer: EntityId,
+        mirror: bool,
+    ) -> Result<OriginAuthority> {
+        let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
+        let common_dir = super::smart_http::push_queue_key(self, repo_name)?;
+        let id = self.served_repo_id(&repo_root)?;
+        let cutover = Cutover {
+            expected_epoch,
+            residence,
+            writer,
+            mirror,
+        };
+        self.cut_origin_authority(&common_dir, &repo_root, id, cutover)
+    }
+    /// The authority row of a repository this vault serves, by its served name.
+    pub fn served_origin_authority(&self, repo_name: &str) -> Result<Option<OriginAuthority>> {
+        let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
+        let id = self.served_repo_id(&repo_root)?;
+        self.origin_authority_by_id(id)
+    }
+    /// What this host holds of the served repository's authority. The host
+    /// is this install's machine ([`Vault::local_machine`]): the writer the
+    /// owner names when the cutover hands this host the repository. No
+    /// request field takes part. The serve path checks a held lease again
+    /// under the coordinator, so a cutover between this read and admission
+    /// refuses the push.
+    pub fn origin_host_authority(&self, repo_name: &str) -> Result<OriginHostAuthority> {
+        let repo_root = super::smart_http::origin_repo_dir(self, repo_name)?;
+        let repo_id = self.served_repo_id(&repo_root)?;
+        let (row, host) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                AUTHORITY.get(&self.store, &txn, &repo_id)?,
+                crate::identity::read_machine_id_in_txn(self, &txn)?,
+            )
+        };
+        let Some(row) = row else {
+            return Ok(OriginHostAuthority::Unconfigured);
+        };
+        if row.mirror {
+            return Ok(OriginHostAuthority::Mirror(row));
+        }
+        if host.is_none_or(|host| row.writer != host.to_hex()) {
+            return Ok(OriginHostAuthority::Elsewhere(row));
+        }
+        Ok(OriginHostAuthority::Held(OriginAuthorityLease {
+            repo_id,
+            epoch: row.epoch,
+            writer: row.writer,
+        }))
+    }
+    /// The authority key of a served repository: its object store's identity,
+    /// as admission reads it before any commit is pinned.
+    fn served_repo_id(&self, repo_root: &Path) -> Result<EntityId> {
+        let identity = GitWire::new(self)?.repository_identity(repo_root)?;
+        crate::origin::lfs::lfs_repo_id(&identity.as_hex())
+    }
+    fn cut_origin_authority(
+        &self,
+        common_dir: &Path,
+        repo_root: &Path,
+        id: EntityId,
+        cutover: Cutover,
+    ) -> Result<OriginAuthority> {
+        let Cutover {
+            expected_epoch,
+            residence,
+            writer,
+            mirror,
+        } = cutover;
+        let _guard = lock_repository(common_dir)?;
+        self.reconcile_receive_pack_operations(repo_root)?;
+        if self.has_pending_receive_pack_operations(repo_root)?
             || self.prepared_origin_publication_count(id)? != 0
         {
             return Err(Error::ConcurrentWrite(
@@ -199,24 +306,36 @@ impl Vault {
         repo: &GitWireRepo,
         publication: EntityId,
     ) -> Result<()> {
+        match self.origin_authority_refusal(repo, publication)? {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
+    }
+    /// Why the current authority refuses this publication, or `None` when it
+    /// permits it. A read failure is an error, never a refusal.
+    pub(in crate::origin) fn origin_authority_refusal(
+        &self,
+        repo: &GitWireRepo,
+        publication: EntityId,
+    ) -> Result<Option<Error>> {
         let Some(row) = self.origin_authority(repo)? else {
-            return Ok(());
+            return Ok(None);
         };
         if row.mirror {
-            return Err(Error::InvariantViolation(
+            return Ok(Some(Error::InvariantViolation(
                 "mirror is read-only; import through the authoritative origin",
-            ));
+            )));
         }
         let txn = self.store.env.read_txn()?;
         if AUTHORITY_PERMIT
             .get(&self.store, &txn, &publication)?
             .is_none_or(|epoch| epoch != row.epoch)
         {
-            return Err(Error::ConcurrentWrite(
+            return Ok(Some(Error::ConcurrentWrite(
                 "origin publication requires the current authority epoch",
-            ));
+            )));
         }
-        Ok(())
+        Ok(None)
     }
     /// Admission has no commit pin yet, including an empty first-push origin.
     /// Resolve the canonical object-store identity without inventing a commit.

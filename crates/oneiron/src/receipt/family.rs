@@ -27,7 +27,7 @@ use super::projection::{
     finalize_receipt_scan, project_receipts_by_brief,
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
-use super::record::scan_suppression_receipts;
+use super::record::{scan_suppression_receipts, served_form_receipts};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -153,7 +153,8 @@ impl Vault {
         &self,
         query: ReceiptQuery,
     ) -> Result<Vec<CounterpartyReceiptProjection>> {
-        if query.limit == 0 {
+        let limit = query.limit;
+        if limit == 0 {
             return Ok(Vec::new());
         }
         let receipts = self.receipts(projection_scan_query(query))?;
@@ -161,6 +162,7 @@ impl Vault {
         Ok(project_receipts_by_counterparty_with_contacts(
             receipts,
             &contact_records,
+            limit,
         ))
     }
 
@@ -350,6 +352,13 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::CommitmentLifecycle) {
         records.extend(commitment_lifecycle_receipts(vault, &rtxn, query)?);
     }
+    // OF-329: the form each read served of an asset. Its own kind and its own
+    // RECEIPT_RECORDs, read through the type index in the shared txn. No
+    // completeness is claimed for them (`Vault::scan_receipts` is
+    // outbound-only).
+    if query.includes_kind(ReceiptKind::ServedForm) {
+        records.extend(served_form_receipts(vault, &rtxn, query)?);
+    }
 
     // ED-01 (ONE-1757): the reserved Δ slot is filled from its own side-ledger
     // once, HERE, rather than by every projector that can emit an amended
@@ -449,7 +458,18 @@ fn commitment_lifecycle_receipts(
     Ok(receipts)
 }
 
+/// Reads every gate decision, newest selection by event time. Past the
+/// ledger's threshold row the walk raises one check and reads on (rule 5).
 fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
+    let mut count = {
+        let txn = vault.store.env.read_txn()?;
+        crate::scan_check::ScanCount::start(
+            &vault.store,
+            &txn,
+            crate::scan_check::EngineScan::GateDecisionRows,
+            &[],
+        )?
+    };
     let mut receipts = Vec::new();
     let mut before = None;
     loop {
@@ -461,6 +481,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         let page_len = decisions.len();
         before = decisions.last().map(|decision| decision.decision_id);
         for decision in decisions {
+            count.row();
             let receipt = gate_decision_receipt_from_base(&decision);
             if query.matches(&receipt) {
                 if query.job_ref.is_none() {
@@ -481,6 +502,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
             break;
         }
     }
+    count.finish(vault);
     Ok(receipts)
 }
 

@@ -291,8 +291,13 @@ side_tables! {
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;
+    /// One sealed FIX6 code-fix export (an invented example or a candidate fix's result) waiting
+    /// for the host to drain it, with the worlds it touched; never real chat text. Key: id16.
+    FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
+    FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
     FEEDBACK_QUEUE: VaultMeta b"feedback:queue:v1:" Named;
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
@@ -444,6 +449,9 @@ side_tables! {
     HOUSEKEEPING_WAKE: VaultMeta b"housekeeping:wake:v1:" Raw;
     /// Follow-up reminder/escalation cursor state for one human task. Key: id16.
     HUMAN_TASK_FOLLOWUP: VaultMeta b"human_task.followup.v1\0" Raw;
+    /// The TASK whose follow-up cursor the due sweep read last: the next wake pass resumes after
+    /// it. Key: ().
+    HUMAN_TASK_FOLLOWUP_SWEEP: VaultMeta b"human_task.followup_sweep.v1" Raw;
     /// Idempotency marker recording which signal/surface-event a wait's response already produced.
     /// Key: id16.
     HUMAN_TASK_WAIT_SIGNAL: VaultMeta b"human_task.wait.signal.v1\0" Raw;

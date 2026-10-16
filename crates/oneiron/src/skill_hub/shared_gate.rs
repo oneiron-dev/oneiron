@@ -11,7 +11,7 @@ use crate::{
     error::{ArtifactError, Error, Result},
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-        TypedDecision,
+        PairedReading, TypedDecision,
     },
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// The host's OF-493 answerer runs the configured typed question with a System One
-/// seat first. It sees submitted bytes, never the branch vault. The gate checks
+/// or escalation seat first. It sees submitted bytes, never the branch vault. The gate checks
 /// its typed receipt before any held-out replay or state change.
 pub trait UsefulUpstreamJudge {
     fn decide(
@@ -659,11 +659,17 @@ pub(super) fn checked_useful_decision(
         || receipt
             .providers
             .first()
-            .is_none_or(|p| p.rung != DecisionRung::SystemOne)
+            .is_none_or(|p| !matches!(p.rung, DecisionRung::SystemOne | DecisionRung::Escalation))
         || receipt
             .providers
             .iter()
             .any(|p| p.model.trim().is_empty() || p.version.trim().is_empty())
+        || !PairedReading::readings_valid(
+            &receipt.paired,
+            &receipt.person,
+            question.id,
+            &receipt.providers,
+        )
         || receipt.band.validate().is_err()
         || decision
             .probability
@@ -674,9 +680,7 @@ pub(super) fn checked_useful_decision(
                 .contains(decision.probability.unwrap_or_default())
         || !question.contract.accepts(&decision.answer)
     {
-        return Err(invalid(
-            "unbound or malformed System One useful-upstream answer",
-        ));
+        return Err(invalid("unbound or malformed model useful-upstream answer"));
     }
     match decision.answer {
         DecisionAnswer::Noul(value) => Ok(value),

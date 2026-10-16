@@ -17,7 +17,7 @@ use crate::projection;
 use crate::projection::View;
 use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
-use crate::server::SyncServer;
+use crate::server::{QueryDoor, SyncServer, query_caller};
 use axum::extract::Path;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
@@ -46,7 +46,8 @@ pub(crate) struct CoreQueryRequest {
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     query_vector: Option<Vec<f32>>,
-    /// Maximum result count.
+    /// Maximum result count. A limit past 1,000 is served at 1,000 and
+    /// `meta.limitClamped` says so.
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     limit: usize,
@@ -88,6 +89,7 @@ pub(crate) struct CoreScopedQueryResponse {
         (status = 400, description = "Malformed query request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 413, description = "The query exceeds `[limits].retrieval_query_bytes` (1 MiB unless set).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Query failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -98,12 +100,18 @@ pub(crate) async fn core_query(
 ) -> Result<Json<CoreScopedQueryResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
+    if let Some(query) = req.query.as_deref() {
+        server
+            .check_retrieval_query(query_caller(&auth), QueryDoor::CoreQuery, "query", query)
+            .map_err(ApiError::from)?;
+    }
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
+    let (limit, limit_clamped) = oneiron::memory::caps::clamp_search_limit(req.limit);
 
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
-    let fetch_limit = search_fetch_limit(count_mode, req.limit);
+    let fetch_limit = search_fetch_limit(count_mode, limit);
     let scope = auth.principal_ref().unwrap_or(auth.principal()).trim();
     let mut observations =
         super::super::session_read_set(&server, scope, req.session_id.as_deref()).await?;
@@ -134,7 +142,9 @@ pub(crate) async fn core_query(
     narrowing.restrict_with(&projected.receipt);
     let total = projected.value.iter().filter(|row| row.is_some()).count();
     let mut staged = observations.as_deref().cloned();
-    let mut response = Vec::with_capacity(total.min(req.limit));
+    let mut bodies =
+        projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
+    let mut response = Vec::with_capacity(total.min(limit));
     for (result, row) in results.value.into_iter().zip(projected.value) {
         let Some(oneiron::claim::ReadRow {
             entity_type,
@@ -145,10 +155,15 @@ pub(crate) async fn core_query(
         else {
             continue;
         };
-        if response.len() >= req.limit {
+        if response.len() >= limit {
             continue;
         }
-        if let Some(observations) = staged.as_mut()
+        // A body is decoded, to project it or to observe it, only while the
+        // response's body budget holds it; Standard alone projects none.
+        let decoded =
+            (matches!(view, View::Standard) && staged.is_none()) || bodies.admits(body.len());
+        if decoded
+            && let Some(observations) = staged.as_mut()
             && let Some(successor) = observations
                 .observe_snapshot(
                     &scoped_read,
@@ -163,8 +178,17 @@ pub(crate) async fn core_query(
         }
         let mut value = if matches!(view, View::Standard) {
             serde_json::json!({"id": result.id.to_hex(), "score": result.score})
-        } else {
+        } else if decoded {
             projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
+        } else {
+            bodies.omitted(
+                &result.id,
+                entity_type,
+                learned_at,
+                &body,
+                view,
+                oneiron::memory::ReadMode::Indexed,
+            )
         };
         if matches!(view, View::Full)
             && let Value::Object(object) = &mut value
@@ -176,7 +200,8 @@ pub(crate) async fn core_query(
     if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged) {
         *target = staged;
     }
-    let meta = search_meta(count_mode, total);
+    let mut meta = search_meta(count_mode, total);
+    meta.limit_clamped = limit_clamped;
 
     Ok(Json(CoreScopedQueryResponse {
         access: oneiron::access_grant::GrantedData::new(
@@ -268,50 +293,32 @@ pub(crate) fn collect_live_entity_page<F>(
     mut fetch: F,
 ) -> Result<(Vec<oneiron::EntityId>, Option<String>), EnvelopedApiError>
 where
-    F: FnMut(
-        Option<&oneiron::EntityId>,
-        usize,
-    ) -> Result<Vec<oneiron::EntityId>, EnvelopedApiError>,
+    F: FnMut(Option<&oneiron::EntityId>, usize) -> Result<oneiron::IdScanPage, EnvelopedApiError>,
 {
     if limit == 0 {
         return Ok((Vec::new(), None));
     }
 
-    let mut cursor = after;
+    // One bounded run of edges per page: deleted shells are read too, and a
+    // page they leave short resumes where the run stopped (F13).
+    let fetched = fetch(after.as_ref(), limit.saturating_add(1))?;
     let mut ids = Vec::with_capacity(limit);
-    let mut next_cursor = None;
-
-    while next_cursor.is_none() {
-        let remaining = limit.saturating_sub(ids.len());
-        let fetch_limit = if remaining == 0 {
-            1
-        } else {
-            remaining.saturating_add(1)
-        };
-        let fetched = fetch(cursor.as_ref(), fetch_limit)?;
-        if fetched.is_empty() {
-            break;
+    for id in fetched.ids {
+        if is_deleted_shell_for_core_list(vault, &id)? {
+            continue;
         }
-
-        let fetched_len = fetched.len();
-        for id in fetched {
-            cursor = Some(id);
-            if is_deleted_shell_for_core_list(vault, &id)? {
-                continue;
-            }
-            if ids.len() < limit {
-                ids.push(id);
-            } else {
-                next_cursor = ids.last().map(oneiron::EntityId::to_hex);
-                break;
-            }
+        if ids.len() == limit {
+            let next_cursor = ids.last().map(oneiron::EntityId::to_hex);
+            return Ok((ids, next_cursor));
         }
-
-        if fetched_len < fetch_limit {
-            break;
-        }
+        ids.push(id);
     }
-
+    // A full page resumes after its last item, as the list always has; a page
+    // the run left short resumes where the run stopped.
+    let next_cursor = fetched.resume_after.map(|resume_after| {
+        let last_served = ids.last().filter(|_| ids.len() == limit);
+        last_served.unwrap_or(&resume_after).to_hex()
+    });
     Ok((ids, next_cursor))
 }
 
@@ -325,17 +332,21 @@ pub(crate) fn is_deleted_shell_for_core_list(
     })
 }
 
+/// Projects one list page, its bodies decoded under one budget of
+/// `body_bytes` (`[limits].projection_body_bytes`).
 pub(crate) fn project_entity_ids(
     vault: &oneiron::Vault,
     ids: Vec<oneiron::EntityId>,
     view: View,
+    body_bytes: usize,
 ) -> Result<Vec<Value>, ApiError> {
+    let mut bodies = projection::BodyBudget::new(vault, body_bytes);
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
         if is_deleted_shell_for_core_list(vault, &id)? {
             continue;
         }
-        if let Some(item) = projection::project_entity(vault, &id, view).map_err(|error| {
+        if let Some(item) = bodies.project_entity(&id, view).map_err(|error| {
             tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core projection failed");
             core_engine_error("core projection failed", error)
         })? {

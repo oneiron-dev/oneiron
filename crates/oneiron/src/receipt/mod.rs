@@ -15,6 +15,7 @@ mod ledgers;
 mod projection;
 mod record;
 mod send_receipt_txn;
+mod served_form;
 mod session;
 
 #[cfg(test)]
@@ -41,6 +42,7 @@ pub use self::projection::{
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
+pub use self::served_form::ServedForm;
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
@@ -78,8 +80,9 @@ pub(crate) use self::ledgers::{
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
 pub(crate) use self::record::{
-    canonical_records_in_window, put_suppression_in_txn, stage_receipt_record_index,
-    suppression_for_intent, suppression_receipt_id, validate_receipt_record_put,
+    canonical_records_in_window, put_served_form_in_txn, put_suppression_in_txn,
+    stage_receipt_record_index, suppression_for_intent, suppression_receipt_id,
+    validate_receipt_record_put,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_record_time};

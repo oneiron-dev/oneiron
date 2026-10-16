@@ -99,6 +99,24 @@ impl Vault {
         Ok(())
     }
 
+    /// Writes the intent `request` names as its provenance, at
+    /// `request.provenance_claim_id`, before the request is published. The
+    /// engine builds the statement from the request
+    /// ([`super::origin_publication_intent_claim`]); `repo.*` is engine-owned,
+    /// so this is the one door that writes it.
+    pub fn put_origin_publication_intent(&self, request: &OriginPublicationRequest) -> Result<()> {
+        let body = super::origin_publication_intent_claim(request)?;
+        self.with_write_txn_grouped(|wtxn| {
+            self.put_reserved_claim_in_txn(
+                wtxn,
+                &request.provenance_claim_id,
+                &body,
+                request.occurred,
+                request.learned_at,
+            )
+        })
+    }
+
     /// Runs the whole publication protocol for one ref advance.
     ///
     /// An identical replay is idempotent: the publication id is derived from
@@ -220,7 +238,7 @@ impl Vault {
     ///
     /// `None` includes every repository. The list is whole: the scan never
     /// refuses for its length, and past its threshold row it raises an
-    /// [`OriginScanCheck`](crate::origin::scan_check::OriginScanCheck).
+    /// [`ScanCheck`](crate::scan_check::ScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.

@@ -6,7 +6,9 @@
 //! the descriptors the sockets leave) wait for a stalled one to free its
 //! permit, a burst of callers on one credential all complete, many pushes to
 //! one repository all land, and a slow transfer that keeps moving is never
-//! cut.
+//! cut. One push names no limit on its ref count (rule 5): two hundred refs
+//! land in one exchange, and a status report past the memory the bridge holds
+//! is held on disk. What a push holds on disk keeps the vault's disk reserve.
 
 use super::routes::git_http_routes;
 use crate::config::{LimitsConfig, SyncServerConfig};
@@ -26,13 +28,21 @@ use tokio::net::TcpStream;
 /// the test expected to end was still running.
 const PATIENCE: Duration = Duration::from_secs(30);
 
+/// How long a push of a few hundred refs may take to land: each ref lands
+/// through its own publication, and a debug build under a loaded test run
+/// took about 0.4 s for each.
+const LANDING_PATIENCE: Duration = Duration::from_secs(600);
+
 struct Origin {
     addr: SocketAddr,
     server: Arc<SyncServer>,
-    headers: HeaderMap,
-    /// The credential's recipe, which [`Origin::git_auth`] binds anew.
+    /// The credential's recipe, which [`Origin::headers`] and
+    /// [`Origin::git_auth`] bind anew: a binding older than its window is
+    /// refused, and a push of a few hundred refs can outlast one.
     token: String,
     oid: String,
+    /// The vault's per-request door root, where a held report spills.
+    door_root: std::path::PathBuf,
     source: tempfile::TempDir,
     _vault_dir: tempfile::TempDir,
     _serving: tokio::task::JoinHandle<()>,
@@ -56,6 +66,12 @@ fn stock_git(root: &Path, args: &[&str]) -> String {
 /// A served `demo.git` holding one commit, behind the git routes with the
 /// given limits, and a registered pusher's credential for it.
 async fn origin(limits: LimitsConfig) -> Origin {
+    origin_holding(limits, None).await
+}
+
+/// [`origin`], holding at most `status_memory` bytes of a push's report in
+/// memory when given.
+async fn origin_holding(limits: LimitsConfig, status_memory: Option<usize>) -> Origin {
     let vault_dir = tempfile::tempdir().expect("vault");
     let vault = Arc::new(
         oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default())
@@ -71,8 +87,14 @@ async fn origin(limits: LimitsConfig) -> Origin {
         crate::test_credentials::RECIPE_PREFIX,
         oneiron::EntityId::now().to_hex()
     );
-    let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
-    let headers = bound_headers(&server, &token);
+    let mut server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
+    if let Some(bytes) = status_memory {
+        Arc::get_mut(&mut server)
+            .expect("the only server handle")
+            .transfers
+            .git_status_memory = bytes;
+    }
+    let door_root = smart_http::origin_door_root(&vault).expect("door root");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
@@ -105,9 +127,9 @@ async fn origin(limits: LimitsConfig) -> Origin {
     Origin {
         addr,
         server,
-        headers,
         token,
         oid,
+        door_root,
         source,
         _vault_dir: vault_dir,
         _serving: serving,
@@ -126,22 +148,32 @@ fn bound_headers(server: &SyncServer, token: &str) -> HeaderMap {
 }
 
 impl Origin {
+    /// The token and a binding signed now.
+    fn headers(&self) -> HeaderMap {
+        bound_headers(&self.server, &self.token)
+    }
+
     /// The token and a binding signed now, as stock git's `-c` arguments. A
     /// binding is fresh for a minute, and a burst on a loaded host outlasts
     /// one signed when it began.
     fn git_auth(&self) -> [String; 2] {
-        let headers = bound_headers(&self.server, &self.token);
-        [
-            format!(
-                "http.extraHeader=Authorization: {}",
-                headers[AUTHORIZATION].to_str().unwrap()
-            ),
-            format!(
-                "http.extraHeader=X-Oneiron-Binding: {}",
-                headers["x-oneiron-binding"].to_str().unwrap()
-            ),
-        ]
+        bound_git_auth(&self.server, &self.token)
     }
+}
+
+/// [`bound_headers`], as stock git's `-c` arguments.
+fn bound_git_auth(server: &SyncServer, token: &str) -> [String; 2] {
+    let headers = bound_headers(server, token);
+    [
+        format!(
+            "http.extraHeader=Authorization: {}",
+            headers[AUTHORIZATION].to_str().unwrap()
+        ),
+        format!(
+            "http.extraHeader=X-Oneiron-Binding: {}",
+            headers["x-oneiron-binding"].to_str().unwrap()
+        ),
+    ]
 }
 
 fn commit(root: &Path, message: &str) {
@@ -172,7 +204,7 @@ fn limits(git_exchanges: usize, idle_ms: u64) -> LimitsConfig {
 pub(crate) async fn cross_the_exchanges(callers: usize) -> crate::admission::Crossing {
     let origin = origin(limits(1, 30_000)).await;
     let calls: Vec<_> = (0..callers)
-        .map(|_| tokio::spawn(advertisement_to(origin.addr, origin.headers.clone())))
+        .map(|_| tokio::spawn(advertisement_to(origin.addr, origin.headers())))
         .collect();
     let mut refused = 0;
     for call in calls {
@@ -212,7 +244,7 @@ async fn rpc_to(addr: SocketAddr, headers: &HeaderMap, service: &str, body: &[u8
 /// Opens one git RPC by hand and sends its head and `prefix`, declaring
 /// `declared` body bytes. HTTP/1.0, so the response ends when the socket does.
 async fn rpc(origin: &Origin, service: &str, declared: usize, prefix: &[u8]) -> TcpStream {
-    rpc_head(origin.addr, &origin.headers, service, declared, prefix).await
+    rpc_head(origin.addr, &origin.headers(), service, declared, prefix).await
 }
 
 async fn rpc_head(
@@ -237,8 +269,12 @@ async fn rpc_head(
 
 /// The response's status and body, read until the server closes the socket.
 async fn response(stream: &mut TcpStream) -> (u16, Vec<u8>) {
+    response_within(stream, PATIENCE).await
+}
+
+async fn response_within(stream: &mut TcpStream, patience: Duration) -> (u16, Vec<u8>) {
     let mut bytes = Vec::new();
-    tokio::time::timeout(PATIENCE, stream.read_to_end(&mut bytes))
+    tokio::time::timeout(patience, stream.read_to_end(&mut bytes))
         .await
         .expect("the exchange ends")
         .unwrap();
@@ -252,7 +288,7 @@ async fn response(stream: &mut TcpStream) -> (u16, Vec<u8>) {
 
 /// The advertisement: a fresh exchange of its own.
 async fn advertisement(origin: &Origin) -> (u16, Vec<u8>) {
-    advertisement_to(origin.addr, origin.headers.clone()).await
+    advertisement_to(origin.addr, origin.headers()).await
 }
 
 async fn advertisement_to(addr: SocketAddr, headers: HeaderMap) -> (u16, Vec<u8>) {
@@ -556,7 +592,7 @@ async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_re
         .reserve(reads.total(), PATIENCE, &transfers.questions)
         .await
         .expect("the whole reads line");
-    let advertised = tokio::spawn(advertisement_to(origin.addr, origin.headers.clone()));
+    let advertised = tokio::spawn(advertisement_to(origin.addr, origin.headers()));
     until_waiting_on(reads, &advertised).await;
     tokio::time::sleep(Duration::from_millis(2_500)).await;
     drop(held);
@@ -612,7 +648,7 @@ async fn a_stalled_exchange_holds_the_next_one_back(origin: Origin) {
 
     // Past the bound a new exchange waits; it is never refused.
     let started = std::time::Instant::now();
-    let waiting = tokio::spawn(advertisement_to(origin.addr, origin.headers.clone()));
+    let waiting = tokio::spawn(advertisement_to(origin.addr, origin.headers()));
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
         !waiting.is_finished(),
@@ -675,7 +711,7 @@ async fn a_burst_of_two_hundred_callers_on_one_credential_all_complete() {
     let fetches: Vec<_> = (0..FETCHES)
         .map(|_| {
             let addr = origin.addr;
-            let headers = origin.headers.clone();
+            let headers = origin.headers();
             let request = request.clone();
             tokio::spawn(async move {
                 let mut stream =
@@ -757,4 +793,248 @@ async fn a_slow_fetch_that_keeps_moving_is_not_cut() {
         body.windows(4).any(|window| window == b"PACK"),
         "the fetch delivers its pack"
     );
+}
+
+/// The push door's per-blob floor is the server's own `[limits]` row, and its
+/// refusal names the key: a blob past `git_scan_blob_bytes` is refused with no
+/// ref moved, and the same push lands at an origin whose floor holds it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_configured_blob_floor_decides_a_push_and_its_refusal_names_the_key() {
+    let push = |limits: LimitsConfig| async move {
+        let origin = origin(limits).await;
+        let url = format!("http://{}/git/demo.git", origin.addr);
+        let source = origin.source.path().to_owned();
+        let [token, binding] = origin.git_auth();
+        tokio::task::spawn_blocking(move || {
+            // 4,096 bytes of clean text in one blob.
+            std::fs::write(source.join("table.csv"), "7\n".repeat(2048)).expect("table");
+            stock_git(&source, &["add", "table.csv"]);
+            commit(&source, "table");
+            let pushed = std::process::Command::new("git")
+                .current_dir(&source)
+                .args(["-c", &token, "-c", &binding, "push", &url])
+                .arg("HEAD:refs/heads/table")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .expect("stock Git starts");
+            let refs = stock_git(&source, &["-c", &token, "-c", &binding, "ls-remote", &url]);
+            (pushed, refs)
+        })
+        .await
+        .unwrap()
+    };
+
+    let blob_floor = |git_scan_blob_bytes| LimitsConfig {
+        git_scan_blob_bytes,
+        ..LimitsConfig::default()
+    };
+    let (refused, refs) = push(blob_floor(4095)).await;
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "oneiron door refused this push: a blob is larger than limits.git_scan_blob_bytes"
+        ),
+        "{stderr}"
+    );
+    assert!(!refs.contains("refs/heads/table"), "{refs}");
+
+    // The configured disk floor reaches the hook too: one past what any disk
+    // holds refuses the same push, naming its key.
+    let (refused, refs) = push(LimitsConfig {
+        git_scan_disk_floor_bytes: oneiron::origin::smart_http::ScanBounds::MAX_BYTES,
+        ..LimitsConfig::default()
+    })
+    .await;
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("limits.git_scan_disk_floor_bytes"),
+        "{stderr}"
+    );
+    assert!(!refs.contains("refs/heads/table"), "{refs}");
+
+    let (landed, refs) = push(blob_floor(4096)).await;
+    assert!(
+        landed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&landed.stderr)
+    );
+    assert!(refs.contains("refs/heads/table"), "{refs}");
+}
+
+/// A push may move as many refs as it names (rule 5): two hundred new
+/// branches in one stock-git push all land and are all advertised.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_200_ref_push_lands() {
+    let origin = origin(LimitsConfig::default()).await;
+    let url = format!("http://{}/git/demo.git", origin.addr);
+    let source = origin.source.path().to_owned();
+    let [token, binding] = origin.git_auth();
+    let (server, recipe) = (Arc::clone(&origin.server), origin.token.clone());
+    let (pushed, listed) = tokio::task::spawn_blocking(move || {
+        std::fs::write(source.join("README.md"), "burst\n").expect("readme");
+        stock_git(&source, &["add", "README.md"]);
+        commit(&source, "burst");
+        let targets: Vec<String> = (0..200)
+            .map(|n| format!("HEAD:refs/heads/burst-{n:03}"))
+            .collect();
+        let mut push: Vec<&str> = vec!["-c", &token, "-c", &binding, "push", &url];
+        push.extend(targets.iter().map(String::as_str));
+        stock_git(&source, &push);
+        // A fresh credential: landing two hundred refs can outlast the first.
+        let [token, binding] = bound_git_auth(&server, &recipe);
+        let listed = stock_git(
+            &source,
+            &[
+                "-c",
+                &token,
+                "-c",
+                &binding,
+                "ls-remote",
+                &url,
+                "refs/heads/burst-*",
+            ],
+        );
+        (stock_git(&source, &["rev-parse", "HEAD"]), listed)
+    })
+    .await
+    .unwrap();
+    let expected: Vec<String> = (0..200)
+        .map(|n| format!("{pushed}\trefs/heads/burst-{n:03}"))
+        .collect();
+    assert_eq!(listed.lines().collect::<Vec<_>>(), expected);
+}
+
+/// One receive-pack request creating `count` branches at the origin's commit,
+/// asking for side-band status, with the empty pack stock git sends for it.
+fn creations(origin: &Origin, count: usize) -> Vec<u8> {
+    creating(
+        origin,
+        (0..count).map(|n| format!("refs/heads/spill-{n:03}")),
+    )
+}
+
+/// One receive-pack request creating each of `names` at the origin's commit,
+/// asking for side-band status, with the empty pack stock git sends for it.
+fn creating(origin: &Origin, names: impl IntoIterator<Item = String>) -> Vec<u8> {
+    let zero = "0".repeat(origin.oid.len());
+    let mut request = String::new();
+    for (n, name) in names.into_iter().enumerate() {
+        let capabilities = if n == 0 {
+            "\0report-status side-band-64k"
+        } else {
+            ""
+        };
+        request.push_str(&pkt(&format!(
+            "{zero} {} {name}{capabilities}\n",
+            origin.oid
+        )));
+    }
+    request.push_str("0000");
+    let pack = std::process::Command::new("git")
+        .current_dir(origin.source.path())
+        .args(["pack-objects", "--stdout"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("stock Git packs");
+    assert!(pack.status.success() && pack.stdout.starts_with(b"PACK"));
+    let mut bytes = request.into_bytes();
+    bytes.extend_from_slice(&pack.stdout);
+    bytes
+}
+
+fn door_entries(origin: &Origin) -> Vec<std::ffi::OsString> {
+    let mut entries: Vec<_> = std::fs::read_dir(&origin.door_root)
+        .expect("door root")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    entries.sort();
+    entries
+}
+
+/// A push's status report past the memory the bridge holds for it is held on
+/// disk, never refused (rule 5). With that memory lowered to 1 KiB, a push of
+/// 300 creations lands, its report is byte for byte the one an origin holding
+/// it in memory sends, and nothing it held is left in the door root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_push_report_past_the_held_memory_spills_and_lands() {
+    let in_memory = origin(LimitsConfig::default()).await;
+    let spilled = origin_holding(LimitsConfig::default(), Some(1024)).await;
+    let before = door_entries(&spilled);
+    let mut reports = Vec::new();
+    for origin in [&in_memory, &spilled] {
+        let request = creations(origin, 300);
+        let mut stream = rpc(origin, "git-receive-pack", request.len(), &request).await;
+        // Each of the 300 refs lands through its own publication.
+        let (status, body) = response_within(&mut stream, LANDING_PATIENCE).await;
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+        reports.push(body);
+    }
+    let count = |haystack: &[u8], needle: &[u8]| {
+        haystack
+            .windows(needle.len())
+            .filter(|window| *window == needle)
+            .count()
+    };
+    assert!(reports[1].len() > 1024, "{} report bytes", reports[1].len());
+    assert_eq!(count(&reports[1], b"ok refs/heads/spill-"), 300);
+    assert_eq!(reports[0], reports[1]);
+    let (status, advertised) = advertisement(&spilled).await;
+    assert_eq!(status, 200);
+    assert_eq!(count(&advertised, b" refs/heads/spill-"), 300);
+    assert_eq!(door_entries(&spilled), before);
+}
+
+/// A push's status report held past memory keeps the vault's disk reserve,
+/// the one refusal rule 5 leaves this path. With the disk shown at its
+/// reserve, a push whose report fits the memory the bridge holds lands as it
+/// would, and one whose report goes past that memory is answered with the
+/// floor's 507, naming `limits.disk_reserve_bytes`. Nothing it held is left
+/// in the door root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_push_report_held_past_memory_keeps_the_disk_reserve() {
+    let in_memory = origin(LimitsConfig::default()).await;
+    let spilled = origin_holding(LimitsConfig::default(), Some(1024)).await;
+    let before = door_entries(&spilled);
+    for origin in [&in_memory, &spilled] {
+        origin.server.transfers.disk.show_free(0);
+    }
+    let request = creations(&in_memory, 100);
+    let mut stream = rpc(&in_memory, "git-receive-pack", request.len(), &request).await;
+    let (status, report) = response_within(&mut stream, LANDING_PATIENCE).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&report));
+    assert!(report.len() > 1024, "{} report bytes", report.len());
+
+    let request = creations(&spilled, 100);
+    let mut stream = rpc(&spilled, "git-receive-pack", request.len(), &request).await;
+    let (status, body) = response_within(&mut stream, LANDING_PATIENCE).await;
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, 507, "{body}");
+    assert!(body.contains("limits.disk_reserve_bytes"), "{body}");
+    assert_eq!(door_entries(&spilled), before);
+}
+
+/// A push's command section held past memory keeps the vault's disk reserve
+/// too. With the disk shown at its reserve, a section past the mebibyte held
+/// in memory (3,699 creations named at the 200-byte ref limit, then a
+/// replacement ref the door refuses, so no ref lands however it ends) is
+/// answered with the floor's 507 before the backend reads it, and nothing it
+/// held is left in the door root.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_command_section_held_past_memory_keeps_the_disk_reserve() {
+    let origin = origin(LimitsConfig::default()).await;
+    let before = door_entries(&origin);
+    origin.server.transfers.disk.show_free(0);
+    let names = (0..3_699)
+        .map(|n| format!("refs/heads/{n:04}-{}", "x".repeat(184)))
+        .chain([format!("refs/replace/{}", "y".repeat(187))]);
+    let request = creating(&origin, names);
+    assert!(request.len() > 1 << 20, "{} request bytes", request.len());
+    let mut stream = rpc(&origin, "git-receive-pack", request.len(), &request).await;
+    let (status, body) = response_within(&mut stream, LANDING_PATIENCE).await;
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, 507, "{body}");
+    assert!(body.contains("limits.disk_reserve_bytes"), "{body}");
+    assert_eq!(door_entries(&origin), before);
 }

@@ -149,7 +149,12 @@ fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
     PushedBlob {
         path: path.to_owned(),
         oid: "b".repeat(40),
-        added_lines: lines.iter().map(|line| line.to_vec()).collect(),
+        content: lines
+            .iter()
+            .flat_map(|line| [*line, b"\n"])
+            .flatten()
+            .copied()
+            .collect(),
     }
 }
 
@@ -921,4 +926,66 @@ fn verb_outside_slip_class_asks_until_owner_widens_consent() {
         DoorDenyReason::RecordOutsideSlip,
         "consent cannot widen a different slip axis"
     );
+}
+
+/// ONE-2597: a lease claimed in the second after the vault's authority clock
+/// first read the time redeems at once. The caller's wall second ran ahead of
+/// that clock, so the lease was stamped as issued in the door's future and
+/// its first push was refused.
+#[test]
+fn a_lease_claimed_late_in_a_second_is_admitted_at_once() {
+    use crate::checkout::lease::{
+        CheckoutClaimRequest, CheckoutFactMutation, CheckoutFactSink, CheckoutId,
+        CheckoutLeaseService, CheckoutLiveness, CheckoutLivenessPulse, CheckoutResult,
+        CheckoutTaskClass,
+    };
+    struct Facts;
+    impl CheckoutFactSink for Facts {
+        fn apply_checkout_fact(&mut self, _: CheckoutFactMutation) -> CheckoutResult<()> {
+            Ok(())
+        }
+    }
+    struct Liveness;
+    impl CheckoutLiveness for Liveness {
+        fn publish(&mut self, _: CheckoutLivenessPulse) -> CheckoutResult<()> {
+            Ok(())
+        }
+        fn current(&self, _: CheckoutId) -> CheckoutResult<Option<CheckoutLivenessPulse>> {
+            Ok(None)
+        }
+        fn clear(&mut self, _: CheckoutId, _: u64) -> CheckoutResult<()> {
+            Ok(())
+        }
+    }
+    let second = crate::unix_seconds_now();
+    let clock = crate::store::ports::ManualClock::new(second);
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..Default::default()
+    };
+    let vault = Arc::new(Vault::open(tmp.path(), config).expect("open vault"));
+    // The authority clock reads the time late in `second`; then the caller's
+    // clock turns to the next second, and it claims and redeems at once.
+    let txn = vault.store.env.read_txn().unwrap();
+    vault.instant_in_txn(&txn).unwrap();
+    drop(txn);
+    clock.set(second + 1);
+    let repo =
+        RepoRef::parse("github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+    let grant = CheckoutLeaseService::new(&vault, Facts, Liveness)
+        .claim(CheckoutClaimRequest {
+            checkout_id: CheckoutId::from_bytes([7; 16]).unwrap(),
+            task_ref: EntityId::from_bytes([1; 16]).unwrap(),
+            repo_ref: repo.clone(),
+            holder_ref: "holder".into(),
+            task_class: CheckoutTaskClass::Build,
+            ttl_secs: Some(600),
+            now: second + 1,
+        })
+        .expect("claim the lease");
+    let ticket = format!("{}.{}", grant.checkout_id, grant.epoch);
+    CredentialDoorService::new(Arc::clone(&vault))
+        .checkout_credential(&ticket, "holder", &repo)
+        .expect("a fresh lease redeems at once");
 }

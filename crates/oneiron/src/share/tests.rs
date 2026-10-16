@@ -54,7 +54,7 @@ fn time(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-fn policy(
+pub(crate) fn policy(
     vault: &Vault,
     issuer: &WriteActor,
     share: &Share,
@@ -636,6 +636,7 @@ fn sharing_a_brief_leaves_its_facet_stamp_unchanged() -> Result<()> {
 #[test]
 fn confirmed_delete_previews_retracts_brief_share_then_purges_once() -> Result<()> {
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = EntityId::from_hex(
@@ -726,6 +727,7 @@ fn confirmed_delete_previews_retracts_brief_share_then_purges_once() -> Result<(
 #[test]
 fn stale_delete_preview_refuses_before_unsharing_or_erasure() -> Result<()> {
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = EntityId::from_hex(&memory.author_brief("before", &[]).expect("brief").id_hex)?;
@@ -757,6 +759,7 @@ fn confirmation_retracts_share_and_publishes_tombstone_before_purge() -> Result<
     use crate::sync::{WindowKey, window};
 
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = EntityId::from_hex(
@@ -817,6 +820,7 @@ fn confirmation_retracts_share_and_publishes_tombstone_before_purge() -> Result<
 #[test]
 fn edited_note_invalidates_delete_preview_before_unshare() -> Result<()> {
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = EntityId::from_hex(&memory.author_brief("before", &[]).expect("brief").id_hex)?;
@@ -902,6 +906,7 @@ fn default_confirmation_unshares_and_publishes_a_soft_tombstone() -> Result<()> 
     use crate::sync::loro_support::tombstone_values_for_id;
     use crate::sync::{WindowKey, window};
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = EntityId::from_hex(
@@ -993,6 +998,7 @@ fn headerless_delete_reserves_identity_before_local_purge() -> Result<()> {
 #[test]
 fn mixed_case_renderable_share_is_previewed_and_revoked_before_purge() -> Result<()> {
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = (0..16)
@@ -1067,6 +1073,7 @@ fn mixed_case_renderable_share_is_previewed_and_revoked_before_purge() -> Result
 #[test]
 fn soft_deleted_note_shell_can_be_previewed_and_confirmed_for_purge() -> Result<()> {
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");
     let brief = EntityId::from_hex(&memory.author_brief("soft body", &[]).expect("brief").id_hex)?;
@@ -1101,6 +1108,7 @@ fn failed_soft_publication_can_retry_from_shell_preview_to_purge() -> Result<()>
     use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
     use std::sync::Arc;
     let (_dir, vault, issuer, mut share) = fixture()?;
+    crate::test_util::bind_test_owner(&vault, issuer.entity_ref());
     let vault = Arc::new(vault);
     let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
     memory.bless_brief_kind().expect("brief kind");

@@ -168,12 +168,23 @@ impl Store {
             #[cfg(target_os = "linux")]
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            federation_stale_sweep_owed: std::sync::atomic::AtomicBool::new(true),
             authority_fold_cache: Mutex::new(None),
             authority_door_view: Mutex::new(None),
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
+            project_forks: crate::workspace_roster::ProjectForks::default(),
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
+            pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
+            limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
+            result_memory: std::sync::RwLock::new(std::sync::Arc::new(
+                crate::result_memory::ResultMemoryPool::new(
+                    config
+                        .limits
+                        .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
+                ),
+            )),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             group_commit: crate::store::GroupCommit::default(),

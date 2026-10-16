@@ -179,7 +179,10 @@ fn open_vault<R: Runtime>(app: &AppHandle<R>) -> Result<Arc<Vault>, Box<dyn std:
 fn open_vault_at(path: &std::path::Path) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
     oneiron::panic_report::install_panic_hook();
     std::fs::create_dir_all(path)?;
-    Ok(Arc::new(Vault::open(path, VaultConfig::device())?))
+    let vault = Vault::open(path, VaultConfig::device())?;
+    // Signing doors (delete receipts) need this install's keys from the keystore.
+    vault.install_default_keystore(path);
+    Ok(Arc::new(vault))
 }
 
 fn install_menu_bar<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {

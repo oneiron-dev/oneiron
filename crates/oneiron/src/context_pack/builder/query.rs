@@ -56,6 +56,8 @@ pub struct ContextPackBuilder<'a> {
     /// Whether the pack is for a caller off this device; see
     /// [`Self::caller_off_device`]. Its edge walk admits no device-local row.
     pub(super) off_device: bool,
+    /// See [`Self::skip_optional_recall`].
+    pub(super) skip_optional_recall: bool,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -130,6 +132,7 @@ impl<'a> ContextPackBuilder<'a> {
             l2_summary_subjects: Vec::new(),
             l2_summary_reader: None,
             off_device: false,
+            skip_optional_recall: false,
         }
     }
 
@@ -466,11 +469,12 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
-    /// Sets the share of the claim budget non-base worlds may occupy when the
-    /// pack is partitioned under [`WorldScope::All`] (default `0.5`). Base
-    /// claims are always kept; non-base claims beyond `floor(fraction × claim
-    /// budget)` are dropped so fiction cannot crowd base reality out. Only
-    /// consulted for `All` scope with surviving non-base claims.
+    /// Sets the share of the pack's claims non-base worlds may occupy under
+    /// [`WorldScope::All`] (default `0.5`). The pack's rows are selected so
+    /// non-base claims stay at most `floor(fraction × emitted claims)`: a base
+    /// claim ranked below fiction still gets its slot, and the pack goes short
+    /// rather than over the share when base claims are scarce. Only consulted
+    /// for `All` scope.
     pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
         self.non_base_world_fraction = fraction;
         self
@@ -564,6 +568,20 @@ impl<'a> ContextPackBuilder<'a> {
                 other: split.other,
             };
         }
+        self
+    }
+
+    /// Takes no optional recall, for a reader whose profile picked
+    /// [`OptionalMemory::None`] for this task (ARCH-0004 #reader-budget): the
+    /// terminal returns an empty pack marked
+    /// [`EmptyReason::SkippedByProfile`] before any retrieval or L2 work.
+    /// Pinned rows and mandatory instructions never ride this pack; the host
+    /// adds them as before.
+    ///
+    /// [`OptionalMemory::None`]: crate::agent_def::OptionalMemory::None
+    /// [`EmptyReason::SkippedByProfile`]: crate::context_pack::EmptyReason::SkippedByProfile
+    pub fn skip_optional_recall(mut self) -> Self {
+        self.skip_optional_recall = true;
         self
     }
 

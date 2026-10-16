@@ -8,7 +8,7 @@ use crate::{
     error::{ErrorKind, Result},
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
-        DecisionReceipt, DecisionRung, ProviderPin, TypedDecision,
+        DecisionReceipt, DecisionRung, PairedReading, ProviderPin, TypedDecision,
     },
     skill::{SkillLifecycle, SkillRecord},
     skill_optimize::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse},
@@ -553,6 +553,9 @@ impl UsefulUpstreamJudge for Useful {
                 band_version: 0,
                 evidence_versions: Vec::new(),
                 cost_per_thousand: None,
+                paired: Vec::new(),
+                person: Vec::new(),
+                time: None,
             },
             human_ask: None,
         })
@@ -799,6 +802,60 @@ impl UsefulUpstreamJudge for WrongSeat {
         Ok(answer)
     }
 }
+/// The house model's decision read, with its paired reading. `self_paired` makes the
+/// pair read the question being answered, which no receipt may hold; `person` adds a
+/// person row no receipt may hold either.
+struct HouseRead {
+    self_paired: bool,
+    person: Option<BadPerson>,
+}
+#[derive(Clone, Copy)]
+enum BadPerson {
+    /// P(ask a person) out of range.
+    OutOfRange,
+    /// The person row reads the question the same provider's paired row read.
+    ReadsPaired,
+}
+impl UsefulUpstreamJudge for HouseRead {
+    fn decide(
+        &self,
+        question: &DecisionQuestion,
+        resident: EntityId,
+        base: &SkillRecord,
+        candidate: &HubPackage,
+        delta: &SharedSkillDelta,
+    ) -> Result<TypedDecision> {
+        let mut answer = Useful(true).decide(question, resident, base, candidate, delta)?;
+        let pin = ProviderPin {
+            rung: DecisionRung::Escalation,
+            model: "fixture-house".to_owned(),
+            version: "1".to_owned(),
+        };
+        answer.receipt.providers = vec![pin.clone()];
+        answer.receipt.paired = vec![PairedReading {
+            provider: pin,
+            question: if self.self_paired {
+                question.id
+            } else {
+                EntityId::now()
+            },
+            question_version: 1,
+            probability: 0.3,
+        }];
+        if let Some(bad) = self.person {
+            let mut row = answer.receipt.paired[0].clone();
+            match bad {
+                BadPerson::OutOfRange => {
+                    row.question = EntityId::now();
+                    row.probability = 2.0;
+                }
+                BadPerson::ReadsPaired => row.probability = 0.5,
+            }
+            answer.receipt.person = vec![row];
+        }
+        Ok(answer)
+    }
+}
 struct WrongQuestion;
 impl UsefulUpstreamJudge for WrongQuestion {
     fn decide(
@@ -815,7 +872,7 @@ impl UsefulUpstreamJudge for WrongQuestion {
     }
 }
 #[test]
-fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() -> Result<()> {
+fn merge_refuses_a_local_seat_and_unbound_receipts_without_spending_consent() -> Result<()> {
     let fixture = Fixture::new();
     // A widening delta, so the merge spends an owner answer a bad verdict must not burn.
     let offered = encode_hub_package(&widened_package())?;
@@ -847,6 +904,27 @@ fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() 
             .merge_shared_skill_delta(&ask, &WrongQuestion, &NoReplay, at(21), 21)
             .is_err()
     );
+    for house in [
+        HouseRead {
+            self_paired: true,
+            person: None,
+        },
+        HouseRead {
+            self_paired: false,
+            person: Some(BadPerson::OutOfRange),
+        },
+        HouseRead {
+            self_paired: false,
+            person: Some(BadPerson::ReadsPaired),
+        },
+    ] {
+        assert!(
+            fixture
+                .vault
+                .merge_shared_skill_delta(&ask, &house, &NoReplay, at(21), 21)
+                .is_err()
+        );
+    }
     assert!(fixture.vault.shared_skill_merge_receipt(&id)?.is_none());
     assert_eq!(
         fixture
@@ -864,15 +942,27 @@ fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() 
             .lifecycle_status,
         SkillLifecycle::Active
     );
-    // The rejected answer has neither burned the consent nor erased the branch.
+    // The rejected answer has neither burned the consent nor erased the branch, and
+    // the house model's read answers the merge like System One (PR B2).
     let ruled = fixture.vault.merge_shared_skill_delta(
         &ask,
-        &Useful(true),
+        &HouseRead {
+            self_paired: false,
+            person: None,
+        },
         &Replay::new(true),
         at(22),
         22,
     )?;
-    assert!(matches!(ruled, SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted));
+    let SharedSkillMergeDisposition::Ruled(receipt) = ruled else {
+        panic!("the approved merge is ruled");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(
+        receipt.decision.receipt.providers[0].rung,
+        DecisionRung::Escalation
+    );
+    assert_eq!(receipt.decision.receipt.paired.len(), 1);
     Ok(())
 }
 #[test]

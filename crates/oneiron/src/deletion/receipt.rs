@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 
+use super::erase::take_staged_sweep_refs_in_txn;
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone::DeleteReason;
 
@@ -704,11 +705,14 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         receipt_id: &EntityId,
         mut input: RedactionReceiptInput,
-        sweep_extras: HardEraseSweepExtras,
+        mut sweep_extras: HardEraseSweepExtras,
     ) -> Result<Vec<u8>> {
         let mut ids = std::collections::BTreeSet::new();
         for hex in &input.scope.entity_ids {
             let holder = EntityId::from_hex(hex)?;
+            if input.sweep_queued_at.is_some() {
+                take_staged_sweep_refs_in_txn(self, wtxn, &holder, &mut sweep_extras)?;
+            }
             ids.insert(holder);
             ids.extend(crate::skill_hub::source_carriers_for_holder_in_txn(
                 &self.store,
@@ -739,9 +743,9 @@ impl Vault {
         };
 
         // ONE-1140 (OD-2/OD-6): every receipt is signed at mint. The device
-        // identity (client id + Ed25519 keypair) is lazily self-provisioned
-        // in THIS txn — all receipt-mint paths funnel through here, so this
-        // is the single in-txn hook.
+        // key is the one the delete door loaded before its first txn (P6c);
+        // the client id is minted in THIS txn when missing — all receipt-mint
+        // paths funnel through here, so this is the single in-txn hook.
         let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
         let hard_purge_complete_at = input.hard_purge_complete_at;
         for entity in &input.scope.entity_ids {

@@ -2,19 +2,46 @@
 
 Canon: `/oneiron/eval/oneiron-arch-0042-beam-evaluation-harness-v1/`.
 
-The sibling performance bench has a [statistical-validity follow-up plan](performance-bench-statistical-plan.md)
-for independent repeats, per-axis intervals, and run-order effects. It is not
-implemented in the current `oneiron-bench perf` runner.
+The sibling performance bench has a statistical-validity plan for independent
+repeats, per-axis intervals, and run-order effects. It lives in canon at
+`/oneiron/eval/oneiron-arch-0042-beam-evaluation-harness-v1/#performance-bench`.
+The current `oneiron-bench perf` runner does not implement it.
 
 `cargo run -p oneiron-bench -- beam` lists the commands. There are two lanes:
 
 - `beam run <manifest>` is the deterministic retrieval pre-check. Its legacy
   `vanilla_rag` arm is an in-engine text/vector-only baseline, not Chroma.
-  Model answerers remain explicitly unavailable in this lane.
+  Backbone-solo runs here with an empty pack and no vault call. The other
+  model answerers stay explicitly unavailable in this lane.
 - `beam measure <plan.json>` runs actual answerers and the three-call judge.
-  Deterministic, agentic and backbone-solo share one exact model/parameter pin.
-  Chat is a separate cheap-model point. Optional Chroma uses an independent
-  v2 HTTP collection and the same corpus, vectors and retrieval limit.
+  Deterministic, agentic, backbone-solo and trajectory-only share one exact
+  model/parameter pin. Chat is a separate cheap-model point. Optional Chroma
+  uses an independent v2 HTTP collection and the same corpus, vectors and
+  retrieval limit.
+
+Trajectory-only is the reader's own trace with no vault recall
+(ARCH-0042 `scour:G12`). It takes as many steps as the effort's
+`retrieval_steps`, under the pinned `trajectory_prompt`. Each step sees the
+question and that question's earlier steps only. The steps then go to the
+shared answer call as its context.
+
+`beam measure` reports `paired` rows: each arm of the reader against
+backbone-solo, question by question, per task family (the gold `ability`
+label). Every row carries the paired difference, mean input and output
+tokens, context and output truncation rates, and query cost. A
+`fixed_answer_cap` row shares the reader's output cap. A
+`fixed_total_tokens` row scores zero for any question whose query tokens pass
+the effort's `total_token_allowance`. `picks` names the setting per reader and
+family: the arm, its optional memory budget and its pack view. Backbone-solo
+stays the pick unless an arm beats it strictly.
+
+Each score in `paired`, `picks`, `points`, `frontier` and `agency_lift` has
+two columns (ARCH-0042 `beam:D9`). `beam-fixed` is the float nugget score with
+half credit, from a judge shown the real question. The picks, the frontier and
+the agency lift rest on it. `int-cast-saw-question` takes the same verdicts
+and drops each 0.5 to 0. Neither column is `beam-replicate@3e12035`, whose
+judge sees the placeholder `<question>`. This harness does not run that
+judge pass yet.
 
 `crates/oneiron-bench/fixtures/beam_measure.example.json` is a runnable plan
 shape for an OpenAI-compatible local relay. Before using it for real numbers,

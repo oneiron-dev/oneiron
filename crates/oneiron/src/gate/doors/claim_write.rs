@@ -14,12 +14,17 @@ use super::peripheral::{
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
 use super::recorded::RecordedClaimGateDecision;
-use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolation_class};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, VerifiedClaimTransition};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, DreamerIsolationClass,
+    claim_sensitivity_band, decode_claim_body, dreamer_isolation_class, encode_claim_body,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
-    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
-    critical_claim_can_land_auto_with_confirm,
+    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED,
+    GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, critical_claim_can_land_auto_with_confirm,
+    pending_row_holds_critical_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -27,11 +32,77 @@ use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
+use crate::ports::EntityStoreRead;
 use crate::store::{
-    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store,
+    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,
     checker_hold_receipt_reason,
 };
 use crate::write_envelope::{SourceLineage, WriteEnvelope};
+
+/// The receipt reason of a write held because its value does not fit the auto
+/// checker's preview, so no checker could review all of it.
+const CHECKER_PARTIAL_VIEW_RECEIPT_REASON: &str = "checker_partial_view";
+
+/// Whether this write only closes the stored row: the row's own value, now
+/// closed, under a verified in-place transition. It admits nothing new, so no
+/// checker is consulted and none is required, whatever the value's length: a
+/// restriction always lands.
+fn closes_stored_value(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
+    closes_in_place(store, txn, id, body, transition)
+        && stored_claim_body(store, txn, id).is_some_and(|stored| stored.value == body.value)
+}
+
+/// Whether this write is the stored row's own close and nothing more: the
+/// stored Active body with only its lifecycle and `valid_to` changed, as the
+/// canonical lifecycle validator admits it. An edit that also moves approval
+/// or any other field is not one.
+fn closes_stored_row_only(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
+    closes_in_place(store, txn, id, body, transition)
+        && stored_claim_body(store, txn, id).is_some_and(|mut stored| {
+            if stored.lifecycle != ClaimLifecycleStatus::Active {
+                return false;
+            }
+            stored.lifecycle = body.lifecycle;
+            stored.valid_to = body.valid_to;
+            match (encode_claim_body(&stored), encode_claim_body(body)) {
+                (Ok(closed), Ok(written)) => closed == written,
+                _ => false,
+            }
+        })
+}
+
+/// A non-Active body under a verified in-place transition of the same row.
+fn closes_in_place(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
+    body.lifecycle != ClaimLifecycleStatus::Active
+        && transition.is_some_and(|proof| {
+            proof.predecessor().is_none()
+                && proof.matches_body(store, txn, id, body).unwrap_or(false)
+        })
+}
+
+/// The stored row's claim body, when it decodes.
+fn stored_claim_body(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Option<ClaimBody> {
+    let raw = store.port_entity_record(txn, id).ok().flatten()?.encode();
+    decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?, true).ok()
+}
 
 /// The claim write door.
 ///
@@ -118,6 +189,24 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     )
 }
 
+/// The isolation class of a Dreamer candidate's predicate: a prefix a trusted
+/// pack declares persona-core (`persona_core_prefixes`, H393) first, so the
+/// host names its own protected namespace and the engine names none; else the
+/// built-in tables.
+fn isolation_class(
+    policy: &PolicyManifestResolution,
+    predicate: &str,
+) -> Option<DreamerIsolationClass> {
+    if policy
+        .persona_core_prefixes
+        .iter()
+        .any(|prefix| predicate.starts_with(prefix.as_str()))
+    {
+        return Some(DreamerIsolationClass::PersonaCore);
+    }
+    dreamer_isolation_class(predicate)
+}
+
 // The inner executor carries the outer record seam's axis tuple plus the
 // preflight identity exactly once; a parameter struct would only rename the
 // same boundary.
@@ -143,6 +232,7 @@ fn check_claim_policy_for_write_with_record_inner(
         auto_checker,
         defer_metrics_until_commit,
         transition,
+        owner_authored,
     } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
@@ -259,7 +349,7 @@ fn check_claim_policy_for_write_with_record_inner(
         // satisfy: a persona-core write has no confirm-attached Auto path.
         if dreamer_candidate
             && decision.outcome() != GateOutcome::Deny
-            && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
+            && let Some(isolation_class) = isolation_class(policy, &body.predicate)
         {
             decision = dreamer_isolation_decision(store, &*wtxn, body, isolation_class);
         }
@@ -284,13 +374,29 @@ fn check_claim_policy_for_write_with_record_inner(
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
-        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
+        let critical_floor_only = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(
                 &input,
                 decision.reason_codes(),
                 &body.predicate,
             );
-        if attach_critical_confirm {
+        // Owner-authored writes carry their own confirmation: the vault's
+        // owner, revalidated in this transaction, wrote this claim in person,
+        // so it lands Auto with nothing to confirm. The proof rides the
+        // write's options from the door that authenticated the owner; the
+        // envelope only has to name the same actor.
+        let owner_write = owner_authored.filter(|write| {
+            envelope.is_some_and(|envelope| {
+                envelope.actor().entity_ref() == write.actor()
+                    && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
+            })
+        });
+        let owner_authored = critical_floor_only && owner_write.is_some();
+        let attach_critical_confirm = critical_floor_only && !owner_authored;
+        if owner_authored {
+            decision = GateDecision::allow()
+                .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);
+        } else if attach_critical_confirm {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
         }
@@ -302,11 +408,13 @@ fn check_claim_policy_for_write_with_record_inner(
         // already refused or already parked is never consulted about, and the
         // checker can only NARROW a verdict, never widen one.
         //
-        // The consult is EXACTLY: a manifest names a checker, a checker is
-        // injected for this write, the ordinary decision is Auto, the write is
-        // an agent-class Dreamer write, and its source is one that requires an
-        // explicit auto permit. Human and owner writes therefore never reach a
-        // checker at all, and neither does any door that passes `None`.
+        // The consult is EXACTLY: a manifest names a checker, the ordinary
+        // decision is Auto, the write is an agent-class Dreamer write, and its
+        // source is one that requires an explicit auto permit. Human and owner
+        // writes therefore never reach a checker at all. A door that injects
+        // no checker for a write the manifest wants checked gets no verdict,
+        // so the write pends as checker-unavailable rather than landing
+        // unreviewed.
         //
         // A confirm-attached Auto is excluded because it is not the ordinary
         // verdict: the ordinary verdict there was a criticality-floor PEND,
@@ -325,14 +433,22 @@ fn check_claim_policy_for_write_with_record_inner(
             && !attach_critical_confirm
             && dreamer_candidate
             && (policy.auto_checker().is_some() || verdict_binding.is_some())
-            && (auto_checker.is_some() || verdict_binding.is_some())
             && preflight_decision_id.is_none()
             && let Some(source) = body.source.filter(|source| {
                 source.requires_explicit_auto_permit()
                     || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
+            && !closes_stored_value(store, &*wtxn, id, body, transition)
         {
+            // A value the preview cannot hold whole is never sent: the
+            // checker would answer for a prefix while the write stores the
+            // rest. With no checker to ask, the write is held below.
             let value_preview = auto_check_value_preview(&body.value);
+            if value_preview.is_none() {
+                checker_receipt_reasons.push(CHECKER_PARTIAL_VIEW_RECEIPT_REASON.to_owned());
+            }
+            let auto_checker = auto_checker.filter(|_| value_preview.is_some());
+            let value_preview = value_preview.unwrap_or_default();
             let candidate = AutoCheckCandidate {
                 signals: crate::gate::auto_signals::auto_check_signals(
                     store,
@@ -523,15 +639,42 @@ fn check_claim_policy_for_write_with_record_inner(
                 dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
-            // This is the sole reopening transition: a successful local
-            // critical-confirm attachment replaces the invalidated ceremony in
-            // this transaction. Pending ordinary work and replicated input do
-            // not clear the claim-scoped marker.
+            // A fresh local confirm on this revision is the item the claim's
+            // owner answers now, and the only one that ends the demotion of
+            // peer revisions. Ordinary pending work and replicated input
+            // never end it.
             if attach_critical_confirm {
-                store.delete_critical_confirm_invalidation_in_txn(wtxn, id)?;
+                crate::gate::owner_answer::rebind_owner_answer_obligation_in_txn(
+                    store, wtxn, id, &pending,
+                )?;
             }
         }
+        // A revision its owner wrote in person answers whatever the claim's
+        // owner had not.
+        if owner_authored
+            && mode.persist_pending_consent
+            && let Some(write) = owner_write
+        {
+            crate::gate::owner_answer::close_owner_answer_obligation_by_owner_revision_in_txn(
+                store, wtxn, id, write,
+            )?;
+        }
 
+        let resolve_pending = mode.resolve_pending && !attach_critical_confirm;
+        // A held claim's own close (a supersession or retraction that changes
+        // only its lifecycle) narrows it and is not the owner's answer: its
+        // tray row goes silently, as a retraction's does, and the obligation
+        // stays open. Redeeming the confirm instead would fail on a binding to
+        // the body it closes.
+        if resolve_pending
+            && decision.outcome() == GateOutcome::Allow
+            && closes_stored_row_only(store, &*wtxn, id, body, transition)
+            && store
+                .pending_gate_consent_in_txn(&*wtxn, id)?
+                .is_some_and(|row| pending_row_holds_critical_confirm(&row))
+        {
+            store.remove_pending_gate_consent_in_txn(wtxn, id, TrayRemoval::Silent)?;
+        }
         enforce_claim_gate_decision_with_consent(
             store,
             wtxn,
@@ -540,9 +683,10 @@ fn check_claim_policy_for_write_with_record_inner(
             body.approval,
             &binding,
             GateWriteMode {
-                resolve_pending: mode.resolve_pending && !attach_critical_confirm,
+                resolve_pending,
                 ..mode
             },
+            owner_write,
         )?;
     } else if let Some(reason_code) = precommit_denial {
         // No manifest is loaded, so there is no policy verdict for the denial
@@ -556,4 +700,25 @@ fn check_claim_policy_for_write_with_record_inner(
 
     let actor_ref = write_envelope_actor_ref(envelope);
     check_claim_source_trust(body, actor_ref.as_deref(), policy, lineage)
+}
+
+/// Whether the source-trust step this door ends on would let `body` land
+/// `Auto` from `envelope` under `policy`. A writer asks before it requests
+/// `Auto`, so a source the policy does not trust stays where it landed
+/// instead of failing the write.
+pub(crate) fn claim_source_trust_admits_auto(
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    policy: &PolicyManifestResolution,
+) -> bool {
+    let mut auto = body.clone();
+    auto.approval = ClaimApprovalStatus::Auto;
+    let actor_ref = write_envelope_actor_ref(Some(envelope));
+    check_claim_source_trust(
+        &auto,
+        actor_ref.as_deref(),
+        policy,
+        Some(envelope.lineage()),
+    )
+    .is_ok()
 }

@@ -9,6 +9,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+blake3 = { workspace = true }
 flate2 = "1"
 expat-sys = "2.1.6"
 crc32fast = "1"
@@ -16,6 +17,7 @@ crc32fast = "1"
 quick-xml = "=0.42.0"
 thiserror.workspace = true
 stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

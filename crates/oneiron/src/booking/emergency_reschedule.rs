@@ -14,7 +14,7 @@ use crate::booking::{
 };
 #[cfg(test)]
 use crate::calendar::passport::live_passports_for_event;
-use crate::calendar::query::{CalendarRead, visit_calendar_events};
+use crate::calendar::query::{CalendarRead, visit_calendar_events_for_effect};
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::temporal::TimeRange;

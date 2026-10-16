@@ -665,6 +665,61 @@ impl OffRecordSession<'_> {
         table.get(&view, &rtxn, key)
     }
 
+    /// [`Self::side_table_get`]'s stored bytes, lent to `read` inside the
+    /// read: a base row is read in place, an overlay row from its copy.
+    pub(crate) fn side_table_read_bytes<K: SideKey, V, C: SideCodec<V>, R>(
+        &self,
+        table: &SideTable<K, V, C>,
+        key: &K,
+        read: impl FnOnce(&[u8]) -> Result<R>,
+    ) -> Result<Option<R>> {
+        let view = self.read_view()?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.participant_in_txn(&rtxn)?;
+        table
+            .get_borrowed(&view, &rtxn, key)?
+            .map(|bytes| read(&bytes))
+            .transpose()
+    }
+
+    /// Where a result body this session writes along `target` goes: the
+    /// session's own body directory while the room is off record, never the
+    /// vault's; the vault's `bodies/` once it is on record.
+    pub(crate) fn body_dir(&self, target: RouteTarget) -> Result<crate::store::BodyDir> {
+        match target {
+            RouteTarget::Overlay => self
+                .vault
+                .store
+                .session_body_dir(&self.session_ref, true)?
+                .ok_or(Error::InvariantViolation("off-record body directory missing")),
+            RouteTarget::Base => self.vault.store.body_dir(),
+            RouteTarget::Discard => Err(Error::InvariantViolation(
+                "anonymous routes write no result bodies",
+            )),
+        }
+    }
+
+    /// Where a result body this session reads may be: its own body
+    /// directory, then the vault's.
+    pub(crate) fn body_dirs(&self) -> Result<Vec<crate::store::BodyDir>> {
+        let mut dirs = Vec::with_capacity(2);
+        if let Some(dir) = self.vault.store.session_body_dir(&self.session_ref, false)? {
+            dirs.push(dir);
+        }
+        dirs.push(self.vault.store.body_dir()?);
+        Ok(dirs)
+    }
+
+    /// The `[limits]` rows of this session's vault.
+    pub(crate) fn limit_watch(&self) -> &crate::limit_ask::LimitWatch {
+        self.vault.limit_watch()
+    }
+
+    /// A share of the result-memory pool for one run in this session.
+    pub(crate) fn result_share(&self) -> crate::result_memory::ResultShare {
+        self.vault.result_share()
+    }
+
     /// Identity of the vault this session belongs to.
     ///
     /// The executor binding compares its storage's owning vault against its

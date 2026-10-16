@@ -4,16 +4,20 @@
 //! and that destination; it rides the ordinary outbound pipeline, so the
 //! vault's policy still decides whether it leaves now or is held.
 //!
-//! A bundle here carries no vault text: a category, the engine version and
-//! the platform. A written note waits for in-vault redaction, which the
-//! engine does not ship yet, so a request with one is refused.
+//! A bundle here carries a category, the engine version and the platform, and
+//! may carry a proposal: a problem and a suggested fix (ARCH-0056
+//! #proposals), sent under its own encoding token. Proposal text is shown in
+//! the preview byte for byte and leaves only on this owner's send of exactly
+//! that preview, so a proposal that quotes vault text has asked the owner
+//! first. A written note waits for in-vault redaction, which the engine does
+//! not ship yet, so a request with one is refused.
 
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackPlatform, FeedbackPreview, UnredactedFeedback, feedback_approval_card,
-    prepare_feedback_preview,
+    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal, UnredactedFeedback,
+    feedback_approval_card, prepare_feedback_preview,
 };
 use oneiron::genui::{
     ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
@@ -36,6 +40,9 @@ pub(crate) struct FeedbackRequest {
     /// Refused until the engine redacts notes in the vault.
     #[serde(default)]
     pub(crate) note: Option<String>,
+    /// A suggested fix beside the problem; makes this a proposal.
+    #[serde(default)]
+    pub(crate) proposal: Option<FeedbackProposal>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +51,9 @@ pub(crate) struct SendRequest {
     pub(crate) category: FeedbackCategory,
     #[serde(default)]
     pub(crate) note: Option<String>,
+    /// The proposal exactly as previewed.
+    #[serde(default)]
+    pub(crate) proposal: Option<FeedbackProposal>,
     /// The digest the preview returned for exactly this bundle.
     pub(crate) digest: String,
     /// The approval the preview returned: this bundle to that destination.
@@ -57,6 +67,8 @@ pub(crate) struct SendRequest {
 pub(crate) struct Preview {
     /// Send this back to send exactly these bytes.
     pub(crate) digest: String,
+    /// The encoding token the bytes leave under: v1, or v2 for a proposal.
+    pub(crate) encoding: &'static str,
     pub(crate) bundle: serde_json::Value,
     pub(crate) destination: String,
     /// Names this bundle going to this destination on this owner's approval;
@@ -89,6 +101,7 @@ pub(crate) fn preview(
     let preview = bundle_preview(request)?;
     Ok(Preview {
         digest: preview.digest().to_owned(),
+        encoding: preview.encoding().as_str(),
         approval: preview.approval_component_id(
             &FeedbackApprovalScope::Send(host.config.route()),
             owner.principal_ref_for_read(vault)?,
@@ -110,6 +123,7 @@ pub(crate) fn send(
     let preview = bundle_preview(&FeedbackRequest {
         category: request.category,
         note: request.note.clone(),
+        proposal: request.proposal.clone(),
     })?;
     if preview.digest() != request.digest {
         return Err(OwnerError::Changed(
@@ -182,11 +196,14 @@ fn bundle_preview(request: &FeedbackRequest) -> OwnerResult<FeedbackPreview> {
                 .to_owned(),
         ));
     }
-    let bundle = FeedbackBundle::new(
+    let mut bundle = FeedbackBundle::new(
         request.category,
         env!("CARGO_PKG_VERSION"),
         FeedbackPlatform::current(),
     );
+    if let Some(proposal) = &request.proposal {
+        bundle = bundle.with_proposal(proposal.clone());
+    }
     prepare_feedback_preview(bundle, &UnredactedFeedback).map_err(feedback_error)
 }
 
@@ -208,5 +225,50 @@ fn feedback_error(error: oneiron::feedback::FeedbackError) -> OwnerError {
             }
         },
         error => OwnerError::Invalid(error.to_string()),
+    }
+}
+
+/// Notes one inbox read returns unless it names fewer, and the most it may.
+const INBOX_PAGE: usize = 100;
+const INBOX_PAGE_MAX: usize = 1_000;
+
+/// One page of the open inbox (ARCH-0056 #open-inbox): the notes after
+/// arrival number `after`, oldest first. A sweep keeps the last number it
+/// read and passes it back.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InboxPage {
+    #[serde(default)]
+    pub(crate) after: Option<u64>,
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+}
+
+/// The notes anyone left this vault's open inbox, for the owner's triage
+/// sweep. Nothing the inbox takes is read anywhere else.
+pub(crate) fn inbox(vault: &Vault, page: &InboxPage) -> OwnerResult<Vec<FeedbackInboxNote>> {
+    let limit = page.limit.unwrap_or(INBOX_PAGE).clamp(1, INBOX_PAGE_MAX);
+    Ok(vault.feedback_inbox(page.after, limit)?)
+}
+
+/// Where this server's feedback goes, and whether it keeps the open inbox:
+/// the effective setting, shown in the owner's status.
+#[derive(Debug, Serialize)]
+pub(crate) struct FeedbackStatus {
+    /// `cloud`, `collector` or `github_issue`; `None` sends nowhere.
+    pub(crate) destination: Option<crate::feedback_delivery::FeedbackDestination>,
+    pub(crate) endpoint: Option<String>,
+    /// Whether `/v1/feedback` takes keyless notes here.
+    pub(crate) inbox: bool,
+}
+
+pub(crate) fn status(
+    host: Option<&FeedbackHost>,
+    inbox: &crate::config::FeedbackInboxConfig,
+) -> FeedbackStatus {
+    FeedbackStatus {
+        destination: host.map(|host| host.config.destination),
+        endpoint: host.map(|host| host.config.endpoint.clone()),
+        inbox: inbox.enabled,
     }
 }

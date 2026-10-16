@@ -27,6 +27,8 @@ impl VaultBridge {
         }
         let vault = Vault::open(&path, config)
             .map_err(|e| boundary_error(format!("failed to open vault: {e}")))?;
+        // Signing doors (delete receipts) need this install's keys from the keystore.
+        vault.install_default_keystore(std::path::Path::new(&path));
         Ok(Self {
             vault: Arc::new(vault),
         })

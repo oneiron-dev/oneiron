@@ -21,13 +21,16 @@ pub mod entity_id;
 pub mod error;
 pub mod housekeeping;
 pub(crate) mod identity;
+pub mod limit_ask;
 pub(crate) mod limits;
 pub mod maintain;
+pub(crate) mod msgpack_shape;
 pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
+pub mod result_memory;
 pub(crate) mod session_overlay;
 pub(crate) mod side_table;
 pub mod slim;
@@ -50,6 +53,7 @@ pub mod entity_doc;
 pub(crate) mod fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
+pub mod live_rows;
 pub mod llm;
 pub mod pipeline;
 pub(crate) mod ppr;
@@ -202,6 +206,7 @@ pub mod git_wire;
 pub mod merge_queue;
 pub mod origin;
 pub mod repo_mutation;
+pub mod scan_check;
 pub mod scope_summary;
 pub mod secret_custody;
 pub mod secret_lease;
@@ -530,9 +535,9 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // private module, so the SDK backend that OWNS a lease value and compares the
 // contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, ReaderTableShortfall, TextIndexStatus, VAULT_WRITER_LEASE_HELD,
-    VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
-    VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
+    ActorBound, HydratedShortId, IdScanPage, ReaderTableShortfall, TextIndexStatus,
+    VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport,
+    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,

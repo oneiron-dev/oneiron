@@ -54,6 +54,9 @@ side_tables! {
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
     /// Immutable publish admission receipt keyed by publish entity id16.
     ARTIFACT_PUBLISH_ADMISSION: VaultMeta b"artifact:publish:admission:v1:" LegacyJson;
+    /// Empty marker: this channel pointer changed and its publication has not reached the sync
+    /// server yet. Key: channel byte + u16be length + string (artifact id).
+    ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
@@ -76,6 +79,9 @@ side_tables! {
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
+    /// Native slide and shape id high-water marks of one deck artifact, raised at each settled
+    /// deck transaction (ARCH-0077 managed id history). Key: id16.
+    BLOB_ARTIFACT_DECK_ID_MARKS: VaultMeta b"blob_artifact:deck_id_marks:v1:" Named;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
@@ -326,6 +332,9 @@ side_tables! {
     /// that synced truth currently names for it; repaired from synced truth on a stale or missing
     /// hit. Key: bytes32 (sha256 of party_key).
     COMM_PARTY_INDEX: VaultMeta b"comm.party.v1:" Raw;
+    /// An inbound STOP this replica has not projected yet: its party and channel, which hold a
+    /// send until the projection that releases it or the event's delete. Key: id16 (the event).
+    COMM_PENDING_STOP: VaultMeta b"comm.pending_stop.v1:" Named;
     /// Time-ordered commitment due-index row. Key: u64be + u8 + id16 + id16.
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.

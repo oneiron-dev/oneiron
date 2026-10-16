@@ -33,6 +33,7 @@ pub(super) fn apply_claim_candidate(
         consent,
         indexing,
         write_policy,
+        owner_authored,
     } = request;
     crate::gate::validate_write_envelope(envelope)?;
     let (analyzer, text_index_trusted) = birth_context;
@@ -118,6 +119,7 @@ pub(super) fn apply_claim_candidate(
                 // Carried-forward transitions bind only to exact claim Puts.
                 transition: None,
                 posture: config.privacy.posture,
+                owner_authored,
             },
         },
     )?;

@@ -12,8 +12,8 @@ use super::pptx::{
 use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionQuestion, DecisionReceipt, DecisionRung, ProviderDecision, ProviderPin, Reversibility,
-    SlideReviewLimits, TypedDecision,
+    DecisionQuestion, DecisionReceipt, DecisionRung, PairedReading, ProviderDecision, ProviderPin,
+    Reversibility, SlideReviewLimits, TypedDecision,
 };
 use crate::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -135,9 +135,12 @@ pub struct SlideReviewRequest<'a> {
     pub at: u64,
 }
 
-/// One question over selected slide/shape units, via adjacent provider rungs.
-/// A band answer or abstention moves at most one rung; missing rungs fail
-/// closed. Errors and malformed output leave no partial proposal behind.
+/// One question over selected slide/shape units, via a route of provider
+/// rungs: the first at the dial's first rung, each above the one before (a
+/// rung with no provider is skipped, ARCH-0076 #posture), the last at the
+/// dial's ceiling; any other route is refused. An enforced in-band answer from
+/// the first provider moves once, to the next; an abstention lists its unit as
+/// abstained. Errors and malformed output leave no partial proposal behind.
 pub fn review_slides(
     base: &[u8],
     base_version: Option<u64>,
@@ -175,9 +178,14 @@ pub fn review_slides(
         return Err(invalid("invalid slide review selection or dial").into());
     }
     let provider_pins: Vec<_> = providers.iter().map(|provider| provider.pin()).collect();
+    // The route starts at the dial's first rung and skips a rung with no provider
+    // (ARCH-0076 #posture), so each provider sits above the one before it.
     for (index, pin) in provider_pins.iter().enumerate() {
-        if pin.rung
-            != rung_from(dial.first, index).ok_or_else(|| invalid("invalid provider sequence"))?
+        if index
+            .checked_sub(1)
+            .map_or(pin.rung != dial.first, |previous| {
+                pin.rung <= provider_pins[previous].rung
+            })
             || pin.rung > dial.ceiling
             || pin.rung == DecisionRung::Human
             || pin.model.trim().is_empty()
@@ -228,6 +236,8 @@ pub fn review_slides(
         let mut pending: Vec<usize> = (0..chunk.len()).collect();
         let mut pins: Vec<Vec<ProviderPin>> = vec![Vec::new(); chunk.len()];
         let mut first_probabilities: Vec<Option<f64>> = vec![None; chunk.len()];
+        let mut paired: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
+        let mut person: Vec<Vec<PairedReading>> = vec![Vec::new(); chunk.len()];
         for (rung, provider) in providers.iter().enumerate() {
             if pending.is_empty() {
                 break;
@@ -239,15 +249,14 @@ pub fn review_slides(
             }
             let mut next = Vec::new();
             for (index, result) in pending.iter().copied().zip(results) {
-                if !question.contract.accepts(&result.answer)
-                    || match result.answer {
-                        DecisionAnswer::Abstain => result.probability.is_some(),
-                        _ => !result
-                            .probability
-                            .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p)),
-                    }
-                {
+                if result.validate(question).is_err() {
                     return Err(invalid("malformed review answer").into());
+                }
+                if let Some(reading) = result.paired {
+                    paired[index].push(reading.bind(provider_pins[rung].clone()));
+                }
+                if let Some(reading) = result.person {
+                    person[index].push(reading.bind(provider_pins[rung].clone()));
                 }
                 pins[index].push(provider_pins[rung].clone());
                 if rung == 0 {
@@ -287,6 +296,9 @@ pub fn review_slides(
                         band_version: band_policy.version,
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
+                        paired: paired[index].clone(),
+                        person: person[index].clone(),
+                        time: None,
                     },
                     human_ask: None,
                 };
@@ -348,19 +360,6 @@ fn evidence_hash(unit: &SlideReviewUnit) -> [u8; 32] {
         hasher.update(field);
     }
     *hasher.finalize().as_bytes()
-}
-
-fn rung_from(first: DecisionRung, steps: usize) -> Option<DecisionRung> {
-    let rungs = [
-        DecisionRung::Rule,
-        DecisionRung::Local,
-        DecisionRung::SystemOne,
-        DecisionRung::Big,
-    ];
-    rungs
-        .iter()
-        .position(|r| *r == first)
-        .and_then(|i| rungs.get(i + steps).copied())
 }
 
 fn invalid(message: &str) -> Error {
@@ -452,13 +451,18 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
             || (decision.receipt.providers.len() == 2
                 && (row.band_mode != BandMode::Enforce
                     || !decision.in_band
-                    || rung_from(decision.receipt.providers[0].rung, 1)
-                        != Some(decision.receipt.providers[1].rung)))
+                    || decision.receipt.providers[1].rung <= decision.receipt.providers[0].rung))
             || decision.receipt.providers.iter().any(|pin| {
                 pin.model.trim().is_empty()
                     || pin.version.trim().is_empty()
                     || pin.rung == DecisionRung::Human
             })
+            || !PairedReading::readings_valid(
+                &decision.receipt.paired,
+                &decision.receipt.person,
+                decision.receipt.question,
+                &decision.receipt.providers,
+            )
             || decision.receipt.question_version == 0
             || row.frontier != proposal.base_content_hash
             || row.judged_version != proposal.base_version
