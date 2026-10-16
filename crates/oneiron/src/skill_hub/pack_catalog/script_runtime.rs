@@ -143,6 +143,14 @@ impl Vault {
         request: PackScriptRun<'_>,
         transport: Arc<dyn CredentialReadTransport>,
     ) -> Result<PackScriptOutcome> {
+        // A connection the pack's setup declares is used only once checked
+        // (OF-378); a grant no setup connection serves asks nothing more.
+        let requested: Vec<&str> = request
+            .grants
+            .iter()
+            .map(|grant| grant.requested.as_str())
+            .collect();
+        self.require_pack_grants_verified(request.name, &requested)?;
         let run_id = EntityId::now();
         let mut backend =
             crate::code_sandbox::microvm::select_backend_for_tier(SandboxGuestTier::Foreign)?

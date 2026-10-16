@@ -248,6 +248,10 @@ side_tables! {
     /// Index from a claim predicate name to the pack name that owns it (exclusivity check). Key:
     /// string.
     SKILL_HUB_PACK_PREDICATE: VaultMeta b"pack.predicate.v1/" Raw;
+    /// One owner's guided setup of one exact pack source: custody refs, consent receipt refs and
+    /// per-connection check results (OF-378). Key: pack name "/" hex content hash "/" principal
+    /// digest.
+    SKILL_HUB_PACK_SETUP: VaultMeta b"pack.setup.v1/" Named;
     /// Alias minted for one skill from a pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SKILL_ALIAS: VaultMeta b"pack.skill-alias.v1/" Raw;
     /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
