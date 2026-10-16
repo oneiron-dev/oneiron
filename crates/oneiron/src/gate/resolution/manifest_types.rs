@@ -406,6 +406,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(crate) sync_world_ceiling: Option<std::collections::BTreeSet<crate::EntityId>>,
     pub(crate) sync_world_default: Option<bool>,
+    /// Host-declared persona-core prefixes, the union over trusted packs.
+    pub(crate) persona_core_prefixes: std::collections::BTreeSet<String>,
     pub(crate) consult_fanout_approval_threshold: Option<u32>,
     pub(crate) consult_fanout_controls: Option<FanoutControls>,
     pub(crate) consult_fanout_precedence: Option<FanoutPrecedence>,

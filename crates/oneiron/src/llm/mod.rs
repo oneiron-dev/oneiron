@@ -12,6 +12,7 @@
 mod autocheck;
 mod budget;
 mod defaults;
+pub(crate) use defaults::read_effective_defaults;
 mod inference_admission;
 mod role_defaults;
 pub use inference_admission::{
