@@ -91,6 +91,43 @@
       "section": false
     },
     {
+      "name": "vault.people.list",
+      "input": "crate::memory::PeopleListRequest",
+      "output": "crate::memory::PeoplePage",
+      "call": "memory.people_list(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.people.get",
+      "input": "crate::memory::PersonRequest",
+      "output": "crate::context_board::PersonRow",
+      "call": "memory.people_get(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.message",
+      "input": "crate::memory::MessagePersonRequest",
+      "output": "crate::memory::MessagePersonReceipt",
+      "call": "memory.message_person(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.grants.ask",
+      "input": "crate::memory::GrantAskRequest",
+      "output": "crate::memory::GrantAskReceipt",
+      "call": "memory.grants_ask(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "self.memory.diary.query",
       "input": "crate::task_verb::sdk::DiaryQueryRequest",
       "output": "crate::task_verb::sdk::DiaryQueryOutcome",
@@ -628,6 +665,73 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.prepare",
+      "input": "PackSetupRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.get",
+      "input": "PackSetupRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.answer",
+      "input": "PackSetupAnswerRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.verify",
+      "input": "PackSetupVerifyRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.authority.audit",
+      "input": "crate::receipt::AuthorityAuditQuery",
+      "output": "crate::receipt::AuthorityAuditPage",
+      "call": "crate::receipt::authority_audit_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.inspection.resolve",
+      "input": "crate::lens::InspectionResolveRequest",
+      "output": "crate::lens::InspectionResolved",
+      "call": "memory.inspection_resolve(&input)?",
+      "scope": "Read",
+      "admission": {"lane_record_scope": true},
       "section": false
     },
     {

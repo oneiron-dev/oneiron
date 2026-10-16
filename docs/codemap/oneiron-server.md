@@ -117,14 +117,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
-| `src/api/esign.rs` | src | m | 3 crate-vis | — | Session-less signing ceremony |
+| `src/api/esign.rs` | src | m | 4 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
+| `src/api/esign/hold_worker.rs` | src | s | 1 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks the vault… |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | s | 1 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/facade.rs` | src | m | 9 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | s | 1 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | XL | 1 crate-vis | — | — |
-| `src/api/facade/host_doors.rs` | src | m | 17 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and… |
+| `src/api/facade/host_doors.rs` | src | m | 22 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/shared_act_doors.rs` | src | m | 13 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
@@ -148,7 +149,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_lfs/tests.rs` | test | XL | 2 crate-vis | — | LFS handler tests |
 | `src/api/git_lfs/wire.rs` | src | s | 10 crate-vis | — | Git-LFS wire DTOs and batch types |
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
-| `src/api/llm.rs` | src | m | 3 crate-vis | — | Owner-authenticated raw inference |
+| `src/api/llm.rs` | src | m | 4 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/decision_read.rs` | src | s | 3 crate-vis | — | `POST /v1/llm/decision_read`: the owner's probe of the house model's decision read |
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
 | `src/api/llm/tests.rs` | test | L | — | — | — |
@@ -171,8 +172,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
-| `src/api/mod.rs` | src | m | 36 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/mod.rs` | src | m | 37 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/off_record_rooms.rs` | src | m | 1 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
+| `src/api/openai_proxy/mod.rs` | src | m | 1 crate-vis | — | OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps… |
+| `src/api/openai_proxy/wire.rs` | src | s | 11 crate-vis | — | The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from… |
 | `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |
 | `src/api/openapi/endpoints_merge.rs` | src | s | 13 crate-vis | — | OpenAPI endpoint wiring and component merges |
@@ -293,9 +296,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli.rs` | src | L | 20 struct · 9 enum · 3 fn · 4 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +21 | — |
 | `src/cli/deployment_args.rs` | src | s | 1 struct | HostRelayArgs | Host-only deployment commands; neither opens a local vault |
 | `src/cli/hook_args.rs` | src | s | 5 struct · 3 enum · 1 fn | HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
-| `src/cli/owner_args.rs` | src | m | 20 struct · 6 enum | BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand, ImportArchiveArgs, ImportBatchArgs, ImportCommand +18 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
+| `src/cli/owner_args.rs` | src | m | 24 struct · 7 enum | BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand, ImportArchiveArgs, ImportBatchArgs, ImportCommand +23 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/wake_args.rs` | src | s | 1 struct · 1 enum | WakeArgs, WakeCommand | Host-side wake inbox commands |
-| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 12 re-export · 4 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 13 re-export · 4 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | L | 1 fn · 22 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | s | 7 crate-vis | — | A file holding a credential, readable by its owner alone |
 | `src/commands/dreamer.rs` | src | s | 1 fn | — | `oneiron dreamer grant`: the owner's weave grant, made offline, for a vault created before the Dreamer's… |
@@ -303,7 +306,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/embedder_serve/tests.rs` | test | s | — | — | Which section `embedder serve` serves, and at what width |
 | `src/commands/history_import.rs` | src | L | 3 crate-vis | — | `oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027) |
 | `src/commands/history_import/confined.rs` | src | m | 10 crate-vis | — | Reading under one folder without leaving it |
-| `src/commands/history_import/notes.rs` | src | m | 1 crate-vis | — | `oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner… |
+| `src/commands/history_import/notes.rs` | src | m | 2 crate-vis | — | `oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner… |
+| `src/commands/history_import/notes/folder.rs` | src | m | 4 crate-vis | — | `oneiron import folder attach\|rescan\|detach\|list`: a folder of markdown notes that stays attached to the… |
 | `src/commands/history_import/notes/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/commands/history_import/queue.rs` | src | m | 4 crate-vis | — | The import queue |
 | `src/commands/history_import/queue/tests.rs` | test | m | — | — | The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code… |
@@ -312,11 +316,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/hook/recall.rs` | src | m | 2 crate-vis | — | Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints… |
 | `src/commands/host_init.rs` | src | s | 1 fn | — | Reference deployment scaffolding and explicit encryption provisioning |
 | `src/commands/host_re_root.rs` | src | s | 1 fn | — | `oneiron host re-root`: moves a stopped self-host vault's root to a new host secret, in-chain (OF-455) |
-| `src/commands/init.rs` | src | L | 1 fn | — | First-run embedder and tagger choices, using the same config and providers as serve |
+| `src/commands/init.rs` | src | L | 1 fn · 5 crate-vis | — | First-run embedder and tagger choices, using the same config and providers as serve |
 | `src/commands/local_servers.rs` | src | s | 11 crate-vis | — | The local servers running for this user, one runtime file each, so a client such as `oneiron hook` finds any… |
 | `src/commands/maintain.rs` | src | s | 1 fn | — | `maintain`: the owner's "run housekeeping now" on a stopped vault |
 | `src/commands/mcp_bridge.rs` | src | m | 1 fn | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
+| `src/commands/oneironer.rs` | src | s | 3 struct · 1 enum · 1 fn | DistillArgs, ExportArgs, OneironerCommand, PublishArgs | `oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 "one base, two… |
 | `src/commands/owner.rs` | src | m | 12 fn · 4 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
@@ -348,7 +353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 6 re-export · 2 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
 | `src/config/models/provider.rs` | src | m | 1 struct · 3 enum · 4 fn · 3 crate-vis | OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire | One provider entry: how to reach a model server, as data |
 | `src/config/models/tests.rs` | test | s | — | — | — |
-| `src/config/oneironer.rs` | src | m | 3 struct · 4 enum · 9 fn · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerRuntime | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
+| `src/config/oneironer.rs` | src | m | 4 struct · 4 enum · 10 fn · 2 crate-vis | OneironerArgs, OneironerBackbone, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider, OneironerRuntime, OneironerTier | The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity, native runtime and label table |
 | `src/config/privacy_tests.rs` | test | s | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
 | `src/config/recall.rs` | src | s | 1 struct · 4 crate-vis | RecallConfig | The `[recall]` section: how recall behaves at this server |
