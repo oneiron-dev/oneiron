@@ -1003,6 +1003,18 @@ fn the_trace_covers_every_block_and_the_check_refuses_drift_from_it() {
 }
 
 #[test]
+fn part_names_that_leave_no_room_refuse() {
+    let mut parts = template_parts(NAMES);
+    parts.push(("ppt/media/image4294967295.png", String::new()));
+    let template = Package::open(&archive(&parts), limits()).unwrap();
+    let bytes = bytes(&brief());
+    assert_eq!(
+        compile(&kept("brief@7", &bytes), &template, &assets()).unwrap_err(),
+        CompileError::PartNames
+    );
+}
+
+#[test]
 fn the_package_row_names_every_part_and_relationship_to_create() {
     let plan = plan_for(&brief(), &template());
     let package = plan.package();

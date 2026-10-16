@@ -285,6 +285,12 @@ fn every_primitive_maps_to_native_geometry_at_9525_emu_per_px() {
 }
 
 #[test]
+fn a_rounded_rect_below_one_emu_is_a_plain_rect() {
+    let shape = one(r#"<rect x="10" y="10" width="0.00001" height="0.00001" rx="0.000005"/>"#);
+    assert_eq!(shape.geometry, Geometry::Preset(Preset::Rect));
+}
+
+#[test]
 fn every_path_command_maps_to_its_drawingml_segment() {
     use Segment::{Close, CubicTo, LineTo, MoveTo, QuadTo};
     let stroked = |d: &str| one(&format!(r##"<path d="{d}" fill="none" stroke="#000"/>"##));
@@ -774,12 +780,39 @@ fn named<'t>(tree: &'t XmlTree, name: &'t str) -> impl Iterator<Item = &'t Node>
     tree.nodes.iter().filter(move |node| node.name == name)
 }
 
-fn png(width: u32, height: u32) -> Vec<u8> {
+/// A PNG signature and IHDR size only: enough to read, not an image.
+fn png_header(width: u32, height: u32) -> Vec<u8> {
     let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
     bytes.extend(width.to_be_bytes());
     bytes.extend(height.to_be_bytes());
     bytes.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
     bytes
+}
+
+/// A whole greyscale PNG: chunks with their CRCs, image data, IEND.
+fn png(width: u32, height: u32) -> Vec<u8> {
+    use std::io::Write;
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend(u32::try_from(data.len()).unwrap().to_be_bytes());
+        let mut crc = crc32fast::Hasher::new();
+        crc.update(kind);
+        crc.update(data);
+        out.extend(kind);
+        out.extend(data);
+        out.extend(crc.finalize().to_be_bytes());
+    }
+    let mut header = width.to_be_bytes().to_vec();
+    header.extend(height.to_be_bytes());
+    header.extend([8, 0, 0, 0, 0]);
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    for _ in 0..height {
+        encoder.write_all(&vec![0; width as usize + 1]).unwrap();
+    }
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut out, b"IHDR", &header);
+    chunk(&mut out, b"IDAT", &encoder.finish().unwrap());
+    chunk(&mut out, b"IEND", &[]);
+    out
 }
 
 fn jpeg(width: u16, height: u16) -> Vec<u8> {
@@ -1032,11 +1065,24 @@ fn missing_assets_licence_gaps_and_provenance_drift_are_refused() {
         check(&webp_record, Some(&webp), illustration),
         Err(GraphicError::UnsupportedPayload)
     );
-    let huge = png(10_000, 10_000);
+    let huge = png_header(10_000, 10_000);
     let huge_record = record(MediaType::Png, &huge, Origin::Held);
     assert_eq!(
         check(&huge_record, Some(&huge), illustration),
         Err(GraphicError::ResourceLimit)
+    );
+    // A header alone, or an image cut short, is not a verified payload.
+    let header = png_header(4, 3);
+    let header_record = record(MediaType::Png, &header, Origin::Held);
+    assert_eq!(
+        check(&header_record, Some(&header), illustration),
+        Err(GraphicError::UnsupportedPayload)
+    );
+    let cut = &photo[..photo.len() - 2];
+    let cut_record = record(MediaType::Jpeg, cut, Origin::Held);
+    assert_eq!(
+        check(&cut_record, Some(cut), illustration),
+        Err(GraphicError::UnsupportedPayload)
     );
     let small = GraphicLimits {
         raster_bytes: 8,

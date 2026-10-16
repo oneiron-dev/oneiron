@@ -63,6 +63,9 @@ pub enum CompileError {
     UnboundAsset(String),
     #[error("the template has no layouts")]
     EmptyTemplate,
+    /// A numbered part family is so high that new names would overflow.
+    #[error("the template's part names leave no room for new parts")]
+    PartNames,
     /// The plan disagrees with its brief: checked before emission.
     #[error("plan trace fault at {block}: {fault:?}")]
     Trace { block: String, fault: TraceFault },
@@ -349,7 +352,7 @@ pub fn compile(
     if !decisions.is_empty() {
         return Ok(Outcome::Ask(decisions));
     }
-    let mut assembly = Assembly::new(template, &view.presentation, assets);
+    let mut assembly = Assembly::new(template, &view.presentation, assets)?;
     for (page, drafts, omitted) in pages {
         assembly.page(page, drafts, &omitted);
     }

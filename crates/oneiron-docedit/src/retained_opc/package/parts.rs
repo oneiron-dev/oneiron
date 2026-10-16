@@ -235,12 +235,13 @@ impl Package {
             || self
                 .entries
                 .iter()
-                .map(|entry| entry.name.trim_end_matches('/'))
-                .chain(self.added.iter().map(|part| part.name.as_str()))
-                .any(|existing| {
+                .map(|entry| (entry.name.trim_end_matches('/'), entry.is_directory()))
+                .chain(self.added.iter().map(|part| (part.name.as_str(), false)))
+                .any(|(existing, directory)| {
                     let existing = existing.to_ascii_lowercase();
+                    // A directory record may hold parts; a part may not.
                     existing == lower
-                        || lower.starts_with(&format!("{existing}/"))
+                        || (!directory && lower.starts_with(&format!("{existing}/")))
                         || existing.starts_with(&format!("{lower}/"))
                 })
         {
@@ -351,11 +352,18 @@ impl Package {
     }
 }
 
-/// Insert `element` as the root's last child.
+/// Insert `element` as the root's last child; a self-closing root is opened.
 fn splice_last_child(tree: &XmlTree, bytes: &[u8], element: &str) -> Result<Vec<u8>> {
     let root = &tree.nodes[0];
     if root.empty {
-        return Err(Error::Edit("self-closing package metadata root"));
+        let close = root.span.end - 2;
+        if bytes.get(close..root.span.end) != Some(&b"/>"[..]) {
+            return Err(Error::Edit("unreadable package metadata root"));
+        }
+        let mut out = bytes[..close].to_vec();
+        out.extend_from_slice(format!(">{element}</{}>", root.qualified).as_bytes());
+        out.extend_from_slice(&bytes[root.span.end..]);
+        return Ok(out);
     }
     let at = root.content.end;
     let mut out = Vec::with_capacity(bytes.len() + element.len());
@@ -421,6 +429,51 @@ fn resolve(source: &str, target: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{relative, resolve};
+    use crate::deck::fixture::limits;
+    use crate::retained_opc::Package;
+    use std::io::Write;
+
+    #[test]
+    fn directory_records_hold_new_parts_and_empty_relationship_roots_open() {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        writer.add_directory("doc/", options).unwrap();
+        for (name, body) in [
+            (
+                "[Content_Types].xml",
+                r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>"#,
+            ),
+            ("doc/a.xml", "<a/>"),
+            (
+                "doc/_rels/a.xml.rels",
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships" />"#,
+            ),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(body.as_bytes()).unwrap();
+        }
+        let bytes = writer.finish().unwrap().into_inner();
+        let mut package = Package::open(&bytes, limits()).unwrap();
+        package
+            .add_part("doc/b.xml", "application/xml", b"<b/>".to_vec())
+            .unwrap();
+        assert!(
+            package
+                .add_part("doc/a.xml/c.xml", "application/xml", b"<c/>".to_vec())
+                .is_err()
+        );
+        let id = package
+            .relate("doc/a.xml", "urn:test", "doc/b.xml")
+            .unwrap();
+        assert_eq!(id, "rId1");
+        let reopened = Package::open(&package.export().unwrap(), limits()).unwrap();
+        let rels = reopened.relationships("doc/a.xml").unwrap();
+        assert_eq!(
+            (rels[0].id.as_str(), rels[0].target.as_str()),
+            ("rId1", "doc/b.xml")
+        );
+    }
 
     #[test]
     fn relative_targets_round_trip_through_resolution() {

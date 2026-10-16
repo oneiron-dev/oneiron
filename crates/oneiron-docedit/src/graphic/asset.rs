@@ -97,6 +97,14 @@ pub(super) fn raster_extent(
     if u64::from(width) * u64::from(height) > limits.raster_pixels {
         return Err(GraphicError::ResourceLimit);
     }
+    let whole = match media {
+        MediaType::Png => png_whole(bytes),
+        MediaType::Jpeg => bytes.len() > 4 && bytes.ends_with(&[0xFF, 0xD9]),
+        MediaType::Svg => false,
+    };
+    if !whole {
+        return Err(GraphicError::UnsupportedPayload);
+    }
     Ok(Extent {
         cx: i64::from(width) * EMU_PER_PX,
         cy: i64::from(height) * EMU_PER_PX,
@@ -109,6 +117,39 @@ fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
         return None;
     }
     Some((be32(bytes.get(16..20)?)?, be32(bytes.get(20..24)?)?))
+}
+
+/// Every chunk whole with its CRC, from a 13-byte IHDR through image data to
+/// a final IEND: a header alone, or a file cut short, is not an image.
+fn png_whole(bytes: &[u8]) -> bool {
+    let mut at = PNG_SIGNATURE.len();
+    let mut data = false;
+    loop {
+        let Some(length) = bytes.get(at..at + 4).and_then(be32) else {
+            return false;
+        };
+        let Some(end) = usize::try_from(length)
+            .ok()
+            .and_then(|length| (at + 8).checked_add(length))
+        else {
+            return false;
+        };
+        let (Some(chunk), Some(crc)) = (bytes.get(at + 4..end), bytes.get(end..end + 4)) else {
+            return false;
+        };
+        if be32(crc) != Some(crc32fast::hash(chunk)) {
+            return false;
+        }
+        let kind = &chunk[..4];
+        if (at == PNG_SIGNATURE.len()) != (kind == b"IHDR" && length == 13) {
+            return false;
+        }
+        data |= kind == b"IDAT";
+        at = end + 4;
+        if kind == b"IEND" {
+            return data && at == bytes.len();
+        }
+    }
 }
 
 /// The size in the first start-of-frame segment, read marker by marker.

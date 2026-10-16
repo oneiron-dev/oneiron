@@ -249,9 +249,12 @@ fn workbook_part(package: &Package, chart: &str, model: &Model) -> Result<String
     let mut users = 0usize;
     let names: Vec<String> = package.names().map(str::to_owned).collect();
     for rels in names.iter().filter(|name| name.ends_with(".rels")) {
+        // `_rels/.rels` is the package's; `_rels/a.xml.rels` a root part's.
         let source = match rels.strip_prefix("_rels/") {
-            Some(".rels") => String::new(),
-            Some(_) => continue,
+            Some(file) => match file.strip_suffix(".rels") {
+                Some(source) => source.to_owned(),
+                None => continue,
+            },
             None => match rels
                 .strip_suffix(".rels")
                 .and_then(|name| name.rsplit_once("/_rels/"))

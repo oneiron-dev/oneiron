@@ -82,9 +82,11 @@ pub(super) fn frame_xml(
     for merge in merges {
         if merge.rows == 0
             || merge.cols == 0
-            || merge.rows * merge.cols < 2
-            || merge.row + merge.rows > rows
-            || merge.col + merge.cols > cols
+            || merge.rows.saturating_mul(merge.cols) < 2
+            || merge.row >= rows
+            || merge.col >= cols
+            || merge.rows > rows - merge.row
+            || merge.cols > cols - merge.col
         {
             return Err(NativeRefusal::UnsupportedMergeTopology(
                 "merge outside the grid",
@@ -283,7 +285,7 @@ pub(super) fn set_cell(
                 continue;
             }
             let (rows, span_cols) = (span(node, "rowSpan")?, span(node, "gridSpan")?);
-            if r + rows > cells.len() || c + span_cols > cols {
+            if rows > cells.len() - r || span_cols > cols.saturating_sub(c) {
                 return Err(NativeRefusal::UnsupportedMergeTopology(
                     "merge outside the grid",
                 ));

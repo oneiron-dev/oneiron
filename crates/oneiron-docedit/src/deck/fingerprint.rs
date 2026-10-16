@@ -98,6 +98,20 @@ pub(super) fn render(
             queue.push(target);
         }
     }
+    // No slide links to the presentation, yet its slide size and default
+    // text style render every slide. Its dependency hash covers only those
+    // elements, so a slide-list edit leaves the render untouched.
+    if let Some(parsed) = graph.parts.get(&graph.presentation)
+        && let Some(bytes) = package.part(&graph.presentation)?
+    {
+        let mut context = blake3::Hasher::new();
+        for (_, node) in parsed.tree.children(0) {
+            if node.is(P, "sldSz") || node.is(P, "defaultTextStyle") {
+                context.update(bytes.get(node.span.clone()).unwrap_or_default());
+            }
+        }
+        parts.insert(graph.presentation.clone(), *context.finalize().as_bytes());
+    }
     let mut hasher = blake3::Hasher::new();
     for (source, id, target) in &edges {
         for field in [source, id, target] {

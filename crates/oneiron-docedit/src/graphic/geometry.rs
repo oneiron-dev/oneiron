@@ -136,6 +136,10 @@ pub(super) fn rect(
         return Err(Refused::Value("rx".to_owned()));
     }
     let short = frame.rect.cx.min(frame.rect.cy);
+    // A corner or frame that rounds below one EMU has no visible radius.
+    if radius == 0 || short == 0 {
+        return Ok((frame, Preset::Rect));
+    }
     Ok((
         frame,
         Preset::RoundRect {

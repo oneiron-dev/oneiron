@@ -540,6 +540,24 @@ fn render_fingerprints_follow_dependencies_and_content_fingerprints_do_not() {
         shape(&base.slides[1], "Note").content_fingerprint
     );
 
+    // The presentation's default text style renders both slides; its slide
+    // list does not.
+    let presentation = "ppt/presentation.xml";
+    let styled = read(&with(
+        presentation,
+        r#"lang="en-US"/>"#,
+        r#"lang="en-US" sz="3200"/>"#,
+    ));
+    assert_ne!(fingerprints(&styled, 0).1, render0);
+    assert_ne!(fingerprints(&styled, 1).1, render1);
+    let listed = read(&with(
+        presentation,
+        "<p:sldIdLst>",
+        "<p:sldIdLst><!-- list -->",
+    ));
+    assert_eq!(fingerprints(&listed, 0), (content0, render0));
+    assert_eq!(base.slides_depending_on(presentation), vec![0, 1]);
+
     assert_eq!(base.slides_depending_on(THEME), vec![0, 1]);
     assert_eq!(base.slides_depending_on(LAYOUT), vec![0, 1]);
     assert_eq!(base.slides_depending_on(IMAGE), vec![0]);

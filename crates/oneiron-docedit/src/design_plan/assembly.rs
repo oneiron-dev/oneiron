@@ -5,8 +5,9 @@ use super::brief::{Block, BlockContent, Division, Page};
 use super::capability::Carry;
 use super::ladder::Draft;
 use super::{
-    AssetBinding, Composition, Content, Estimate, Fallback, Fit, FitPolicy, MediaType, NewPart,
-    PackagePlan, Placement, PlannedRelationship, SlidePlan, TraceEntry, TraceOutcome,
+    AssetBinding, CompileError, Composition, Content, Estimate, Fallback, Fit, FitPolicy,
+    MediaType, NewPart, PackagePlan, Placement, PlannedRelationship, SlidePlan, TraceEntry,
+    TraceOutcome,
 };
 use crate::retained_opc::Package;
 use std::collections::BTreeMap;
@@ -42,7 +43,7 @@ impl<'a> Assembly<'a> {
         template: &Package,
         presentation: &str,
         assets: &'a BTreeMap<String, AssetBinding>,
-    ) -> Self {
+    ) -> Result<Self, CompileError> {
         let folder = presentation
             .rsplit_once('/')
             .map_or_else(String::new, |(folder, _)| format!("{folder}/"));
@@ -54,11 +55,19 @@ impl<'a> Assembly<'a> {
             image: high("media/image"),
             folder,
         };
+        // A package holds fewer than 65,536 entries, so no family can need
+        // more names than that above its mark.
+        if [next.slide, next.chart, next.workbook, next.image]
+            .iter()
+            .any(|&mark| mark > u32::MAX - 65_536)
+        {
+            return Err(CompileError::PartNames);
+        }
         let rels = match presentation.rsplit_once('/') {
             Some((folder, file)) => format!("{folder}/_rels/{file}.rels"),
             None => format!("_rels/{presentation}.rels"),
         };
-        Self {
+        Ok(Self {
             presentation: presentation.to_owned(),
             assets,
             next,
@@ -74,7 +83,7 @@ impl<'a> Assembly<'a> {
             },
             trace: Vec::new(),
             media: BTreeMap::new(),
-        }
+        })
     }
 
     pub(super) fn page(&mut self, page: &'a Page, drafts: Vec<Draft>, omitted: &[usize]) {

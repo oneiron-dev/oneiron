@@ -267,6 +267,21 @@ fn tables_write_merge_anchors_and_refuse_continuation_writes() {
                 cols: 1,
             },
         ],
+        // Endpoints past the address space refuse rather than wrap.
+        [
+            Merge {
+                row: usize::MAX,
+                col: 0,
+                rows: 1,
+                cols: 2,
+            },
+            Merge {
+                row: 0,
+                col: 0,
+                rows: usize::MAX,
+                cols: usize::MAX,
+            },
+        ],
     ] {
         let edit = NativeEdit::CreateTable {
             frame: frame(6),

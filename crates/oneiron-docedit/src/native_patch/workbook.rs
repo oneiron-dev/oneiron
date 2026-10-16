@@ -130,12 +130,12 @@ pub(super) fn a1(key: &CellKey) -> String {
 }
 
 /// The shortest text that parses back to the same number.
-pub(super) fn number(value: f64) -> String {
+pub(crate) fn number(value: f64) -> String {
     format!("{value}")
 }
 
 /// A column header: its name, and its unit in parentheses.
-pub(super) fn header(column: &Column) -> String {
+pub(crate) fn header(column: &Column) -> String {
     match &column.unit {
         Some(unit) => format!("{} ({unit})", column.name),
         None => column.name.clone(),

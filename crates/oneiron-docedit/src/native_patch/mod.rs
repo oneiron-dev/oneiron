@@ -16,6 +16,7 @@ use crate::retained_opc::{self, Package};
 
 pub use chart::{ChartData, Sequence, SeriesData, chart_data};
 pub(crate) use table::{insert_frame, placeholder_xml};
+pub(crate) use workbook::{header, number};
 
 /// Where a new graphic frame goes: the slide part, its new `p:cNvPr` id
 /// (unique in the slide) and name, its bounds, and the layout placeholder it

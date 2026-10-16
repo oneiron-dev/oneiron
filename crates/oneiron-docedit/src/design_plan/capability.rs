@@ -276,7 +276,12 @@ impl Template {
     }
 }
 
-/// Unrotated, ungrouped, with an effective offset and extent.
+/// DrawingML's coordinate bound (ST_PositiveCoordinate); within it, the
+/// rectangle arithmetic below cannot overflow.
+const COORDINATE: i64 = 27_273_042_316_900;
+
+/// Unrotated, ungrouped, with an effective offset and extent inside the
+/// schema's coordinate range.
 fn bounds(shape: &ShapeView) -> Option<Rect> {
     let geometry = &shape.geometry;
     if !shape.group_path.is_empty()
@@ -288,7 +293,13 @@ fn bounds(shape: &ShapeView) -> Option<Rect> {
     }
     let (x, y) = geometry.offset.value?;
     let (cx, cy) = geometry.extent.value?;
-    (cx > 0 && cy > 0).then_some(Rect { x, y, cx, cy })
+    let range = |value: i64| value.abs() <= COORDINATE;
+    (cx > 0 && cy > 0 && range(x) && range(y) && range(cx) && range(cy)).then_some(Rect {
+        x,
+        y,
+        cx,
+        cy,
+    })
 }
 
 fn insets(shape: &ShapeView) -> [i64; 4] {

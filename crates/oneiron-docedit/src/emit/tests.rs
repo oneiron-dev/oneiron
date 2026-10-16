@@ -561,12 +561,15 @@ fn the_candidate_checks_refuse_what_the_plan_does_not_allow() {
             other => panic!("expected a check fault, got {other:?}"),
         }
     };
-    let rewrite = |package: &mut Package, from: &str, to: &str| {
-        let xml = String::from_utf8(package.part(&first).unwrap().unwrap()).unwrap();
-        assert!(xml.contains(from));
+    let rewrite_in = |package: &mut Package, part: &str, from: &str, to: &str| {
+        let xml = String::from_utf8(package.part(part).unwrap().unwrap()).unwrap();
+        assert!(xml.contains(from), "{part} lacks {from}");
         package
-            .replace_xml_part(&first, xml.replacen(from, to, 1).into_bytes())
+            .replace_xml_part(part, xml.replacen(from, to, 1).into_bytes())
             .unwrap();
+    };
+    let rewrite = |package: &mut Package, from: &str, to: &str| {
+        rewrite_in(package, &first, from, to);
     };
 
     assert_eq!(
@@ -599,6 +602,21 @@ fn the_candidate_checks_refuse_what_the_plan_does_not_allow() {
         tampered(&|p| rewrite(p, "Revenue doubled", "Revenue tripled")),
         CheckFault::Reimport
     );
+    // Native data is read back too: a table cell, a chart cache.
+    let (table, _) = unit(&candidate.report, "d-table");
+    assert_eq!(
+        tampered(&|p| rewrite_in(p, &table.part, "<a:t>1200</a:t>", "<a:t>999</a:t>")),
+        CheckFault::Reimport
+    );
+    assert_eq!(
+        tampered(&|p| rewrite_in(
+            p,
+            "ppt/charts/chart1.xml",
+            "<c:v>4.1</c:v>",
+            "<c:v>4.2</c:v>"
+        )),
+        CheckFault::Reimport
+    );
 }
 
 /// The oracle's clean deck without its one slide: a real PowerPoint
@@ -611,8 +629,9 @@ fn oracle_template() -> Package {
     let source = std::fs::read(path).unwrap();
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(source)).unwrap();
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options = zip::write::FileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .last_modified_time(zip::DateTime::default());
     let cut = |text: &str, start: &str, end: &str| -> String {
         let at = text.find(start).unwrap();
         let to = at + text[at..].find(end).unwrap() + end.len();

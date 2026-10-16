@@ -5,14 +5,19 @@
 //! metrics, and a re-import through the deck view that finds every unit
 //! where the plan put it.
 use super::slide::PML;
-use super::{CheckFault, EmitError, EmittedSlide, FitTrace, REL};
+use super::{CheckFault, EmitError, EmittedSlide, FitTrace, REL, Unit};
 use crate::deck::{DeckView, ShapeKind, ShapeView};
-use crate::design_plan::{Content, DesignPlan, Destination, Rect};
-use crate::ooxml::{CONTENT_TYPES, XmlTree};
+use crate::design_plan::{Cell, Content, DesignPlan, Destination, Rect};
+use crate::native_patch::{Sequence, chart_data, header, number};
+use crate::ooxml::{CONTENT_TYPES, Node, XmlTree};
 use crate::retained_opc::{Package, rels_name};
 use std::collections::BTreeSet;
 
 const TYPES: &str = "[Content_Types].xml";
+const DML: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const TABLE: &str = "http://schemas.openxmlformats.org/drawingml/2006/table";
+/// The chart graphic-data URI, which is also the chart namespace.
+const CHART: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 
 /// Check the candidate `bytes` against the plan and template; returns the
 /// write set, in archive order.
@@ -184,8 +189,129 @@ fn reimport(
         if !held {
             return fault(&planned.part, CheckFault::Reimport);
         }
+        for unit in &emitted.units {
+            if !native_data(plan, candidate, &planned.part, unit)? {
+                return fault(&planned.part, CheckFault::Reimport);
+            }
+        }
     }
     Ok(())
+}
+
+/// A table's cells, or a chart's caches and workbook cells, as the candidate
+/// holds them, against the planned dataset.
+fn native_data(
+    plan: &DesignPlan,
+    candidate: &Package,
+    slide: &str,
+    unit: &Unit,
+) -> Result<bool, EmitError> {
+    let (Content::Table(dataset) | Content::Chart(dataset)) = &unit.content else {
+        return Ok(true);
+    };
+    let Some(dataset) = plan.data().iter().find(|data| data.id == *dataset) else {
+        return Ok(false);
+    };
+    let bytes = candidate.part(slide)?.unwrap_or_default();
+    let tree = XmlTree::parse(&bytes, candidate.limits().xml)?;
+    let id = unit.shape.to_string();
+    let Some(frame) = (0..tree.nodes.len()).find(|&at| {
+        tree.nodes[at].is(PML, "graphicFrame")
+            && inside(&tree, at)
+                .any(|(_, node)| node.is(PML, "cNvPr") && node.attr("id") == Some(id.as_str()))
+    }) else {
+        return Ok(false);
+    };
+    let uri = inside(&tree, frame)
+        .find(|(_, node)| node.is(DML, "graphicData"))
+        .and_then(|(_, node)| node.attr("uri"));
+    let column = |at: usize| -> Vec<Cell> {
+        dataset
+            .rows
+            .iter()
+            .map(|row| row.get(at).cloned().unwrap_or(Cell::Missing))
+            .collect()
+    };
+    if matches!(unit.content, Content::Table(_)) {
+        let text = |cell: &Cell| match cell {
+            Cell::Missing => dataset.missing.clone().unwrap_or_default(),
+            Cell::Number(value) => number(*value),
+            Cell::Text(text) | Cell::Date(text) => text.clone(),
+        };
+        let expected: Vec<Vec<String>> =
+            std::iter::once(dataset.columns.iter().map(header).collect::<Vec<_>>())
+                .chain(
+                    dataset
+                        .rows
+                        .iter()
+                        .map(|row| row.iter().map(text).collect::<Vec<_>>()),
+                )
+                .collect();
+        let read: Vec<Vec<String>> = inside(&tree, frame)
+            .filter(|(_, node)| node.is(DML, "tr"))
+            .map(|(row, _)| {
+                inside(&tree, row)
+                    .filter(|(_, node)| node.is(DML, "tc"))
+                    .map(|(cell, _)| {
+                        inside(&tree, cell)
+                            .filter(|(_, node)| node.is(DML, "p"))
+                            .map(|(paragraph, _)| {
+                                inside(&tree, paragraph)
+                                    .filter(|(_, node)| node.is(DML, "t"))
+                                    .map(|(_, node)| node.text.as_str())
+                                    .collect::<String>()
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .collect()
+            })
+            .collect();
+        return Ok(uri == Some(TABLE) && read == expected);
+    }
+    let link = inside(&tree, frame)
+        .find(|(_, node)| node.is(CHART, "chart"))
+        .and_then(|(_, node)| node.attr_ns(REL, "id"));
+    let target = candidate
+        .relationships(slide)?
+        .into_iter()
+        .find(|rel| Some(rel.id.as_str()) == link)
+        .map(|rel| rel.target);
+    let Some(data) = target.and_then(|target| chart_data(candidate, &target).ok()) else {
+        return Ok(false);
+    };
+    let categories: Vec<Cell> = column(0)
+        .into_iter()
+        .map(|cell| match cell {
+            Cell::Number(value) => Cell::Text(number(value)),
+            Cell::Date(text) => Cell::Text(text),
+            cell => cell,
+        })
+        .collect();
+    let held = |sequence: &Option<Sequence>, want: &[Cell]| {
+        sequence
+            .as_ref()
+            .is_some_and(|sequence| sequence.cache == want && sequence.workbook == want)
+    };
+    Ok(uri == Some(CHART)
+        && data.series.len() + 1 == dataset.columns.len()
+        && data.series.iter().enumerate().all(|(at, series)| {
+            held(
+                &series.name,
+                &[Cell::Text(header(&dataset.columns[at + 1]))],
+            ) && held(&series.categories, &categories)
+                && held(&series.values, &column(at + 1))
+        }))
+}
+
+/// The elements inside `index`, in document order.
+fn inside(tree: &XmlTree, index: usize) -> impl Iterator<Item = (usize, &Node)> {
+    let end = tree.nodes[index].span.end;
+    tree.nodes
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .take_while(move |(_, node)| node.span.start < end)
 }
 
 /// One unit as read back: its id, kind, placeholder, text and geometry.
