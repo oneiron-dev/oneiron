@@ -7,8 +7,18 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn self_memory_diary(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.memory.diary", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("cancel", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn steer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("steer", input).map_err(facade_error)
     }
     #[napi]
     pub fn describe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
@@ -203,6 +213,12 @@ impl NativeClient {
             .agent_verb("vault.kv.namespaces", input)
             .map_err(facade_error)?;
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.put", input)
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_artifacts_view(&self, request_json: String) -> napi::Result<String> {
@@ -487,6 +503,153 @@ impl NativeClient {
     pub fn vault_rooms_speak(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.speak", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_conversations_turn_continue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.continue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_conversations_turn_retry(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.retry", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_host(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.host", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_sharing(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.sharing", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_companions_sharing_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.companions.sharing.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_work_companion_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.work_companion.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_work_companion_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.work_companion.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_save(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_fork(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.fork", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_callables(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.callables", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.options", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_image(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.image", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_speech(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.speech", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_transcribe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.transcribe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_embed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.embed", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video_poll(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video.poll", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_video_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.video.cancel", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_status(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn connector_outbound_schedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.outbound.schedule", input)
             .map_err(facade_error)
     }
 }

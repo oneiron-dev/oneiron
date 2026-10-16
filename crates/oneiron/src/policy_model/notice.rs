@@ -95,6 +95,7 @@ pub(super) fn policy_notice(
                 row_ref,
             },
             hosted,
+            config,
         )),
     }
 }
@@ -112,6 +113,11 @@ fn owner_notice(
 ) -> GateSystemNoticeRecord {
     let row_ref = safe_notice_row_ref(row_ref);
     let body = match (decision, row_ref.as_deref()) {
+        (PolicyClassifyDecision::Reword, _) => config
+            .owner_reword_notice
+            .as_deref()
+            .unwrap_or_default()
+            .to_owned(),
         (PolicyClassifyDecision::Hold, _) => host_notice_body(
             config.owner_hold_notice.as_deref(),
             "The policy check held this content and queued it for the human named by the matched policy row. It is not waiting for that person to be online.",
@@ -120,7 +126,9 @@ fn owner_notice(
             "Oneiron withheld this outbound content because your policy row {row_ref} asked it to."
         ),
         (PolicyClassifyDecision::Block, None) => POLICY_MODEL_OWNER_BLOCK_NOTICE.to_owned(),
-        (PolicyClassifyDecision::RouteToHelp, _) => POLICY_MODEL_HELP_CARD_NOTICE.to_owned(),
+        (PolicyClassifyDecision::RouteToHelp, _) => host_notice_body(
+            config.help_message.as_deref(), POLICY_MODEL_HELP_CARD_NOTICE,
+        ).to_owned(),
         (_, Some(row_ref)) => format!(
             "Oneiron flagged this outbound content under your policy row {row_ref} and delivered it unchanged."
         ),
@@ -142,7 +150,7 @@ fn owner_notice(
 
 /// Host-supplied notice text, or the engine's generic `fallback` when the
 /// host's is empty or past the ledger's bound.
-fn host_notice_body<'a>(host: Option<&'a str>, fallback: &'a str) -> &'a str {
+pub(super) fn host_notice_body<'a>(host: Option<&'a str>, fallback: &'a str) -> &'a str {
     host.filter(|body| !body.trim().is_empty() && body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN)
         .unwrap_or(fallback)
 }
@@ -197,6 +205,7 @@ fn hosted_notice(
     decision: PolicyClassifyDecision,
     attribution: HostedAttribution<'_>,
     hosted: Option<&HostedLegalPolicy>,
+    config: &PolicyModelConfig,
 ) -> GateSystemNoticeRecord {
     let jurisdiction = attribution.jurisdiction;
     let body = if decision == PolicyClassifyDecision::Warn {
@@ -213,7 +222,9 @@ fn hosted_notice(
         // A hosted row ref names a line in a policy the service publishes, so
         // surfacing it points the reader at something they can go read.
         row_ref: safe_notice_row_ref(attribution.row_ref),
-        setting_change_offer: None,
+        setting_change_offer: (decision == PolicyClassifyDecision::Block)
+            .then(|| safe_setting_change_offer(config.hosted_local_model_offer.as_ref()))
+            .flatten(),
         policy_plane: Some(PolicyPlane::HostedLegal.as_str().to_owned()),
         policy_version: Some(attribution.policy_version.to_owned()),
         docs_url: hosted.map(|hosted| hosted.docs_url.clone()),
@@ -266,6 +277,41 @@ pub(super) fn policy_model_rationale_notice(
     })
 }
 
+/// Complete typed receipts on the audit channel. A long JSON receipt spans
+/// consecutive notices, keyed by `question_hex/part` in `row_ref`; joining the
+/// bodies in part order recovers the original JSON without truncation.
+pub(super) fn policy_decision_receipt_notices(
+    verdict: &PolicyClassifyVerdict,
+) -> Vec<GateSystemNoticeRecord> {
+    let mut notices = Vec::new();
+    for decision in verdict.audit.iter().flat_map(|audit| &audit.typed_decisions) {
+        let json = serde_json::json!(decision).to_string();
+        let mut start = 0;
+        let mut part = 0;
+        while start < json.len() {
+            let mut end = (start + GATE_SYSTEM_NOTICE_BODY_MAX_LEN).min(json.len());
+            while !json.is_char_boundary(end) {
+                end -= 1;
+            }
+            notices.push(GateSystemNoticeRecord {
+                notice_type: "policy_decision_receipt".to_owned(),
+                channel: SYSTEM_NOTICE_CHANNEL_AUDIT.to_owned(),
+                voice: SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
+                audience: SYSTEM_NOTICE_AUDIENCE_AUDIT.to_owned(),
+                body: json[start..end].to_owned(),
+                row_ref: Some(format!("{}/{part}", decision.receipt.question.to_hex())),
+                setting_change_offer: None,
+                policy_plane: None,
+                policy_version: None,
+                docs_url: None,
+            });
+            start = end;
+            part += 1;
+        }
+    }
+    notices
+}
+
 fn bounded_notice_body(value: &str) -> String {
     if value.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN {
         return value.to_owned();
@@ -287,7 +333,7 @@ fn bounded_notice_body(value: &str) -> String {
 /// the whole gate append — the verdict lost, and the content unenforced,
 /// because of a broken LINK. A notice missing its convenience affordance still
 /// says everything the reader needs.
-fn safe_setting_change_offer(
+pub(super) fn safe_setting_change_offer(
     offer: Option<&GateSystemNoticeAction>,
 ) -> Option<GateSystemNoticeAction> {
     let offer = offer?;
@@ -312,6 +358,7 @@ const fn notice_type_for(decision: PolicyClassifyDecision) -> &'static str {
     match decision {
         PolicyClassifyDecision::RouteToHelp => SYSTEM_NOTICE_TYPE_HELP_CARD,
         PolicyClassifyDecision::Hold => "policy_hold",
+        PolicyClassifyDecision::Reword => "policy_reword",
         PolicyClassifyDecision::Block => SYSTEM_NOTICE_TYPE_BLOCK,
         PolicyClassifyDecision::Allow
         | PolicyClassifyDecision::Warn

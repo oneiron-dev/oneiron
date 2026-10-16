@@ -106,6 +106,8 @@ side_tables! {
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
+    /// Owner-set relationship-stewardship rules. Key: ().
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
@@ -157,6 +159,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
+    /// the exact content hash it scored). Key: id16 (skill entity).
+    SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
@@ -188,6 +193,8 @@ side_tables! {
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
+    SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
     /// The highest attribution evidence sequence the positive lane has read. Key: ().
     SKILL_ATTRIBUTION_POSITIVE_CURSOR: VaultMeta b"skill_attribution:positive_cursor:v1" Named;
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill.
@@ -318,6 +325,14 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// One Coach training offer snapshot for a seat (OF-577), written once. Key: id16 (offer).
+    SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named;
+    /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
+    /// id16 (offer).
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
+    /// (check).
+    SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
     /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
     /// prefix included.
@@ -429,6 +444,12 @@ side_tables! {
     TEXT_BM25_FIELD_SCHEMA_HASH: VaultMeta b"text_bm25_field_schema_hash" Raw;
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
+    /// Current owner-approved training checkpoint per model role. Key: serialized role string.
+    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named;
+    /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
+    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named;
+    /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
+    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named;
     /// One open, answered or superseded "may I reach your trusted contact?" ask, raised by a
     /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
     TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;
@@ -440,6 +461,16 @@ side_tables! {
     TRUSTED_CONTACT_RELATION: VaultMeta b"trusted_contact.relation.v1:" Named;
     /// The trusted-contact tier the owner gave one `RouteToHelp` policy row. Key: string (row ref).
     TRUSTED_CONTACT_TIER: VaultMeta b"trusted_contact.tier.v1:" Named;
+    /// A typed body's Loro snapshot at its head. Key: id16 (entity).
+    TYPED_BODY_DOC: VaultMeta b"typed_body:doc:v1:" Raw;
+    /// Work on a typed body away from its head: opener, base frontier and state. Key: id16
+    /// (entity) + id16 (fork).
+    TYPED_BODY_FORK: VaultMeta b"typed_body:fork:v1:" Named;
+    /// An open typed-body fork's Loro snapshot. Key: id16 (entity) + id16 (fork).
+    TYPED_BODY_FORK_DOC: VaultMeta b"typed_body:fork_doc:v1:" Raw;
+    /// An entity's typed body: its schema tag, birth and head frontiers and commit count. Key:
+    /// id16 (entity).
+    TYPED_BODY_HEAD: VaultMeta b"typed_body:head:v1:" Named;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;

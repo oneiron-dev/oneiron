@@ -565,7 +565,11 @@ impl Vault {
             (false, _) => receipt
                 .pass
                 .boundary_verdict()
-                .is_some_and(|verdict| verdict.binding == fresh),
+                .is_some_and(|verdict| {
+                    verdict.binding == fresh
+                        && verdict.decision_binding
+                            == receipt.config.decision_binding(PolicyPlane::HostedLegal)
+                }),
         };
         if unmoved {
             return Ok(None);

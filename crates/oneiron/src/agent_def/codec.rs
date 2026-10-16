@@ -5,6 +5,7 @@ use super::decode::{
     encode_mcp_ref, text_value, validate_agent_definition,
 };
 use super::manifest::system_agent_manifest;
+use super::refusal::{decode_refusal_dial, encode_refusal_dial};
 use super::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_ID_MAX_BYTES,
     AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES,
@@ -16,10 +17,9 @@ use super::types::{
     KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
     KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
     KEY_PROVENANCE, KEY_REFUSAL, KEY_SCOPE, KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS,
-    KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE, KEY_WORLD,
-    MemoryProfile, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
+    KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE,
+    KEY_WORLD, MemoryProfile, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
 };
-use super::refusal::{decode_refusal_dial, encode_refusal_dial};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};

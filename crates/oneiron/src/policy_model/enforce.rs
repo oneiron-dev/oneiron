@@ -14,8 +14,8 @@ use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
 use super::notice::{
-    POLICY_MODEL_HELP_MESSAGE, SYSTEM_NOTICE_AUDIENCE_AUDIT, default_system_notice,
-    policy_model_rationale_notice, policy_notice, trusted_contact_notices,
+    POLICY_MODEL_HELP_MESSAGE, SYSTEM_NOTICE_AUDIENCE_AUDIT, default_system_notice, host_notice_body,
+    policy_model_rationale_notice, policy_notice, safe_setting_change_offer, trusted_contact_notices,
 };
 use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
@@ -67,6 +67,7 @@ enum DecisionLedger {
 pub enum PolicyEnforcementAction {
     Allow,
     Warn,
+    Reword,
     Block,
     RouteToHelp,
     Hold,
@@ -82,6 +83,7 @@ impl PolicyEnforcementAction {
         match self {
             Self::Allow => "allow",
             Self::Warn => "warn",
+            Self::Reword => "reword",
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
@@ -93,6 +95,7 @@ impl PolicyEnforcementAction {
         match decision {
             PolicyClassifyDecision::Allow => Self::Allow,
             PolicyClassifyDecision::Warn => Self::Warn,
+            PolicyClassifyDecision::Reword => Self::Reword,
             PolicyClassifyDecision::Block => Self::Block,
             PolicyClassifyDecision::Hold => Self::Hold,
             PolicyClassifyDecision::RouteToHelp => Self::RouteToHelp,
@@ -104,7 +107,7 @@ impl PolicyEnforcementAction {
     /// deliver.
     #[must_use]
     pub const fn halts(self) -> bool {
-        matches!(self, Self::Block | Self::RouteToHelp | Self::Hold)
+        matches!(self, Self::Reword | Self::Block | Self::RouteToHelp | Self::Hold)
     }
 }
 
@@ -138,6 +141,9 @@ pub struct PolicyHelpRouting {
     pub message: String,
     pub diagnosis: Option<String>,
     pub persona_present: bool,
+    /// Host-configured resources, not an engine-owned safety taxonomy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<crate::store::GateSystemNoticeAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,6 +161,10 @@ pub struct PolicyModelEnforcement {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub system_notices: Vec<GateSystemNoticeRecord>,
     pub help_routing: Option<PolicyHelpRouting>,
+    /// The disclosed owner constraint for a fresh candidate, never a rewrite
+    /// or an authorization to deliver one without classifying it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reword: Option<super::PolicyRewordRequest>,
     pub classify_trace: Vec<PolicyClassifyVerdict>,
     pub pre_display_block: bool,
     pub barge_in_kill: Option<PolicyBargeInKill>,
@@ -265,6 +275,7 @@ impl Vault {
             notice_voice: None,
             system_notices: Vec::new(),
             help_routing: None,
+            reword: None,
             pre_display_block: false,
             barge_in_kill: None,
             // The plane did not get to decide, which is the fact this flag
@@ -441,6 +452,7 @@ impl Vault {
                 notice_voice: None,
                 system_notices: Vec::new(),
                 help_routing: None,
+                reword: None,
                 classify_trace,
                 pre_display_block: false,
                 barge_in_kill: None,
@@ -465,7 +477,7 @@ impl Vault {
         // verdict (and queued its hold), or, for a verdict another door
         // recorded, in the same snapshot that finds it still in force: a
         // ruling read later could answer a policy already replaced.
-        let (receipt_ref, held) = match wtxn.take() {
+        let (receipt_ref, held, reword) = match wtxn.take() {
             Some(mut wtxn) => {
                 // A RouteToHelp this door settles reaches the concerned
                 // person's trusted contacts (OF-527) in the receipt's own
@@ -503,8 +515,9 @@ impl Vault {
                     system_notices.clone(),
                 )?;
                 let held = self.hold_for_action_in_txn(&wtxn, action, &request, &verdict)?;
+                let reword = self.policy_reword_request_in_txn(&wtxn, &request, &verdict, config)?;
                 wtxn.commit()?;
-                (Some(receipt_ref), held)
+                (Some(receipt_ref), held, reword)
             }
             None => {
                 let rtxn = self.store.env.read_txn()?;
@@ -514,6 +527,7 @@ impl Vault {
                 (
                     None,
                     self.hold_for_action_in_txn(&rtxn, action, &request, &verdict)?,
+                    self.policy_reword_request_in_txn(&rtxn, &request, &verdict, config)?,
                 )
             }
         };
@@ -536,11 +550,17 @@ impl Vault {
             help_routing: (action == PolicyEnforcementAction::RouteToHelp).then(|| {
                 PolicyHelpRouting {
                     category: verdict.category.clone(),
-                    message: POLICY_MODEL_HELP_MESSAGE.to_owned(),
+                    message: host_notice_body(
+                        config.help_message.as_deref(), POLICY_MODEL_HELP_MESSAGE,
+                    ).to_owned(),
                     diagnosis: None,
                     persona_present: true,
+                    resources: config.help_resources.iter()
+                        .filter_map(|resource| safe_setting_change_offer(Some(resource)))
+                        .collect(),
                 }
             }),
+            reword,
             action,
             verdict,
             // `Warn` hands back exactly what the caller passed in.

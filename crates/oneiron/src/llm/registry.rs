@@ -1,5 +1,7 @@
 //! Vault-persisted, priced model catalogs. Scores are evidence, never routing authority.
+mod backend;
 mod description;
+pub use backend::{ModelBackendPin, ModelCostReceipt, PricedModelBackend};
 mod installed_pack;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 
@@ -94,6 +96,7 @@ impl ModelRegistryRow {
     }
     pub fn validate(&self) -> Result<()> {
         self.description()?.validate()?;
+        self.backends()?;
         let entry = &self.catalog;
         if self.version != 1
             || entry.display_name.trim().is_empty()

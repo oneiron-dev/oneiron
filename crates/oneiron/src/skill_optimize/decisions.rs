@@ -129,7 +129,7 @@ fn case_state<S: HeldOutReplayScorer + ?Sized>(
 }
 
 impl dyn HeldOutReplayScorer + '_ {
-    /// All replay scores, including shared-skill admission, use decide().
+    /// All replay judgments, including shared-skill admission, use decide().
     pub fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         score(self, "score", &[case.skill], &case_state(self, case)?)
     }

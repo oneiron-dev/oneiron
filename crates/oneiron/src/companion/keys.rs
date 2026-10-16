@@ -6,7 +6,7 @@ pub use oneiron_contracts::companion::{
 
 pub(super) const SCOPE_KEYS: [&str; 3] = ["kind", "person_ref", "vault_id"];
 
-pub(super) const SUBJECT_KEYS: [&str; 3] = ["kind", "persona_ref", "relationship_ref"];
+pub(super) const SUBJECT_KEYS: [&str; 3] = ["kind", "person_ref", "relationship_ref"];
 
 pub(super) const RELATIONSHIP_REF_KEYS: [&str; 2] = ["source_ref", "target_ref"];
 

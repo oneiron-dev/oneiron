@@ -9,6 +9,7 @@ mod call;
 mod codec;
 mod doors;
 mod graph;
+pub mod helper;
 mod identity;
 mod lifecycle;
 mod pack_load;

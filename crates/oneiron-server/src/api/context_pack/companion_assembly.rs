@@ -20,8 +20,13 @@ pub(crate) fn companion_scope_resolution_authorized(
     let Some(principal_ref) = auth_bound_principal_ref(auth)? else {
         return Ok(false);
     };
+    // The caller resolves its own relationship with the other endpoint, and
+    // only when it may read that PERSON's whole companion profile.
+    if principal_ref != person_ref {
+        return Ok(false);
+    }
     vault
-        .companion_profile_access_grant(&principal_ref, &person_ref, &persona_ref)
+        .companion_profile_access_grant(&principal_ref, &persona_ref, None)
         .map(|grant| grant.is_some())
         .map_err(|error| {
             tracing::error!(

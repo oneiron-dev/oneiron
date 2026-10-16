@@ -56,8 +56,10 @@ mod types;
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
 pub use self::residence::{
-    OpenedItem, ResidenceHit, ResidenceIndexWindow, ResidenceSearch, SearchSource, ThinItem,
+    OpenedItem, ResidenceHit, ResidenceIndexWindow, ResidenceSearch, SealedRelay, SearchSource,
+    ThinItem,
 };
+pub(crate) use self::residence::{catch_up_authority, relay_sealed_windows};
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
