@@ -173,7 +173,7 @@ impl Agent {
             self.timeout,
             self.rpc_inner(
                 round as u64 + 1,
-                "recall",
+                "vault.recall",
                 json!({"query":query,"effort":"light","limit":10}),
             ),
         )

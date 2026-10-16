@@ -132,7 +132,7 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "ask the vault owner to check the model route in [models]",
         ],
         "verb_dispatch_failed" => {
-            &["re-read the board with board.refresh and retry against the current epoch"]
+            &["re-read the board with self.focus.refresh and retry against the current epoch"]
         }
         "payload_too_large" => &["shorten the field to at most max_bytes bytes and retry"],
         "mcp_verb_not_bound" => &[
