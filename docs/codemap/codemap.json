@@ -14082,7 +14082,7 @@
      "path": "src/context_pack/source_ranking.rs",
      "purpose": "PACK data for provenance-aware claim ordering",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -34466,7 +34466,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/retrieval_depth/accumulation.rs",
