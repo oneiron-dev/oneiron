@@ -171,13 +171,14 @@ impl SkillEditDisposition {
 }
 
 /// Resolution of one exact pending vector, and the ladder rung that made it
-/// (ARCH-0053 §10a: preference rule, then Jev, then the responsible person).
+/// (ARCH-0053 §10a: preference rule, then a typed judgment on the band, then
+/// the responsible person).
 ///
 /// `owner` is the person the ladder answers to. On the [`TradeoffRung::Person`]
 /// rung `authentication` is that person's authenticated decision and
 /// `evidence` an opaque host reference, or the digest of the A/B question the
 /// pick answered. On the [`TradeoffRung::Preference`] rung `authentication`
-/// names the stored rule and on [`TradeoffRung::Jev`] the pinned model; both
+/// names the stored rule and on [`TradeoffRung::Judgment`] the pinned model; both
 /// carry the digest of the bound question as `evidence`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -195,8 +196,11 @@ pub struct TradeoffResolution {
 pub enum TradeoffRung {
     /// An authored or learned preference rule matched the axis signature.
     Preference,
-    /// A Jev verdict bound to the exact question, at or above the high band.
-    Jev,
+    /// A typed judgment on the band: a verdict bound to the exact question, at
+    /// or above the high band. Stored rows spell it `jev`, the frozen v1 wire
+    /// token, so the rename touches code only.
+    #[serde(rename = "jev")]
+    Judgment,
     /// The authenticated person: the owner door or an A/B pick.
     Person,
 }

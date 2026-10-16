@@ -175,14 +175,14 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             continue;
         };
-        if id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        if !crate::dreamer_runner::authority::is_base_agent_actor(&id)?
             && !crate::registry::is_delete_protected_engine_record(header.entity_type)
             && !crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type)
         {
             continue;
         }
 
-        let rejection = if id == crate::dreamer_runner::authority::dreamer_actor_id()? {
+        let rejection = if crate::dreamer_runner::authority::is_base_agent_actor(&id)? {
             Error::Registry(RegistryError::DreamerActorImmutable)
         } else {
             Error::Registry(RegistryError::MaintenanceKindNotWritable(
@@ -200,11 +200,11 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         protected_tombstones.insert(id);
         let hex_id = id.to_hex();
         if !map_contains_binary(&entities_map, &hex_id)
-            || (id == crate::dreamer_runner::authority::dreamer_actor_id()?
+            || (crate::dreamer_runner::authority::is_base_agent_actor(&id)?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice()))
         {
             // A rejected peer overwrite is not a valid protected carrier.
-            // Restore the fixed Dreamer bytes, not merely a missing key.
+            // Restore the fixed base-agent bytes, not merely a missing key.
             map_insert_bytes(&entities_map, &hex_id, &raw)?;
             if let Some(revision) = source_revision {
                 mirror_sources.insert(id, revision);
@@ -325,7 +325,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                     id,
                     &raw,
                 )?;
-            let fixed_actor_mismatch = *id == crate::dreamer_runner::authority::dreamer_actor_id()?
+            let fixed_actor_mismatch = crate::dreamer_runner::authority::is_base_agent_actor(id)?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice());
             if !map_contains_binary(&entities_map, &hex_id) || dominates || fixed_actor_mismatch {
                 // Pack rows mirror the canonical wire header/body (origin
@@ -534,7 +534,7 @@ pub(super) fn quarantine_outbound_protected_tombstones(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(false);
     };
-    if *id != crate::dreamer_runner::authority::dreamer_actor_id()?
+    if !crate::dreamer_runner::authority::is_base_agent_actor(id)?
         && !crate::registry::is_delete_protected_engine_record(header.entity_type)
         && !crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type)
     {
@@ -546,7 +546,7 @@ pub(super) fn quarantine_outbound_protected_tombstones(
         return Ok(false);
     }
 
-    let rejection = if *id == crate::dreamer_runner::authority::dreamer_actor_id()? {
+    let rejection = if crate::dreamer_runner::authority::is_base_agent_actor(id)? {
         Error::Registry(RegistryError::DreamerActorImmutable)
     } else {
         Error::Registry(RegistryError::MaintenanceKindNotWritable(

@@ -1,5 +1,6 @@
-//! SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Dreamer
-//! maintenance job that keeps skill instructions honest over time.
+//! SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's
+//! job on the Dreamer's runner that keeps skill instructions honest over time.
+//! It keeps its `dreamer.skill_optimize` kind token; its stamp names the Coach.
 //!
 //! ```text
 //! Dreamer wake ─▶ skill_optimize attempt

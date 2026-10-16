@@ -295,9 +295,12 @@ pub enum KillOutcome {
 /// Which healer a failure scope routes its cases to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HealerSlot {
-    /// The default slot until the configured ARCH-0066 healer agent exists. It
-    /// is an explicit typed outcome, never a silently dropped case.
+    /// No healer: the case goes only to the human surface. It is an explicit
+    /// typed outcome, never a silently dropped case.
     Reserved,
+    /// The Coach, the second base agent (ARCH-0066 #coach): the default slot.
+    /// The case also wakes one Coach heal attempt on the Dreamer's runner.
+    Coach,
     /// Lowercase-hex EntityId spelling.
     AgentDef { agent_def_ref: String },
 }
@@ -314,7 +317,15 @@ pub struct DispatchHealer {
 /// Typed healer-slot outcome.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HealerSlotOutcome {
-    Reserved { case: HealerCase },
+    Reserved {
+        case: HealerCase,
+    },
+    /// The case, for the human surface, and the Coach heal attempt it woke
+    /// (or the one an earlier route of the same case already woke).
+    Coach {
+        case: HealerCase,
+        attempt: crate::attempt_queue::AttemptId,
+    },
     Dispatched(AgentDispatchStatus),
     Existing(AgentDispatchStatus),
 }

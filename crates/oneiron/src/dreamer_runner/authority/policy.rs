@@ -1,4 +1,5 @@
-//! Dreamer job roster and the boundary for minting a separate agent.
+//! The runner's job roster, its two base agents, and the boundary for minting
+//! a separate agent.
 //!
 //! A job kind is not an agent identity. The roster only groups shipped job
 //! types; additional responsibility contracts in ARCH-0026 are design targets,
@@ -8,13 +9,35 @@
 use crate::agent_def::AgentCeiling;
 use crate::llm::ModelLocality;
 
-/// The shipped Dreamer job types and their shared authority facets.
+/// The two base agents on the runner (ARCH-0026 #base-agents). A job that
+/// changes what the vault knows is the Dreamer's; one that changes how agents
+/// behave is the Coach's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseAgent {
+    Dreamer,
+    Coach,
+}
+
+/// The base agent a stamped facet runs under. SKILL-OPT is the Coach's but
+/// keeps its `dreamer.skill_optimize` token: it is a persisted queue kind,
+/// payload type and provenance facet.
+#[must_use]
+pub fn base_agent_for_facet(facet: &str) -> BaseAgent {
+    if facet == super::super::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND || facet.starts_with("coach.") {
+        BaseAgent::Coach
+    } else {
+        BaseAgent::Dreamer
+    }
+}
+
+/// The shipped runner job types and their shared authority facets.
 /// Generic user agent dispatch is deliberately not part of this roster.
 #[must_use]
 pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
     use super::super::{
-        DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-        DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+        COACH_HEAL_ATTEMPT_KIND, COACH_RETRIEVAL_TUNE_FACET, DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE,
+        DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+        DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
     };
     match job_type {
         "micro" | "meso" | "macro" => Some("dreamer.consolidation"),
@@ -30,6 +53,8 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND => Some(DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
         DREAMER_VAULT_CLEANUP_ATTEMPT_KIND => Some(DREAMER_VAULT_CLEANUP_ATTEMPT_KIND),
         DREAMER_WEAVE_RECIPE_ATTEMPT_KIND => Some(DREAMER_WEAVE_RECIPE_ATTEMPT_KIND),
+        COACH_HEAL_ATTEMPT_KIND => Some(COACH_HEAL_ATTEMPT_KIND),
+        COACH_RETRIEVAL_TUNE_FACET => Some(COACH_RETRIEVAL_TUNE_FACET),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
         super::super::maintenance::representation::REPRESENTATION_FACET => {

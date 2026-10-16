@@ -21,7 +21,7 @@ fn validate_tradeoff_verdict(
     }
     // A Jev resolution is the bound verdict on this row, echoing its question.
     if resolution.is_some_and(|resolution| {
-        resolution.rung == TradeoffRung::Jev
+        resolution.rung == TradeoffRung::Judgment
             && jev.is_none_or(|jev| jev.question_digest != resolution.evidence)
     }) {
         return Err(invalid("a Jev resolution requires its bound verdict"));

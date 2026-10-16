@@ -59,6 +59,17 @@ impl Store {
         &self,
         config: RetrievalBlendTuningConfig,
     ) -> Result<RetrievalBlendWeightTableEntry> {
+        self.tune_retrieval_blend_weights_when_ready(config)?
+            .map_err(Error::InvalidConfig)
+    }
+
+    /// [`Self::tune_retrieval_blend_weights`] for the Coach's nightly pass: a
+    /// window without enough gated rewards is an answer, `Ok(Err(reason))`,
+    /// and writes nothing.
+    pub(crate) fn tune_retrieval_blend_weights_when_ready(
+        &self,
+        config: RetrievalBlendTuningConfig,
+    ) -> Result<std::result::Result<RetrievalBlendWeightTableEntry, String>> {
         validate_retrieval_blend_tuning_config(config)?;
         if active_write_txn_depth() > 0 {
             return Err(Error::ConcurrentWrite(
@@ -157,13 +168,13 @@ impl Store {
         scanned.defer(self);
 
         if reward_count < config.min_reward_count {
-            return Err(Error::InvalidConfig(format!(
+            return Ok(Err(format!(
                 "retrieval blend tuning requires at least {} reward outcome(s), found {reward_count}",
                 config.min_reward_count
             )));
         }
         if component_count == 0 {
-            return Err(Error::InvalidConfig(
+            return Ok(Err(
                 "retrieval blend tuning requires blend-signal score components".to_owned(),
             ));
         }
@@ -194,7 +205,7 @@ impl Store {
             data_window,
         };
         self.put_retrieval_blend_weight_table_entry(&entry)?;
-        Ok(entry)
+        Ok(Ok(entry))
     }
 
     fn put_retrieval_blend_weight_table_entry(

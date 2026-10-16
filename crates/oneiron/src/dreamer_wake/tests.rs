@@ -18,6 +18,7 @@ use crate::{EdgeActorClass, EntityId, Vault};
 use super::*;
 
 mod cleanup_lane;
+mod coach_tune;
 
 pub(crate) fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();

@@ -330,7 +330,7 @@ fn transactional_timer_wake_rolls_back_both_queue_lanes() {
         })
         .expect("commit wake");
     let queued = AttemptQueue::new(&vault).list().expect("queue");
-    assert_eq!(queued.len(), 2);
+    assert_eq!(queued.len(), 3, "cleanup, the Coach's tune, consolidation");
     assert_eq!(
         queued
             .iter()
