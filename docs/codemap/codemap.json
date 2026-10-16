@@ -9858,7 +9858,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -10005,13 +10005,16 @@
       "MemoryEdgeInput",
       "MemorySearchInput",
       "MemorySupersedeInput",
-      "MemoryTimeRange"
+      "MemoryTimeRange",
+      "TaskRefuseDomain",
+      "TaskRefuseInput"
      ],
      "path": "src/code_run/run_verbs.rs",
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "struct": 5
+      "enum": 1,
+      "struct": 6
      }
     },
     {
@@ -10159,6 +10162,8 @@
       "SelfMemoryWriteResult",
       "SelfSpeechCall",
       "SelfSpeechResult",
+      "SelfTaskRefusalResult",
+      "SelfTaskRefuseCall",
       "SelfWakePolicyWriteCall"
      ],
      "path": "src/code_run/types.rs",
@@ -10166,8 +10171,8 @@
      "surface": {
       "const": 2,
       "enum": 6,
-      "fn": 17,
-      "struct": 24,
+      "fn": 19,
+      "struct": 26,
       "trait": 2
      }
     },
