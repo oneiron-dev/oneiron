@@ -227,7 +227,10 @@ pub(crate) use ask_option_link::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
-pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
+pub(crate) use ask_record::{
+    admit_attendee_entry_in_txn, ask_notice_at_in, attendee_entry_id, guard_ask_fact_put,
+    read_attendee_entry_in,
+};
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };

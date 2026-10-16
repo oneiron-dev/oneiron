@@ -22,8 +22,12 @@ pub(crate) use guard::waits_for_ask_group;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+mod attendee_entry;
 mod link_proof;
 mod word_admission;
+pub(crate) use attendee_entry::{
+    admit_attendee_entry_in_txn, attendee_entry_id, read_attendee_entry_in,
+};
 pub(super) use link_proof::{
     mint_key as mint_link_key, sign_settlement as sign_link_settlement,
     verify_settlement as verify_link_settlement,
