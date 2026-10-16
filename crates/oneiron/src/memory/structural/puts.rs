@@ -50,7 +50,7 @@ impl Memory<'_> {
         if type_byte == ENTITY_TYPE_CLAIM {
             return Err(MemoryError::bad_request_with(
                 "CLAIM entities cannot be written structurally",
-                &["Use commit/claim_upsert so the write gate sees the claim."],
+                &["Use vault.commit/vault.claims.upsert so the write gate sees the claim."],
             ));
         }
         if type_byte == ENTITY_TYPE_MACHINE {

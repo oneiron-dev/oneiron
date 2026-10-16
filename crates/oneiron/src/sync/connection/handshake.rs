@@ -81,7 +81,7 @@ impl SyncConnection {
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<mpsc::UnboundedReceiver<SyncEvent>> {
         let (client, event_rx) =
-            SyncClient::new(Arc::clone(&self.manager), self.config.client_config.clone())?;
+            SyncClient::new(Arc::clone(&self.manager), self.client_config())?;
         let event_tx = client.event_tx.clone();
         let mut client = client;
 
@@ -111,6 +111,8 @@ impl SyncConnection {
         let mut promotion_rx = self.manager.subscribe_promotions();
 
         loop {
+            // A residence-mode switch takes effect at this connect's hello.
+            client.config.residence_mode = *self.mode.borrow();
             // Attempt connection
             let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connecting));
 

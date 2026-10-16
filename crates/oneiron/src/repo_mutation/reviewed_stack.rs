@@ -402,6 +402,7 @@ fn require_document_base(
                         row.actor,
                         crate::edge::EdgeActorClass::Agent,
                     )
+                || receipt.provenance != row.op_provenance
                 || receipt.edit
                     != crate::code_document::CodeFileEdit::between(&row.path, old, new) =>
         {

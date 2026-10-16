@@ -24,8 +24,8 @@ preflight; `unrestricted_record_scope` requires an unrestricted HTTP credential.
 propose-only). Every other write takes effect at once and needs `core:write`.
 `lands_turn` marks a `Write` row that lands a conversation turn: its generated HTTP
 facade handler wakes the Dreamer's turn producer after the write (ARCH-0026 RD-26).
-`witness` and `claim_upsert` retain their size checks. `recall` and `receipts`
-need the scope restriction as well as query/limit validation. Their shared SDK
+`vault.witness` and `vault.claims.upsert` retain their size checks. `vault.recall`
+and `vault.receipts` need the scope restriction as well as query/limit validation. Their shared SDK
 request DTOs preserve the wire defaults. Language-specific DTO conversion stays
 in generator templates; only manifest rows select which methods are emitted. Language DTO declarations live in the generator;
 keep them aligned with the serde domain types when a domain shape changes.
@@ -68,8 +68,8 @@ pages; drain `meta.page.cursor` before using an engine `next_after` cursor.
 
 ## Task handles
 
-`client.tasks.ask(spec)` returns `{handle, count, replayed}` immediately. The
-caller can keep working. `client.tasks.wait(handle, stepKey)` returns `Pending`,
+`client.ask(spec)` returns `{handle, count, replayed}` immediately. The
+caller can keep working. `client.wait(handle, stepKey)` returns `Pending`,
 `Ready`, or `AlreadyResumed`; it does not block the OS thread, suspend the run, or
 poll the server. Re-enter the same durable step with the same key. Different
 calling steps use different keys. The first ready delivery consumes that step's
@@ -82,11 +82,13 @@ owner-only read of currently eligible calibration pairs, not an unrestricted
 fact export. An answer supplies a real result reference; the adapter never
 invents a model prediction or confidence receipt.
 
-HTTP uses `/v1/core/facade/<verb>` with the existing credential binding. Core
+HTTP uses `/v1/core/facade/<verb>`, the verb's full dotted name
+(`/v1/core/facade/vault.claims.upsert`), with the existing credential binding. Core
 SDK task and room requests cannot choose another authenticated actor. MCP uses
 the same dispatcher after its family admission. Private N-API method names are
-camelCase; PyO3 method names are snake_case. The public namespaces keep
-`tasks.ask/wait/answer/outcomes` and `rooms.list/messages/claim/speak`.
+camelCase; PyO3 method names are snake_case. The public tree puts `ask` and
+`wait` on the handle, `tasks.answer/outcomes` under `tasks`, and
+`vault.rooms.list/messages/claim/speak` under `vault`.
 
 ## Real native boundary check
 
@@ -110,7 +112,8 @@ boundary is covered by this script and `crates/oneiron-napi/tests/node_host.cjs`
 ## Code-mode declarations
 
 `crates/oneiron/src/task_verb/code-mode.d.ts` is the verb table as code mode
-declares it: one `self.memory.<name>` signature per row, which the engine
+declares it: one signature per row at its full path (`vault.recall`,
+`self.focus.refresh`, a bare `describe`), which the engine
 renders from each row's compiled input schema (`code_mode_declarations`). The
 executor prompt and shadow mode's type check read that rendering. This script
 cannot see the schemas, so `--check` only requires the file to declare exactly

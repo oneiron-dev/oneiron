@@ -1,7 +1,42 @@
 //! The shared Generated/Proposed writer for deterministic maintenance findings.
+//! Each finding lands in the owner's run tray (`/v1/owner/runs`) under the
+//! attempt that wrote it, so one review approves or declines a night's batch.
 use crate::attempt_queue::AttemptId;
+use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, ClaimSubject, EntityId, Result, TimeRange, Vault};
 use rmpv::Value;
+
+/// The facet's shared proposal envelope plus the Gate's run-tray keys
+/// (`runner=dreamer`, `run=<attempt>`), the same keys a representation
+/// proposal carries. The authority stamp is unchanged.
+pub(super) fn run_tray_envelope(
+    vault: &Vault,
+    facet: &str,
+    attempt: AttemptId,
+) -> Result<WriteEnvelope> {
+    let shared = vault.dreamer_proposal_envelope(facet, attempt)?;
+    let run = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
+    let mut provenance = shared
+        .provenance()
+        .value()
+        .as_map()
+        .ok_or_else(super::invalid)?
+        .clone();
+    if provenance
+        .iter()
+        .any(|(key, _)| matches!(key.as_str(), Some("runner" | "run")))
+    {
+        return Err(super::invalid());
+    }
+    provenance.push((Value::from("runner"), Value::from("dreamer")));
+    provenance.push((Value::from("run"), Value::from(run)));
+    Ok(WriteEnvelope::new(
+        shared.actor(),
+        shared.source(),
+        WriteProvenance::new(Value::Map(provenance))?,
+        shared.approval(),
+    ))
+}
 pub(super) fn emit(
     vault: &Vault,
     attempt: AttemptId,
@@ -11,7 +46,7 @@ pub(super) fn emit(
     value: &serde_json::Value,
     now: u64,
 ) -> Result<EntityId> {
-    let envelope = vault.dreamer_proposal_envelope(facet, attempt)?;
+    let envelope = run_tray_envelope(vault, facet, attempt)?;
     vault.with_write_txn_grouped(|txn| {
         emit_in_txn(vault, txn, subject, predicate, value, &envelope, now)
     })
@@ -70,6 +105,6 @@ pub(super) fn emit_in_txn(
             },
             now,
         )
-        .apply(txn)?;
+        .apply_recording_gate_decisions(txn)?;
     Ok(id)
 }

@@ -220,6 +220,7 @@ fn semantic_signal(signal: RetrievalSignal) -> bool {
             | RetrievalSignal::Vector
             | RetrievalSignal::Hyde
             | RetrievalSignal::HydeRetry
+            | RetrievalSignal::MediaVector
     )
 }
 
