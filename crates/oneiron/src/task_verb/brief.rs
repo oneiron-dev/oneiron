@@ -47,21 +47,26 @@ pub(super) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
 pub(super) mod hex32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(bytes: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+    pub(crate) fn serialize<S: Serializer>(
+        bytes: &[u8; 32],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&crate::entity_id::bytes_to_hex_lower(bytes))
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[u8; 32], D::Error> {
         let text = String::deserialize(deserializer)?;
         super::decode_hex::<32>(&text)
             .ok_or_else(|| serde::de::Error::custom("expected a 64-character hex digest"))
     }
 
     /// The same for an optional digest.
-    pub mod option {
+    pub(crate) mod option {
         use serde::{Deserialize, Deserializer, Serializer};
 
-        pub fn serialize<S: Serializer>(
+        pub(crate) fn serialize<S: Serializer>(
             bytes: &Option<[u8; 32]>,
             serializer: S,
         ) -> Result<S::Ok, S::Error> {
@@ -73,7 +78,7 @@ pub(super) mod hex32 {
             }
         }
 
-        pub fn deserialize<'de, D: Deserializer<'de>>(
+        pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
             deserializer: D,
         ) -> Result<Option<[u8; 32]>, D::Error> {
             Option::<String>::deserialize(deserializer)?

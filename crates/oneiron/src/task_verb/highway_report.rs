@@ -524,9 +524,15 @@ impl Memory<'_> {
                         false,
                     )? {
                         Escalation::Asked(handle) => Some(handle),
-                        Escalation::NotListed | Escalation::Declined | Escalation::Default(_) => {
+                        Escalation::Default(default) => {
+                            // No question to ask with: the rule's default is
+                            // the agent's own act, never anyone's answer.
+                            lifecycle
+                                .fields
+                                .insert("default_taken".to_owned(), format!("{default:?}"));
                             None
                         }
+                        Escalation::NotListed | Escalation::Declined => None,
                     },
                 };
                 if let Some(handle) = opened {

@@ -25,11 +25,16 @@ mod attempt_hex {
 
     use crate::attempt_queue::AttemptId;
 
-    pub fn serialize<S: Serializer>(id: &AttemptId, serializer: S) -> Result<S::Ok, S::Error> {
+    pub(super) fn serialize<S: Serializer>(
+        id: &AttemptId,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&crate::entity_id::bytes_to_hex_lower(id.as_bytes()))
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<AttemptId, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<AttemptId, D::Error> {
         let text = String::deserialize(deserializer)?;
         let bytes = super::super::brief::decode_hex::<16>(&text)
             .ok_or_else(|| serde::de::Error::custom("expected a 32-character hex attempt id"))?;

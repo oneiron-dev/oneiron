@@ -398,7 +398,7 @@ impl Memory<'_> {
                 })
             }
             PostDirect::Gated => {
-                self.park_post(via, &post, &spec, &key, digest, now, decisions, lifecycle)
+                self.park_post(&post, &spec, &key, digest, now, decisions, lifecycle)
             }
         }
     }
@@ -444,7 +444,6 @@ impl Memory<'_> {
     )]
     fn park_post(
         &self,
-        via: &TaskVia,
         post: &TaskPost,
         spec: &TaskCreateSpec,
         key: &str,
