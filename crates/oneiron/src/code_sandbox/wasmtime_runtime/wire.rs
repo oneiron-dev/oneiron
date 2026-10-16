@@ -171,9 +171,14 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
         "sandbox.fs.read_file" => {
             let args: File = parse(input)?;
             let path = SandboxVirtualPath::try_new(&args.path)?;
+            // The run's own recorded outputs: past observations and bridge
+            // results stored as bodies, each read a chunk at a time.
             if path
                 .as_str()
                 .starts_with("/mnt/outputs/.oneiron-context-ref/")
+                || path
+                    .as_str()
+                    .starts_with(crate::engine_executor::RESULT_READ_ROOT)
             {
                 let bytes = state
                     .host
