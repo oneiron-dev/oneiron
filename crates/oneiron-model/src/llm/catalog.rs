@@ -156,7 +156,10 @@ impl LlmCatalogEntry {
     pub fn admit_media(&self, request: &MediaRequest) -> super::LlmResult<()> {
         if self.model != request.model
             || self.locality != request.envelope.locality
-            || request.admission_request().route_selector_override().is_some()
+            || request
+                .admission_request()
+                .route_selector_override()
+                .is_some()
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }

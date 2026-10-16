@@ -3460,13 +3460,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -3489,6 +3489,10 @@
       "ExportLedger",
       "ExportPack",
       "ExportPackSource",
+      "ExportResultBody",
+      "ExportRun",
+      "ExportRunOutput",
+      "ExportRunResults",
       "ExportSourceVault",
       "WholeVaultDocument",
       "WholeVaultDocumentManifest",
@@ -3496,13 +3500,13 @@
       "WholeVaultImportReceipt"
      ],
      "path": "src/batch/export/document_types.rs",
-     "purpose": "Versioned six-part whole-vault interchange document",
+     "purpose": "Versioned seven-part whole-vault interchange document",
      "surface": {
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
       "fn": 4,
-      "struct": 11
+      "struct": 15
      }
     },
     {
@@ -3541,6 +3545,7 @@
      "path": "src/batch/export/export_egress.rs",
      "purpose": "Whole-vault manifest egress doors and the Vault export surface",
      "surface": {
+      "crate-vis": 1,
       "fn": 13
      }
     },
@@ -3949,7 +3954,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 29,
       "enum": 1
      }
     },
@@ -5393,7 +5398,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/booking/emergency_reschedule/state.rs",
@@ -5572,7 +5577,7 @@
      "path": "src/booking/lifecycle/confirmation_state.rs",
      "purpose": "The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -6473,7 +6478,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarInviteAdmission",
@@ -6483,7 +6488,7 @@
      "purpose": "UID-once/SEQUENCE admission and outbound passport state moves",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -6514,7 +6519,7 @@
      "path": "src/calendar/invite/mime.rs",
      "purpose": "iMIP MIME rendering and blob reads",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -6526,7 +6531,7 @@
      "path": "src/calendar/invite/mod.rs",
      "purpose": "Outbound iMIP invite adapter (CAL-04, ONE-1786)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -6541,10 +6546,20 @@
      "purpose": "Frozen five-field invite payload contract and its decoder",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/invite/publication.rs",
+     "purpose": "Calendar admission at the outbound publication writer",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -6653,7 +6668,7 @@
      "path": "src/calendar/passport.rs",
      "purpose": "UID-first passport index and feed diff (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7
      }
@@ -9759,7 +9774,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 18,
       "struct": 10
@@ -9815,14 +9830,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CodeRunModelHealCount"
+      "CodeRunModelHealCount",
+      "CodeRunSecretLiftProposal"
      ],
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 17,
-      "fn": 9,
-      "struct": 1
+      "crate-vis": 25,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -23018,6 +23034,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DefaultVaultInput",
+      "DefaultVaultItem"
+     ],
+     "path": "src/lens/default_vault.rs",
+     "purpose": "Renderer-neutral default vault composition over already-admitted projections",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GeneratedUiCard"
      ],
      "path": "src/lens/generated_ui/genui_card.rs",
@@ -23326,7 +23356,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -23508,7 +23538,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 182,
+      "mod": 184,
       "re-export": 72
      }
     },
@@ -27217,6 +27247,64 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BodyBlock",
+      "BodyBlockKind",
+      "DocxBody",
+      "DocxBodyOp"
+     ],
+     "path": "src/office_body/docx.rs",
+     "purpose": "The DOCX body inside its Loro document, schema 1",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BlockChange",
+      "BodyConflict",
+      "ChangeKind",
+      "ConflictKind",
+      "OfficeBodyDiff"
+     ],
+     "path": "src/office_body/fork.rs",
+     "purpose": "Three-way reads of a fork against the live body (ARCH-0077, \"Machine work as fork and diff\"): base is the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ForkState",
+      "OfficeBodyEdit",
+      "OfficeBodyExport",
+      "OfficeBodyExportRecord",
+      "OfficeBodyExportRequest",
+      "OfficeBodyFork",
+      "OfficeBodyHead",
+      "OfficeBodyKind"
+     ],
+     "path": "src/office_body/mod.rs",
+     "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX as a typed…",
+     "surface": {
+      "enum": 2,
+      "fn": 13,
+      "re-export": 2,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -28039,7 +28127,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -28370,7 +28458,7 @@
      "path": "src/outbound_chokepoint/admission.rs",
      "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -39545,6 +39633,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/project_ask.rs",
+     "purpose": "Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -39937,6 +40035,106 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LedgerEntry",
+      "LedgerKind",
+      "Market",
+      "MarketMode",
+      "MarketResult",
+      "Participant",
+      "RefereeKind",
+      "SignedReferee",
+      "Submission"
+     ],
+     "path": "src/team/market.rs",
+     "purpose": "The MARKET pattern's ledger (ARCH-0079 #market, OF-540)",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 8,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/team/mod.rs",
+     "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
+     "surface": {
+      "mod": 5,
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PatternSkill",
+      "TeamAxis",
+      "TeamPattern"
+     ],
+     "path": "src/team/pattern.rs",
+     "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PatternCardEntry",
+      "PayoffRow",
+      "PlannerCard"
+     ],
+     "path": "src/team/payoff.rs",
+     "purpose": "The payoff table and the planner card (ARCH-0003 #learning-views, ARCH-0079 #scoring, #works-well-for)",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Coverage",
+      "DecidedBy",
+      "PatternSkillRef",
+      "TeamOutcome",
+      "TeamReceipt",
+      "TeamShape"
+     ],
+     "path": "src/team/receipt.rs",
+     "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BranchResult",
+      "NodeComparison"
+     ],
+     "path": "src/team/stack.rs",
+     "purpose": "Stacking (ARCH-0079 #stacking): a sub-project may run a different pattern from its parent, and every node…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -40222,6 +40420,7 @@
      "purpose": "Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5)",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 21,
       "struct": 4
@@ -41553,6 +41752,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectAsk"
+     ],
+     "path": "src/workspace_roster/project/asks.rs",
+     "purpose": "A project's asks queue (ARCH-0067 tasks and asks)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41629,7 +41842,7 @@
      "path": "src/workspace_roster/project/fold.rs",
      "purpose": "The fold over a project's held revisions (decisions 5-7)",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 57,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -41728,15 +41941,16 @@
      "notable": [
       "ProjectCycleQuestion",
       "ProjectHistoryOverBudget",
-      "ProjectHistoryPolicy"
+      "ProjectHistoryPolicy",
+      "ProjectHistoryQuestion"
      ],
      "path": "src/workspace_roster/project/history_policy.rs",
      "purpose": "The per-project history budget (decision 9, ruling F2 (a))",
      "surface": {
       "const": 2,
       "crate-vis": 15,
-      "fn": 4,
-      "struct": 3
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -41796,11 +42010,13 @@
      "notable": [
       "ProjectAnchor",
       "ProjectAuthority",
+      "ProjectParentWitness",
       "ProjectProofVersion",
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
       "ProjectRoomChange",
+      "ProjectWriteOutcome",
       "ProjectWriteProof",
       "RoomOriginCard"
      ],
@@ -41808,11 +42024,11 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 41,
-      "enum": 2,
-      "fn": 16,
-      "re-export": 11,
-      "struct": 7
+      "crate-vis": 42,
+      "enum": 3,
+      "fn": 17,
+      "re-export": 13,
+      "struct": 8
      }
     },
     {
@@ -41823,6 +42039,20 @@
      "purpose": "Durable origin proof and local secondary indexes for converted projects",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerProjectSigner"
+     ],
+     "path": "src/workspace_roster/project/owner_signer.rs",
+     "purpose": "The owner-project signer (decision 3): every owner door signs the project state it writes through one…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -41878,6 +42108,16 @@
      "purpose": "The batch-end refresh of each touched project (sections 2 and 6 of the PR 3 contract)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/reparent.rs",
+     "purpose": "The board's typed re-parent (ARCH-0079 stacking: \"each parent leader sits on its board with a slice of…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -42076,13 +42316,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/validity.rs",
      "purpose": "Whether one held revision is valid on its own lineage, and the board's resolutions at one node (decisions 5…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -43494,7 +43734,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44110,7 +44350,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44213,6 +44453,13 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
+    },
+    "office_body": {
+     "files": 3,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX as a typed…"
     },
     "origin": {
      "files": 60,
@@ -44649,11 +44896,18 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
+    },
+    "team": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)"
     },
     "temporal": {
      "files": 1,
@@ -44761,7 +45015,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 63,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44782,9 +45036,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 64,
+   "over_bar": 65,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2686,
+   "source_files": 2701,
    "test_files": 903
   },
   "oneiron-android": {
@@ -48734,6 +48988,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocxAnchor",
+      "DocxBlock",
+      "DocxBlockKind",
+      "DocxCell",
+      "DocxChange",
+      "DocxLock",
+      "DocxParagraph",
+      "DocxRevision"
+     ],
+     "path": "src/docx_body.rs",
+     "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")",
+     "surface": {
+      "enum": 4,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -49110,7 +49385,7 @@
      "surface": {
       "enum": 1,
       "fn": 8,
-      "mod": 10,
+      "mod": 11,
       "re-export": 5
      }
     },
@@ -49361,6 +49636,13 @@
      "layout": "dir",
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
     },
+    "docx_body": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
+    },
     "edit": {
      "files": 15,
      "impl_vault": false,
@@ -49420,7 +49702,7 @@
    },
    "over_bar": 3,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 52,
+   "source_files": 53,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -59406,7 +59688,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/housekeeping.rs",

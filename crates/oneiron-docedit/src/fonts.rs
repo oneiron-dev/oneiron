@@ -59,7 +59,8 @@ impl FontBook {
         };
         let mut added = 0;
         for offset in offsets {
-            self.faces.push(Arc::new(Face::parse(data.clone(), offset)?));
+            self.faces
+                .push(Arc::new(Face::parse(data.clone(), offset)?));
             added += 1;
         }
         Ok(added)
@@ -119,7 +120,8 @@ impl Face {
         if !matches!(version, 0x0001_0000 | 0x4F54_544F | 0x7472_7565) {
             return Err(FontError::Invalid("sfnt version"));
         }
-        let tables = usize::from(u16_at(&data, base + 4).ok_or(FontError::Invalid("offset table"))?);
+        let tables =
+            usize::from(u16_at(&data, base + 4).ok_or(FontError::Invalid("offset table"))?);
         let table = |tag: &[u8; 4]| -> Option<(usize, usize)> {
             (0..tables).find_map(|index| {
                 let record = base + 12 + 16 * index;
@@ -237,9 +239,8 @@ impl Face {
                 let starts = ends + 2 * count + 2;
                 let deltas = starts + 2 * count;
                 let ranges = deltas + 2 * count;
-                let segment = (0..count).find(|&i| {
-                    u16_at(data, ends + 2 * i).is_some_and(|end| end >= code)
-                })?;
+                let segment = (0..count)
+                    .find(|&i| u16_at(data, ends + 2 * i).is_some_and(|end| end >= code))?;
                 let start = u16_at(data, starts + 2 * segment)?;
                 if start > code {
                     return None;
@@ -249,10 +250,8 @@ impl Face {
                 if range == 0 {
                     code.wrapping_add(delta)
                 } else {
-                    let at = ranges
-                        + 2 * segment
-                        + usize::from(range)
-                        + 2 * usize::from(code - start);
+                    let at =
+                        ranges + 2 * segment + usize::from(range) + 2 * usize::from(code - start);
                     match u16_at(data, at)? {
                         0 => 0,
                         glyph => glyph.wrapping_add(delta),
@@ -261,9 +260,8 @@ impl Face {
             }
             CharMap::Groups { at, count } => {
                 let groups = at + 16;
-                let group = (0..count).find(|&i| {
-                    u32_at(data, groups + 12 * i + 4).is_some_and(|end| end >= code)
-                })?;
+                let group = (0..count)
+                    .find(|&i| u32_at(data, groups + 12 * i + 4).is_some_and(|end| end >= code))?;
                 let start = u32_at(data, groups + 12 * group)?;
                 if start > code {
                     return None;

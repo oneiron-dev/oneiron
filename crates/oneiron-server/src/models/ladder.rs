@@ -9,9 +9,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::llm::SpentKind;
 use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
-use oneiron::llm::SpentKind;
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
@@ -407,7 +407,11 @@ impl OfferLadder {
         }
         // Every offer the call could use is parked on spent credit: no
         // reset brings one back, only the owner.
-        if back.as_ref().is_some_and(|(_, resets)| resets == &[u64::MAX]) && walk.limited() {
+        if back
+            .as_ref()
+            .is_some_and(|(_, resets)| resets == &[u64::MAX])
+            && walk.limited()
+        {
             return RetryableLlmError::QuotaSpent {
                 kind: SpentKind::Credit,
                 retry_after: None,
@@ -748,8 +752,7 @@ impl OfferLadder {
             }
             wait = None;
             if !usable {
-                let Some(back) = self.waits_for(call, &mut walk, self.rests.max_wait_secs())
-                else {
+                let Some(back) = self.waits_for(call, &mut walk, self.rests.max_wait_secs()) else {
                     let _ = events.send(Err(self.unanswered(walk))).await;
                     return;
                 };
