@@ -156,6 +156,9 @@ pub(super) struct TaskVerbBody {
     pub(super) state: Option<TaskExecutionState>,
     pub(super) provenance: Value,
     pub(super) created_at: u64,
+    /// OF-543 ONE TASK TYPE stamp placed at creation. `None` only on rows
+    /// written before OF-543, where it reads as the seeded root.
+    pub(super) type_ref: Option<crate::task_type::TaskTypeRef>,
 }
 
 impl TaskVerbBody {
@@ -165,6 +168,11 @@ impl TaskVerbBody {
             Some(kind) => kind,
             None => TaskKind::Standard,
         }
+    }
+
+    /// The OF-543 stamp on this body; pre-OF-543 rows read as the root.
+    pub(super) fn resolved_type_ref(&self) -> crate::task_type::TaskTypeRef {
+        self.type_ref.clone().unwrap_or_default()
     }
 
     pub(super) const fn terminal(&self) -> Option<&TaskTerminalRecord> {

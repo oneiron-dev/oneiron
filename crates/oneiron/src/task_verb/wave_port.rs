@@ -192,6 +192,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                             consult: None,
                             ttl: None,
                             spec,
+                            type_ref: crate::task_type::TaskTypeRef::seeded_root(),
                         };
                         super::rate_limit::record_task_create(
                             self.vault,

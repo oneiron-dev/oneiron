@@ -3,7 +3,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::field_set::append_pack_manifest_fields;
+use super::field_set::{append_pack_manifest_fields, append_task_type_fields};
 #[cfg(test)]
 use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
@@ -113,6 +113,11 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         ));
     }
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    // OF-543: the terminal spawn/task receipt carries the one type stamp
+    // the spawn was placed with.
+    if let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(record) {
+        append_task_type_fields(&mut receipt, &type_ref)?;
+    }
     if let Some(model) = &record.executor_model {
         receipt.fields.insert("model".to_owned(), model.clone());
     }

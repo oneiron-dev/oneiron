@@ -307,6 +307,7 @@ impl Memory<'_> {
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
+            type_ref: Some(validated.type_ref.clone()),
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).

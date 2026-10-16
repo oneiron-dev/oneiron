@@ -70,6 +70,8 @@ pub(super) struct WidenIntent {
     pub project_ref: Option<String>,
     pub scope: Option<crate::llm::Scope>,
     pub healer_case: Option<crate::failure_ladder::HealerCase>,
+    #[serde(default)]
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
 }
 
 impl WidenIntent {
@@ -91,6 +93,7 @@ impl WidenIntent {
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
             scope: spawn.scope.clone(),
             healer_case: spawn.healer_case.clone(),
+            type_ref: spawn.type_ref.clone(),
         })
     }
 
@@ -131,6 +134,7 @@ impl WidenIntent {
                     .map(EntityId::from_hex)
                     .transpose()?,
                 scope: self.scope.clone(),
+                type_ref: self.type_ref.clone(),
             },
         ))
     }
