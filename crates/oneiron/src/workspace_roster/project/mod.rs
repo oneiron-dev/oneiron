@@ -16,6 +16,7 @@ mod doors;
 mod fold;
 mod fork_evidence;
 mod history_policy;
+mod house;
 mod joint;
 mod leader_chat;
 mod owner_signer;

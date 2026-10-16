@@ -19,10 +19,10 @@ pub mod wasmtime_boundary;
 pub mod wasmtime_runtime;
 
 mod adapter;
-/// Engine-owned open-web relay and owner-local receipts.
-pub mod egress;
 mod contract;
 mod credential;
+/// Engine-owned open-web relay and owner-local receipts.
+pub mod egress;
 mod paths;
 mod proposal;
 

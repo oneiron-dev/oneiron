@@ -159,6 +159,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
+    /// the exact content hash it scored). Key: id16 (skill entity).
+    SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
@@ -441,6 +444,12 @@ side_tables! {
     TEXT_BM25_FIELD_SCHEMA_HASH: VaultMeta b"text_bm25_field_schema_hash" Raw;
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
+    /// Current owner-approved training checkpoint per model role. Key: serialized role string.
+    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named;
+    /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
+    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named;
+    /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
+    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named;
     /// One open, answered or superseded "may I reach your trusted contact?" ask, raised by a
     /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
     TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;

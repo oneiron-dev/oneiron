@@ -66,6 +66,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
+    (&t::SKILL_CALLABLE_GATE, CONTENT),
     (&t::SKILL_RESIDENT_LOADED_SKILL, CONTENT),
     (&t::SKILL_RESIDENT_OWNER, CONTENT),
     (&t::SKILL_RESIDENT_RECEIPT, CONTENT),
@@ -78,6 +79,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE, CONTENT),
     (&t::SKILL_ATTRIBUTION_JUDGE_REVISION, CONTENT),
     (&t::SKILL_ATTRIBUTION_JUDGMENT, CONTENT),
+    (&t::SKILL_ATTRIBUTION_POSITIVE_CURSOR, CONTENT),
+    (&t::SKILL_ATTRIBUTION_POSITIVE_PROPOSAL, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_RECEIPT_CAPTURED, CONTENT),
     (&t::SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR, CONTENT),
@@ -168,9 +171,16 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_ASK_WAIT, CONTENT),
     (&t::TASK_FANOUT_RUN, CONTENT),
     (&t::TASK_FANOUT_POLICY, CONTENT),
+    (&t::TEAM_MARKET, CONTENT),
+    (&t::TEAM_PATTERN_SKILL, CONTENT),
+    (&t::TEAM_RECEIPT, CONTENT),
     (&t::TEXT_ANALYZER_MANIFEST, CONTENT),
     (&t::TEXT_BM25_FIELD_SCHEMA_HASH, CONTENT),
     (&t::TEXT_INDEX_SCHEMA_VERSION, CONTENT),
+    // A restore never replays a GPU dispatch or rolls back an owner's model swap.
+    (&t::TRAINING_PACK_ROLE, LIVE),
+    (&t::TRAINING_PACK_RUN, LIVE),
+    (&t::TRAINING_PACK_SWAP, LIVE),
     // Consent and the owner's tiers stand on their own: a restore never brings
     // back a relation either side has since revoked, or an ask already answered.
     (&t::TRUSTED_CONTACT_ASK, LIVE),

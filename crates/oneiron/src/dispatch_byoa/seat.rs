@@ -124,12 +124,14 @@ impl RunnerSeat {
         task: String,
         checkout_id: CheckoutId,
     ) -> ByoaResult<ByoaConnectorSpec> {
-        registry.resolve(&self.runner)?.connector(DreamerProviderInput {
-            task,
-            checkout_id,
-            egress_profile_ref: self.egress_profile_ref.clone(),
-            credential_handles: self.credential_handles.clone(),
-        })
+        registry
+            .resolve(&self.runner)?
+            .connector(DreamerProviderInput {
+                task,
+                checkout_id,
+                egress_profile_ref: self.egress_profile_ref.clone(),
+                credential_handles: self.credential_handles.clone(),
+            })
     }
 }
 

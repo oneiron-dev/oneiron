@@ -371,7 +371,8 @@ pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
         if since.is_some_and(|since| now.saturating_sub(since) < TRADEOFF_REMINDER_SECS) {
             continue;
         }
-        vault.with_write_txn_grouped(|txn| TRADEOFF_CLIMB.put(&vault.store, txn, &proposal, &now))?;
+        vault
+            .with_write_txn_grouped(|txn| TRADEOFF_CLIMB.put(&vault.store, txn, &proposal, &now))?;
         if since.is_some() {
             crate::skill_optimize::escalate_skill_tradeoff_ask(vault, &proposal)?;
         }

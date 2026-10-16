@@ -21,6 +21,11 @@ pub struct TaskCreateSpec {
     pub consult: Option<ConsultPayload>,
     pub assignee: Option<TaskAssignee>,
     pub ttl: Option<TaskTtl>,
+    /// OF-220: a typed brief. A create that carries one, with its intent
+    /// key, is a post and runs through the task highway.
+    pub brief: Option<super::brief::QueueTaskBrief>,
+    /// The caller's idempotency key for a briefed create.
+    pub intent_key: Option<String>,
 }
 
 impl TaskCreateSpec {
@@ -41,7 +46,21 @@ impl TaskCreateSpec {
             consult: None,
             assignee: None,
             ttl: None,
+            brief: None,
+            intent_key: None,
         }
+    }
+
+    /// Makes this create a post: one typed brief under one intent key.
+    #[must_use]
+    pub fn with_brief(
+        mut self,
+        intent_key: impl Into<String>,
+        brief: super::brief::QueueTaskBrief,
+    ) -> Self {
+        self.intent_key = Some(intent_key.into());
+        self.brief = Some(brief);
+        self
     }
 
     #[must_use]

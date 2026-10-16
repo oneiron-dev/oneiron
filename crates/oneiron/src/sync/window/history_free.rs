@@ -450,7 +450,14 @@ pub fn export_window_since(
     remote_vv: &[u8],
     baseline: Option<&VersionVector>,
 ) -> Result<WindowExport> {
-    export_window_since_for(vault, key, doc, remote_vv, baseline, super::Withhold::Unknown)
+    export_window_since_for(
+        vault,
+        key,
+        doc,
+        remote_vv,
+        baseline,
+        super::Withhold::Unknown,
+    )
 }
 
 /// [`export_window_since`] for the machine the export serves: the worlds
