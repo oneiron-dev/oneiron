@@ -6,6 +6,7 @@
 //! delivery-time request stage.
 
 mod capability;
+mod connector_reply;
 mod connector_task;
 mod dispatch_attempt_id;
 mod dispatch_pipeline;
@@ -30,6 +31,9 @@ pub use self::capability::{
     OutboundRetryClass, OutboundVerbContract, UnsupportedOutboundCapability,
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
     unsupported_outbound_connector,
+};
+pub use self::connector_reply::{
+    ConnectorReply, ConnectorReplyDispatch, connector_reply_request,
 };
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
