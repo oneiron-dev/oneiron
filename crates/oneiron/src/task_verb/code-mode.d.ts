@@ -43,7 +43,10 @@ declare namespace self {
   const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
   const memory: {
-    diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+    diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
+      reads(input: { limit?: number | null }): Promise<unknown>;
+      review(input: { request: string; approve: boolean }): Promise<unknown>;
+    };
   };
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;

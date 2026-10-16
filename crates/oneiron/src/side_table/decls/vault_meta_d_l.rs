@@ -18,6 +18,15 @@ side_tables! {
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;
+    /// OF-490: one read of an agent's diary: reader, stated reason, entries and Grants (the agent
+    /// sees it). Key: id16 (agent) + id16 (read).
+    DIARY_READ_LOG: VaultMeta b"diary:read_log:v1:" Named;
+    /// OF-490: a reader's reason waiting on, or answered by, the agent's Y/N review. Key: id16
+    /// (agent) + id16 (request).
+    DIARY_READ_REQUEST: VaultMeta b"diary:read_request:v1:" Named;
+    /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
+    /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
+    DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw;
     /// Enforcement-truth per-counterparty-contact disclosure scope row (rmpv-encoded), dual-written
     /// with an owner-visible claim. Key: id16.
     DISCLOSURE_SCOPE: VaultMeta b"disclosure.scope.v1:" Raw;
