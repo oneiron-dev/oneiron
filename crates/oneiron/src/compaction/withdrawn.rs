@@ -143,6 +143,34 @@ fn refused() -> Error {
     Error::InvariantViolation("not a withdrawn epoch keyframe")
 }
 
+/// Whether `body` is a withdrawn epoch keyframe, the content-free form a
+/// withdrawn generation keeps.
+#[cfg(feature = "sync")]
+pub(crate) fn is_withdrawn_keyframe(body: &[u8]) -> bool {
+    WithdrawnKeyframe::decode(body).is_ok()
+}
+
+/// The content-free stand-in for epoch summary carrier `envelope` (its
+/// header, then its stored body): the same header, then the keyframe the body
+/// keeps, as [`ScrubbedRecord::WithdrawnEpoch`] leaves the row. `None` when
+/// the carrier is no SUMMARY or its body keeps no keyframe.
+#[cfg(feature = "sync")]
+pub(crate) fn withdrawn_keyframe_envelope(envelope: &[u8]) -> Result<Option<Vec<u8>>> {
+    let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(envelope) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_SUMMARY {
+        return Ok(None);
+    }
+    let Some(keyframe) = WithdrawnKeyframe::of_stored(&envelope[header_len..]) else {
+        return Ok(None);
+    };
+    let mut out = envelope[..header_len].to_vec();
+    out.extend(keyframe.encode()?);
+    Ok(Some(out))
+}
+
 /// Takes withdrawn epoch summary `id`'s words from its row and from the
 /// carriers beside it on this device: its document, its row revisions, its
 /// short-id rows and the L2 cache. The row keeps its header and keyframe.

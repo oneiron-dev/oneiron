@@ -8542,7 +8542,7 @@
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
       "crate-vis": 1,
-      "mod": 4,
+      "mod": 5,
       "re-export": 5
      }
     },
@@ -8560,8 +8560,24 @@
       "crate-vis": 14,
       "enum": 1,
       "fn": 7,
+      "mod": 1,
+      "re-export": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailPack",
+      "PreparedNativeMailSend"
+     ],
+     "path": "src/channel_identity_provider/native_mail/pack.rs",
+     "purpose": "Native mail pack runtime: one Stalwart instance, both run modes, one gate",
+     "surface": {
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -8608,6 +8624,72 @@
      "purpose": "Slack key, workspace, and field normalizers shared by the Slack adapter paths",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StalwartClient",
+      "StalwartConfig",
+      "StalwartWebhookVerifier"
+     ],
+     "path": "src/channel_identity_provider/stalwart.rs",
+     "purpose": "Stalwart 0.16 JMAP driver for the native mail pack",
+     "surface": {
+      "const": 1,
+      "crate-vis": 10,
+      "fn": 10,
+      "re-export": 3,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StalwartInboxCursor",
+      "StalwartInboxOutcome",
+      "StalwartQuarantine"
+     ],
+     "path": "src/channel_identity_provider/stalwart/inbox.rs",
+     "purpose": "Authenticated JMAP reads, raw quarantine, then the existing CID-6 door",
+     "surface": {
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailReputationReport",
+      "NativeMailReputationUpdate",
+      "NativeMailSignalSource",
+      "NativeMailWarmupPolicy"
+     ],
+     "path": "src/channel_identity_provider/stalwart/reputation.rs",
+     "purpose": "Real-signal snapshots written through the existing CID-5 claim family",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailMessage",
+      "StalwartSendSink"
+     ],
+     "path": "src/channel_identity_provider/stalwart/send.rs",
+     "purpose": "Native message fields and the common outbound sink's JMAP submission",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -11899,7 +11981,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -12088,7 +12170,7 @@
      "path": "src/compaction/withdrawn.rs",
      "purpose": "What a withdrawn epoch summary keeps: its keyframe, without its words",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -15318,7 +15400,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "re-export": 8
      }
     },
@@ -15353,13 +15435,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/sweep_queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 24,
       "fn": 1
      }
     },
@@ -18744,7 +18826,7 @@
      "path": "src/edit_roundtrip/pptx/identities.rs",
      "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -39612,7 +39694,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sweep/compact.rs",
@@ -39628,7 +39710,7 @@
      "path": "src/sweep/finalize.rs",
      "purpose": "Job finalize, retry rewrite, and dropped-obligation audit",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -39648,7 +39730,7 @@
      "path": "src/sweep/run.rs",
      "purpose": "Sweep driver, run state, and race-injection hooks",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -40345,7 +40427,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -40354,6 +40436,16 @@
      "notable": [],
      "path": "src/sync/ingest/order.rs",
      "purpose": "The order one pass or delta visits AUTHORITY_LOG rows in",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/peer_import.rs",
+     "purpose": "Whether the entity doors on this thread carry a federation peer's import (Docs Q04)",
      "surface": {
       "crate-vis": 2
      }
@@ -41243,7 +41335,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -41321,6 +41413,16 @@
      "surface": {
       "crate-vis": 11,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/withdrawn.rs",
+     "purpose": "Withdrawn generations in a window's live map (OF-013)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -46748,7 +46850,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 18,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -47856,12 +47958,12 @@
     "sweep": {
      "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 147,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48043,9 +48145,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 86,
+   "over_bar": 87,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2897,
+   "source_files": 2904,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51987,7 +52089,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 7,
-      "fn": 4,
+      "fn": 5,
       "re-export": 3,
       "struct": 15
      }
