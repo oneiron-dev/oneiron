@@ -137,6 +137,10 @@ export class Oneiron {
         query: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as unknown),
       }),
     },
+    identity: {
+      answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentityAnswer(input) as unknown),
+      settle: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentitySettle(input) as unknown),
+    },
     message: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMessage(input) as unknown),
     grants: {
       ask: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfGrantsAsk(input) as unknown),
