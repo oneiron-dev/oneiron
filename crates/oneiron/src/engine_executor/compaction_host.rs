@@ -5,8 +5,8 @@ use super::compaction::{FoldJob, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
 use super::store::{
-    COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_observation_window,
-    load_utf8_output, observation_output_path, recoverable_chunk_path, script_output_path,
+    COMPACTION_OBSERVATION_WINDOW_BYTES, RECOVERABLE_OUTPUT_CHUNK_BYTES, load_context_output,
+    load_observation_window, observation_output_path, recoverable_chunk_path, script_output_path,
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
@@ -208,7 +208,7 @@ impl EngineNativeExecutor<'_> {
                 super::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
-                load_utf8_output(&self.storage, record, &script_output_path(seq))?,
+                load_context_output(&self.storage, record, &script_output_path(seq))?,
                 load_observation_window(
                     &self.storage,
                     record,
@@ -377,7 +377,7 @@ impl EngineNativeExecutor<'_> {
                 super::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
-                load_utf8_output(&self.storage, record, &script_output_path(seq))?,
+                load_context_output(&self.storage, record, &script_output_path(seq))?,
                 load_observation_window(
                     &self.storage,
                     record,
@@ -552,8 +552,12 @@ impl EngineNativeExecutor<'_> {
                 );
                 for step in fold.from..=fold.through.min(completed.saturating_sub(1)) {
                     let turn = CodeRunHistoryTurn {
-                        code: load_utf8_output(&self.storage, record, &script_output_path(step))?,
-                        console: load_utf8_output(
+                        code: load_context_output(
+                            &self.storage,
+                            record,
+                            &script_output_path(step),
+                        )?,
+                        console: load_context_output(
                             &self.storage,
                             record,
                             &observation_output_path(step),

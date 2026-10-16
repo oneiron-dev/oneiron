@@ -74,6 +74,15 @@
       if (typeof held === "function") throw new TypeError("verb row shadows a host import");
       target[leaf] = held ? Object.assign(verb(name), held) : verb(name);
     }
+    // `store(value, name?)` streams the value to the host as the result
+    // frames do, then binds it: a string as given, any other value as its
+    // JSON. The host answers the stored result's card.
+    if ("store" in bare) throw new TypeError("verb row shadows a host import");
+    bare.store = (value, name) => {
+      if (name !== undefined && typeof name !== "string") throw new TypeError("store name must be a string");
+      sendFramed("store", text(value), true);
+      return Promise.resolve(send("store", verbInput(name === undefined ? {} : {name}))).then(decode);
+    };
     for (const root of ["tools", "connectors", "mcp", "memory", "board", "shared", "home", "sdk"])
       if (!roots.has(root)) bare[root] = refusal(root);
     for (const root of ["connectors", "mcp"]) sdk.self[root] ??= refusal(`self.${root}`);

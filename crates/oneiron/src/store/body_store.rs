@@ -472,6 +472,15 @@ impl BodySink {
         Ok(())
     }
 
+    /// The digest of the bytes written so far, the body's own once it is
+    /// finished: a body's name can depend on it before it is published.
+    pub(crate) fn digest(&self) -> Result<[u8; 32]> {
+        self.meter
+            .as_ref()
+            .map(|meter| *meter.hasher.finalize().as_bytes())
+            .ok_or(Error::InvariantViolation("result body sink finished twice"))
+    }
+
     /// Finishes the body: a spilled one is published under its digest.
     pub(crate) fn finish(mut self, preview_chars: usize) -> Result<(BodyFacts, SunkBody)> {
         let facts = self
