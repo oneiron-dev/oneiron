@@ -63,6 +63,22 @@ pub const MODEL_ROLES: [ModelRole; 15] = [
     ModelRole::TtsDeferred,
     ModelRole::LocalVision,
 ];
+impl ModelRole {
+    /// A role of the generative family: it generates or rules through the
+    /// model line, never tags (ARCH-0036 "two model families").
+    #[must_use]
+    pub const fn is_generative(self) -> bool {
+        matches!(
+            self,
+            Self::GenerativeReasoner
+                | Self::LocalReasoner
+                | Self::Checker
+                | Self::DreamerCurrent
+                | Self::DreamerTarget
+                | Self::ExtractionTeacher
+        )
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelSlot {
@@ -225,7 +241,51 @@ impl ModelManifest {
         {
             return Err(invalid("verdict requires llm slot"));
         }
+        self.validate_families()
+    }
+    /// The two families stay apart: the extraction encoder binds the
+    /// Oneironer slot and no other role does, and no generative role is
+    /// served by a model the encoder is bound to, on any route. Tagging is
+    /// never collapsed into the generative seat (ARCH-0036, OF-138).
+    fn validate_families(&self) -> Result<()> {
+        if self.roles.iter().any(|(role, binding)| {
+            (*role == ModelRole::ExtractionEncoder) != (binding.slot == ModelSlot::Oneironer)
+        }) {
+            return Err(invalid(
+                "extraction_encoder binds the oneironer slot, and only it does",
+            ));
+        }
+        let models = |binding: &ModelBinding| {
+            std::iter::once(binding.model.clone())
+                .chain(binding.route_models.values().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let encoder = models(self.binding(ModelRole::ExtractionEncoder)?);
+        if self
+            .roles
+            .iter()
+            .filter(|(role, _)| role.is_generative())
+            .any(|(_, binding)| !models(binding).is_disjoint(&encoder))
+        {
+            return Err(invalid(
+                "a generative role cannot be served by the extraction encoder's model",
+            ));
+        }
         Ok(())
+    }
+    /// The encoder the vault binds at `route`: the model the Oneironer slot
+    /// must serve for this vault's turns to be tagged. A narrower route than
+    /// the slot's pin takes its own route model.
+    pub fn extraction_encoder(&self, route: ModelLocality) -> Result<&ModelId> {
+        let binding = self.binding(ModelRole::ExtractionEncoder)?;
+        let widest = *self
+            .routes
+            .get(&ModelSlot::Oneironer)
+            .ok_or_else(|| invalid("missing slot route"))?;
+        if route_rank(route) > route_rank(widest) {
+            return Err(invalid("resident route cannot widen manifest pin"));
+        }
+        model_for_route(binding, route, widest)
     }
     pub fn binding(&self, role: ModelRole) -> Result<&ModelBinding> {
         self.roles

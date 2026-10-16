@@ -85,6 +85,33 @@ impl OneironClient {
                     "vault.kv.namespaces" => {
                         remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                     }
+                    "vault.artifacts.view" => remote_agent_verb_output::<
+                        Option<oneiron::blob_artifact::ArtifactView>,
+                    >(client, verb, &input),
+                    "vault.artifacts.export" => remote_agent_verb_output::<
+                        Option<oneiron::blob_artifact::ArtifactExportFile>,
+                    >(client, verb, &input),
+                    "vault.artifacts.born_from" => remote_agent_verb_output::<
+                        oneiron::blob_artifact::BornFromView,
+                    >(client, verb, &input),
+                    "vault.artifacts.proposals" => remote_agent_verb_output::<
+                        Vec<oneiron::edit_settle::PendingProposalView>,
+                    >(client, verb, &input),
+                    "vault.artifacts.propose_deck" => remote_agent_verb_output::<
+                        oneiron::blob_artifact::DeckProposeOutcome,
+                    >(client, verb, &input),
+                    "vault.artifacts.propose_output" => remote_agent_verb_output::<
+                        oneiron::edit_settle::PendingProposalView,
+                    >(client, verb, &input),
+                    "vault.artifacts.keep" => remote_agent_verb_output::<
+                        oneiron::blob_artifact::KeptProposal,
+                    >(client, verb, &input),
+                    "vault.artifacts.discard" => remote_agent_verb_output::<
+                        oneiron::blob_artifact::DiscardedProposal,
+                    >(client, verb, &input),
+                    "vault.artifacts.undo" => remote_agent_verb_output::<
+                        oneiron::blob_artifact::UndoneKeep,
+                    >(client, verb, &input),
                     "can" => remote_agent_verb_output::<oneiron::task_verb::TaskAskPreflight>(
                         client, verb, &input,
                     ),
@@ -405,6 +432,123 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.kv.namespaces", value)
+    }
+    /// One artifact's kind, head and versions, each with its made_by and born-from.
+    pub fn vault_artifacts_view(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactRefRequest,
+    ) -> Result<Option<oneiron::blob_artifact::ArtifactView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.view", value)
+    }
+    /// One version's export file (base64), with its pinned name and media type.
+    pub fn vault_artifacts_export(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactExportRequest,
+    ) -> Result<Option<oneiron::blob_artifact::ArtifactExportFile>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.export", value)
+    }
+    /// The artifacts and versions a task, ask, run, skill or agent run produced.
+    pub fn vault_artifacts_born_from(
+        &self,
+        input: &oneiron::blob_artifact::BornFromRequest,
+    ) -> Result<oneiron::blob_artifact::BornFromView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.born_from", value)
+    }
+    /// The proposals waiting beside one artifact for Keep or Discard.
+    pub fn vault_artifacts_proposals(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactRefRequest,
+    ) -> Result<Vec<oneiron::edit_settle::PendingProposalView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.proposals", value)
+    }
+    /// Runs one native deck transaction over the head and holds the proposal for Keep.
+    pub fn vault_artifacts_propose_deck(
+        &self,
+        input: &oneiron::blob_artifact::DeckProposeRequest,
+    ) -> Result<oneiron::blob_artifact::DeckProposeOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.propose_deck", value)
+    }
+    /// Offers one native organ result as the artifact's next version, held for Keep.
+    pub fn vault_artifacts_propose_output(
+        &self,
+        input: &oneiron::blob_artifact::NativeOutputRequest,
+    ) -> Result<oneiron::edit_settle::PendingProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.propose_output", value)
+    }
+    /// Keeps one waiting proposal as a new version, once, with its receipt.
+    pub fn vault_artifacts_keep(
+        &self,
+        input: &oneiron::blob_artifact::ProposalSettleRequest,
+    ) -> Result<oneiron::blob_artifact::KeptProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.keep", value)
+    }
+    /// Discards one waiting proposal, once, with its receipt.
+    pub fn vault_artifacts_discard(
+        &self,
+        input: &oneiron::blob_artifact::ProposalSettleRequest,
+    ) -> Result<oneiron::blob_artifact::DiscardedProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.discard", value)
+    }
+    /// Undoes one Keep with a new version; the settle stays consumed.
+    pub fn vault_artifacts_undo(
+        &self,
+        input: &oneiron::blob_artifact::ProposalSettleRequest,
+    ) -> Result<oneiron::blob_artifact::UndoneKeep, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.undo", value)
     }
     /// Read-only ask preflight or partial answer evidence.
     pub fn can(
