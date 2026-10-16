@@ -167,6 +167,28 @@ impl OfferLadder {
         &self.name
     }
 
+    /// Bind one traceless turn without retained cooldowns, fallback logs or
+    /// receipts. Only the house target keeps the host's configured prompt.
+    pub(crate) fn anonymous_call(
+        &self,
+        request: LlmRequest,
+        include_prompt: bool,
+    ) -> LlmResult<(LlmRequest, ServedOffer)> {
+        self.admits(&request)?;
+        if self.kept_on_device(0, &request) {
+            return Err(RetryableLlmError::KeptOnDevice {
+                retry_after: None,
+                resets_at: Vec::new(),
+            }
+            .into());
+        }
+        let mut rung = self.rungs[0].clone();
+        if !include_prompt {
+            rung.prompt = None;
+        }
+        Ok((rung.bind(request), rung.offer))
+    }
+
     /// How many provider calls a call that fails makes on one pass of its
     /// chain: one per rung. A call that waits for a cooling chain makes one
     /// more pass.

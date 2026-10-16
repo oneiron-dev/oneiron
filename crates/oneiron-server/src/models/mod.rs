@@ -109,6 +109,7 @@ pub struct ModelRuntime {
     router: Option<Arc<ModelRouter>>,
     status: ModelsStatus,
     receipts: Arc<dyn RunReceiptSink>,
+    host: Option<Arc<HostAccount>>,
     /// The house model's decision read (`[models.decision_read]`).
     decision_read: Option<DecisionReadDoor>,
     /// The roles whose work never leaves the device.
@@ -129,6 +130,7 @@ impl ModelRuntime {
             router: None,
             status: ModelsStatus::unconfigured(),
             receipts: Arc::new(LoggedReceipts),
+            host: None,
             decision_read: None,
             stays_on_device: BTreeSet::new(),
             media: MediaRuntime::empty(),
@@ -145,17 +147,30 @@ impl ModelRuntime {
         self
     }
 
+    /// The live vault allocation used by every run this runtime serves.
+    #[must_use]
+    pub fn with_host_account(mut self, host: Arc<HostAccount>) -> Self {
+        self.media.set_host_account(Arc::clone(&host));
+        self.host = Some(host);
+        self
+    }
+
+    pub(crate) fn host_account(&self) -> Option<Arc<HostAccount>> {
+        self.host.clone()
+    }
+
     /// A run that declares nothing, on a meter its host built (see
     /// [`undeclared_run`]), with this runtime's receipts.
     #[must_use]
     pub fn undeclared_run(&self, run: impl Into<String>, meter: BudgetGuard) -> RunAdmission {
-        undeclared_run(run, meter, Arc::clone(&self.receipts))
+        undeclared_run(run, meter, self.host.clone(), Arc::clone(&self.receipts))
     }
 
     /// A declared run (ARCH-0053 `#run-declaration`) on its own line, over
     /// this runtime's models: its teachers, connectors and budget, as the host
     /// that starts it states them. `host` is the account whose allocation
-    /// pays host-paid offers. Its paid keys must sit at T0 unless the owner
+    /// pays host-paid offers; `None` uses this runtime's live host account.
+    /// Its paid keys must sit at T0 unless the owner
     /// allowed an offer at T1; a `key_env` key is at T1.
     #[must_use]
     pub fn declared_run(
@@ -165,7 +180,12 @@ impl ModelRuntime {
         host: Option<Arc<HostAccount>>,
     ) -> DeclaredRun {
         DeclaredRun::new(
-            RunAdmission::new(run, declaration, host, Arc::clone(&self.receipts)),
+            RunAdmission::new(
+                run,
+                declaration,
+                host.or_else(|| self.host.clone()),
+                Arc::clone(&self.receipts),
+            ),
             self.router.clone(),
         )
     }
@@ -348,6 +368,7 @@ impl ModelRuntime {
             router: (!router.is_empty()).then(|| Arc::new(router)),
             status,
             receipts: Arc::new(LoggedReceipts),
+            host: None,
             decision_read,
             stays_on_device: config.stays_on_device.clone(),
             media,
@@ -418,6 +439,7 @@ impl ModelRuntime {
 pub fn undeclared_run(
     run: impl Into<String>,
     meter: BudgetGuard,
+    host: Option<Arc<HostAccount>>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> RunAdmission {
     let line = BudgetLine {
@@ -425,7 +447,7 @@ pub fn undeclared_run(
         reserve_units: meter.reserve_units(),
         unit: LeaseUnit::tokens(),
     };
-    RunAdmission::with_meter(run, RunDeclaration::undeclared(line), meter, None, receipts)
+    RunAdmission::with_meter(run, RunDeclaration::undeclared(line), meter, host, receipts)
 }
 
 /// One provider's wire backend. Each sends one request per call (its

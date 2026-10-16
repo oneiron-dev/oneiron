@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
+use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
     BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
@@ -178,8 +178,8 @@ pub(super) fn bind(
     Ok(Some(door))
 }
 
-/// A read admitted as one paid call at the provider's origin: the owner's own
-/// server, or a keyed endpoint paid with the owner's key.
+/// A read admitted as one paid call at the provider's origin, with the
+/// payer and allocation-unit rates the host bound on that provider.
 fn connector(provider: &ProviderConfig, model: &str) -> anyhow::Result<PaidConnector> {
     let origin = reqwest::Url::parse(&provider.base_url)?
         .origin()
@@ -191,11 +191,7 @@ fn connector(provider: &ProviderConfig, model: &str) -> anyhow::Result<PaidConne
         connector: format!("decision-read:{model}"),
         route,
         locality: provider.locality,
-        payer: if keyed.is_some() {
-            Payer::CustomerKey
-        } else {
-            Payer::Local
-        },
+        payer: provider.payer,
         credential_binding: keyed.map(|env| format!("env:{env}")),
         catalog_revision: Some(provider.revision.clone()),
         custody: if keyed.is_some() {
@@ -205,7 +201,7 @@ fn connector(provider: &ProviderConfig, model: &str) -> anyhow::Result<PaidConne
         },
         unit_cost: 1,
         cost_unit: LeaseUnit::tokens(),
-        rates: Vec::new(),
+        rates: provider.rates.clone(),
     })
 }
 

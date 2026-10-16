@@ -32,16 +32,16 @@ pub(super) fn residence_update_frame(
 pub(super) const MAX_CONVERGENCE_ROUNDS: u32 = 5;
 
 pub(super) const EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS: u64 = 1;
-/// How often a live lane relays its sealed private-world windows through the
-/// home (OF-534 G7).
+/// How often a live lane runs its residence upkeep: an opened machine's
+/// authority catch-up (OF-469), then the sealed relay through the home
+/// (OF-534 G7).
 pub(super) const SEALED_RELAY_INTERVAL_SECS: u64 = 300;
 
 pub(super) type WsSink = SplitSink<WsStream, Message>;
 
 pub(super) type WsSource = SplitStream<WsStream>;
 
-type WsStream =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type WsStream = crate::sync::carrier::SyncSocket;
 
 /// Read-budget for one server-frame pump: how long to wait for the first
 /// frame, how long a quiet gap ends the pump, and a frame cap.

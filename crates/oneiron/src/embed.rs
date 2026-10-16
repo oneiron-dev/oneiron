@@ -22,7 +22,8 @@ pub use space::{
     KindSlotBindings,
 };
 pub(crate) use space::{
-    delete_media_vectors_in_txn, embedding_space_in_txn, search_media_space_in_txn,
+    delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
+    search_media_space_in_txn,
 };
 pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
