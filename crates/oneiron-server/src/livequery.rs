@@ -10,6 +10,7 @@ use oneiron::memory::{Memory, RecallScope, ScopedView};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::api::call_receipt::{self, CallStamp};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::protocol::{ProtocolError, TAG_RPC, TAG_SUB};
 
@@ -66,10 +67,30 @@ pub(crate) fn rpc_result(request_id: u64, result: Value) -> Result<Vec<Vec<u8>>,
     wire::result(request_id, &result)
 }
 
-fn rpc_error(request_id: u64, error: AppError) -> Result<Vec<Vec<u8>>, ProtocolError> {
-    Ok(vec![wire::frame(
-        TAG_RPC, "rpc.err", request_id, 0, true, error,
+fn rpc_error(
+    request_id: u64,
+    error: AppError,
+    stamp: &CallStamp,
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    Ok(vec![wire::stamped_frame(
+        TAG_RPC, "rpc.err", request_id, 0, true, error, stamp,
     )?])
+}
+
+/// What a WS RPC's receipt states of its request (OF-538), taken before the
+/// call consumes its params.
+pub(crate) struct RpcCall {
+    method: String,
+    request_digest: String,
+}
+
+impl RpcCall {
+    pub(crate) fn of(request: &RpcRequest) -> Self {
+        Self {
+            method: request.method.clone(),
+            request_digest: oneiron::receipt::call_json_digest(&request.params),
+        }
+    }
 }
 
 /// A read RPC's reply frames, and the rows its result carries as its
@@ -82,22 +103,67 @@ pub(crate) struct RpcReply {
 }
 
 impl RpcReply {
+    /// OF-538's one WS door: records the call once it has answered, in its
+    /// own write transaction, and states the receipt on every `rpc.res`
+    /// chunk and on `rpc.err` alike. The result is packed first, so one past
+    /// the byte limit is recorded as the refusal the caller receives.
+    ///
+    /// A WS RPC runs on the vault the bound credential reads, never inside
+    /// an off-record session, so the anonymous no-record exception never
+    /// arises here.
     fn answer(
+        server: &crate::server::SyncServer,
+        auth: &CoreAuth,
+        call: RpcCall,
         request_id: u64,
         result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
     ) -> Result<Self, ProtocolError> {
-        let (frames, rows) = match result {
-            Ok((value, rows)) => match rpc_result(request_id, value) {
-                Ok(frames) => (frames, Some(rows)),
-                Err(_) => (
-                    rpc_error(
-                        request_id,
-                        AppError::bad_request("RPC result byte limit exceeded", None),
-                    )?,
-                    None,
-                ),
+        let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
+        let packed = result.and_then(|(value, rows)| {
+            wire::packed(&value)
+                .map(|bytes| (bytes, rows))
+                .map_err(|_| too_large())
+        });
+        let (outcome, result_digest, served) = match &packed {
+            Ok((bytes, rows)) => (
+                oneiron::receipt::CallOutcome::Ok,
+                Some(oneiron::receipt::call_bytes_digest(bytes)),
+                rows.iter()
+                    .flatten()
+                    .take(oneiron::receipt::MAX_CALL_RECEIPT_SERVED)
+                    .map(oneiron::EntityId::to_hex)
+                    .collect(),
+            ),
+            Err(error) => (
+                oneiron::receipt::CallOutcome::Refused {
+                    code: error.code().to_owned(),
+                },
+                None,
+                Vec::new(),
+            ),
+        };
+        let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+        let stamp = call_receipt::record(
+            server,
+            false,
+            oneiron::receipt::CallReceiptInput {
+                transport: oneiron::receipt::CallTransport::Ws,
+                verb: call.method,
+                actor_ref,
+                actor_class,
+                credential_ref: call_receipt::credential_ref(auth),
+                outcome,
+                request_digest: call.request_digest,
+                result_digest,
+                served,
             },
-            Err(error) => (rpc_error(request_id, error)?, None),
+        );
+        let (frames, rows) = match packed {
+            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
+                Ok(frames) => (frames, Some(rows)),
+                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+            },
+            Err(error) => (rpc_error(request_id, error, &stamp)?, None),
         };
         Ok(Self {
             request_id,
@@ -191,6 +257,7 @@ pub(crate) fn bound_rpc_reply(
     auth: &CoreAuth,
     request: RpcRequest,
 ) -> Result<RpcReply, ProtocolError> {
+    let call = RpcCall::of(&request);
     let result = (|| {
         if !read_method(&request.method) {
             // A canonical verb under the wrong root is refused with its
@@ -207,7 +274,7 @@ pub(crate) fn bound_rpc_reply(
         let memory = bound_memory(server.vault(), auth)?;
         read.run(server, auth, &memory)
     })();
-    RpcReply::answer(request.request_id, result)
+    RpcReply::answer(server, auth, call, request.request_id, result)
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

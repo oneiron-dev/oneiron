@@ -631,7 +631,12 @@ impl Connection {
         if !last {
             self.refused.insert(routed.id);
         }
-        super::rpc_error(routed.id, AppError::result_changed())
+        // The refusal that replaces the result states the same call receipt.
+        let stamp = envelope.map_or(
+            crate::api::call_receipt::CallStamp::Unrecorded,
+            |envelope| envelope.call_stamp(),
+        );
+        super::rpc_error(routed.id, AppError::result_changed(), &stamp)
             .ok()?
             .pop()
     }

@@ -124,6 +124,7 @@ pub(super) fn run(
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
+    let call = super::RpcCall::of(&request);
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -145,7 +146,7 @@ pub(super) fn run(
             )),
         }
     })();
-    super::RpcReply::answer(request.request_id, result)
+    super::RpcReply::answer(server, auth, call, request.request_id, result)
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

@@ -1,6 +1,7 @@
 //! Version-8 app envelopes. Result chunks are MessagePack binary fragments of
 //! one MessagePack value. Concatenate by seq before decoding or acknowledging.
 use super::*;
+use crate::api::call_receipt::CallStamp;
 use std::io::Write;
 
 pub(super) const CHUNK_BYTES: usize = 64 * 1024;
@@ -16,6 +17,27 @@ pub(super) struct Envelope<T> {
     pub seq: u64,
     pub last: bool,
     pub payload: T,
+    /// The call receipt an RPC reply states (OF-538), on every `rpc.res`
+    /// chunk and on `rpc.err`: the `call:<32hex>` ref, or `null` beside
+    /// `no_record: true` for a call inside an anonymous off-record session.
+    /// Absent on every frame that answers no call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_record: bool,
+}
+
+impl<T> Envelope<T> {
+    /// The call receipt this frame states.
+    pub(super) fn call_stamp(&self) -> CallStamp {
+        if self.no_record {
+            return CallStamp::NoRecord;
+        }
+        match &self.receipt_ref {
+            Some(Some(receipt_ref)) => CallStamp::Recorded(receipt_ref.clone()),
+            _ => CallStamp::Unrecorded,
+        }
+    }
 }
 
 struct BoundedWriter(Vec<u8>);
@@ -70,6 +92,19 @@ pub(super) fn frame<T: Serialize>(
     last: bool,
     payload: T,
 ) -> Result<Vec<u8>, ProtocolError> {
+    stamped_frame(tag, kind, id, seq, last, payload, &CallStamp::Unrecorded)
+}
+
+/// [`frame`] for a reply that states its call's receipt.
+pub(super) fn stamped_frame<T: Serialize>(
+    tag: u8,
+    kind: &str,
+    id: u64,
+    seq: u64,
+    last: bool,
+    payload: T,
+    stamp: &CallStamp,
+) -> Result<Vec<u8>, ProtocolError> {
     let mut bytes = vec![tag];
     bytes.extend(packed(&Envelope {
         kind: kind.to_owned(),
@@ -77,6 +112,12 @@ pub(super) fn frame<T: Serialize>(
         seq,
         last,
         payload,
+        receipt_ref: match stamp {
+            CallStamp::Recorded(receipt_ref) => Some(Some(receipt_ref.clone())),
+            CallStamp::NoRecord => Some(None),
+            CallStamp::Unrecorded => None,
+        },
+        no_record: stamp.no_record(),
     })?);
     let max = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
     if bytes.len() - 1 > max {
@@ -183,18 +224,27 @@ pub(crate) fn sub(bytes: &[u8]) -> Result<SubRequest, ProtocolError> {
 }
 
 pub(super) fn result(id: u64, value: &Value) -> Result<Vec<Vec<u8>>, ProtocolError> {
-    let bytes = packed(value)?;
+    result_chunks(id, &packed(value)?, &CallStamp::Unrecorded)
+}
+
+/// One packed result as `rpc.res` chunks, each stating the call's receipt.
+pub(super) fn result_chunks(
+    id: u64,
+    bytes: &[u8],
+    stamp: &CallStamp,
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
     bytes
         .chunks(CHUNK_BYTES)
         .enumerate()
         .map(|(seq, chunk)| {
-            frame(
+            stamped_frame(
                 TAG_RPC,
                 "rpc.res",
                 id,
                 seq as u64,
                 (seq + 1) * CHUNK_BYTES >= bytes.len(),
                 serde_bytes::Bytes::new(chunk),
+                stamp,
             )
         })
         .collect()

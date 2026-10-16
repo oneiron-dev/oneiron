@@ -304,3 +304,36 @@ pub fn mcp_verb_board_section(
         },
     )
 }
+
+/// States a `tools/call` result's call receipt (OF-538) in its metadata
+/// envelope, `structuredContent.meta`: `receipt_ref`, or `receipt_ref: null`
+/// with `no_record: true` for a call inside an anonymous off-record session.
+/// The text content that restates `structuredContent` as canonical JSON is
+/// restated again, so the two still agree byte for byte.
+pub(crate) fn mcp_stamp_call_receipt(
+    result: &mut Value,
+    stamp: &crate::api::call_receipt::CallStamp,
+) {
+    let Some(structured) = result.get_mut("structuredContent") else {
+        return;
+    };
+    let before = super::paging::mcp_canonical_json(structured);
+    let Some(object) = structured.as_object_mut() else {
+        return;
+    };
+    let meta = object.entry("meta").or_insert_with(|| json!({}));
+    let Some(meta) = meta.as_object_mut() else {
+        return;
+    };
+    stamp.stamp_json(meta);
+    let after = super::paging::mcp_canonical_json(structured);
+    if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
+        for item in content {
+            if item.get("text").and_then(Value::as_str) == Some(before.as_str())
+                && let Some(item) = item.as_object_mut()
+            {
+                item.insert("text".to_owned(), Value::String(after.clone()));
+            }
+        }
+    }
+}
