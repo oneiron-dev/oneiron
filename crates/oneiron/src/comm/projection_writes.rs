@@ -166,10 +166,16 @@ pub(super) fn put_projected_comm_claim_in_txn(
         }
         return Ok((id, false));
     }
-    put_comm_claim_with_id_in_txn(vault, wtxn, id, value, occurred_at)?;
+    // A STOP's opt-out is a restriction the engine derives from a recorded
+    // inbound event, so like the contact writer's projection it rides the
+    // engine-owned setting: the criticality ladder never refuses a restriction
+    // (F06 H160). Body validation and the source-trust check still run.
+    let restrictive = matches!(value, CommClaimValue::OptOut { .. });
+    put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, restrictive)?;
     Ok((id, true))
 }
 
+#[cfg(test)]
 pub(super) fn put_comm_claim_with_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -180,8 +186,8 @@ pub(super) fn put_comm_claim_with_id_in_txn(
     put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, false)
 }
 
-/// [`put_comm_claim_with_id_in_txn`] on the ENGINE-OWNED setting, for the
-/// projection a contact writer authors on the party's behalf (ONE-1752).
+/// The comm claim put on the ENGINE-OWNED setting, for the projection a
+/// contact writer authors on the party's behalf (ONE-1752).
 ///
 /// The contact door already validated and authorized that write; re-asking the
 /// public criticality ladder here would turn one recorded counterparty fact
@@ -377,7 +383,13 @@ pub(super) fn build_contact_view_in_txn(
     party_ref: EntityId,
 ) -> CommResult<(Vec<u8>, u64)> {
     let mut last_touch = Vec::new();
-    let mut opt_out = Vec::new();
+    // Opt-outs read through merged shells, as the send fold does: a STOP that
+    // projected onto a twin before the merge is still this party's word.
+    let mut opt_out: Vec<_> =
+        super::consent::standing_opt_out_heads_in_txn(vault, rtxn, party_ref)?
+            .into_iter()
+            .map(|head| (head.channel_class, head.occurred_at))
+            .collect();
     let threads = active_thread_refs_in_txn(vault, rtxn, party_ref)?;
     for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
         let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
@@ -396,12 +408,7 @@ pub(super) fn build_contact_view_in_txn(
                 occurred_at,
                 ..
             } => last_touch.push((channel_class, occurred_at)),
-            CommClaimValue::OptOut {
-                channel_class,
-                occurred_at,
-                ..
-            } => opt_out.push((channel_class, occurred_at)),
-            CommClaimValue::ThreadMember { .. } => {}
+            CommClaimValue::OptOut { .. } | CommClaimValue::ThreadMember { .. } => {}
             // Reachability carries no view entry, and an override is an owner
             // DECISION about sending rather than contact state — the lens
             // reports what the counterparty said, not what the owner ruled.

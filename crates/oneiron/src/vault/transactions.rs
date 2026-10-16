@@ -26,7 +26,10 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// they edit the record of which identity-topology seals this vault wrote and
 /// whose it last counted: only the seal writes it (H161). Nor the record of
 /// which author carriers it wrote: only the carrier write and its scrub touch
-/// it (H161 sidecars).
+/// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
+/// reservation: only the delete doors write them. Nor a federation world's
+/// registration or stale stamp: only the registration and the stale sweep
+/// write them.
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -42,6 +45,27 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("it:authored:") {
         return Err(Error::InvalidConfig(
             "identity-topology authorship is written only by its carrier".to_owned(),
+        ));
+    }
+    if [
+        crate::side_table::DELETION_ROW_FENCE.prefix,
+        crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
+        crate::side_table::DELETION_TOPOLOGY_DELETE_INTENT.prefix,
+    ]
+    .iter()
+    .any(|prefix| key.as_bytes().starts_with(prefix))
+    {
+        return Err(Error::InvalidConfig(
+            "deletion fences, markers and topology reservations are written only by the delete doors"
+                .to_owned(),
+        ));
+    }
+    if key.starts_with(crate::federation::FEDERATION_WORLD_KEY_PREFIX)
+        || key.starts_with(crate::federation::FEDERATION_STALE_KEY_PREFIX)
+    {
+        return Err(Error::InvalidConfig(
+            "federation world registrations and stale stamps are written only by the engine"
+                .to_owned(),
         ));
     }
     Ok(())
@@ -400,9 +424,15 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        // Scan checks raised since the last write are kept first, in a write
+        // of their own (no scan opens one). It takes the writer where this
+        // write is about to, holding nothing more: no answer exists yet to
+        // carry a permit another write waits on.
+        self.keep_waiting_scan_checks();
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
+        let stale_sweep = crate::federation::StaleSweepWatch::begin(self);
         let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
             self.store.group_write_as(callback, None, |wtxn| {
                 let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -444,6 +474,9 @@ impl Vault {
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }
+        // A replicated, replayed or composed authority row stamps the worlds
+        // of a pact it ended, as the authority door does (H213).
+        stale_sweep.finish()?;
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved. The
         // clock is observed only when there is an approval to consolidate.

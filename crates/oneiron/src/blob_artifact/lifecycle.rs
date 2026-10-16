@@ -5,12 +5,11 @@ use heed::RwTxn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ppr;
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
+use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::Store;
 
-use super::references::{
-    claimed_hashes, fence_released_asset, forget_claimed_hashes, held_by_live_artifact,
-};
+use super::holders::artifact_hashes;
+use super::references::{fence_released_asset, forget_claimed_hashes, held_by_live_artifact};
 use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
 use super::versions::{HEAD, VERSIONS, blob_artifact_asset_entity_id};
 
@@ -51,26 +50,8 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
-    let mut keys = Vec::new();
-    let mut hashes: Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]> = Vec::new();
-    for entry in VERSIONS.iter_from(store, wtxn, id.as_bytes())? {
-        let (key, record) = entry?;
-        if !hashes.contains(&record.content_hash) {
-            hashes.push(record.content_hash);
-        }
-        keys.push(key);
-    }
-    let claims_count = store
-        .entities
-        .get(wtxn, id.as_bytes())?
-        .is_none_or(|raw| raw.first() == Some(&ENTITY_TYPE_BLOB_ARTIFACT));
-    if claims_count {
-        for content_hash in claimed_hashes(store, wtxn, id)? {
-            if !hashes.contains(&content_hash) {
-                hashes.push(content_hash);
-            }
-        }
-    }
+    let hashes = artifact_hashes(store, wtxn, id)?;
+    let keys = VERSIONS.scan_keys(store, wtxn, id.as_bytes())?;
     forget_claimed_hashes(store, wtxn, id)?;
     HEAD.delete(store, wtxn, id)?;
     for key in keys {

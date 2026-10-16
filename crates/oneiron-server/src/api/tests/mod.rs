@@ -49,9 +49,14 @@ mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
+// Its code-runs row is the wasmtime host's.
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod rate_law;
 mod reactive;
 mod recall_rerank;
 mod relay_widen;
+mod retrieval_bounds;
+mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
 mod run_gate;

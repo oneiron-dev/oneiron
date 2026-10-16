@@ -90,6 +90,7 @@ impl Vault {
         }
         withhold_unborn_projects(self, &wtxn, &document, &mut omitted)?;
         map_project_root(self, &wtxn, &mut document, &mut omitted)?;
+        omit_project_revisions(self, &document, &mut omitted)?;
         for row in &mut document.evidence_ledger.entities {
             if let ExportBody::Pack(value) = &row.body {
                 let (handle, envelope) = self
@@ -503,6 +504,24 @@ fn map_project_root(
         }
         let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
         row.body = ExportBody::from_bytes(&bytes, row.entity_type);
+    }
+    Ok(())
+}
+
+/// Signed project history is archive data: its slips name the source vault's
+/// authority, so its revisions stay in the document beside the signed rows.
+fn omit_project_revisions(
+    vault: &Vault,
+    document: &WholeVaultDocument,
+    omitted: &mut BTreeSet<EntityId>,
+) -> Result<()> {
+    let Some(kind) = crate::workspace_roster::project_revision_type(&vault.store) else {
+        return Ok(());
+    };
+    for row in document.entities() {
+        if row.entity_type == kind {
+            omitted.insert(parse_id(&row.id)?);
+        }
     }
     Ok(())
 }

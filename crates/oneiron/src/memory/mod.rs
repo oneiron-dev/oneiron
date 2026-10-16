@@ -24,6 +24,7 @@
 //! unchanged from the flat-file era.
 
 mod archive_purge;
+mod asset_resolve;
 mod authorship;
 mod birth_position;
 mod booking;
@@ -40,6 +41,7 @@ mod conversation_list;
 mod credential_key;
 mod dreamer;
 mod entity_delete;
+mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
@@ -64,6 +66,7 @@ mod tests;
 mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use asset_resolve::{AssetConsumer, LandedImage, ResolvedAsset, ServedAssetForm};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
@@ -84,6 +87,9 @@ pub use claims::{
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use entity_erase::{
+    EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
+};
 pub use export::{ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

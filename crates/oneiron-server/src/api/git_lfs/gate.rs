@@ -17,9 +17,8 @@ pub(crate) fn lfs_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(
             "/git/{repo}/info/lfs/chunks",
-            post(super::chunks::exchange).layer(DefaultBodyLimit::max(
-                oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME,
-            )),
+            // The handler reads its body, within a frame, at its turn.
+            post(super::chunks::exchange),
         )
         .route("/git/{repo}/info/lfs/objects/batch", post(lfs_batch))
         .route(

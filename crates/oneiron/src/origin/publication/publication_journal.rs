@@ -6,9 +6,10 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
-    GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName, GitWireCommitOutcome, GitWireRepo,
+    GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire,
+    GitWireCommitOutcome, GitWireRepo, lock_repository,
 };
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::OriginPublicationRow;
@@ -74,8 +75,7 @@ impl Vault {
     ) -> Result<()> {
         let count = {
             let rtxn = self.store.env.read_txn()?;
-            let mut count =
-                ScanCount::start(&self.store, &rtxn, OriginScan::PublicationRows, None)?;
+            let mut count = ScanCount::start(&self.store, &rtxn, EngineScan::PublicationRows, &[])?;
             for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
                 count.row();
                 let (_, row) = row?;
@@ -136,8 +136,8 @@ impl Vault {
             let mut count = ScanCount::start(
                 &self.store,
                 &rtxn,
-                OriginScan::VisibleRefRows,
-                Some(*repo_id),
+                EngineScan::VisibleRefRows,
+                repo_id.as_bytes(),
             )?;
             for row in VISIBLE_REF.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
                 count.row();
@@ -231,6 +231,72 @@ impl Vault {
         }
         self.with_write_txn_grouped(|wtxn| {
             CAS_BACKFILL.put(&self.store, wtxn, &(), &())?;
+            Ok(())
+        })
+    }
+
+    /// Whether a saved GitWire effect may move its refs, asked by GitWire at
+    /// the effect itself so that no door to a saved effect re-applies one the
+    /// origin no longer permits. A move an origin publication owns runs only
+    /// under that publication's current authority; a move none owns is not the
+    /// origin's to judge. A permitted Published owner whose name has no visible
+    /// slot gets it back before the effect, so a recreated ref is visible the
+    /// moment it exists and a crash cannot leave it hidden.
+    pub(crate) fn admit_origin_ref_effect(
+        &self,
+        repo: &GitWireRepo,
+        publications: &[GitRefPublication],
+    ) -> Result<bool> {
+        let repo_id = self.origin_repo_id_for(repo)?;
+        for publication in publications {
+            let Some(next) = publication.next() else {
+                continue;
+            };
+            let expected = match publication.expected() {
+                GitRefExpectation::Absent => None,
+                GitRefExpectation::Value(oid) => Some(oid),
+                GitRefExpectation::Any => continue,
+            };
+            let Some(owner) =
+                self.origin_move_owner(repo_id, publication.name(), expected, next)?
+            else {
+                continue;
+            };
+            if self
+                .origin_authority_refusal(repo, owner.publication_id)?
+                .is_some()
+            {
+                return Ok(false);
+            }
+            if owner.status == OriginPublicationStatus::Published {
+                let key = visible_ref_key(&owner.repo_id, &owner.ref_name);
+                self.with_write_txn_grouped(|wtxn| {
+                    if !VISIBLE_REF.contains(&self.store, wtxn, &key)? {
+                        VISIBLE_REF.put(&self.store, wtxn, &key, &owner.publication_id)?;
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Retires a deleted name's visible slot while the ref is still absent.
+    /// A read failure is not absence. No publication, CAS owner or Change row
+    /// goes with it, so a later push at an old tip still finds its owner.
+    pub(in crate::origin) fn retire_origin_visible_ref(
+        &self,
+        git: &GitWire<'_>,
+        repo: &GitWireRepo,
+        repo_id: EntityId,
+        ref_name: &GitRefName,
+    ) -> Result<()> {
+        let _guard = lock_repository(repo.common_dir())?;
+        if git.read_ref(repo, ref_name)?.is_some() {
+            return Ok(());
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            VISIBLE_REF.delete(&self.store, wtxn, &visible_ref_key(&repo_id, ref_name))?;
             Ok(())
         })
     }

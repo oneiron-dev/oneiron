@@ -1,6 +1,52 @@
 use super::*;
 use crate::error::GateError;
 
+/// Review r11 (Sol R11-1, P1): the walk read each map key from a copy, so
+/// maps nested in their keys held a copy of everything inside at every
+/// level: 128 such levels around an array of nils held over a hundred copies
+/// of the array at once, past what an install's room counts a decoded byte
+/// at. A key is read in place now, and nesting in keys costs what nesting in
+/// values does; a credential deep in a key is still refused.
+#[test]
+fn maps_nested_in_their_keys_cost_what_maps_nested_in_their_values_do() {
+    use crate::session_overlay::hygiene_tests::peak_allocated;
+    const LEVELS: usize = 128;
+    const NILS: u32 = 64 * 1024;
+    let mut nils = vec![0xdd];
+    nils.extend_from_slice(&NILS.to_be_bytes());
+    nils.resize(5 + NILS as usize, 0xc0);
+    // {{{[nil, …]: nil}: nil} …: nil}
+    let mut in_keys = vec![0x81; LEVELS];
+    in_keys.extend_from_slice(&nils);
+    in_keys.extend(std::iter::repeat_n(0xc0, LEVELS));
+    // {nil: {nil: {… [nil, …]}}}
+    let mut in_values = [0x81, 0xc0].repeat(LEVELS);
+    in_values.extend_from_slice(&nils);
+    let (scanned, keys) = peak_allocated(|| scan_write_payload(&in_keys));
+    scanned.expect("no credential in the keys");
+    let (scanned, values) = peak_allocated(|| scan_write_payload(&in_values));
+    scanned.expect("no credential in the values");
+    assert!(
+        keys <= 2 * values,
+        "nested in keys held {keys} bytes at once; in values, {values}"
+    );
+
+    let mut key = rmpv::Value::Map(vec![(
+        rmpv::Value::from("password"),
+        rmpv::Value::Binary(b"private fixture".to_vec()),
+    )]);
+    for _ in 0..LEVELS {
+        key = rmpv::Value::Map(vec![(key, rmpv::Value::Nil)]);
+    }
+    let mut deep = Vec::new();
+    rmpv::encode::write_value(&mut deep, &key).expect("encode");
+    let error = scan_payload(&deep).expect_err("a credential deep in a key");
+    assert!(
+        matches!(error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+        if reason_codes.contains(&"gate.secret_scan.sensitive_env"))
+    );
+}
+
 #[test]
 fn credential_fields_cannot_hide_behind_messagepack_binary_or_json_escapes() {
     let mut bytes = Vec::new();
@@ -334,6 +380,51 @@ fn every_provider_token_shape_still_rejects() {
     }
 }
 
+/// F23 (H49, H66): a credential keeps its reason after leading token bytes
+/// (one letter, `_`, `-`), while snake and kebab prose holding a provider
+/// prefix inside a word (Sol R1: or a whole word) is not read as a key.
+#[test]
+fn a_credential_after_leading_token_bytes_still_rejects() {
+    let body36 = "0123456789abcdefghijklmnopqrstuvwxyz";
+    for (token, reason) in [
+        (
+            ["AK", "IA0123456789ABCDEF"].concat(),
+            REASON_AWS_ACCESS_KEY_ID,
+        ),
+        (["gh", "p_", body36].concat(), REASON_GITHUB_TOKEN),
+        (
+            ["github", "_pat_", body36, body36].concat(),
+            REASON_GITHUB_TOKEN,
+        ),
+        (
+            ["AI", "za", "0123456789abcdefghijklmnopqrstuvwxy"].concat(),
+            REASON_GOOGLE_API_KEY,
+        ),
+        (
+            ["sk", "-", body36, "ABCDEFGHIJKL"].concat(),
+            REASON_OPENAI_KEY,
+        ),
+        (["sk", "-proj-", body36].concat(), REASON_OPENAI_KEY),
+        (["xo", "xb-", body36].concat(), REASON_SLACK_TOKEN),
+        (["sk", "_live_", body36].concat(), REASON_STRIPE_KEY),
+        (["rk", "_live_", body36].concat(), REASON_STRIPE_KEY),
+    ] {
+        for lead in ["X", "_", "-", "x9_"] {
+            let prose = format!("the value is {lead}{token} for now");
+            assert_eq!(write_reason(&prose), Some(reason), "{lead}{reason}");
+            assert_eq!(scan_file_content("", prose.as_bytes()), Some(reason));
+        }
+    }
+    for prose in [
+        "highs_and_lows_of_the_quarterly_market_report_for_this_year",
+        "risk_live_monitoring_dashboard_configuration_v2",
+        "task-assessment-for-the-quarterly-planning-meeting-notes-and-more-words",
+        "task-proj-quarterly-planning-meeting-notes-and-more-words",
+    ] {
+        assert_eq!(write_reason(prose), None, "{prose}");
+    }
+}
+
 /// A token-shaped name assembled at run time, so no literal in the source
 /// matches a provider pattern.
 fn token_shape() -> String {
@@ -528,4 +619,61 @@ fn a_body_nested_past_its_decoder_is_refused_by_name() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+/// The push door scans a blob whole, so a line may be as long as the blob
+/// (Astra F1, Sol F1 on the per-blob scan): the phrase detector keeps a
+/// bounded number of words however long a run of list words is. Before #1433
+/// it kept a vector for every one-word segment until the run ended, many
+/// times the line. Read where each test owns its process, so the peak is this
+/// scan's.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_long_run_of_list_words_scans_in_bounded_memory() {
+    if std::env::var("NEXTEST_EXECUTION_MODE").as_deref() != Ok("process-per-test") {
+        return;
+    }
+    let peak_bytes = || {
+        let status = std::fs::read_to_string("/proc/self/status").expect("process status");
+        let kib = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmHWM:"))
+            .and_then(|value| value.trim().strip_suffix("kB"))
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .expect("peak resident size");
+        kib * 1024
+    };
+    // Sixteen MiB of one line: two million one-word segments, no phrase.
+    let line = "abandon,".repeat(2 << 20);
+    let before = peak_bytes();
+    assert_eq!(scan_file_content("words.csv", line.as_bytes()), None);
+    let grown = peak_bytes() - before;
+    assert!(
+        grown < 2 * line.len() as u64,
+        "the scan grew the peak by {grown} bytes over a {} byte line",
+        line.len()
+    );
+}
+
+/// The phrase detector keeps a bounded window of a long run: at the edges of
+/// the longest phrase and its labels its verdict is the one the whole run
+/// gives (scan-cap review round 2).
+#[test]
+fn the_phrase_detector_decides_at_its_kept_edges_as_on_the_whole_run() {
+    let words: Vec<&str> = VALID_PHRASES[3].split(' ').collect();
+    assert_eq!(words.len(), 24);
+    let reason = |text: &str| scan_file_content("", text.as_bytes());
+    // A label word at each edge of a run of one-word segments: 26 of them.
+    let labelled = [&["zoo"][..], &words, &["zoo"]].concat();
+    assert_eq!(
+        reason(&labelled.join(", ")),
+        Some("gate.secret_scan.mnemonic")
+    );
+    // Two labels on one edge: no window of the run is the phrase.
+    let twice = [&["zoo", "zoo"][..], &words, &["zoo"]].concat();
+    assert_eq!(reason(&twice.join(", ")), None);
+    // One segment of the phrase is one; one word more is none.
+    assert_eq!(reason(&words.join(" ")), Some("gate.secret_scan.mnemonic"));
+    let longer = [&words[..], &["zoo"]].concat();
+    assert_eq!(reason(&longer.join(" ")), None);
 }
