@@ -298,7 +298,10 @@ impl Vault {
     /// Unlike `get()` which strips the header, this returns the full LMDB
     /// value. SECRET_CUSTODY (byte 77) is denied for the same reason `get()`
     /// denies it: the body carries the secret value in the clear. An LFS chunk
-    /// no published object holds yet reads as absent, as `get()` reads it.
+    /// no published object holds yet reads as absent, as `get()` reads it. A
+    /// row whose words a deletion withdrew (stale, a pending source walk, or a
+    /// deletion fence over a full body) reads as absent too; a soft-erased
+    /// header-only shell still reads, since it carries no words.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(bytes) = self.get_raw_in(&rtxn, id)? else {
@@ -316,6 +319,11 @@ impl Vault {
             id,
             header.entity_type,
         )? {
+            return Ok(None);
+        }
+        if bytes.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
+            && crate::ports::withdrawn_in_txn(&self.store, &rtxn, id)?
+        {
             return Ok(None);
         }
         Ok(Some(bytes))
@@ -583,6 +591,7 @@ impl Vault {
                     &entry.id,
                     row.entity_type,
                 )?
+                || crate::ports::withdrawn_in_txn(&self.store, &txn, &entry.id)?
             {
                 continue;
             }
