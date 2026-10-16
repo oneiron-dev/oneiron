@@ -135,6 +135,16 @@ pub const AI_VERDICT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// A routine driver step through `ai.verdict` (OF-523, the CUA-S1 pattern): which of the
+/// step's candidates the driver acts on (NONE, reobserve or ask up reserved), or where its
+/// target is in a screenshot. Keyed by the answer contract, as [`AI_VERDICT`] is, so a
+/// step's bands learn apart from plain verdicts.
+pub const AI_VERDICT_ROUTINE: QuestionFamily = QuestionFamily {
+    name: "ai.verdict.routine",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// The paired yes/no question every decision read asks beside the labels: does this need
 /// more thinking? Keyed by its wording alone.
 pub const THINK_MORE: QuestionFamily = QuestionFamily {
@@ -271,6 +281,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     DESCRIPTION_FIT,
     AUTO_CHECK,
     AI_VERDICT,
+    AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
     POLICY_OWNER_ROW,
