@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 
 use super::*;
 use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED};
-use crate::dreamer_consolidation::conflict_close_candidate;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, RowRevision};
+use crate::dreamer_consolidation::{conflict_close_candidate, marker_ids as ids_at};
 use crate::edge::EdgeKind;
 
 /// Grants `replacement` when the policy allows it, returning the prior the
@@ -192,26 +192,4 @@ fn same_axes(marker: &crate::ClaimBody, replacement: &crate::ClaimBody) -> bool 
         && marker.rel == replacement.rel
         && marker.scope_project == replacement.scope_project
         && matches!((facet(marker), facet(replacement)), (Ok(a), Ok(b)) if a == b)
-}
-
-/// The ids under `key` in a claim value map: one binary id, or an array.
-fn ids_at<'v>(value: &'v Value, key: &str) -> impl Iterator<Item = EntityId> + 'v {
-    let found = match value {
-        Value::Map(rows) => rows
-            .iter()
-            .find(|(name, _)| name.as_str() == Some(key))
-            .map(|(_, value)| value),
-        _ => None,
-    };
-    let values: &'v [Value] = match found {
-        Some(Value::Array(values)) => values,
-        Some(value) => std::slice::from_ref(value),
-        None => &[],
-    };
-    values.iter().filter_map(|value| match value {
-        Value::Binary(bytes) => <[u8; 16]>::try_from(bytes.as_slice())
-            .ok()
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok()),
-        _ => None,
-    })
 }

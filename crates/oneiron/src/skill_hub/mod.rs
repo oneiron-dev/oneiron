@@ -39,7 +39,8 @@ pub(crate) use claim_refinement::{
 };
 pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use default_hub::{
-    ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit, default_skill_hub_id,
+    ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
+    default_skill_hub_id,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
@@ -92,7 +93,7 @@ pub use self::index::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use self::package::{
     HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat,
 };
-pub(crate) use folder::{declared_role_call, package_from_source};
+pub(crate) use folder::{declared_role_call, package_from_files, package_from_source};
 mod fork_source;
 pub use self::record::{
     HUB_PIN_KEYS, HUB_REF_KEYS, HubPin, HubRef, HubSyncPolicy, SKILL_HUB_BODY_KEYS, SkillHubKind,

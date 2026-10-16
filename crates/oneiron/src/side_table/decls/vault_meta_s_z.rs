@@ -157,6 +157,9 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
+    /// the exact content hash it scored). Key: id16 (skill entity).
+    SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
     /// Marker (the single byte 1) that one attempt receipt's pack loaded one skill. Key: u64be
     /// receipt length + receipt string + id16.
     SKILL_RESIDENT_LOADED_SKILL: VaultMeta b"skill:resident_loaded_skill:v1:" Raw;
@@ -188,6 +191,8 @@ side_tables! {
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
+    SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
     /// The highest attribution evidence sequence the positive lane has read. Key: ().
     SKILL_ATTRIBUTION_POSITIVE_CURSOR: VaultMeta b"skill_attribution:positive_cursor:v1" Named;
     /// A positive skill proposal: a succeeded deviation or uncovered step that taught its skill.
@@ -318,6 +323,14 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// One Coach training offer snapshot for a seat (OF-577), written once. Key: id16 (offer).
+    SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named;
+    /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
+    /// id16 (offer).
+    SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
+    /// (check).
+    SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// The amendment verdict replacing one attempt's outcome row (MessagePack map: amendment
     /// receipt, `skill_defect` share, event time). Key: the outcome row's full stored key, table
     /// prefix included.

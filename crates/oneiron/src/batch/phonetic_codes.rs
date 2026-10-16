@@ -29,7 +29,10 @@ pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
             add_romaji(&mut codes, &romaji);
         }
     } else {
-        let latin: String = normalized.nfkd().filter(|c| !is_combining_mark(*c)).collect();
+        let latin: String = normalized
+            .nfkd()
+            .filter(|c| !is_combining_mark(*c))
+            .collect();
         if latin
             .chars()
             .all(|c| c.is_ascii_alphabetic() || is_separator(c))
@@ -64,8 +67,8 @@ pub(crate) fn codes_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
     for (key, value) in fields {
         match key.as_str() {
             Some(
-                "name" | "reading" | "kana" | "romaji" | "nameKana" | "name_kana"
-                | "nameReading" | "name_reading",
+                "name" | "reading" | "kana" | "romaji" | "nameKana" | "name_kana" | "nameReading"
+                | "name_reading",
             ) => {
                 if let Some(name) = value.as_str() {
                     codes.extend(generate_phonetic_codes(name));
@@ -189,7 +192,11 @@ fn romanize(kana: &str) -> Option<String> {
             if matches!(first, 'a' | 'i' | 'u' | 'e' | 'o' | 'n') {
                 return None;
             }
-            out.push(if syllable.starts_with("ch") { 't' } else { first });
+            out.push(if syllable.starts_with("ch") {
+                't'
+            } else {
+                first
+            });
             geminate = false;
         }
         out.push_str(&syllable);

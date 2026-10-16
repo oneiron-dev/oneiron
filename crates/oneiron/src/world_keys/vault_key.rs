@@ -24,7 +24,7 @@ use oneiron_crypto::{
     Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Passphrase,
     Purpose, SealKey, SealParams, SuiteId, WrapType, seal,
 };
-use oneiron_keystore::{KeystoreSlot, SlotKind};
+use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -163,6 +163,125 @@ fn check_name(name: &str) -> Result<()> {
         Err(refused(
             "a wrap name is 1 to 64 letters, digits, dots, dashes or underscores",
         ))
+    }
+}
+
+/// What unlocks the vault key a sealed artifact carries, on a host that may not
+/// hold the vault: the secrets the unlock doors take.
+pub enum VaultKeyUnlock<'a> {
+    /// This install's keystore, holding the slot of one of the device wraps.
+    Device(&'a dyn DeviceKeystore),
+    Password(&'a [u8]),
+    Passkey {
+        credential: &'a str,
+        prf: [u8; 32],
+    },
+    Escrow {
+        label: &'a str,
+        secret: &'a HybridSecretKey,
+    },
+}
+
+/// The vault key as it rests: its commitment and every wrap's sealed envelope,
+/// never the key. A sealed artifact carries it in the clear, so a host without
+/// the vault can unlock the artifact's key from one of the wraps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CarriedVaultKey {
+    commitment: [u8; 32],
+    wraps: Vec<StoredWrap>,
+}
+
+impl CarriedVaultKey {
+    /// The commitment naming the vault key.
+    pub(crate) fn commitment(&self) -> &[u8; 32] {
+        &self.commitment
+    }
+
+    /// The key for `context` of the vault key a carried wrap opens to under
+    /// `unlock`.
+    pub(crate) fn subkey(
+        &self,
+        vault_id: &[u8; 32],
+        unlock: &VaultKeyUnlock<'_>,
+        context: &str,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        let key = self.open(vault_id, unlock)?;
+        Ok(Zeroizing::new(key.derive(context, vault_id)))
+    }
+
+    fn open(&self, vault_id: &[u8; 32], unlock: &VaultKeyUnlock<'_>) -> Result<VaultDataKey> {
+        let wrap = |kind: VaultKeyWrapKind| {
+            let id = kind.id();
+            self.wraps
+                .iter()
+                .find(|stored| stored.info.id == id)
+                .ok_or_else(|| refused("the vault key has no such wrap"))
+        };
+        match unlock {
+            VaultKeyUnlock::Device(keystore) => {
+                for stored in &self.wraps {
+                    let VaultKeyWrapKind::Device { install } = &stored.info.kind else {
+                        continue;
+                    };
+                    let Ok(install) = crate::EntityId::from_hex(install) else {
+                        continue;
+                    };
+                    let slot = KeystoreSlot {
+                        vault_id: *vault_id,
+                        install: *install.as_bytes(),
+                        kind: SlotKind::VaultUnlock,
+                    };
+                    let Some(seed) = keystore
+                        .get(&slot)
+                        .map_err(super::machine::keystore_error)?
+                    else {
+                        continue;
+                    };
+                    return open_wrap(
+                        vault_id,
+                        &self.commitment,
+                        stored,
+                        &UnlockSecret::Kek(Kek::from_bytes(*seed)),
+                    );
+                }
+                Err(refused(
+                    "this keystore holds no device wrap of the vault key",
+                ))
+            }
+            VaultKeyUnlock::Password(password) => {
+                let passphrase = Passphrase::new(password)
+                    .map_err(|_| refused("the password is not accepted"))?;
+                open_wrap(
+                    vault_id,
+                    &self.commitment,
+                    wrap(VaultKeyWrapKind::Password)?,
+                    &UnlockSecret::Passphrase(&passphrase),
+                )
+            }
+            VaultKeyUnlock::Passkey { credential, prf } => {
+                check_name(credential)?;
+                open_wrap(
+                    vault_id,
+                    &self.commitment,
+                    wrap(VaultKeyWrapKind::Passkey {
+                        credential: (*credential).to_owned(),
+                    })?,
+                    &UnlockSecret::Kek(Kek::from_bytes(*prf)),
+                )
+            }
+            VaultKeyUnlock::Escrow { label, secret } => {
+                check_name(label)?;
+                open_wrap(
+                    vault_id,
+                    &self.commitment,
+                    wrap(VaultKeyWrapKind::Escrow {
+                        label: (*label).to_owned(),
+                    })?,
+                    &UnlockSecret::Hybrid(secret),
+                )
+            }
+        }
     }
 }
 
@@ -358,6 +477,55 @@ impl Vault {
         })?;
         self.hold_vault_key(key);
         Ok(info)
+    }
+
+    /// Holds the vault data key on this handle, as a sealed artifact needs it:
+    /// unlocked with this device's wrap, or minted and wrapped to this device
+    /// when the vault has none yet.
+    pub fn ensure_vault_key(&self) -> Result<()> {
+        if self.vault_key_status()? == VaultKeyStatus::NoKey {
+            match self.create_vault_key() {
+                Ok(_) => return Ok(()),
+                Err(error) if self.vault_key_status()? == VaultKeyStatus::NoKey => {
+                    return Err(error);
+                }
+                // Another handle minted it first.
+                Err(_) => {}
+            }
+        }
+        self.unlock_vault_key()
+    }
+
+    /// The vault key as it rests, read in `txn` for a sealed artifact to carry,
+    /// and the key for `context` of the one this handle holds. Refused while the
+    /// key is locked, and when the held key is not the one `txn` reads.
+    pub(crate) fn carried_vault_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        context: &str,
+    ) -> Result<(CarriedVaultKey, Zeroizing<[u8; 32]>)> {
+        let key = self
+            .held_vault_key()
+            .ok_or_else(|| refused("the vault key is locked"))?;
+        let vault_id = *self.vault_id().as_bytes();
+        let state = STATE
+            .get(&self.store, txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        if state.commitment != key.commitment(&vault_id) {
+            return Err(refused("this handle holds another vault key"));
+        }
+        let wraps = WRAPS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(_, stored)| stored)
+            .collect();
+        Ok((
+            CarriedVaultKey {
+                commitment: state.commitment,
+                wraps,
+            },
+            Zeroizing::new(key.derive(context, &vault_id)),
+        ))
     }
 
     /// Unlocks the vault data key with this device's keystore wrap.

@@ -73,6 +73,14 @@ budget: each streams to the host as it is written, through the hidden
 message (text cut at a UTF-16 boundary, a lone surrogate sent as U+FFFD). The
 host keeps each body in the vault's result store and gives the model a handle
 and a preview.
+First-party code also gets `store(value, name?)`, which streams a value the
+same way (a string as given, anything else as its JSON) through the `store`
+target and binds it under `name` or the next free `r<n>`; it answers the
+result's card. `describe(r)`, given a name, a handle or a card, answers that
+card again from the manifest: name, size, lines, completion, taint and a
+preview a tainted body withholds. The names live in the run's replay record,
+so they survive steps, compaction and restart. An unknown name throws
+`unknown_handle` with the live names.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
 Only workspace/output file paths are proposal targets; upload and skill files
