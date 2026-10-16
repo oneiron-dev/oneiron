@@ -514,6 +514,20 @@ fn native_mail_identity_in_txn(
     txn: &heed::RoTxn<'_>,
     identity_ref: EntityId,
 ) -> Result<Option<ChannelIdentity>> {
+    // Recognition reads the identity's channel and address heads (OF-272);
+    // the row is read for its custody only.
+    let Some(facts) =
+        crate::channel_identity::channel_identity_facts_in_txn(store, txn, &identity_ref)?
+    else {
+        return Ok(None);
+    };
+    if facts.channel != "email"
+        || !facts
+            .address_or_handle
+            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
+    {
+        return Ok(None);
+    }
     let Some(raw) = store
         .port_entity_record(txn, &identity_ref)?
         .map(|row| row.encode())
@@ -525,15 +539,7 @@ fn native_mail_identity_in_txn(
     if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(None);
     }
-    let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    if identity.channel() != "email"
-        || !identity
-            .address_or_handle()
-            .starts_with(&format!("mail-{}@", identity_ref.to_hex()))
-    {
-        return Ok(None);
-    }
-    Ok(Some(identity))
+    decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
 /// Called only by the external-effect Gate on its own transaction. The
