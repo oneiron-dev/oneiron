@@ -8542,7 +8542,7 @@
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
       "crate-vis": 1,
-      "mod": 4,
+      "mod": 5,
       "re-export": 5
      }
     },
@@ -8560,8 +8560,24 @@
       "crate-vis": 14,
       "enum": 1,
       "fn": 7,
+      "mod": 1,
+      "re-export": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailPack",
+      "PreparedNativeMailSend"
+     ],
+     "path": "src/channel_identity_provider/native_mail/pack.rs",
+     "purpose": "Native mail pack runtime: one Stalwart instance, both run modes, one gate",
+     "surface": {
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -8608,6 +8624,72 @@
      "purpose": "Slack key, workspace, and field normalizers shared by the Slack adapter paths",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StalwartClient",
+      "StalwartConfig",
+      "StalwartWebhookVerifier"
+     ],
+     "path": "src/channel_identity_provider/stalwart.rs",
+     "purpose": "Stalwart 0.16 JMAP driver for the native mail pack",
+     "surface": {
+      "const": 1,
+      "crate-vis": 10,
+      "fn": 10,
+      "re-export": 3,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StalwartInboxCursor",
+      "StalwartInboxOutcome",
+      "StalwartQuarantine"
+     ],
+     "path": "src/channel_identity_provider/stalwart/inbox.rs",
+     "purpose": "Authenticated JMAP reads, raw quarantine, then the existing CID-6 door",
+     "surface": {
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailReputationReport",
+      "NativeMailReputationUpdate",
+      "NativeMailSignalSource",
+      "NativeMailWarmupPolicy"
+     ],
+     "path": "src/channel_identity_provider/stalwart/reputation.rs",
+     "purpose": "Real-signal snapshots written through the existing CID-5 claim family",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailMessage",
+      "StalwartSendSink"
+     ],
+     "path": "src/channel_identity_provider/stalwart/send.rs",
+     "purpose": "Native message fields and the common outbound sink's JMAP submission",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -12323,7 +12405,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -14082,7 +14164,7 @@
      "path": "src/context_pack/source_ranking.rs",
      "purpose": "PACK data for provenance-aware claim ordering",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -14524,7 +14606,7 @@
      "surface": {
       "crate-vis": 17,
       "mod": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -14535,6 +14617,34 @@
      "purpose": "Actor-bound write-policy preflight for the append operation",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/quote.rs",
+     "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuoteReplyGroup",
+      "QuoteReplyStrip",
+      "QuoteStripStatus",
+      "ReplyStripsPage",
+      "ReplyStripsRequest"
+     ],
+     "path": "src/conversation_dag/quote_strips.rs",
+     "purpose": "Reply strips by quoted MESSAGE over one selected thread chain",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -14639,6 +14749,7 @@
       "AppendedRecord",
       "DagPage",
       "DagPageRequest",
+      "QuoteSpan",
       "ResolvedScope",
       "ScopePath",
       "ScopeSelector"
@@ -14647,7 +14758,7 @@
      "purpose": "Door inputs and snapshot results",
      "surface": {
       "enum": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -18715,7 +18826,7 @@
      "path": "src/edit_roundtrip/pptx/identities.rs",
      "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -19506,7 +19617,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -29550,6 +29661,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorReply",
+      "ConnectorReplyDispatch"
+     ],
+     "path": "src/outbound/connector_reply.rs",
+     "purpose": "A standing connector's reply leg (OF-218)",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29789,7 +29914,7 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -34437,7 +34562,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/retrieval_depth/accumulation.rs",
@@ -37491,7 +37616,26 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 6,
-      "re-export": 13
+      "re-export": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackOrgan",
+      "PackOrganBinary",
+      "PackOrganBuild",
+      "PackOrganEntry",
+      "PackTree"
+     ],
+     "path": "src/skill_hub/pack_catalog/organs.rs",
+     "purpose": "Pack organs (OF-575, ARCH-0075 §9): a PACK.md `organs:` key names folders under `organs/`, each with an…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 5
      }
     },
     {
@@ -37597,7 +37741,7 @@
      "path": "src/skill_hub/pack_catalog/source.rs",
      "purpose": "Validated exact source trees",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -39456,6 +39600,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorWakeBridge",
+      "SurfaceConnectorPayload"
+     ],
+     "path": "src/surface_event/connector_bridge.rs",
+     "purpose": "Surface events as standing-connector wake sources (OF-218)",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -39515,7 +39674,7 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -42405,7 +42564,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 102
+      "fn": 103
      }
     },
     {
@@ -46671,7 +46830,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 18,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46895,7 +47054,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47364,7 +47523,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47714,7 +47873,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 73,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47770,7 +47929,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)"
     },
     "surface_event": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47968,7 +48127,7 @@
    },
    "over_bar": 86,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2892,
+   "source_files": 2902,
    "test_files": 903
   },
   "oneiron-android": {
@@ -51910,7 +52069,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 7,
-      "fn": 4,
+      "fn": 5,
       "re-export": 3,
       "struct": 15
      }
@@ -55477,7 +55636,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 84
+      "fn": 85
      }
     },
     {
@@ -56326,7 +56485,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 85
+      "fn": 86
      }
     },
     {
@@ -58489,7 +58648,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
