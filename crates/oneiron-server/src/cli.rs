@@ -16,10 +16,11 @@ pub use hook_args::{
 };
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
-    ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportNotesArgs,
-    ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs, RestoreArgs, RunArgs,
-    RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
-    SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportFolderAttachArgs,
+    ImportFolderCommand, ImportFolderListArgs, ImportFolderPathArgs, ImportFolderRescanArgs,
+    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
+    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
+    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
 pub use wake_args::{WakeArgs, WakeCommand};
 
@@ -127,6 +128,10 @@ pub enum Command {
     /// Run this host's local embedder for other vaults.
     #[command(subcommand)]
     Embedder(EmbedderCommand),
+    /// The tagger's offline handoff with the model project: distillation
+    /// jobs from the approved teacher, student receipts, and publishing.
+    #[command(subcommand)]
+    Oneironer(commands::OneironerCommand),
     /// Official subscription seats: where a vendor login may run and what
     /// you run to sign one in. Never takes or shows a vendor token.
     #[command(subcommand)]
@@ -729,6 +734,11 @@ pub struct InitArgs {
     /// bundle's parity bar), `cpu`, `metal` or `cuda`.
     #[arg(long)]
     pub oneironer_device: Option<crate::config::EmbedderDevice>,
+    /// Name the local bundle as a tier (`tiny`, `medium`, ...): init writes
+    /// it as `[oneironer.tiers.<label>]` and serves it with `oneironer.tier`,
+    /// so more candidates can sit beside it.
+    #[arg(long)]
+    pub oneironer_tier: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -874,6 +884,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
+        Command::Oneironer(command) => commands::oneironer(command),
         Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
     }

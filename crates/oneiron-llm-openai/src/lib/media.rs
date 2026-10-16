@@ -196,10 +196,8 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             // it is refused, so a raw name never stands in for a banked
             // identity.
             Some(voice) => {
-                if body
-                    .insert("voice".into(), json!(voice.wire_id()))
-                    .is_some()
-                {
+                let id = voice.wire_id().ok_or(FatalLlmError::InvalidRequest)?;
+                if body.insert("voice".into(), json!(id)).is_some() {
                     return Err(FatalLlmError::InvalidRequest.into());
                 }
             }
