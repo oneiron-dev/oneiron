@@ -2954,13 +2954,16 @@
      "notable": [
       "BlindCampaignJudgeInput",
       "CampaignGoldAnchor",
-      "CampaignTasteJudgment"
+      "CampaignTaste",
+      "CampaignTasteDecisions",
+      "CampaignTasteWording"
      ],
      "path": "src/autoreason_campaign/judge.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
-      "struct": 3
+      "const": 1,
+      "crate-vis": 2,
+      "struct": 5
      }
     },
     {
@@ -23666,7 +23669,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 4,
+      "const": 6,
       "fn": 1,
       "struct": 1
      }
@@ -34168,19 +34171,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "AttributionJudge",
-      "RuleAttributionJudge"
+      "AttributionDecisions",
+      "AttributionNotes",
+      "AttributionRules"
      ],
      "path": "src/skill_attribution/judge.rs",
-     "purpose": "Classification seam: the judge trait, the deterministic rule tier, and verdict routing",
+     "purpose": "Classification: the deterministic rule tier, the host's decisions for the model tier through the shared…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
+      "const": 2,
+      "crate-vis": 4,
       "fn": 1,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -34242,7 +34246,7 @@
      "path": "src/skill_attribution/split.rs",
      "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
