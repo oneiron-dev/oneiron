@@ -350,6 +350,11 @@ impl AgentDispatcher<'_> {
         else {
             return Ok(None);
         };
+        // OF-220: the TASK this try realizes is taken on the task highway,
+        // as the Dreamer's admission takes it.
+        crate::task_verb::highway_runner::accept_leased_task_in_txn(
+            self.vault, &mut txn, &attempt,
+        )?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(Some((AgentDispatchStatus { attempt, input }, resident)))
