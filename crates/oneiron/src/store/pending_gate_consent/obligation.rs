@@ -105,6 +105,21 @@ impl Store {
         Ok(())
     }
 
+    /// An erasure leaves `claim_id`'s obligation open but blanks the item it
+    /// names, whose hash derives from the erased body. A blank item names no
+    /// item, so no answer closes it.
+    pub(crate) fn blank_owner_answer_obligation_item_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<()> {
+        let Some(mut obligation) = self.owner_answer_obligation_in_txn(wtxn, claim_id)? else {
+            return Ok(());
+        };
+        obligation.item = [0; 32];
+        self.put_owner_answer_obligation_in_txn(wtxn, &obligation)
+    }
+
     /// Only the owner's answer reaches this: `crate::gate::owner_answer`
     /// calls it with an answer in hand.
     pub(crate) fn delete_owner_answer_obligation_in_txn(

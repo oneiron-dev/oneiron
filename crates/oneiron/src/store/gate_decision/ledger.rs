@@ -348,8 +348,10 @@ impl Store {
         // The tray carries the original content binding and can mint a fresh
         // live v0 resolution from a v1 skeleton. Remove it and every index
         // inside this same destructive transaction, before verification. An
-        // erasure shows no fresh item.
+        // erasure shows no fresh item, and the open obligation keeps no hash
+        // of the erased body.
         self.remove_pending_gate_consent_in_txn(wtxn, &id, crate::store::TrayRemoval::Silent)?;
+        self.blank_owner_answer_obligation_item_in_txn(wtxn, &id)?;
         for decision_id in self.verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)? {
             if !self.is_unapplied_preflight_decision_in_txn(&*wtxn, decision_id)? {
                 return Err(Error::CorruptedIndex("gate decision claim erasure"));

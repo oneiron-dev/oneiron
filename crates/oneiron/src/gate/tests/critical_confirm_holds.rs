@@ -532,3 +532,79 @@ fn a_cleared_decay_lands_on_a_held_machine_history() -> Result<()> {
     assert_eq!(view.current.approval, ClaimApprovalStatus::Auto);
     Ok(())
 }
+
+/// The owner's Clear of a held `edge.provenance` claim re-stamps its edge in
+/// the same transaction: held, the claim stamped no flags, and cleared, it
+/// wins its edge's cohort without waiting for another write (F14
+/// H244-narrowed, PR review).
+#[test]
+fn the_owners_clear_restamps_a_held_provenance_claims_edge() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let [source, target, actor] = [test_id(0x21), test_id(0x52), test_id(0x43)];
+    for id in [source, target, actor] {
+        vault.put_entity(&id, ENTITY_TYPE_PERSON, test_time(1), 1, b"person")?;
+    }
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.6)?;
+    let edge = EdgeRef::new(source, EdgeKind::Mentions, target);
+    let held = test_id(0x97);
+    vault.put_edge_provenance(
+        &held,
+        &edge,
+        &EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed),
+        EdgeActorClass::Human,
+        2000,
+    )?;
+    let pending = critical_confirm_pending(held, 0x70, crate::unix_seconds_now());
+    vault.with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &pending))?;
+    vault.put_edge_provenance(
+        &test_id(0x98),
+        &edge,
+        &EdgeProvenanceClaimBody::new(actor, 0.1, SupersessionStatus::Proposed),
+        EdgeActorClass::Human,
+        2000,
+    )?;
+    let stamp = |confirmation_status| EdgeProvenanceFlags {
+        confirmation_status,
+        actor_class: EdgeActorClass::Human,
+    };
+    assert_eq!(
+        edge_provenance_flags(&vault, &source, EdgeKind::Mentions, &target)?,
+        stamp(EdgeConfirmationStatus::Proposed),
+        "the held claim stamped its edge"
+    );
+    clear(&vault, &pending, 0x97)?;
+    assert_eq!(
+        edge_provenance_flags(&vault, &source, EdgeKind::Mentions, &target)?,
+        stamp(EdgeConfirmationStatus::Confirmed),
+        "FAILBEFORE H244 narrowed: the owner's Clear left the edge stamped without its winner"
+    );
+    Ok(())
+}
+
+/// A delete keeps a held claim's obligation open, but no hash of the erased
+/// body survives in it: the item it named was the erased content's binding
+/// (F14 H244-narrowed, PR review).
+#[test]
+fn a_deleted_held_claim_keeps_no_hash_of_its_body() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x96);
+    let pending = put_critical_auto_claim(&vault, claim)?;
+    let erased = crate::store::owner_answer_item_hash(&pending.diff_handle);
+    assert!(vault.delete_entity(&claim)?);
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some(),
+        "the delete closed the obligation with no owner answer"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    for row in vault.store.vault_meta.iter(&rtxn)? {
+        let (key, value) = row?;
+        assert!(
+            !value.windows(erased.len()).any(|window| window == erased),
+            "FAILBEFORE H244 narrowed: {} keeps a hash of the erased body",
+            String::from_utf8_lossy(key)
+        );
+    }
+    Ok(())
+}
