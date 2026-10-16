@@ -1197,11 +1197,12 @@ fn act_policy_default_entry() -> (Value, Value) {
     let rows = Value::Array(vec![
         // A delegated row is the member's own mailbox under an OAuth
         // grant. ARCH-0063 R3 says identity picks the STARTING posture
-        // only and a grant may authorize send-as-owner, so the ban is
-        // a default and not a class property. Raising this row to
-        // `require_capability` does not by itself enable sending: the
-        // grant must carry an outbound scope, and the read-only scope
-        // classes cannot express one.
+        // only and a grant may authorize send-as-owner, and that posture
+        // "starts at draft→approve" (OF-374). So the row asks for the
+        // capability: a read-only grant still cannot send, a `mail.send`
+        // grant exists only over custody holding the provider's granted
+        // scope, and the Gate still holds every send no grant covers for
+        // the owner's press.
         Value::Map(vec![
             (
                 Value::from(ACT_POLICY_CLASS_KEY),
@@ -1213,7 +1214,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::Deny.as_str()),
+                Value::from(ActPosture::RequireCapability.as_str()),
             ),
         ]),
         // A self-held row is an account the product minted, so the

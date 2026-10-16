@@ -162,6 +162,25 @@ pub(crate) fn evaluate_external_effect_policy(
             "inactive native-mail sender".into(),
         ));
     }
+    // OF-374: the same writer-snapshot check for a member mailbox. A row
+    // released, or a grant that lost send, after preparation sends nothing.
+    if hydrated_effect.channel == "email"
+        && hydrated_effect.verb == "send"
+        && let Some(identity) = hydrated_effect.channel_identity_ref
+        && crate::channel_identity_provider::member_mail::is_member_mail_identity_in_txn(
+            store, &*wtxn, identity,
+        )?
+        && !crate::channel_identity_provider::member_mail::member_mail_actor_may_send_in_txn(
+            store,
+            &*wtxn,
+            identity,
+            hydrated_effect.provenance.actor_entity_ref,
+        )?
+    {
+        return Err(crate::error::Error::InvalidConfig(
+            "inactive member-mail sender".into(),
+        ));
+    }
     hydrated_effect.standing_grant_ref = None;
     let mut scoped_mcp_grant_authorized = false;
     let matched_grant = standing_outbound_grant_for_effect(
@@ -204,6 +223,15 @@ pub(crate) fn evaluate_external_effect_policy(
         &hydrated_effect,
         policy,
     )?;
+    // OF-374: a member-mailbox send takes the same canonical mail digest, so
+    // one owner press releases exactly that send (ARCH-0046 "a press per
+    // send"); a covering standing grant still releases it with no press.
+    let member_mail = crate::channel_identity_provider::member_mail::member_mail_send_in_txn(
+        store,
+        &*wtxn,
+        &hydrated_effect,
+    )?;
+    let mail_once = mail_cold || member_mail;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
         &*wtxn,
@@ -291,7 +319,7 @@ pub(crate) fn evaluate_external_effect_policy(
     // unforgeable available authorization, or a typed spent-replay refusal.
     // The marker is changed to spent only when the final Gate decision is
     // recorded as Allow in this same transaction.
-    let composed = if mail_cold || mail_retry_authorized {
+    let composed = if mail_once || mail_retry_authorized {
         native_mail_cold_composed_effect(&hydrated_effect)
     } else {
         external_effect_composed_effect(&hydrated_effect)
@@ -307,7 +335,7 @@ pub(crate) fn evaluate_external_effect_policy(
             .transpose()?
             .flatten()
     };
-    let consent = if mail_cold || mail_retry_authorized {
+    let consent = if mail_once || mail_retry_authorized {
         composed.as_ref().map(|effect| {
             ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
         })
@@ -331,7 +359,7 @@ pub(crate) fn evaluate_external_effect_policy(
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
-        effect.mail_approve_once = mail_retry_authorized || (mail_cold && approve_once.is_some());
+        effect.mail_approve_once = mail_retry_authorized || (mail_once && approve_once.is_some());
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some()

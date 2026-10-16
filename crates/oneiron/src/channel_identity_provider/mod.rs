@@ -9,6 +9,7 @@ pub mod gmail;
 mod gmail_header;
 mod inbound_types;
 mod line_adapter;
+pub(crate) mod member_mail;
 pub mod mail_placement;
 pub mod mailbox_cursor;
 mod shared_validate;

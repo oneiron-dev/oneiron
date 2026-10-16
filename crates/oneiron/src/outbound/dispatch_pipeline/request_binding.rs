@@ -239,6 +239,8 @@ impl PreparedOutboundDispatch {
 }
 /// Only an executable Pending retry needs the native sender live today.
 /// Parked Pending and terminal records remain readable without transport.
+/// A member mailbox (OF-374) shares the canonical mail binding, so its live
+/// send-capable row answers here too.
 pub(super) fn require_native_mail_retry_sender(
     vault: &Vault,
     request: &OutboundDispatchRequest,
@@ -253,6 +255,10 @@ pub(super) fn require_native_mail_retry_sender(
             &vault.store,
             &txn,
             sender,
+        )? && !crate::channel_identity_provider::member_mail::is_member_mail_sender_in_txn(
+            &vault.store,
+            &txn,
+            sender,
         )? {
             return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
         }
@@ -262,6 +268,8 @@ pub(super) fn require_native_mail_retry_sender(
 
 /// Bind one canonical native-mail recipient to gate, ledger and transport.
 /// The generic dispatch API must not bypass the adapter's target check.
+/// OF-374: a delegated member mailbox is bound the same way, so its per-send
+/// approval digest and replay proof are the canonical mail operation's.
 fn bind_native_mail_recipient(
     vault: &Vault,
     request: &mut OutboundDispatchRequest,
@@ -301,7 +309,21 @@ fn bind_native_mail_recipient(
         {
             return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
         }
-        structural
+        let member = crate::channel_identity_provider::member_mail::is_member_mail_identity_in_txn(
+            &vault.store,
+            &txn,
+            identity,
+        )?;
+        if member
+            && !crate::channel_identity_provider::member_mail::is_member_mail_sender_in_txn(
+                &vault.store,
+                &txn,
+                identity,
+            )?
+        {
+            return Err(Error::InvalidConfig("inactive member-mail sender".into()).into());
+        }
+        structural || member
     };
     if !native {
         return Ok(false);
