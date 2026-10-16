@@ -41790,7 +41790,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 7
      }
     },
@@ -41852,7 +41852,7 @@
      "path": "src/task_verb/ask_preflight.rs",
      "purpose": "Read-only ask preflight over the exact admission holder and route facts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -42059,7 +42059,7 @@
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
       "const": 1,
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -42296,6 +42296,16 @@
      "path": "src/task_verb/highway_accept.rs",
      "purpose": "The highway's Accept arm (OF-220): take a TASK addressed to you",
      "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_block.rs",
+     "purpose": "Exits from Blocked an owner can drive (OF-220)",
+     "surface": {
       "crate-vis": 7
      }
     },
@@ -42306,17 +42316,27 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_report.rs",
      "purpose": "The highway's Report arm (OF-220): progress, blocked, done, failed and release against a fenced handle, the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_runner.rs",
+     "purpose": "Engine runners on the task highway (OF-220)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -42391,7 +42411,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 1,
       "re-export": 22
      }
@@ -42463,6 +42483,16 @@
      "purpose": "Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/proposal_create.rs",
+     "purpose": "Brief-less `tasks.create` proposals land on approval (OF-220)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48055,7 +48085,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 94,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -48211,7 +48241,7 @@
    },
    "over_bar": 88,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2906,
+   "source_files": 2909,
    "test_files": 903
   },
   "oneiron-android": {
