@@ -104,7 +104,28 @@ impl Vault {
         std::fs::create_dir_all(path.as_ref())?;
         let canonical = path.as_ref().canonicalize()?;
         let lease = VaultWriterLease::acquire(&canonical)?;
-        let store = Store::open_with_writer_lease(&canonical, &config, &lease)?;
+        Self::open_leased(&canonical, config, lease)
+    }
+
+    /// [`Self::open_owned`] on `directory`, a vault root the caller already
+    /// holds open, as a managed host's isolation probe does. The writer lease
+    /// and, on Linux, the LMDB environment bind that descriptor, so a
+    /// directory renamed in under `path` after the caller's checks is refused,
+    /// never opened. Refuses unless `path` still names `directory`.
+    #[cfg(unix)]
+    pub fn open_owned_held(
+        directory: std::fs::File,
+        path: impl AsRef<Path>,
+        config: VaultConfig,
+    ) -> Result<Self> {
+        validate_open_config(&config)?;
+        let canonical = path.as_ref().canonicalize()?;
+        let lease = VaultWriterLease::acquire_held(directory, &canonical)?;
+        Self::open_leased(&canonical, config, lease)
+    }
+
+    fn open_leased(canonical: &Path, config: VaultConfig, lease: VaultWriterLease) -> Result<Self> {
+        let store = Store::open_with_writer_lease(canonical, &config, &lease)?;
         let mut vault = Self::finish_open(store, config, DefaultPolicySeedMode::Required)?;
         vault.writer_lease = Some(lease);
         Ok(vault)
@@ -544,6 +565,7 @@ impl Vault {
             live_rows: Default::default(),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
+            trusted_contact_send_order: Default::default(),
             housekeeping: Default::default(),
             #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
@@ -563,7 +585,10 @@ impl Vault {
         // the authority a restore carried in; the stored shell edges follow
         // it before any caller observes this vault (H161).
         vault.reconcile_identity_topology_on_open()?;
-        vault.with_write_txn_grouped(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
+        vault.with_write_txn_grouped(|txn| {
+            vault.dreamer_authority_in_txn(txn, 0)?;
+            vault.coach_authority_in_txn(txn)
+        })?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now

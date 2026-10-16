@@ -4,7 +4,9 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::super::gate::{GatedDeletion, reverify_deletion_authority_when_unpublished};
+use super::super::gate::{
+    GatedDeletion, refuse_claim, reverify_deletion_authority_when_unpublished,
+};
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
     DeleteRendezvous, maybe_fail_after_tombstone_before_purge, signal_after_delete_probe,
@@ -29,6 +31,7 @@ impl Vault {
         requested_at: u64,
         gate: Option<&GatedDeletion<'_>>,
     ) -> Result<DeleteEntityOutcome> {
+        refuse_claim(gate)?;
         // Probe first so a fully-missing id stays a strict no-op — deleting
         // a nonexistent entity must not mint tombstones or receipts.
         {

@@ -78,6 +78,9 @@ pub struct Vault {
     pub(crate) world_keys: crate::world_keys::WorldKeySession,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
+    /// Orders a trusted-contact notice's last consent read and send against
+    /// revocation and re-naming.
+    pub(crate) trusted_contact_send_order: std::sync::RwLock<()>,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     #[cfg(feature = "sync")]

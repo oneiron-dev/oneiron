@@ -93,7 +93,11 @@ impl Store {
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
-            std::fs::create_dir_all(path.as_ref())?;
+            // A leased open binds a directory that already exists: creating
+            // by path could only touch a tree renamed in since the lease.
+            if lease.is_none() {
+                std::fs::create_dir_all(path.as_ref())?;
+            }
             let canonical_path = path.as_ref().canonicalize()?;
             if let Some(lease) = lease {
                 lease.validate_directory(&canonical_path)?;

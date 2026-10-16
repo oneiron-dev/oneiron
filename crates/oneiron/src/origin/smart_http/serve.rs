@@ -323,6 +323,11 @@ fn serve_request(
     } else {
         HeldBytes::new(0, None)
     };
+    // A publication this push may land on again gets its roots back while no
+    // backend can move a ref yet, on the thread holding the coordinator.
+    if coordinator.is_some() {
+        vault.repin_pushed_move_owners(&repo_dir, &mut commands.reader().map_err(Error::Io)?)?;
+    }
     let body = &mut commands.reader().map_err(Error::Io)?.chain(body);
     // Between the coordinator and the child, so on every way out the child
     // is reaped first, then what a killed backend left in quarantine is
@@ -373,6 +378,15 @@ fn serve_request(
             "git http-backend exited with a failure: {}",
             exchange.stderr
         )));
+    }
+    #[cfg(test)]
+    if request.is_receive_pack()
+        && vault
+            .test_hooks()
+            .stop_push_before_landing
+            .swap(false, Ordering::SeqCst)
+    {
+        return Err(serve_failed("stopped before the landing"));
     }
     let report = finish_serve(vault, request, &repo_dir, admission, exchange);
     // Held to here on purpose: the ref mutation, the quarantine migration and

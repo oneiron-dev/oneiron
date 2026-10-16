@@ -89,6 +89,13 @@ pub(crate) fn request_wake_in_txn(
                 now,
             },
         )?;
+        store.enqueue_coach_retrieval_tune_in_txn(
+            txn,
+            payload.parent_attempt,
+            dedupe_key.as_deref(),
+            run_id.clone(),
+            now,
+        )?;
     }
     store.enqueue_consolidation_in_txn(
         txn,

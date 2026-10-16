@@ -276,6 +276,13 @@ const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
     scope: Scope::ImageEntities,
 };
+/// A STOP's send hold before this replica projected it, keyed by the event:
+/// it leaves with an event made after the checkpoint, and a changed one for
+/// an event both vaults hold refuses.
+const PENDING_COMM_STOPS: Class = Class::Refuse {
+    what: "pending communication STOP",
+    scope: Scope::ImageEntities,
+};
 const UNCLASSIFIED_ROWS: Class = refuse("rows of an undeclared family");
 const UNCLASSIFIED_KINDS: Class = refuse("entities of an unregistered kind");
 

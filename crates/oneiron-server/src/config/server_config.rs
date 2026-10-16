@@ -7,7 +7,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
-use super::feedback::FeedbackConfig;
+use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
@@ -96,6 +96,9 @@ pub struct SyncServerConfig {
     pub max_bulk_decompressed: usize,
     /// The bounds on work a remote caller can start: git and LFS transfers.
     pub limits: LimitsConfig,
+    /// `[feedback.inbox]`: whether this server keeps the keyless open inbox,
+    /// and its flood cap.
+    pub feedback_inbox: FeedbackInboxConfig,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -127,6 +130,7 @@ impl Default for SyncServerConfig {
             max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             limits: LimitsConfig::default(),
+            feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
         }
     }
@@ -199,6 +203,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("limits", &self.limits)
+            .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
             .finish()
     }
@@ -427,6 +432,7 @@ impl ServeConfig {
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
             limits: self.limits.clone(),
+            feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {

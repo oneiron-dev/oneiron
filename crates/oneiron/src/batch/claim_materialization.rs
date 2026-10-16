@@ -290,6 +290,7 @@ impl ClaimMaterialization {
                 auto_checker: checker,
                 defer_metrics_until_commit: true,
                 transition: None,
+                owner_authored: None,
             },
             &policy,
             crate::gate::GateWriteMode {

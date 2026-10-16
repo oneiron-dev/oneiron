@@ -117,6 +117,10 @@ pub struct LimitsConfig {
     /// its memory), not a count: past it, such state is the memory floor's
     /// one refusal, and a retained ring falls back to a resync.
     pub retained_memory_bytes: u64,
+    /// Bytes one note to the open feedback inbox may carry: a POST body, or
+    /// a GET link's query. A memory floor: a longer note is refused with 413
+    /// before it is stored. Room for any v1 feedback bundle.
+    pub feedback_inbox_bytes: u64,
 }
 
 impl Default for LimitsConfig {
@@ -148,6 +152,7 @@ impl Default for LimitsConfig {
             message_streams: oneiron::live_rows::LiveRows::DEFAULT_MESSAGE_STREAMS,
             live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
             retained_memory_bytes: memory_floor(),
+            feedback_inbox_bytes: 128 * 1024,
         }
     }
 }
@@ -210,6 +215,7 @@ impl LimitsConfig {
             message_streams,
             live_documents,
             retained_memory_bytes,
+            feedback_inbox_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -239,6 +245,7 @@ impl LimitsConfig {
         set(&mut self.message_streams, message_streams);
         set(&mut self.live_documents, live_documents);
         set(&mut self.retained_memory_bytes, retained_memory_bytes);
+        set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -270,6 +277,7 @@ impl LimitsConfig {
             ("message_streams", self.message_streams as u64),
             ("live_documents", self.live_documents as u64),
             ("retained_memory_bytes", self.retained_memory_bytes),
+            ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
@@ -332,4 +340,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) message_streams: Option<usize>,
     pub(super) live_documents: Option<usize>,
     pub(super) retained_memory_bytes: Option<u64>,
+    pub(super) feedback_inbox_bytes: Option<u64>,
 }

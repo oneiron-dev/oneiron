@@ -14,8 +14,8 @@ fn magistrate_recuses_on_vault_derived_dreamer_authorship() {
     let dreamer_state = ladder_id(0x94);
     let agent_state = ladder_id(0x95);
     let delta = ladder_id(0x96);
-    // Dreamer-surface state, so GATE-12 asks it for evidence: cite the
-    // subject this fixture seeds. Authorship derivation below is unchanged.
+    // Dreamer-surface state, so GATE-12 asks it for evidence: cite a turn.
+    // Authorship derivation below is unchanged.
     put_envelope_claim_citing(
         &vault,
         dreamer_state,
@@ -23,7 +23,7 @@ fn magistrate_recuses_on_vault_derived_dreamer_authorship() {
         actor,
         EdgeActorClass::Agent,
         dreamer_provenance(),
-        Some(subject),
+        Some(said_turn(&vault)),
     );
     put_envelope_claim(
         &vault,
@@ -88,7 +88,7 @@ fn forged_authorship_cannot_defeat_the_provenance_derivation() {
         actor,
         EdgeActorClass::Agent,
         dreamer_provenance(),
-        Some(subject),
+        Some(said_turn(&vault)),
     );
 
     let forged = magistrate_case(agent_state, dreamer_delta, CaseCriticality::Normal);

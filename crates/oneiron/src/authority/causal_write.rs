@@ -73,21 +73,31 @@ pub(super) fn causal_actor_frontiers(
         let frontiers = states
             .iter()
             .filter(|(hash, _)| is_main(hash))
-            .filter_map(|(hash, state)| {
-                let binding = state.live_actor_binding(key)?;
-                (binding.actor_ref == final_binding.actor_ref
-                    && binding.actor_class == final_binding.actor_class
-                    && required.is_subset(&binding.observed_revocations)
-                    && state
-                        .roster
-                        .get(key)
-                        .is_some_and(|device| !device.revoked && device.roles != 0))
-                .then_some(*hash)
-            })
+            .filter(|(_, state)| is_frontier(state, key, final_binding, &required))
+            .map(|(hash, _)| *hash)
             .collect();
         out.insert(key.clone(), frontiers);
     }
     out
+}
+
+/// Whether a row whose state is `state` is a frontier for `key`'s final
+/// binding, given the revocations that binding must have observed.
+pub(super) fn is_frontier(
+    state: &FoldState,
+    key: &AuthorityKey,
+    final_binding: &FoldedActorBinding,
+    required: &BTreeSet<AuthorityEntryHash>,
+) -> bool {
+    state.live_actor_binding(key).is_some_and(|binding| {
+        binding.actor_ref == final_binding.actor_ref
+            && binding.actor_class == final_binding.actor_class
+            && required.is_subset(&binding.observed_revocations)
+            && state
+                .roster
+                .get(key)
+                .is_some_and(|device| !device.revoked && device.roles != 0)
+    })
 }
 
 pub(super) fn revocation_affected_writers(

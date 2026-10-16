@@ -267,38 +267,6 @@ impl Vault {
         Ok(owner)
     }
 
-    /// Counts what `read` holds: a room's read holds its overlay ∪ base, and
-    /// a row its reader is refused must not take a slot from one it reads.
-    pub(crate) fn scoped_read_search_candidate_limit(
-        &self,
-        read: &crate::store::StoreRead<'_>,
-        requested: usize,
-        include_text: bool,
-        include_vector: bool,
-    ) -> Result<usize> {
-        if requested == 0 {
-            return Ok(0);
-        }
-
-        let rtxn = self.store.env.read_txn()?;
-        let mut limit = requested;
-        let mut hybrid_union_limit = 0usize;
-        if include_text {
-            let indexed_docs = crate::pipeline::indexed_text_population(read, &rtxn)?;
-            hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_docs);
-            limit = limit.max(indexed_docs);
-        }
-        if include_vector {
-            let indexed_vectors = crate::pipeline::indexed_vector_population(read, &rtxn)?;
-            hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_vectors);
-            limit = limit.max(indexed_vectors);
-        }
-        if include_text && include_vector {
-            limit = limit.max(hybrid_union_limit);
-        }
-        Ok(limit)
-    }
-
     /// Registers a local-only vault-scoped StructuralKind slot.
     /// Use [`Self::register_structural_kind_in_family`] for replicated kinds.
     ///

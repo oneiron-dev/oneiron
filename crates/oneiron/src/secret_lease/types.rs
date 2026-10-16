@@ -104,6 +104,23 @@ impl Vault {
             self.store.clock.now_recorded_at(),
         )))
     }
+
+    /// [`Self::instant_in_txn`] for a write that stamps the reading into a
+    /// row a door later compares against this clock. Commits the reading as
+    /// the floor, as [`Vault::authority_fold`] does, because a reopen resumes
+    /// the clock from that floor and must never read below the stamp.
+    pub(crate) fn instant_in_write_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<VaultInstant> {
+        let floor_key = authority_first_seen_clock_key();
+        let floor = AUTHORITY_FIRST_SEEN
+            .get_lenient(&self.store, wtxn, &floor_key)?
+            .unwrap_or(0);
+        let now =
+            authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
+        if now != floor {
+            AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now)?;
+        }
+        Ok(VaultInstant(now))
+    }
 }
 
 // ---------------------------------------------------------------------------
