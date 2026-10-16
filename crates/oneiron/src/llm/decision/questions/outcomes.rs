@@ -7,7 +7,15 @@ use super::{
         family_prefix,
     },
 };
+use crate::llm::decision::{DecisionAnswer, PersonChangedAnswer};
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
+
+/// The Coach's person-changed records, read here only: the table, its
+/// writer ([`Vault::record_person_changed_answer`]) and its read marks are
+/// the Coach's. Key: the source the host bound the person's answer to.
+const PERSON_CHANGED: SideTable<EntityId, PersonChangedAnswer, Named> =
+    SideTable::new(&side_table::COACH_PERSON_CHANGED);
 
 pub fn project_bound_outcomes(
     vault: &Vault,
@@ -129,6 +137,60 @@ pub fn calibration_pairs(
             prediction: answer.decision.answer.clone(),
             probability,
             outcome,
+            derived_from,
+        });
+    }
+    Ok(pairs)
+}
+
+/// Ask-up changed-answer labels (OF-516): each time a person changed the
+/// model's answer to `question` for `principal`, the model's prior answer and
+/// its probability are paired with the person's answer as the outcome. For a
+/// yes/no question the label is the person's answer, as a fact's mapped value
+/// is; for any other the label says the prior held, which a changed answer
+/// never does. A record without a prior probability pairs nothing. A caller
+/// at `locality` gets no pair from a row a device-local world keeps from it.
+pub fn person_changed_pairs(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    locality: crate::claim::CallerLocality,
+) -> Result<Vec<CalibrationPair>> {
+    let txn = vault.store.env.read_txn()?;
+    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+    let mut pairs = Vec::new();
+    for (source, record) in PERSON_CHANGED.scan(&vault.store, &txn)? {
+        if record.question != question || record.principal != principal {
+            continue;
+        }
+        let Some(probability) = record.prior_probability else {
+            continue;
+        };
+        let derived_from = vec![question, source];
+        if !kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)? {
+            continue;
+        }
+        let label = match (&record.prior, &record.person) {
+            (DecisionAnswer::Noul(_), DecisionAnswer::Noul(person)) => *person,
+            (prior, person) => prior == person,
+        };
+        let person = serde_json::to_vec(&record.person)
+            .map_err(|_| crate::Error::InvariantViolation("encode a person's answer"))?;
+        let occurred_at =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?
+                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+                .map_or(0, |header| header.occurred_start);
+        pairs.push(CalibrationPair {
+            prediction: record.prior,
+            probability,
+            outcome: OutcomeLabel {
+                answer: source,
+                fact: source,
+                fact_value_hash: *blake3::hash(&person).as_bytes(),
+                label,
+                noise_weight: 1.0,
+                occurred_at,
+            },
             derived_from,
         });
     }
