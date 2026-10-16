@@ -1,15 +1,16 @@
-//! The escalation rung's decision read: the house model scores the question's labels and the
-//! paired "does this need more thinking?" question in one forward evaluation. The person
-//! question ("ask a person?") is its own typed question in the ladder's pack, read apart.
+//! The escalation rung's decision read: the house model reads the paired "does this need more
+//! thinking?" question and the pack's questions as one pack: each its own question over the
+//! same state, in one request, normalized apart (idle-fold test 6b). The person question ("ask
+//! a person?") is the ladder's own typed question, the pack's last, so it is the last readout.
 
 use super::ladder::{
-    DecisionCall, DecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision,
-    validate_pin,
+    DecisionCall, DecisionPack, DecisionProvider, PairedAnswer, ProviderCapability,
+    ProviderDecision, validate_pin,
 };
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
-use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
 use crate::Result;
+use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
@@ -56,28 +57,57 @@ impl DecisionProvider for DecisionReadProvider<'_> {
 
     fn capability(&self) -> ProviderCapability {
         ProviderCapability {
+            max_options: self.reader.max_labels(),
             score: false,
-            ..ProviderCapability::default()
         }
     }
 
+    /// A pack of one.
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
-        let DecisionCall {
-            question,
+        let mut answers = self.decide_pack(&DecisionPack {
+            questions: &[call.question],
+            evidence: call.evidence,
+            state: call.state,
+            deadline: call.deadline,
+        })?;
+        answers
+            .pop()
+            .ok_or_else(|| invalid("malformed decision read"))
+    }
+
+    /// One read: the paired question, then the pack's questions in order. The paired P(yes)
+    /// joins every answer.
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
+        let DecisionPack {
+            questions: asked,
             state,
             deadline,
             ..
-        } = *call;
-        if question.id == self.paired.id {
-            return Err(invalid("invalid paired question"));
+        } = *pack;
+        if asked.is_empty() {
+            return Err(invalid("invalid decision pack"));
         }
-        let labels = match &question.contract {
-            AnswerContract::Noul => LabelSet::Noul,
-            AnswerContract::Choice { options } => LabelSet::Choice(options),
-            AnswerContract::Score { .. } => {
-                return Err(invalid("a decision read takes noul and choice questions"));
+        let mut questions = Vec::with_capacity(asked.len() + 1);
+        questions.push(LabelReadout {
+            text: &self.paired.text,
+            labels: LabelSet::Noul,
+        });
+        for question in asked {
+            if question.id == self.paired.id {
+                return Err(invalid("invalid paired question"));
             }
-        };
+            let labels = match &question.contract {
+                AnswerContract::Noul => LabelSet::Noul,
+                AnswerContract::Choice { options } => LabelSet::Choice(options),
+                AnswerContract::Score { .. } => {
+                    return Err(invalid("a decision read takes noul and choice questions"));
+                }
+            };
+            questions.push(LabelReadout {
+                text: &question.text,
+                labels,
+            });
+        }
         let lease = self
             .guard
             .admit()
@@ -92,13 +122,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         }
         let request = LabelReadRequest {
             state,
-            primary: LabelReadout {
-                text: &question.text,
-                labels,
-            },
-            paired: &self.paired.text,
-            // The ladder asks the person question as its own typed question.
-            person: None,
+            questions: &questions,
             // An instant, not a duration, so the reader's own preparation spends it too.
             work_until: Some(Instant::now() + deadline.decision_time_left()),
         };
@@ -116,43 +140,48 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 return Err(invalid(&format!("decision read failed: {error}")));
             }
         };
-        let count = match labels {
-            LabelSet::Noul => 2,
-            LabelSet::Choice(options) => options.len(),
-        };
         let unit = |p: &f64| p.is_finite() && (0.0..=1.0).contains(p);
-        if read.primary.len() != count
-            || !read.primary.iter().all(unit)
-            || (read.primary.iter().sum::<f64>() - 1.0).abs() > DISTRIBUTION_TOLERANCE
-            || !unit(&read.paired_yes)
-            || read.person_yes.is_some()
+        let distribution = |(readout, question): (&Vec<f64>, &LabelReadout<'_>)| {
+            readout.len() == question.labels.len()
+                && readout.iter().all(unit)
+                && (readout.iter().sum::<f64>() - 1.0).abs() <= DISTRIBUTION_TOLERANCE
+        };
+        if read.readouts.len() != questions.len()
+            || !read.readouts.iter().zip(&questions).all(distribution)
         {
             return Err(invalid("malformed decision read"));
         }
-        // The first label wins a tie, so a tied noul reads yes.
-        let mut top = 0;
-        for (i, p) in read.primary.iter().enumerate() {
-            if *p > read.primary[top] {
-                top = i;
-            }
-        }
-        let (answer, probability) = match labels {
-            // A noul's probability is P(yes), whichever way it reads.
-            LabelSet::Noul => (DecisionAnswer::Noul(top == 0), read.primary[0]),
-            LabelSet::Choice(options) => (
-                DecisionAnswer::Choice(options[top].clone()),
-                read.primary[top],
-            ),
+        // Each readout reports yes first.
+        let paired = PairedAnswer {
+            question: self.paired.id,
+            question_version: self.paired.version,
+            probability: read.readouts[0][0],
         };
-        Ok(ProviderDecision {
-            answer,
-            probability: Some(probability),
-            paired: Some(PairedAnswer {
-                question: self.paired.id,
-                question_version: self.paired.version,
-                probability: read.paired_yes,
-            }),
-            person: None,
-        })
+        Ok(questions[1..]
+            .iter()
+            .zip(&read.readouts[1..])
+            .map(|(question, readout)| {
+                // The first label wins a tie, so a tied noul reads yes.
+                let mut top = 0;
+                for (i, p) in readout.iter().enumerate() {
+                    if *p > readout[top] {
+                        top = i;
+                    }
+                }
+                let (answer, probability) = match question.labels {
+                    // A noul's probability is P(yes), whichever way it reads.
+                    LabelSet::Noul => (DecisionAnswer::Noul(top == 0), readout[0]),
+                    LabelSet::Choice(options) => {
+                        (DecisionAnswer::Choice(options[top].clone()), readout[top])
+                    }
+                };
+                ProviderDecision {
+                    answer,
+                    probability: Some(probability),
+                    paired: Some(paired),
+                    person: None,
+                }
+            })
+            .collect())
     }
 }

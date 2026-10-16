@@ -63,9 +63,9 @@ pub struct LimitsConfig {
     /// bound sized for the endpoint's machine, not a count.
     pub embedder_answer_bytes: u64,
     /// Decision reads `POST /v1/llm/decision_read` holds at once, from the
-    /// owner check until the model's read ends. Past it, reads queue. The
-    /// model server reads one at a time whatever this is; the rest wait their
-    /// turn.
+    /// owner check until the model's read ends. Past it, reads queue. A read
+    /// is one pack of prompts, however many the model server's slots take at
+    /// once; the rest wait their turn there.
     pub decision_reads: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
