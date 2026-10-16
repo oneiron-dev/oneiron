@@ -524,6 +524,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RoomHostRequest>(),
             ),
             (
+                "vault.rooms.host.pin",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::RoomHostPin>(
+                ),
+            ),
+            (
+                "vault.rooms.host.hand",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::RoomHostHand>(
+                ),
+            ),
+            (
                 "vault.rooms.sharing",
                 crate::code_run::vault_read::request_schema::<RoomRefRequest>(),
             ),
@@ -1576,6 +1586,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.host.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.host.hand" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.sharing" => {
             properties.insert(
                 "room_ref".to_owned(),
@@ -2221,6 +2245,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.host" => {
             let _input: RoomHostRequest = decode(value.clone())?;
         }
+        "vault.rooms.host.pin" => {
+            let _input: crate::workspace_roster::RoomHostPin = decode(value.clone())?;
+        }
+        "vault.rooms.host.hand" => {
+            let _input: crate::workspace_roster::RoomHostHand = decode(value.clone())?;
+        }
         "vault.rooms.sharing" => {
             let _input: RoomRefRequest = decode(value.clone())?;
         }
@@ -2566,6 +2596,8 @@ pub fn invoke(
             encode(vault_conversations_turn_retry(memory, decode(value)?)?)
         }
         "vault.rooms.host" => encode(vault_rooms_host(memory, decode(value)?)?),
+        "vault.rooms.host.pin" => encode(vault_rooms_host_pin(memory, decode(value)?)?),
+        "vault.rooms.host.hand" => encode(vault_rooms_host_hand(memory, decode(value)?)?),
         "vault.rooms.sharing" => encode(vault_rooms_sharing(memory, decode(value)?)?),
         "vault.companions.sharing.get" => {
             encode(vault_companions_sharing_get(memory, decode(value)?)?)
@@ -3590,6 +3622,18 @@ pub fn vault_rooms_host(
             .map(crate::EntityId::from_hex)
             .transpose()?,
     )
+}
+pub fn vault_rooms_host_pin(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomHostPin,
+) -> MemoryResult<crate::workspace_roster::RoomStanding> {
+    memory.rooms_host_pin(&input)
+}
+pub fn vault_rooms_host_hand(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomHostHand,
+) -> MemoryResult<crate::workspace_roster::RoomStanding> {
+    memory.rooms_host_hand(&input)
 }
 pub fn vault_rooms_sharing(
     memory: &Memory<'_>,
