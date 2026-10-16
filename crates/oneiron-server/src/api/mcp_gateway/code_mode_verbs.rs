@@ -145,6 +145,9 @@ async fn execute_code_mode_verb(
     let Some(McpEndpointTool::Verb(tool)) =
         registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
     else {
+        if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(verb) {
+            return Err(super::mcp_facade_error(refusal));
+        }
         return Err(McpGatewayError::new(
             -32601,
             "unknown_tool",

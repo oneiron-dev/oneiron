@@ -547,7 +547,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
-        _ => return Err(MemoryError::bad_request("unknown SDK agent verb")),
+        _ => {
+            return Err(wrong_root(verb)
+                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
+        }
     }
     Ok(())
 }
@@ -585,7 +588,10 @@ pub fn invoke(
         "rooms.trunk" => encode(rooms_trunk(memory, decode(value)?)?),
         "rooms.claim" => encode(rooms_claim(memory, decode(value)?)?),
         "rooms.speak" => encode(rooms_speak(memory, decode(value)?)?),
-        _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
+        _ => {
+            Err(wrong_root(verb)
+                .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")))
+        }
     }
 }
 pub fn board_expand<S: crate::board_verb::LiveBoardSource>(

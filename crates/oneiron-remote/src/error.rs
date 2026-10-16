@@ -38,6 +38,7 @@ pub(crate) fn sdk_error(
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,
+        wrong_root: None,
     }
 }
 

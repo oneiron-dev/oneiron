@@ -432,6 +432,11 @@ pub(super) fn mcp_validated_call_args(
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
             return Err(mcp_code_host_unbound());
         }
+        // A canonical verb under the wrong root is refused with its
+        // correction; it is never resolved to the verb it means.
+        if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(&params.name) {
+            return Err(super::mcp_facade_error(refusal));
+        }
         return Err(McpGatewayError::new(
             -32602,
             "unknown_tool",

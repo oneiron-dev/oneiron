@@ -17,6 +17,9 @@ pub(crate) struct AppError {
     /// boxed so the refusal stays small on every `Result` that carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
+    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
+    #[serde(flatten)]
+    wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
 }
 
 impl AppError {
@@ -33,6 +36,7 @@ impl AppError {
             request_id: format!("ws-facade-req-{id:016x}"),
             suggestions: suggestions.into_iter().map(Into::into).collect(),
             narrowing: None,
+            wrong_root: None,
         }
     }
 
@@ -97,6 +101,7 @@ impl From<MemoryError> for AppError {
         // fields; a read refusal keeps its receipt, as the HTTP envelope does.
         Self {
             narrowing: error.read_receipt,
+            wrong_root: error.wrong_root,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

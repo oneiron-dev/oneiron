@@ -191,10 +191,24 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             Ok(json!({"bytes":bytes}).to_string())
         }
         _ => {
+            if let Some(refusal) = wrong_root_call(name, input) {
+                return Ok(json!({ "error": refusal }).to_string());
+            }
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
             response(state.host.dispatch_self(call)?)
         }
     }
+}
+
+/// The `WRONG_ROOT` refusal for a verb-table call that names no row but one
+/// canonical verb under another root. Answered before any typed call, bridge
+/// stamp or receipt exists, so the wrong name has no effect.
+fn wrong_root_call(name: &str, input: &str) -> Option<crate::memory::MemoryError> {
+    if name != "self.verbs.call" {
+        return None;
+    }
+    let args: VerbCall = serde_json::from_str(input).ok()?;
+    crate::task_verb::sdk::wrong_root(&args.verb)
 }
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
