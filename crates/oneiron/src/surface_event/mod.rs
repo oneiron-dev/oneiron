@@ -12,6 +12,9 @@ mod cc_intake;
 mod handoff;
 pub use cc_intake::CcAgentIntakeOutcome;
 mod inbound;
+mod threaded_intake;
+pub(crate) use threaded_intake::canonical_email_threading;
+pub use threaded_intake::ThreadedEmailIntakeOutcome;
 
 pub use self::handoff::{
     SURFACE_EVENT_ATTEMPT_KIND, SurfaceEventAck, SurfaceEventAdmission, SurfaceEventAttemptPayload,

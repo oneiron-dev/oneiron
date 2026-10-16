@@ -105,6 +105,36 @@ pub struct GmailMessageMetadata {
     pub internal_date_secs: u64,
     /// Provider labels classified into an engine placement fact.
     pub placement: MailPlacement,
+    /// RFC 5322 threading headers, when the host's header projection read
+    /// them (OF-374). They key the `(identity × Message-ID)` passport; the
+    /// Gmail ids above never stand in for them.
+    #[serde(default, skip_serializing_if = "GmailRfcThreading::is_empty")]
+    pub rfc_threading: GmailRfcThreading,
+}
+
+/// The raw RFC threading headers of one Gmail message.
+///
+/// Raw on purpose: canonicalization is the passport's, and a malformed header
+/// degrades the message to unthreaded delivery instead of dropping it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GmailRfcThreading {
+    /// The `Message-ID` header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    /// The `References` header, split into ids in header order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
+    /// The `In-Reply-To` header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<String>,
+}
+
+impl GmailRfcThreading {
+    /// Whether the host read no threading header at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.message_id.is_none() && self.references.is_empty() && self.in_reply_to.is_none()
+    }
 }
 
 impl GmailMessageMetadata {
@@ -130,7 +160,15 @@ impl GmailMessageMetadata {
             from: from.into(),
             internal_date_secs,
             placement,
+            rfc_threading: GmailRfcThreading::default(),
         }
+    }
+
+    /// Attaches the message's RFC threading headers.
+    #[must_use]
+    pub fn with_rfc_threading(mut self, threading: GmailRfcThreading) -> Self {
+        self.rfc_threading = threading;
+        self
     }
 
     /// Selects a provider-classified placement.
