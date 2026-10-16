@@ -55894,7 +55894,6 @@
      "path": "src/mcp/endpoint_args.rs",
      "purpose": "Endpoint tool argument envelopes: setup, execute-code, paging, and verbs",
      "surface": {
-      "const": 1,
       "crate-vis": 3,
       "fn": 3,
       "struct": 7
