@@ -167,7 +167,7 @@ pub use self::eval_set::{
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
-    GoalAxisScorer, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
+    OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
@@ -195,7 +195,7 @@ pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
     GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,
-    HeldOutReplayScorer, HeldOutVerdict, HonestyReplayObservation, JevTradeoffVerdict,
+    HeldOutReplayNotes, HeldOutVerdict, HonestyReplay, HonestyReplayObservation, JevTradeoffVerdict,
     JudgeMeasurements, PreferredResponse, ProjectGoalRevisionProposal, SKILL_EDIT_CYCLE_CAP_KEY,
     SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
     SkillEditDisposition, SkillEditGoal, SkillTradeoffAsk, SkillTradeoffPreferences,

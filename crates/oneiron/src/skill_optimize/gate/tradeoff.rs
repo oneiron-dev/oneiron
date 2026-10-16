@@ -565,7 +565,7 @@ pub(super) fn plan(
     basis: &ScoredBasis,
     definition: &GoalDefinition,
     axes: &BTreeMap<String, GoalAxisScore>,
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
 ) -> Result<TradeoffPlan> {
     if floor_regressed(axes) || !is_tradeoff(axes) {
         return Ok(TradeoffPlan::None);

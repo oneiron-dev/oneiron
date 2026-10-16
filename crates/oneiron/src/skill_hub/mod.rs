@@ -6,6 +6,7 @@ mod admission_guard;
 mod admission_view;
 mod bootstrap;
 mod claim_refinement;
+mod decisions;
 mod default_hub;
 mod doors;
 mod folder;
@@ -32,12 +33,12 @@ pub(crate) use admission_guard::{check_hub_skill_put, scan_skill_admission};
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
 pub use claim_refinement::{
     ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
-    HeldOutClaimReplayCase, HeldOutClaimReplayScorer, LocalClaimRefinement,
-    UsefulUpstreamClaimJudge,
+    LocalClaimRefinement,
 };
 pub(crate) use claim_refinement::{
     claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
+pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions};
 pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use default_hub::{
     ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
@@ -65,7 +66,6 @@ pub(crate) use refinement_custody::{refinement_carrier_holder, refinement_carrie
 pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
     SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback,
-    UsefulUpstreamJudge,
 };
 
 #[cfg(test)]

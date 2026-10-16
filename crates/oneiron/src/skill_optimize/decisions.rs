@@ -12,11 +12,14 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 use serde_json::{Value, json};
 
-use super::{BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse};
+use super::{
+    BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation,
+    PreferredResponse,
+};
 
 /// The Coach uses the host's existing provider slots, policy and one clock.
 /// Wording keys are score, structural, contrastive, preference, task_success,
-/// tradeoff, and axis.<name>. No prompt or model is selected by the engine.
+/// honesty, tradeoff, and axis.<name>. No prompt or model is selected by the engine.
 pub struct SkillOptimizeDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -71,7 +74,7 @@ impl SkillOptimizeDecisions<'_> {
     }
 }
 
-fn ask<S: HeldOutReplayScorer + ?Sized>(
+fn ask<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     kind: &str,
     evidence: &[EntityId],
@@ -90,7 +93,7 @@ fn ask<S: HeldOutReplayScorer + ?Sized>(
     Ok(decision)
 }
 
-fn score<S: HeldOutReplayScorer + ?Sized>(
+fn score<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     kind: &str,
     evidence: &[EntityId],
@@ -116,7 +119,7 @@ fn score<S: HeldOutReplayScorer + ?Sized>(
     }
 }
 
-fn case_state<S: HeldOutReplayScorer + ?Sized>(
+fn case_state<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     case: &HeldOutReplayCase<'_>,
 ) -> Result<Value> {
@@ -128,7 +131,7 @@ fn case_state<S: HeldOutReplayScorer + ?Sized>(
     }))
 }
 
-impl dyn HeldOutReplayScorer + '_ {
+impl dyn HeldOutReplayNotes + '_ {
     /// All replay judgments, including shared-skill admission, use decide().
     pub fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         score(self, "score", &[case.skill], &case_state(self, case)?)
@@ -240,6 +243,51 @@ impl dyn HeldOutReplayScorer + '_ {
                     &[case.skill],
                     &case_state(self, &one)?,
                 )
+            })
+            .collect()
+    }
+
+    /// Every objective of every held-out replay, put to the hidden-flaw
+    /// question one at a time. The counts are the decided findings; an
+    /// abstained or escalated finding fails the audit rather than counting.
+    pub(crate) fn replay_honesty(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+    ) -> Result<Vec<HonestyReplayObservation>> {
+        self.honesty_replays(case)?
+            .into_iter()
+            .map(|replay| {
+                let mut hidden_flaws = 0_u32;
+                for objective in &replay.objectives {
+                    let decision = ask(
+                        self,
+                        "honesty",
+                        &[case.skill],
+                        &json!({
+                            "skill_id": case.skill_id, "version": case.version,
+                            "instructions": case.instructions, "receipt": replay.receipt,
+                            "replay": replay.state, "objective": objective,
+                        }),
+                        AnswerContract::Noul,
+                    )?;
+                    match decision.answer {
+                        DecisionAnswer::Noul(flawed)
+                            if decision.human_ask.is_none()
+                                && decision
+                                    .probability
+                                    .is_some_and(|p| p >= decision.receipt.band.high) =>
+                        {
+                            hidden_flaws += u32::from(flawed);
+                        }
+                        _ => return Err(invalid("honesty finding abstained")),
+                    }
+                }
+                Ok(HonestyReplayObservation {
+                    checked_objectives: u32::try_from(replay.objectives.len())
+                        .map_err(|_| invalid("honesty replay objective count overflow"))?,
+                    receipt: replay.receipt,
+                    hidden_flaws,
+                })
             })
             .collect()
     }

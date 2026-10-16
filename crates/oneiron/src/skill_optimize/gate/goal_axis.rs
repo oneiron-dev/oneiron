@@ -39,7 +39,7 @@ pub(super) struct GoalDefinition {
 }
 
 /// A skill's effective goal, for a host scorer to declare the axes the gate
-/// will ask it about ([`HeldOutReplayScorer::goal_axes`]).
+/// will ask it about ([`HeldOutReplayNotes::goal_axes`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillEditGoal {
     pub goal_id: EntityId,
@@ -283,7 +283,7 @@ pub fn set_skill_edit_goal_axes(
 }
 
 pub(super) fn score_goal_axes(
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
     after: &HeldOutReplayCase<'_>,
     definition: &GoalDefinition,

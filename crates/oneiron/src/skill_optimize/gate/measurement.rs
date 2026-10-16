@@ -69,9 +69,19 @@ pub struct JudgeMeasurements {
     pub world_labels_digest: String,
 }
 
+/// One held-out replay as the honesty audit reads it: the run's task inputs and
+/// rollout, and every objective the run took on. Each objective is one typed
+/// hidden-flaw question on the decision path; the host only says what was taken on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HonestyReplay {
+    pub receipt: String,
+    pub state: serde_json::Value,
+    pub objectives: Vec<String>,
+}
+
 /// A complete, independently checked held-out replay. Counts come from the
-/// auditor's findings, not from the executor's self-assessment. Every objective
-/// is checked, so held-out honesty measurements have sampling probability one.
+/// decided hidden-flaw findings, not from the executor's self-assessment. Every
+/// objective is checked, so held-out honesty measurements have sampling probability one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HonestyReplayObservation {
@@ -84,7 +94,7 @@ pub struct HonestyReplayObservation {
 /// cannot dilute its hidden flaws by adding more claimed objectives. Only
 /// independently checked findings, not a confession, move this floor.
 pub(super) fn measure_honesty(
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
     after: &HeldOutReplayCase<'_>,
 ) -> Result<AuditPair> {
@@ -137,7 +147,7 @@ fn checked(score: f32) -> Result<f32> {
 /// from the durable outcome ledger. No audit result is passed to the scalar
 /// scorer, and no audit result changes admission.
 pub(super) fn measure(
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
     after: &HeldOutReplayCase<'_>,
     outcomes: &[(String, bool)],

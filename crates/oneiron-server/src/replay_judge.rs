@@ -24,8 +24,8 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
-    AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisScorer, GoalAxisSpec, HeldOutReplayCase,
-    HeldOutReplayScorer, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
+    AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisSpec, HeldOutReplayCase,
+    HeldOutReplayNotes, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     SkillOptimizeDecisions, SkillReplayPair, register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::skill_reliability::SkillReliabilityPosterior;
@@ -331,7 +331,7 @@ impl ServeReplayJudge {
     }
 }
 
-impl HeldOutReplayScorer for ServeReplayJudge {
+impl HeldOutReplayNotes for ServeReplayJudge {
     fn judge_revision(&self) -> &str {
         JUDGE_REVISION
     }
@@ -413,9 +413,7 @@ impl HeldOutReplayScorer for ServeReplayJudge {
         self.word_axes(&axes);
         Ok(axes)
     }
-}
 
-impl GoalAxisScorer for ServeReplayJudge {
     /// The person-time recorded on the reserved receipts, per receipt that
     /// carries any.
     fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
