@@ -2,6 +2,7 @@ mod agent_verb;
 mod coordination;
 mod emission;
 mod envelope;
+mod fold_verbs;
 mod human_speech;
 mod memory_verbs;
 mod wake_policy;
@@ -78,7 +79,7 @@ pub(crate) struct ExecutorCallSite<'h> {
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
 ///
-/// This is a type alias for [`HostSelfDispatcher`], whose public `self.memory.*`
+/// This is a type alias for [`HostSelfDispatcher`], whose public `vault.*` run-row
 /// variants stamp host-owned actor/provenance and run per-operation gate checks
 /// before any write commits.
 pub type GatedActorWrite<'a> = HostSelfDispatcher<'a>;
@@ -177,7 +178,7 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
-    /// Binds the host's door onto the SDK verb table, so `self.memory.<verb>`
+    /// Binds the host's door onto the SDK verb table, so each verb-table call
     /// runs each verb with that host's ceiling and gate.
     ///
     /// A host that binds a door runs one attempt of a run at a time, as the
@@ -404,6 +405,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
+            SelfCall::Fold(call) => self.dispatch_fold(&call, site),
         }
     }
 }

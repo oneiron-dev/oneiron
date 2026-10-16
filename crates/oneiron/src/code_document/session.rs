@@ -1,7 +1,7 @@
 //! Private Loro forks and persistent cursor-anchored symbol spans.
 
 use super::codec::{frontier, hash, invalid};
-use super::types::{CodeDocumentFrontier, CodeSpanAnchor, CodeSpanResolution};
+use super::types::{CodeDocumentFrontier, CodeOpProvenance, CodeSpanAnchor, CodeSpanResolution};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use loro::LoroDoc;
@@ -9,12 +9,14 @@ use loro::cursor::{Cursor, Side};
 
 /// One editor's observed file state. Refresh explicitly to observe another
 /// session. An edit is never silently re-diffed against an unseen newer body.
+/// Every operation it applies carries the session's current op provenance.
 pub struct CodeDocumentSession {
     pub(super) doc: LoroDoc,
     pub(super) repo: String,
     pub(super) document_id: [u8; 32],
     pub(super) session_id: EntityId,
     pub(super) initial_hash: [u8; 32],
+    pub(super) provenance: CodeOpProvenance,
 }
 
 impl CodeDocumentSession {
@@ -23,6 +25,18 @@ impl CodeDocumentSession {
     }
     pub fn session_id(&self) -> EntityId {
         self.session_id
+    }
+    /// Names the turn, activity, intent and model behind the next operations.
+    pub fn set_op_provenance(&mut self, provenance: CodeOpProvenance) {
+        self.provenance = provenance;
+    }
+    #[must_use]
+    pub fn with_op_provenance(mut self, provenance: CodeOpProvenance) -> Self {
+        self.provenance = provenance;
+        self
+    }
+    pub fn op_provenance(&self) -> &CodeOpProvenance {
+        &self.provenance
     }
     pub fn text(&self) -> String {
         self.doc.get_text("body").to_string()

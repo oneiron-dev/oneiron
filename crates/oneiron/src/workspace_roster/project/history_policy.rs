@@ -2,8 +2,10 @@
 //! every read folds fresh. Past it the project serves the frontier its last
 //! within-budget fold persisted, re-checked at every read, narrowed by the
 //! valid descendants of its frozen head, and takes no new authority until the
-//! owner seals or raises the policy. The over-budget view is local and exempt
-//! from order-freedom; a huge threshold raises a typed state, never a quiet limit.
+//! owner seals or raises the policy. A live write past it is held, never
+//! refused, and the crossing opens one owner question per project (OF-520).
+//! The over-budget view is local and exempt from order-freedom; a huge
+//! threshold raises a typed state, never a quiet limit.
 use super::fold::{
     ProjectDisposition, ProjectEffective, ProjectFrontier, ProjectWitness, parent_bounds, reason,
     seal_tips,
@@ -49,6 +51,18 @@ impl Default for ProjectHistoryPolicy {
 pub struct ProjectCycleQuestion {
     /// The cycle's projects, in id order; each keys a copy of the row.
     pub members: Vec<EntityId>,
+    pub raised_at: u64,
+}
+
+/// The owner's question about a project past its history budget (OF-520):
+/// raised once, when a batch end first freezes the project, while every
+/// authenticated revision past it is held; a seal or a raised policy that
+/// brings the project back within budget clears it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectHistoryQuestion {
+    pub project: EntityId,
+    /// The revisions counted when the project crossed its budget.
+    pub counted_at_crossing: u64,
     pub raised_at: u64,
 }
 
@@ -121,6 +135,8 @@ impl ProjectEvidenceSet {
 pub(crate) struct ProjectFreeze {
     pub(crate) at_counted: u64,
     pub(crate) narrowed: bool,
+    /// When the crossing raised the owner's question.
+    pub(crate) raised_at: u64,
 }
 
 /// LIVE authority: kept across delete, never rolled back by restore.
@@ -287,6 +303,35 @@ impl Vault {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             PROJECT_HISTORY_POLICY.put(&self.store, txn, &(), &policy)
         })
+    }
+
+    /// The open questions about projects past their history budget: one per
+    /// frozen project that a fresh read still finds over it, so a raised
+    /// policy clears its question at once and a seal at its batch end.
+    pub fn project_history_questions(&self) -> Result<Vec<ProjectHistoryQuestion>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(reader) = ProjectReader::new(&self.store, &txn, self.privacy_posture())? else {
+            return Ok(Vec::new());
+        };
+        let reader = reader.committed();
+        let mut questions = Vec::new();
+        for (project, record) in PROJECT_FRONTIER.scan_from(&self.store, &txn, &[])? {
+            let Some(freeze) = record.frozen else {
+                continue;
+            };
+            if let Some(ProjectFrontier {
+                disposition: ProjectDisposition::OverBudget { .. },
+                ..
+            }) = reader.frontier(project)?
+            {
+                questions.push(ProjectHistoryQuestion {
+                    project,
+                    counted_at_crossing: freeze.at_counted,
+                    raised_at: freeze.raised_at,
+                });
+            }
+        }
+        Ok(questions)
     }
 
     /// Every project whose history is past the budget, for the owner.

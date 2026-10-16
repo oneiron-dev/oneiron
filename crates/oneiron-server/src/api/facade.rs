@@ -1,15 +1,15 @@
 //! ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface.
 //!
-//! One route per §HEAD-CONTRACT verb at `/v1/core/facade/<snake_case_verb>`,
-//! and nothing else. Every handler does the same four things: require the
+//! One route per §HEAD-CONTRACT verb at `/v1/core/facade/<verb>`, the verb's
+//! full dotted name, and nothing else. Every handler does the same four things: require the
 //! scope, resolve the actor from the CREDENTIAL, bind
 //! [`oneiron::Vault::memory`] to it, and serialize what the engine returned.
 //! There is no transport-only domain model here — the request and response
 //! types ARE the engine DTOs — so this projection and the in-process N-API
 //! binding cannot drift into two dialects of the same verb.
 //!
-//! L1 ships the canonical quickstart, which is four calls: `witness` →
-//! `claim_upsert` → `recall` → `receipts`. The rest of the §HEAD-CONTRACT
+//! L1 ships the canonical quickstart, which is four calls: `vault.witness` →
+//! `vault.claims.upsert` → `vault.recall` → `vault.receipts`. The rest of the §HEAD-CONTRACT
 //! catalog is deliberately ABSENT rather than stubbed, except the five
 //! exact keyed-memory routes below and eight generated tasks/rooms routes.
 //! A `501` stub is still a
@@ -67,7 +67,7 @@ const FACADE_MAX_BODY_BYTES: usize = MAX_REMOTE_REQUEST_BYTES;
 /// The facade route table.
 ///
 /// Exactly one row per verb, all `POST`: the read verbs carry structured
-/// request bodies (`recall` has five inputs), and `/v1/core`'s own read
+/// request bodies (`vault.recall` has five inputs), and `/v1/core`'s own read
 /// routes — `/query`, `/context-pack`, `/hydrate` — already post their
 /// requests for the same reason. One method per verb also keeps the route
 /// census a flat list a contract test can compare against the catalog.

@@ -66,7 +66,7 @@ impl RoomThreads {
             rows.extend(list.rows.iter().map(|row| row.line(name)));
             if list.more > 0 || name == "quiet" {
                 rows.push(format!(
-                    "threads {name}: +{} more; find=rooms.find(room_ref={}) get=rooms.get(room_ref={},turn_ref=<handle>)",
+                    "threads {name}: +{} more; find=vault.rooms.find(room_ref={}) get=vault.rooms.get(room_ref={},turn_ref=<handle>)",
                     list.more, room.to_hex(), room.to_hex()
                 ));
             }
@@ -99,7 +99,7 @@ impl RoomThread {
         }
         if self.waits.len() > self.wait_render_limit {
             row.push_str(&format!(
-                " waits:+{} get=rooms.get",
+                " waits:+{} get=vault.rooms.get",
                 self.waits.len() - self.wait_render_limit
             ));
         }
@@ -435,7 +435,7 @@ fn project_inner(
             let more = total - count;
             let footer_tok = if more > 0 || lane == "quiet" {
                 let footer = format!(
-                    "threads {lane}: +{more} more; find=rooms.find(room_ref={room_hex}) get=rooms.get(room_ref={room_hex},turn_ref=<handle>)"
+                    "threads {lane}: +{more} more; find=vault.rooms.find(room_ref={room_hex}) get=vault.rooms.get(room_ref={room_hex},turn_ref=<handle>)"
                 );
                 crate::tokenizer::count_context_pack_tokens(&footer)
             } else {

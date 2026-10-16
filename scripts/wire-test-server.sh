@@ -104,7 +104,7 @@ for _ in $(seq 1 300); do
   fi
   STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
     -H 'Content-Type: application/json' -d '{}' \
-    "${BASE_URL}/v1/core/facade/receipts" 2>/dev/null || true)"
+    "${BASE_URL}/v1/core/facade/vault.receipts" 2>/dev/null || true)"
   if [[ "$STATUS" == "401" || "$STATUS" == "403" ]]; then
     READY=1
     break

@@ -22,7 +22,9 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
         return Ok(());
     }
     let scope = super::oplog::repo_mutation_repo_key(&repo);
-    let session = vault.open_code_document(&scope, &proposal.path, old, proposal.session)?;
+    let session = vault
+        .open_code_document(&scope, &proposal.path, old, proposal.session)?
+        .with_op_provenance(proposal.op_provenance.clone());
     vault.apply_code_file_ingress_exact(&mut [CodeFileIngress {
         operation: proposal_id,
         session,
