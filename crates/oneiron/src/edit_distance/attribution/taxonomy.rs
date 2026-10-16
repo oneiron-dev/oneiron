@@ -5,8 +5,8 @@ use crate::edit_distance::delta::delta_from_reconstructed;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_attribution::{
-    AttemptOutcome, AttributionJudge, AttributionLane, AttributionSplit, AttributionVerdict,
-    EditHunk, JudgeRequest, OutcomeEvidence, classify_split,
+    AttemptOutcome, AttributionDecisions, AttributionLane, AttributionSplit, AttributionVerdict,
+    EditHunk, JudgeRequest, OutcomeEvidence, classify_split, settled_split,
 };
 
 // ---------------------------------------------------------------------------
@@ -276,20 +276,21 @@ pub struct PreferenceProposal {
 /// edit mass, measured here with the pinned reconstructed-lane metric. With no
 /// hunks the amendment is one region and the split is one class at 100% — the
 /// same path, not a second one. A settled cause answers for every hunk; the
-/// `ProposalWrong` arm hands the judge SK-04's own evidence shape, and the
-/// judge may split it across any label the amendment lane admits.
-/// [`RuleAttributionJudge`](crate::skill_attribution::RuleAttributionJudge) is
-/// the deterministic pass; a host-supplied judge is the model tier.
+/// `ProposalWrong` arm asks SK-04's own evidence shape, and the answers may
+/// split it across any label the amendment lane admits.
+/// [`AttributionRules`](crate::skill_attribution::AttributionRules) is the
+/// deterministic pass (`decisions` `None`); the host's
+/// [`AttributionDecisions`] are the model tier.
 ///
 /// Every answer then meets `floor` (the `attribution_unclear_floor` setting):
 /// a hunk held below it is `unclear`.
 ///
 /// # Errors
 ///
-/// Whatever `judge` returns.
+/// Whatever the decision path returns.
 pub fn classify_amendment(
     evidence: &AmendmentEvidence,
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
     hunks: &[EditHunk<'_>],
     floor: f32,
 ) -> Result<Option<AttributionSplit>> {
@@ -315,17 +316,8 @@ pub fn classify_amendment(
         floor,
     };
     match settled {
-        Some(class) => classify_split(&SettledCause(class), &request, &masses),
-        None => classify_split(judge, &request, &masses),
-    }
-}
-
-/// The answer a settled cause gives: its class, certain, for every hunk.
-struct SettledCause(AmendmentClass);
-
-impl AttributionJudge for SettledCause {
-    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-        Ok(Some(self.0))
+        Some(class) => settled_split(class, &request, &masses).map(Some),
+        None => Ok(classify_split(decisions, &request, &masses)?.map(|(split, _)| split)),
     }
 }
 
