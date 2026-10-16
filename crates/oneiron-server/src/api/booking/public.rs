@@ -268,6 +268,8 @@ fn public_http_transport_context(
     Ok(BookingTransportContext {
         source_ip,
         authenticated_actor_ref: None,
+        credential: None,
+        owner_grade: false,
         transport: BookingTransport::AnonymousHttp,
     })
 }
@@ -331,3 +333,6 @@ mod lifecycle_tests;
 #[cfg(test)]
 #[path = "public_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "turn_tests.rs"]
+pub(super) mod turn_tests;

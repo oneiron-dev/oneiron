@@ -118,9 +118,13 @@ pub(super) fn admission_facts(
         }
         None => 0,
     };
+    // The per-email cap on active bookings sheds anonymous visitors; an
+    // owner-grade caller books for the owner and is not held to it (rule 5).
     let live_email_bookings = match booker_email {
-        Some(email) => active_future_bookings_for_email(server, page_ref, email, now)?,
-        None => 0,
+        Some(email) if !transport.owner_grade => {
+            active_future_bookings_for_email(server, page_ref, email, now)?
+        }
+        _ => 0,
     };
     let intake_chars: usize = intake.map_or(0, |answers| {
         answers
@@ -181,7 +185,7 @@ pub(super) fn admission_short_circuit(
             Ok(Some(benign_response(request)))
         }
         BookingHttpDisposition::PromptCorrection { body } => Err(prompt_correction_error(&body)),
-        BookingHttpDisposition::RetryAfter { seconds } => {
+        BookingHttpDisposition::RetryAfter { seconds, .. } => {
             let state = format!("booking_retry_after_{seconds}s");
             Err(ApiError::new(
                 format!("booking admission is rate limited; retry after {seconds} seconds"),
