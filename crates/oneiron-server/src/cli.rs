@@ -603,6 +603,13 @@ pub struct InitArgs {
     /// `save` (the default) or `shadow`.
     #[arg(long)]
     pub oneironer_mode: Option<crate::config::OneironerMode>,
+    /// The local tagger's model bundle: the directory holding `oneironer.json`.
+    #[arg(long)]
+    pub oneironer_model_dir: Option<PathBuf>,
+    /// The local tagger's engine device: `auto` (the fastest that clears the
+    /// bundle's parity bar), `cpu`, `metal` or `cuda`.
+    #[arg(long)]
+    pub oneironer_device: Option<crate::config::EmbedderDevice>,
 }
 
 #[derive(Args, Clone, Debug)]

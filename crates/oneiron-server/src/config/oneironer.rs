@@ -158,8 +158,10 @@ pub struct OneironerConfig {
     pub model_dir: Option<PathBuf>,
     pub runtime: OneironerRuntime,
     pub backbone: OneironerBackbone,
-    /// CPU is the portable baseline; a named accelerator must be available.
-    /// Auto also uses CPU until OF-539 provides measured engine selection.
+    /// The local tagger's engine device. `auto`, the default, serves the
+    /// fastest engine this machine runs that clears the bundle's parity bar,
+    /// or the built-in CPU engine when the bundle ships no reference; a named
+    /// device is the user's pick and must run here (`oneironer::engines`).
     pub device: EmbedderDevice,
     /// Native window ceiling, including context and special tokens. A current
     /// turn beyond it fails rather than silently saving a truncated tag set.
@@ -213,7 +215,7 @@ impl Default for OneironerConfig {
             model_dir: None,
             runtime: OneironerRuntime::default(),
             backbone: OneironerBackbone::default(),
-            device: EmbedderDevice::Cpu,
+            device: EmbedderDevice::Auto,
             max_input_tokens: 2048,
             url: None,
             checkpoint_sha16: None,

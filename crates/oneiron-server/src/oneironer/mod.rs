@@ -17,6 +17,7 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 use crate::config::{OneironerConfig, OneironerProvider};
 
 pub(crate) mod endpoint;
+pub(crate) mod engines;
 mod local;
 
 #[cfg(test)]
@@ -78,6 +79,8 @@ pub(crate) struct TaggerSlot {
     config: OneironerConfig,
     tagger: Arc<ProviderTagger>,
     card: Mutex<Option<endpoint::ModelCard>>,
+    /// The engine a local tagger runs on and how it was picked.
+    serving: Option<engines::Serving>,
     /// The test door onto the traces the worker emitted, bounded.
     #[cfg(test)]
     traces: Mutex<VecDeque<LoggedTrace>>,
@@ -90,6 +93,11 @@ impl TaggerSlot {
 
     pub(crate) fn tagger(&self) -> &Arc<ProviderTagger> {
         &self.tagger
+    }
+
+    /// The engine a local tagger serves on; `None` for an endpoint.
+    pub(crate) fn serving(&self) -> Option<engines::Serving> {
+        self.serving
     }
 
     /// The last model card a probe accepted.
@@ -149,9 +157,17 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
         return Ok(None);
     };
     config.validate()?;
+    let mut serving = None;
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            ProviderTagger::Local(Box::new(local::LocalTagger::load(config)?))
+            let (tagger, engine) = engines::load(config)?;
+            tracing::info!(
+                engine = %engine.engine.id(),
+                pick = engine.pick.as_str(),
+                "oneironer engine serving"
+            );
+            serving = Some(engine);
+            ProviderTagger::Local(Box::new(tagger))
         }
         OneironerProvider::Endpoint => {
             ProviderTagger::Endpoint(endpoint::HttpTagger::from_config(config)?)
@@ -162,6 +178,7 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
         config: config.clone(),
         tagger: Arc::new(tagger),
         card: Mutex::new(None),
+        serving,
         #[cfg(test)]
         traces: Mutex::new(VecDeque::new()),
     };

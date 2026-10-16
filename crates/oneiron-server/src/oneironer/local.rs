@@ -164,8 +164,8 @@ impl LocalTagger {
             EmbedderDevice::Cpu => Device::Cpu,
             EmbedderDevice::Metal => Device::new_metal(0)?,
             EmbedderDevice::Cuda => Device::new_cuda(0)?,
-            // CPU is the portable baseline. Automatic faster-engine selection
-            // belongs to the slot's measured parity/speed policy (OF-539).
+            // The slot resolves `auto` to a measured engine before it loads
+            // (`super::engines`); a direct load runs on the built-in CPU one.
             EmbedderDevice::Auto => Device::Cpu,
         };
         let mut tokenizer = Tokenizer::from_bytes(manifest.tokenizer.read(dir)?)
