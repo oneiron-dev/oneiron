@@ -30,6 +30,7 @@
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
 pub mod bridge;
+pub mod carrier;
 pub mod chunks;
 pub mod client;
 pub mod connection;
@@ -63,6 +64,7 @@ pub mod types;
 pub mod window;
 pub(crate) mod window_rows;
 
+pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
     ResidenceSearch, SealedRelay, SearchSource, SyncClient, SyncClientConfig, SyncEvent,
@@ -105,7 +107,7 @@ pub use selector::{
     SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
     admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
     decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for,
+    filtered_window_doc_for, filtered_window_doc_for_peer,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

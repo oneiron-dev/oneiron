@@ -1,8 +1,10 @@
 //! Bounded on-demand home reads on an independent short-lived authenticated
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 
+mod authority;
 mod index;
 mod sealed;
+pub(crate) use authority::catch_up_authority;
 pub use index::ResidenceIndexWindow;
 pub use sealed::SealedRelay;
 pub(crate) use sealed::relay_sealed_windows;
@@ -38,8 +40,7 @@ fn residence_budgets(vault: &crate::Vault) -> Result<ResidenceOperationBudgets, 
         ))
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Socket = crate::sync::carrier::SyncSocket;
 
 /// Search explicitly distinguishes a complete home answer from a partial
 /// offline answer over this device's previously opened, cached items.
@@ -175,13 +176,19 @@ impl ResidenceRpc {
                 .map_err(|_| refused())?;
             request.headers_mut().insert(AUTHORIZATION, header);
         }
+        // The mesh carrier reaches the configured home; an elected home
+        // elsewhere is dialed at its own URL.
+        let dialer = config
+            .mesh_dialer
+            .as_deref()
+            .filter(|_| config.residence_url() == config.server_url);
         let mut socket = match tokio::time::timeout_at(
             deadline,
-            tokio_tungstenite::connect_async(request),
+            crate::sync::carrier::connect_sync_socket(request, dialer),
         )
         .await
         {
-            Ok(Ok((socket, _))) => socket,
+            Ok(Ok(socket)) => socket,
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => return Err(refused()),
             Ok(Err(_)) | Err(_) => return Ok(None),
         };

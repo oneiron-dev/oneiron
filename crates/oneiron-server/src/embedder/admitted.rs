@@ -134,7 +134,7 @@ impl PaidRequests for AdmittedRequests {
             1,
             BudgetExhaustionPolicy::Suspend,
         );
-        let run = undeclared_run(run, meter, Arc::clone(&self.receipts));
+        let run = undeclared_run(run, meter, None, Arc::clone(&self.receipts));
         let permit = run.admit_paid(&self.connector, tokens).map_err(refused)?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(refused)?;

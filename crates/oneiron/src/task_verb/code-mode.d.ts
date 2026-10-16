@@ -21,6 +21,7 @@ declare const connector: {
 };
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
+declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
     click(input: { ref: string }): Promise<unknown>;
@@ -80,6 +81,12 @@ declare const vault: {
   companions: {
     sharing: {
       get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+    };
+  };
+  conversations: {
+    turn: {
+      continue(input: { turn_id: string }): Promise<unknown>;
+      retry(input: { turn_id: string }): Promise<unknown>;
     };
   };
   edges: {
