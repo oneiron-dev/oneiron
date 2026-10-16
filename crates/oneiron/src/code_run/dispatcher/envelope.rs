@@ -286,6 +286,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::AgentsPut
         | SelfEffect::TasksAsk
         | SelfEffect::TasksWait
+        | SelfEffect::TasksRefuse
         | SelfEffect::TaskDelegate
         | SelfEffect::Context
         | SelfEffect::Speak
@@ -294,7 +295,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::ReportBlocked
         | SelfEffect::InferenceDefaultsRead
         | SelfEffect::InferenceDefaultsReplace => false,
-        SelfEffect::WakePolicyWrite | SelfEffect::AgentVerb => false,
+        SelfEffect::WakePolicyWrite | SelfEffect::AgentVerb | SelfEffect::Fold => false,
     }
 }
 

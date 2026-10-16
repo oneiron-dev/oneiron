@@ -9,6 +9,7 @@ mod exec_board_verbs;
 mod memory_response;
 mod stream_reads;
 mod tasks_response;
+mod wakes;
 
 pub(crate) use self::actor_dispatch::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_params, mcp_tool_validation_error,
@@ -35,7 +36,7 @@ pub(crate) use self::envelope::{
 };
 pub(crate) use self::exec_board_verbs::execute_mcp_execute_code;
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
-pub(crate) use self::stream_reads::mcp_stream_reads_task;
+pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
 // but no production path does, so a plain `pub(crate)` re-export would warn as
 // unused in non-test builds.

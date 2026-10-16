@@ -1,8 +1,10 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
 mod history;
+mod hosting;
 mod liveness;
 #[cfg(test)]
 mod tests;
+mod upkeep;
 mod witness;
 use super::ProjectRoom;
 use crate::error::{Error, Result};
@@ -12,12 +14,16 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
+pub(in crate::workspace_roster) use history::thread_turns_in;
+pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
 };
+pub(in crate::workspace_roster) use liveness::{thread_root_map, thread_task_bindings};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
@@ -115,6 +121,7 @@ pub struct RoomTurn {
 pub enum RoomTrunkItem {
     Origin(super::project::RoomOriginCard),
     Turn(RoomTurn),
+    Result(RoomTrunkHeader),
 }
 
 /// A delivered TASK's durable result, attached to its trunk on a room read.
@@ -210,6 +217,36 @@ pub(crate) fn project_room_audience_in(
     ))
 }
 
+/// The validated project room `room` is, or `None` for an ordinary
+/// Conversation, whose membership ledger stays authoritative.
+fn project_room_of(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<ProjectRoom>> {
+    // A PROJECT and its exact room may arrive in the same batch. The
+    // projector's equality path can then leave no marker behind; the
+    // stored body, not that auxiliary row, identifies the substrate.
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+        return Err(invalid());
+    }
+    let body = crate::conversation::ConversationBody::from_bytes(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    let derived = body.extra.contains_key("project_id") || body.extra.contains_key("memberIds");
+    if derived
+        || super::project::ROOM_PROJECT
+            .get(&vault.store, txn, &room)?
+            .is_some()
+    {
+        return room_in(vault, txn, room).map(Some);
+    }
+    Ok(None)
+}
+
 impl Vault {
     /// Resolve the audience of a room from its owning substrate. Project home
     /// rooms derive membership from the PROJECT roster, not from the ordinary
@@ -253,31 +290,14 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         room: EntityId,
     ) -> Result<Vec<EntityId>> {
-        // A PROJECT and its exact room may arrive in the same batch. The
-        // projector's equality path can then leave no marker behind; the
-        // stored body, not that auxiliary row, identifies the substrate.
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &room)?
-            .ok_or(Error::EntityNotFound)?;
-        let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
-            return Err(invalid());
-        }
-        let body = crate::conversation::ConversationBody::from_bytes(
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        )?;
-        let derived = body.extra.contains_key("project_id") || body.extra.contains_key("memberIds");
-        if derived
-            || super::project::ROOM_PROJECT
-                .get(&self.store, txn, &room)?
-                .is_some()
-        {
-            return room_in(self, txn, room)?
+        match project_room_of(self, txn, room)? {
+            Some(room) => room
                 .member_ids
                 .iter()
                 .map(|id| EntityId::from_hex(id))
-                .collect();
+                .collect(),
+            None => self.members_in_txn(txn, room),
         }
-        self.members_in_txn(txn, room)
     }
 
     /// Host roster configuration, not a user message. A platform handle maps
@@ -353,6 +373,9 @@ impl Memory<'_> {
         }
         self.with_verified_actor_write_txn(|txn| {
             require_member(self.vault(), txn, room, self.actor())?;
+            // Claiming a turn is speaking: engine upkeep holds no speaking
+            // role, and winning the turn appoints no host.
+            hosting::admit_room_speech_in(self.vault(), txn, room, self.actor())?;
             let addressed = turn_in(self.vault(), txn, turn)?;
             if addressed.room_id != room.to_hex() {
                 return Err(MemoryError::from(invalid()));

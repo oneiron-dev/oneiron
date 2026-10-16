@@ -15,14 +15,17 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::models::QuotaChoice;
 use crate::server::SyncServer;
 
-mod chat;
+pub(crate) mod chat;
 mod media;
+mod waves;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/status", get(status))
         .route("/session", post(session))
         .route("/chat", post(chat::chat_turn))
+        .route("/waves", post(waves::enqueue))
+        .route("/waves/{attempt}", get(waves::status))
         .route("/options", get(media::options))
         .route("/quota/{question}", post(answer_quota))
         .merge(media_routes())
