@@ -133,6 +133,10 @@ pub enum JoinParticipation {
     /// An agent never takes a room seat: this receipt is its participation
     /// evidence.
     AgentReceipt,
+    /// A companion attends through her principal's live standing: a seat of
+    /// her own would outlive it, so this receipt, re-proved on each use, is
+    /// her participation evidence.
+    PrincipalReceipt,
 }
 
 /// Everything a join was filed with: its receipt but the decision.

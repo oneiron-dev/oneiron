@@ -541,7 +541,18 @@ pub(super) fn record_roster_member(
             return Ok(());
         }
         MEMBER.put(&vault.store, wtxn, &key, &row)?;
-        Ok(())
+        // Brought or born, the companion follows her member into the rooms
+        // the member stands in, filed only when the member or the companion
+        // herself writes this step (OF-417).
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        super::workplace_join::file_companion_rooms_in_txn(
+            vault,
+            wtxn,
+            intent.person_ref,
+            intent.companion.person_ref(),
+            *writer,
+            now,
+        )
     })
 }
 
