@@ -19,6 +19,18 @@ pub fn replay_entity(
     entity: ReplicatedEntity<'_>,
     tier: ImportTier,
 ) -> crate::Result<()> {
+    replay_entity_with_birth(vault, entity, None, tier)
+}
+
+/// [`replay_entity`] with the row's carried Rule A birth, stamped in the
+/// transaction that admits the row. A malformed or conflicting birth is left
+/// out; the row stands.
+pub fn replay_entity_with_birth(
+    vault: &Vault,
+    entity: ReplicatedEntity<'_>,
+    birth: Option<&crate::provenance::birth::RowBirth>,
+    tier: ImportTier,
+) -> crate::Result<()> {
     let replayed = vault.with_write_txn_grouped(|txn| {
         vault
             .batch_in()
@@ -30,7 +42,13 @@ pub fn replay_entity(
                 entity.learned_at,
                 entity.body,
             )
-            .apply(txn)
+            .apply(txn)?;
+        if let Some(birth) = birth
+            && crate::vault::live_entity_row_in_txn(&vault.store, txn, &entity.id)?.is_live()
+        {
+            super::row_birth::stamp_birth_or_warn(vault, txn, &entity.id, birth)?;
+        }
+        Ok(())
     });
     if replayed.is_err() {
         // A task authority fact deleted here before it arrived is refused
