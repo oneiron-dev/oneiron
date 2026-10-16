@@ -22,7 +22,8 @@ pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]
 use self::record::step_state_hash;
 pub(crate) use self::store::{
-    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, is_result_output_path, result_handle_json,
+    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,
+    result_handle_json,
 };
 pub use self::types::{
     ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,

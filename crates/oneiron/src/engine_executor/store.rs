@@ -270,7 +270,7 @@ pub(super) fn record_text_output(
 
 /// Whether `output`'s body may enter model context as it stands: a body
 /// the secret scan marked, or one under live or stale taint, never does.
-pub(super) fn clean_for_context(
+pub(crate) fn clean_for_context(
     storage: &ExecutorStorage<'_>,
     output: &CodeRunRawOutput,
 ) -> Result<bool> {
