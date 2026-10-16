@@ -158,7 +158,7 @@ impl StoredFanout {
                 total_count: self.estimate.total_count,
                 per_peer: self.estimate.per_peer.clone(),
                 plan_digest: self.estimate.plan_digest,
-                board_rows: crate::context_board::fanout_agent_rows(
+                board_rows: super::consult_fanout_types::fanout_meter_rows(
                     &self.correlation,
                     &self.estimate,
                     self.pause.as_ref().and_then(|row| row.pathology.as_ref()),

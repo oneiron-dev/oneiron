@@ -98,19 +98,41 @@ pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
     if let Some(label) = intent.label.as_deref() {
         tokens.push(one_line_token(label));
     }
-    if let Some(assignee) = intent.assignee.as_deref() {
-        tokens.push(format!("assignee={}", single_token(assignee)));
+    if let Some(who) = intent.who_label.as_deref().or(intent.assignee.as_deref()) {
+        tokens.push(format!("who={}", single_token(who)));
     }
     tokens.push(intent.status.as_str().to_owned());
     tokens.extend(cause_tokens(intent));
     if folded_job_count > 0 {
         tokens.push(format!("jobs={folded_job_count}"));
     }
+    if !intent.children.is_empty() {
+        tokens.push(format!(
+            "children={}",
+            intent
+                .children
+                .iter()
+                .map(|child| single_token(child))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
     // ONE-1896: the refusal signal rides BESIDE the status, exactly like a
     // cause token — the row still says `running`, because the worker IS
     // running; what the owner learns is that it will not stop when asked.
     if let Some(pathology) = intent_cancel_pathology(intent) {
         tokens.push(pathology.token());
+    }
+    if !intent.fits.is_empty() {
+        tokens.push(format!(
+            "fits: {}",
+            intent
+                .fits
+                .iter()
+                .map(|person| single_token(person))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
     }
     TaskRow::from_intent(intent, tokens.join(" "))
 }

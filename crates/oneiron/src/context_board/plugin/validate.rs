@@ -15,7 +15,7 @@ pub const CORE_SECTION_IDS: [&str; 9] = [
     "WORLDS",
     "MEMORIES",
     "TASKS",
-    "AGENTS",
+    "ROOM",
     "VERBS",
     "SKILLS",
     "PROPOSALS",
