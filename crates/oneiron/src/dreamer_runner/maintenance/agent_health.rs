@@ -310,6 +310,10 @@ struct Finding {
     confession: Option<EntityId>,
 }
 
+/// The working set's attempts, and its agent dispatches, by attempt bytes.
+type Attempts = BTreeMap<[u8; 16], AttemptRecord>;
+type Dispatches = BTreeMap<[u8; 16], Dispatched>;
+
 /// The dials in force for one review.
 struct Dials {
     loop_repeats: u64,
@@ -366,14 +370,14 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     };
     let since = now.saturating_sub(LOOKBACK_SECS);
     let calls = agent_calls(vault, since)?;
-    let attempts: BTreeMap<AttemptId, AttemptRecord> = AttemptQueue::new(vault)
+    let attempts: Attempts = AttemptQueue::new(vault)
         .list()?
         .into_iter()
-        .map(|record| (record.id, record))
+        .map(|record| (*record.id.as_bytes(), record))
         .collect();
-    let dispatched: BTreeMap<AttemptId, Dispatched> = attempts
-        .values()
-        .filter_map(|record| Dispatched::of(record).map(|dispatch| (record.id, dispatch)))
+    let dispatched: Dispatches = attempts
+        .iter()
+        .filter_map(|(key, record)| Dispatched::of(record).map(|dispatch| (*key, dispatch)))
         .collect();
 
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
@@ -502,19 +506,16 @@ fn settled(state: AttemptState) -> bool {
 /// The actor's newest leased attempt, the one its calls belong to.
 fn live_attempt(
     actor: EntityId,
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
 ) -> Option<AttemptId> {
     dispatched
         .iter()
-        .filter(|(id, dispatch)| {
-            dispatch.actor == actor
-                && attempts
-                    .get(id)
-                    .is_some_and(|record| record.state == AttemptState::Leased)
-        })
-        .max_by_key(|(id, _)| attempts.get(id).map_or(0, |record| record.updated_at))
-        .map(|(id, _)| *id)
+        .filter(|(_, dispatch)| dispatch.actor == actor)
+        .filter_map(|(key, _)| attempts.get(key))
+        .filter(|record| record.state == AttemptState::Leased)
+        .max_by_key(|record| record.updated_at)
+        .map(|record| record.id)
 }
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
@@ -522,8 +523,8 @@ fn live_attempt(
 /// so the card's task is none.
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
     repeats: u64,
 ) -> Vec<Finding> {
     let mut out = Vec::new();
@@ -577,8 +578,8 @@ fn loop_findings(
 fn silent_findings(
     vault: &Vault,
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
     dials: &Dials,
     now: u64,
 ) -> Result<Vec<Finding>> {
@@ -613,14 +614,14 @@ fn silent_findings(
         if waiting || blocked {
             continue;
         }
-        let Some(attempt) = entity(*id) else {
+        let Some(attempt) = entity(record.id) else {
             continue;
         };
         out.push(Finding {
             subject: dispatch.actor,
             signal: AgentHealthSignal::Silent,
             task,
-            attempt: Some(*id),
+            attempt: Some(record.id),
             evidence: vec![attempt],
             window: (active, now),
             actual: 0,
@@ -637,8 +638,8 @@ fn silent_findings(
 /// life waiting, not on a person, over at least the dial's minutes. Only
 /// settled attempts have a closed life to measure.
 fn long_wait_findings(
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
     dials: &Dials,
     since: u64,
 ) -> Vec<Finding> {
@@ -673,7 +674,7 @@ fn long_wait_findings(
         if share <= dials.wait_share {
             continue;
         }
-        let Some(attempt) = entity(*id) else {
+        let Some(attempt) = entity(record.id) else {
             continue;
         };
         let permille = (share * 1000.0).round() as i64;
@@ -685,7 +686,7 @@ fn long_wait_findings(
             subject: dispatch.actor,
             signal: AgentHealthSignal::LongWait,
             task: task_of(record),
-            attempt: Some(*id),
+            attempt: Some(record.id),
             evidence: vec![attempt],
             window: (record.created_at, record.updated_at),
             actual: permille,
@@ -702,8 +703,8 @@ fn long_wait_findings(
 /// agent that did the second piece of work.
 fn duplicate_findings(
     vault: &Vault,
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
     since: u64,
     now: u64,
 ) -> Result<Vec<Finding>> {
@@ -719,32 +720,31 @@ fn duplicate_findings(
         for label in &cost.duplicate_work {
             // A work reference is the TASK the attempt did, or the attempt.
             let does = |reference: &str| {
-                dispatched.keys().find(|id| {
-                    attempts.get(id).is_some_and(|record| {
-                        record.run_id.as_deref() == Some(run)
-                            && (record.task_ref.as_deref() == Some(reference)
-                                || crate::entity_id::bytes_to_hex_lower(id.as_bytes())
-                                    == reference)
-                    })
+                dispatched.iter().find_map(|(key, dispatch)| {
+                    attempts
+                        .get(key)
+                        .filter(|record| {
+                            record.run_id.as_deref() == Some(run)
+                                && (record.task_ref.as_deref() == Some(reference)
+                                    || crate::entity_id::bytes_to_hex_lower(key) == reference)
+                        })
+                        .map(|record| (record, dispatch))
                 })
             };
-            let Some(second) = does(&label.second) else {
+            let Some((record, dispatch)) = does(&label.second) else {
                 continue;
             };
-            let Some(record) = attempts.get(second) else {
-                continue;
-            };
-            let mut evidence: Vec<EntityId> = [Some(*second), does(&label.first).copied()]
+            let mut evidence: Vec<EntityId> = [Some(record), does(&label.first).map(|(first, _)| first)]
                 .into_iter()
                 .flatten()
-                .filter_map(entity)
+                .filter_map(|record| entity(record.id))
                 .collect();
             evidence.extend(EntityId::from_hex(&label.audit_receipt).ok());
             out.push(Finding {
-                subject: dispatched[second].actor,
+                subject: dispatch.actor,
                 signal: AgentHealthSignal::DuplicateWork,
                 task: task_of(record),
-                attempt: Some(*second),
+                attempt: Some(record.id),
                 evidence,
                 window: (record.created_at, record.updated_at),
                 actual: 1,
@@ -762,8 +762,8 @@ fn duplicate_findings(
 /// confession called met with no flaw. A confession alone never flags.
 fn misalignment_findings(
     vault: &Vault,
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
     since: u64,
 ) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
@@ -774,7 +774,7 @@ fn misalignment_findings(
         if !settled(record.state) || record.updated_at < since {
             continue;
         }
-        let Some(sealed) = vault.sealed_attempt_receipt(*id)? else {
+        let Some(sealed) = vault.sealed_attempt_receipt(record.id)? else {
             continue;
         };
         let mut unreported = BTreeSet::new();
@@ -799,7 +799,7 @@ fn misalignment_findings(
         if unreported.is_empty() {
             continue;
         }
-        let Some(attempt) = entity(*id) else {
+        let Some(attempt) = entity(record.id) else {
             continue;
         };
         evidence.insert(0, attempt);
@@ -808,7 +808,7 @@ fn misalignment_findings(
             subject: dispatch.actor,
             signal: AgentHealthSignal::Misalignment,
             task: task_of(record),
-            attempt: Some(*id),
+            attempt: Some(record.id),
             evidence,
             window: (sealed.sealed_at, checked_at),
             actual: count,
@@ -885,14 +885,16 @@ fn route(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     finding: &Finding,
-    dispatched: &BTreeMap<AttemptId, Dispatched>,
-    attempts: &BTreeMap<AttemptId, AttemptRecord>,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
 ) -> Result<Route> {
-    let dispatch = finding.attempt.and_then(|attempt| dispatched.get(&attempt));
+    let dispatch = finding
+        .attempt
+        .and_then(|attempt| dispatched.get(attempt.as_bytes()));
     // A helper's card goes to its spawner, which already controls it.
     let spawner = dispatch
         .and_then(|dispatch| dispatch.parent)
-        .and_then(|parent| attempts.get(&parent))
+        .and_then(|parent| attempts.get(parent.as_bytes()))
         .and_then(Dispatched::of)
         .map(|parent| parent.actor);
     // The project's effective leader, never a stored claim of one.

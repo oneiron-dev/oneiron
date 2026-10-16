@@ -323,8 +323,12 @@ impl PeoplePrefix {
             out.push('\n');
             out.push_str(row);
         }
+        // The overflow points at the verb that pages the rest (ARCH-0067).
         if self.more > 0 {
-            out.push_str(&format!("\nmore: +{}", self.more));
+            out.push_str(&format!(
+                "\nmore: +{} \u{b7} vault.people.list({}, page)",
+                self.more, self.vault
+            ));
         }
         out.push_str("\n</people>");
         out
