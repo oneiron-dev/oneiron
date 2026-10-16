@@ -100,7 +100,7 @@ mod maintain;
 pub use maintain::maintain;
 mod owner;
 pub use owner::{
-    backup, doctor, export, import, recover_clock, recover_window, restore, runs, secret_scan,
+    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs, secret_scan,
     secrets, whoami,
 };
 mod msgpack_json;

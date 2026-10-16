@@ -634,6 +634,22 @@ same version applies none, and no rewrite lands on a predicate the update drops.
 `GET /v1/owner/pack-drift` lists what the ladder did, query by query;
 a paused query shows its error on the query itself.
 
+## A forked root handoff
+
+When a key a held root handoff retired signs another row, the vault refuses the row and saves a
+fork alarm: the retired key (`suite:hex`), the refused row's hash, the handoffs the key signed,
+and when it was raised. The alarm stays until you acknowledge it. Acknowledging keeps it saved
+with that refused row marked seen, and only a refused row you have not seen raises it again.
+
+```sh
+oneiron handoff-alarms list                     # every saved alarm, open or acknowledged
+oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
+```
+
+Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
+`POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
+signer is 404, and acknowledging an acknowledged alarm changes nothing.
+
 ## The model catalog
 
 The model catalog comes from the first-party hub as the knowledge pack `oneiron.models`
