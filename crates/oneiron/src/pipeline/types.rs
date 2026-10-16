@@ -218,6 +218,12 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// per run under the run's read transaction and borrowed by every
     /// per-candidate check. `None` for every other scope.
     pub(super) world_active_set: Option<&'a WorldAuthoritySet>,
+    /// The stale federated worlds, read once per run under
+    /// [`WorldScope::All`] when any is stamped: a scope that never named such
+    /// a world keeps its claims out of every bounded channel, as the
+    /// post-fusion world filter does. `None` otherwise.
+    pub(super) stale_worlds:
+        Option<&'a std::collections::BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
     /// The query's project-axis selection; [`CorpusScope::All`] is the
     /// default and a no-op, exactly like [`WorldScope::All`].
     ///

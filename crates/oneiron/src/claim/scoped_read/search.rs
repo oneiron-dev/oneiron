@@ -36,7 +36,17 @@ impl ScopedRead<'_> {
     + Send
     + Sync
     + 'p {
-        move |_store, txn, id| self.recall_candidate_in(txn, policy, filter, id)
+        move |store, txn, id| {
+            // A CLAIM whose body does not decode is no candidate, as the D19
+            // gate holds; it does not end the search.
+            if let Some(row) = crate::ports::EntityStoreRead::port_entity_record(store, txn, id)?
+                && row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && crate::claim::decode_claim_body(&row.body, true).is_err()
+            {
+                return Ok(false);
+            }
+            self.recall_candidate_in(txn, policy, filter, id)
+        }
     }
 
     /// Admit one candidate in the retrieval transaction under the query plan.

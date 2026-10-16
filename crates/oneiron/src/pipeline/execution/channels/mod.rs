@@ -196,6 +196,16 @@ impl PipelineBuilder<'_> {
                 .as_ref()
                 .map(|resolved| &resolved.active_set);
             filter_config.device_local = device_local.as_ref();
+            let stale_worlds = if matches!(self.world_scope, super::super::types::WorldScope::All) {
+                Some(crate::federation::stale_stamped_worlds(
+                    &self.vault.store,
+                    rtxn,
+                )?)
+                .filter(|stale| !stale.is_empty())
+            } else {
+                None
+            };
+            filter_config.stale_worlds = stale_worlds.as_ref();
             // A scoped scan scores every posting through its scope, D19's gate
             // included. Unscoped text probes for a posting the gate rejects
             // and scans that way too when it finds one; candidate-filtered
