@@ -6,6 +6,7 @@ use crate::authority::{ActorBindingStatus, AuthorityKey, CausalWriteDisposition}
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
 
@@ -64,7 +65,7 @@ fn default_source_disposition(
             anchored = true;
             continue;
         }
-        let Some(raw) = store.entities.get(txn, next.as_bytes())? else {
+        let Some(raw) = store.port_entity_raw(txn, &next)? else {
             pending = true;
             continue;
         };
@@ -122,7 +123,7 @@ fn birth_disposition(
             ProjectDepthDisposition::Quarantined
         }
     } else {
-        let Some(raw) = store.entities.get(txn, source.as_bytes())? else {
+        let Some(raw) = store.port_entity_raw(txn, &source)? else {
             return Ok(ProjectDepthDisposition::Pending);
         };
         if EntityMetadataHeader::parse(&raw)
@@ -195,22 +196,13 @@ fn predates_signed_birth(
     let implicit = super::codec::birth_id(&super::codec::canonical_birth(project)?)?.to_hex();
     let project_ref = project.to_hex();
     let mut anchored = Vec::new();
-    for row in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
-    {
-        let (key, _) = row?;
-        let id = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project-depth type index"))?,
-        )?;
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = id?;
         if !is_project_depth_id(&id) {
             continue;
         }
         let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_raw(txn, &id)?
             .ok_or(Error::CorruptedIndex("project-depth manifest missing"))?;
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
@@ -337,22 +329,13 @@ pub(crate) fn resolve_creation_default(
     let mut rows = BTreeMap::new();
     rows.insert(seed_id, super::codec::seeded_default().depth);
     let mut edits = BTreeMap::new();
-    for row in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
-    {
-        let (key, _) = row?;
-        let id = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("default depth index"))?,
-        )?;
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = id?;
         if !is_project_depth_id(&id) || id == seed_id {
             continue;
         }
         let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_raw(txn, &id)?
             .ok_or(Error::CorruptedIndex("default depth row"))?;
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
@@ -460,22 +443,13 @@ pub(crate) fn birth_for_project(
     project: EntityId,
 ) -> Result<Option<(EntityId, ProjectDepthBirth)>> {
     let mut found = None;
-    for row in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
-    {
-        let (key, _) = row?;
-        let id = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project birth index"))?,
-        )?;
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = id?;
         if !is_project_depth_id(&id) {
             continue;
         }
         let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_raw(txn, &id)?
             .ok_or(Error::CorruptedIndex("project birth row"))?;
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
@@ -505,22 +479,13 @@ pub(crate) fn resolve_project_depth(
 ) -> Result<ProjectDepthResolution> {
     let maximum = crate::gate::resolve_project_depth_max(store, txn)?;
     let mut rows = BTreeMap::new();
-    for row in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
-    {
-        let (key, _) = row?;
-        let id = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project-depth type index"))?,
-        )?;
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = id?;
         if !is_project_depth_id(&id) {
             continue;
         }
         let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+            .port_entity_raw(txn, &id)?
             .ok_or(Error::CorruptedIndex("project-depth manifest missing"))?;
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)

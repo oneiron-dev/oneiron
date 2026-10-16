@@ -285,6 +285,9 @@ impl Memory<'_> {
             Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
             _ => None,
         };
+        // A consult answer to an attendee ask counts only under the owner
+        // proof this surface carries, the same as `tasks_answer`.
+        let owner = self.answer_owner_proof();
         let ask_group = super::ask_record::record_answer(
             self.vault(),
             wtxn,
@@ -292,17 +295,19 @@ impl Memory<'_> {
             &body,
             crate::WriteActor::new(self.actor(), self.actor_class()),
             (landed, option),
+            owner,
             at,
         )?;
         body.state = Some(TaskExecutionState::Terminal(landed.clone()));
         let encoded = encode_task_verb_body(body);
         self.put_task_body_in_txn(wtxn, task_ref, &encoded, at)?;
         if let Some(group) = ask_group {
-            super::ask_settlement::settle_in(
+            super::ask_settlement::settle_with_owner_in(
                 self.vault(),
                 wtxn,
                 group,
                 self.vault().store.clock.now_recorded_at(),
+                owner,
             )?;
         }
 
@@ -364,6 +369,10 @@ impl Memory<'_> {
                 &["Ask the person to answer through their own client."],
             ));
         }
+        // The owner proof the host bound for a direct request. An attendee
+        // ask admits a word, and cuts on it, only under that proof; every
+        // other ask ignores it.
+        let owner = self.answer_owner_proof();
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = self
                 .ask_group_in(txn, handle.group_ref)?
@@ -376,12 +385,19 @@ impl Memory<'_> {
                 &group,
                 crate::WriteActor::new(self.actor(), self.actor_class()),
                 word,
+                owner,
                 now,
             )?;
             if word.inform_for.is_none() && word.companion_for.is_none() {
                 complete_ask_member_in_txn(self.vault(), txn, answer, word, now)?;
             }
-            super::ask_settlement::settle_in(self.vault(), txn, handle.group_ref, now)?;
+            super::ask_settlement::settle_with_owner_in(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                now,
+                owner,
+            )?;
             Ok(answer)
         })?;
         if let Some(person) = word.companion_for {

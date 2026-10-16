@@ -19,7 +19,9 @@ use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(super) use history::delete_room_metadata;
 pub(in crate::workspace_roster) use history::thread_turns_in;
-pub use hosting::{RoomHosting, RoomSpeakingRole, RoomStanding};
+pub use hosting::{
+    HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
+};
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
     RoomThread, RoomThreadList, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomWaitKind,
@@ -322,15 +324,14 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             // A handle may name an agent with no seat: naming enrolls no one
-            // and grants nothing (OF-529).
+            // and grants nothing (OF-529). A person stands on its seat or a
+            // live Ready join for the room (OF-417).
             let record = room_in(self, txn, room)?;
+            let now = self.store.clock.now_recorded_at();
+            let subject = participation::participant_in_txn(self, txn, actor, now)?;
             if !record.member_ids.contains(&actor.to_hex())
-                && !participation::addressable_agent_in_txn(
-                    self,
-                    txn,
-                    actor,
-                    self.store.clock.now_recorded_at(),
-                )?
+                && !participation::addressable_agent_in_txn(self, txn, actor, now)?
+                && !participation::person_stands_in_txn(self, txn, room, None, actor, subject)?
             {
                 return Err(invalid());
             }

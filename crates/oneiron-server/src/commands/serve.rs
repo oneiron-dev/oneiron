@@ -188,7 +188,7 @@ pub(super) async fn serve_with_config(
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
     let sync_server = Arc::new(sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
-    crate::replay_judge::register(&sync_server);
+    crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
     // The vault's first oversight receipts, before the host's own workers
     // start: a vault that cannot sign them never reports ready.
     let oversight = sync_server

@@ -77,6 +77,11 @@ vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
+vaultLegalHoldsPlace(input: unknown): unknown
+vaultLegalHoldsWiden(input: unknown): unknown
+vaultLegalHoldsList(input: unknown): unknown
+vaultLegalHoldsLog(input: unknown): unknown
+vaultLegalHoldsLiftAndErase(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
@@ -129,8 +134,11 @@ vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
+vaultRoomsHostPin(input: unknown): unknown
+vaultRoomsHostHand(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
+vaultCompanionsSharingSet(input: unknown): unknown
 vaultWorkspaceWorkCompanionGet(input: unknown): unknown
 vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown

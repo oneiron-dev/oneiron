@@ -54,6 +54,11 @@ pub enum AgentVerb {
     VaultMembersLeave,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
+    VaultLegalHoldsPlace,
+    VaultLegalHoldsWiden,
+    VaultLegalHoldsList,
+    VaultLegalHoldsLog,
+    VaultLegalHoldsLiftAndErase,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -106,8 +111,11 @@ pub enum AgentVerb {
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
     VaultRoomsHost,
+    VaultRoomsHostPin,
+    VaultRoomsHostHand,
     VaultRoomsSharing,
     VaultCompanionsSharingGet,
+    VaultCompanionsSharingSet,
     VaultWorkspaceWorkCompanionGet,
     VaultWorkspaceWorkCompanionSet,
     SelfSkillsSave,
@@ -217,6 +225,11 @@ impl AgentVerb {
         Self::VaultMembersLeave,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
+        Self::VaultLegalHoldsPlace,
+        Self::VaultLegalHoldsWiden,
+        Self::VaultLegalHoldsList,
+        Self::VaultLegalHoldsLog,
+        Self::VaultLegalHoldsLiftAndErase,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -269,8 +282,11 @@ impl AgentVerb {
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
         Self::VaultRoomsHost,
+        Self::VaultRoomsHostPin,
+        Self::VaultRoomsHostHand,
         Self::VaultRoomsSharing,
         Self::VaultCompanionsSharingGet,
+        Self::VaultCompanionsSharingSet,
         Self::VaultWorkspaceWorkCompanionGet,
         Self::VaultWorkspaceWorkCompanionSet,
         Self::SelfSkillsSave,
@@ -385,6 +401,11 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
             }
+            Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
+            Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
+            Self::VaultLegalHoldsList => "vault.legal_holds.list",
+            Self::VaultLegalHoldsLog => "vault.legal_holds.log",
+            Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -437,8 +458,11 @@ impl AgentVerb {
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
             Self::VaultRoomsHost => "vault.rooms.host",
+            Self::VaultRoomsHostPin => "vault.rooms.host.pin",
+            Self::VaultRoomsHostHand => "vault.rooms.host.hand",
             Self::VaultRoomsSharing => "vault.rooms.sharing",
             Self::VaultCompanionsSharingGet => "vault.companions.sharing.get",
+            Self::VaultCompanionsSharingSet => "vault.companions.sharing.set",
             Self::VaultWorkspaceWorkCompanionGet => "vault.workspace.work_companion.get",
             Self::VaultWorkspaceWorkCompanionSet => "vault.workspace.work_companion.set",
             Self::SelfSkillsSave => "self.skills.save",
@@ -547,6 +571,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -599,8 +628,11 @@ impl AgentVerb {
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -717,6 +749,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -769,8 +806,11 @@ impl AgentVerb {
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -838,6 +878,8 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultSharedOutcomes
                 | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -925,6 +967,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -977,8 +1024,11 @@ impl AgentVerb {
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
                 | Self::VaultRoomsSharing
                 | Self::VaultCompanionsSharingGet
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionGet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
@@ -1059,6 +1109,9 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1087,6 +1140,9 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultRoomsHostPin
+                | Self::VaultRoomsHostHand
+                | Self::VaultCompanionsSharingSet
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
@@ -1185,6 +1241,11 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultLegalHoldsPlace => &["spec"],
+            Self::VaultLegalHoldsWiden => &["spec"],
+            Self::VaultLegalHoldsList => &[],
+            Self::VaultLegalHoldsLog => &[],
+            Self::VaultLegalHoldsLiftAndErase => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1237,8 +1298,11 @@ impl AgentVerb {
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsHostPin => &["spec"],
+            Self::VaultRoomsHostHand => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultCompanionsSharingSet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],
@@ -1349,6 +1413,11 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultLegalHoldsPlace => &["spec"],
+            Self::VaultLegalHoldsWiden => &["spec"],
+            Self::VaultLegalHoldsList => &[],
+            Self::VaultLegalHoldsLog => &[],
+            Self::VaultLegalHoldsLiftAndErase => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1401,8 +1470,11 @@ impl AgentVerb {
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
+            Self::VaultRoomsHostPin => &["spec"],
+            Self::VaultRoomsHostHand => &["spec"],
             Self::VaultRoomsSharing => &["room_ref"],
             Self::VaultCompanionsSharingGet => &["spec"],
+            Self::VaultCompanionsSharingSet => &["spec"],
             Self::VaultWorkspaceWorkCompanionGet => &["spec"],
             Self::VaultWorkspaceWorkCompanionSet => &["spec"],
             Self::SelfSkillsSave => &["spec"],

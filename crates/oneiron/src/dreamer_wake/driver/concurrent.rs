@@ -45,6 +45,7 @@ impl DreamerWakeDriver<'_> {
                         crate::dreamer_runner::maintenance::CoachSkillOptimizer {
                             author: optimizer.author,
                             scorer: optimizer.scorer,
+                            live: optimizer.live,
                         }
                     });
                 }
