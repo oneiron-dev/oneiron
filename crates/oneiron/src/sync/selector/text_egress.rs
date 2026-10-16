@@ -78,3 +78,17 @@ pub(super) fn source_selected(
         )
         .is_some())
 }
+
+/// The document plane uses the same source fence as ledger selection, with
+/// the destination's withheld worlds instead of an unknown-machine default.
+pub(in crate::sync) fn document_sources_readable_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    flagged: &std::collections::BTreeSet<EntityId>,
+) -> Result<bool> {
+    text_backed(vault, txn, &id, None, |source, raw| {
+        crate::settings::device_only_withholds_raw(&vault.store, txn, flagged, source, Some(raw))
+            .map(|withheld| !withheld)
+    })
+}

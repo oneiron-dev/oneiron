@@ -422,7 +422,9 @@ mod replica;
 #[cfg(feature = "sync")]
 pub use brief_view::{BriefCitationView, BriefView};
 #[cfg(feature = "sync")]
-pub(crate) use replica::{import_note_from_authority, validate_note_export};
+pub(crate) use replica::{
+    import_note_from_authority, text_withheld_by_worlds, validate_note_export,
+};
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
 #[cfg(all(test, feature = "sync"))]

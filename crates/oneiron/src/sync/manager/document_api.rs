@@ -96,6 +96,25 @@ impl WindowManager {
         )
     }
 
+    /// Text-plane export for the physical machine proven by the transport.
+    /// Actor grants still apply, independently of the world's machine policy.
+    pub fn export_document_for_peer(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        scope: crate::FederationGrantScope,
+        selector: &selector::SyncSelector,
+        remote_vv: &[u8],
+        peer: crate::authority::PeerMachine,
+    ) -> Result<Vec<u8>> {
+        self.export_document_with(
+            id,
+            scope,
+            selector,
+            crate::sync::window::Withhold::Peer(peer),
+            remote_vv,
+        )
+    }
+
     /// [`Self::export_document`] for the machine the socket proved:
     /// `withhold` names the worlds kept off it.
     pub fn export_document_with(

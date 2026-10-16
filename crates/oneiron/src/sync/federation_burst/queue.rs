@@ -21,7 +21,9 @@ pub(in crate::sync) struct DeferredWork {
     pub(in crate::sync) kind: WorkKind,
     pub(in crate::sync) payload: Vec<u8>,
     pub(super) inputs: NormalizedBurstInputs,
-    peer: [u8; 32],
+    pub(super) peer: [u8; 32],
+    pub(super) isolated_update: Option<Vec<u8>>,
+    pub(super) streak_ratio: f32,
     selector: Vec<u8>,
 }
 
@@ -35,6 +37,8 @@ struct StoredWork {
     payload: Vec<u8>,
     rate_ratio: f32,
     streak: u32,
+    streak_ratio: f32,
+    isolated_update: Option<Vec<u8>>,
 }
 
 fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
@@ -77,6 +81,8 @@ impl DeferredWork {
             window: key.as_str().to_owned(),
             kind,
             payload: payload.to_vec(),
+            isolated_update: None,
+            streak_ratio: 0.0,
             inputs: NormalizedBurstInputs {
                 rate_ratio: 0.0,
                 streak: 0,
@@ -89,7 +95,7 @@ impl DeferredWork {
         self
     }
 
-    fn key(&self) -> Vec<u8> {
+    pub(super) fn key(&self) -> Vec<u8> {
         let mut key = b"m:federation-deferred:v1:".to_vec();
         key.extend_from_slice(&self.peer);
         key.extend_from_slice(blake3::hash(&self.selector).as_bytes());
@@ -146,6 +152,8 @@ impl DeferredWork {
             payload: self.payload.clone(),
             rate_ratio: self.inputs.rate_ratio,
             streak: self.inputs.streak,
+            streak_ratio: self.streak_ratio,
+            isolated_update: self.isolated_update.clone(),
         })
         .map_err(|_| corrupt())?;
         // Storage capacity is distinct from the peer-relative burst verdict.
@@ -172,12 +180,15 @@ impl DeferredWork {
         Ok(())
     }
 
-    fn decode(value: &[u8]) -> Result<Self> {
+    pub(super) fn decode(value: &[u8]) -> Result<Self> {
         let row: StoredWork = postcard::from_bytes(value).map_err(|_| corrupt())?;
         if WindowKey::try_new(&row.window).is_none()
             || row.payload.len() > MAX_DECODED_PAYLOAD_BYTES
             || !row.rate_ratio.is_finite()
             || row.rate_ratio < 0.0
+            || !row.streak_ratio.is_finite()
+            || row.streak_ratio < 0.0
+            || (row.kind == WorkKind::Selector && row.isolated_update.is_some())
         {
             return Err(corrupt());
         }
@@ -188,6 +199,8 @@ impl DeferredWork {
             window: row.window,
             kind: row.kind,
             payload: row.payload,
+            isolated_update: row.isolated_update,
+            streak_ratio: row.streak_ratio,
             inputs: NormalizedBurstInputs {
                 rate_ratio: row.rate_ratio,
                 streak: row.streak,
@@ -249,52 +262,18 @@ impl DeferredWork {
             {
                 return Err(corrupt());
             }
-            if work.kind != WorkKind::Selector {
+            if work.kind != WorkKind::Selector
+                && (work.isolated_update.is_none()
+                    || observations::replay_ready_in_txn(
+                        vault,
+                        &txn,
+                        peer,
+                        vault.now_recorded_at(),
+                    )?)
+            {
                 return Ok(Some(work));
             }
         }
         Ok(None)
-    }
-}
-
-/// One coalesced review projection for a peer's isolated pending payloads.
-/// Review is advisory. The automatic replay doors never wait for a human.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederationBurstReviewBundle {
-    pub bundle_ref: String,
-    pub request_refs: Vec<String>,
-    pub quarantined: bool,
-    pub replay_automatic: bool,
-}
-impl Vault {
-    /// Pending payload bytes stay outside live entities and coalesce by peer.
-    /// Completion removes requests from this projection, not from a human pause.
-    pub fn federation_burst_review_bundles(&self) -> Result<Vec<FederationBurstReviewBundle>> {
-        let txn = self.store.env.read_txn()?;
-        let mut bundles = std::collections::BTreeMap::<[u8; 32], Vec<String>>::new();
-        for row in self
-            .store
-            .sync_queue
-            .prefix_iter(&txn, b"m:federation-deferred:v1:")?
-        {
-            let (key, value) = row?;
-            let work = DeferredWork::decode(&value)?;
-            if key.as_ref() != work.key() {
-                return Err(corrupt());
-            }
-            bundles
-                .entry(work.peer)
-                .or_default()
-                .push(blake3::Hash::from(work.id).to_hex().to_string());
-        }
-        Ok(bundles
-            .into_iter()
-            .map(|(peer, request_refs)| FederationBurstReviewBundle {
-                bundle_ref: format!("federation-review:{}", blake3::Hash::from(peer).to_hex()),
-                request_refs,
-                quarantined: true,
-                replay_automatic: true,
-            })
-            .collect())
     }
 }

@@ -375,6 +375,20 @@ impl WorldPrivacyView {
     pub fn withheld_for(&self, destination: Destination) -> Result<BTreeSet<EntityId>> {
         self.view.worlds_withheld_from(destination)
     }
+
+    /// Revalidate a connection's machine proof in this very snapshot, then
+    /// apply the world's read setting. Actor identity is never a machine proof.
+    pub fn withheld_for_peer(&self, peer: PeerMachine) -> Result<BTreeSet<EntityId>> {
+        let destination = match peer {
+            PeerMachine::Proven { machine, key }
+                if self.view.machine_proof_key(machine) == Some(key) =>
+            {
+                Destination::Machine(machine)
+            }
+            _ => Destination::Unknown,
+        };
+        self.withheld_for(destination)
+    }
 }
 
 /// May `destination` hold `world` readable, in `txn`'s snapshot?

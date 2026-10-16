@@ -49,6 +49,24 @@ pub(super) fn admit_pin_disclosure(
     Ok(())
 }
 
+/// A NOTE's text includes the words of its pins. A readable NOTE cannot
+/// disclose a citation whose document or claim the destination may not hold.
+pub(crate) fn text_withheld_by_worlds(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    flagged: &std::collections::BTreeSet<EntityId>,
+) -> Result<bool> {
+    for pin in load(vault, txn, id)?.pins()? {
+        for source in [pin.document, pin.claim] {
+            if crate::settings::device_only_withholds(&vault.store, txn, flagged, &source)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn validate_note_export(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

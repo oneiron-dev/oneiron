@@ -42,7 +42,7 @@ pub use self::admission::{
 };
 pub use self::device_only::{
     UpdateVerdict, Withhold, export_withheld, export_withheld_for, raw_update_verdict,
-    raw_update_verdict_for,
+    raw_update_verdict_for, selector_update_verdict_for_peer,
 };
 pub(in crate::sync) use self::device_only::{device_only_ids, window_withheld_for};
 pub(crate) use self::egress::export_history_free_window_snapshot;

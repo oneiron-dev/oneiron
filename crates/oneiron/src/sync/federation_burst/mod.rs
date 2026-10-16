@@ -5,8 +5,10 @@
 //! Transport payload, fabricated-window, and malformed-record bounds still apply.
 
 mod observations;
+mod peer_health;
 mod queue;
-pub use queue::FederationBurstReviewBundle;
+mod review_bundle;
+pub use review_bundle::{FederationBurstReviewBundle, FederationIsolatedUpdate};
 mod selector;
 
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
@@ -90,6 +92,13 @@ impl FederationPeer {
 pub enum FederationBurstDecision {
     /// Continue through the ordinary authorization/admission door.
     Allow(NormalizedBurstInputs),
+    /// Rows stay outside the live graph in one peer review bundle. Recovery
+    /// replays them automatically through current admission, not human approval.
+    IsolateAndPropose {
+        request_id: [u8; 32],
+        bundle_id: [u8; 32],
+        inputs: NormalizedBurstInputs,
+    },
     /// Payload and authority context are durable; retry without a human gate.
     Defer {
         request_id: [u8; 32],
@@ -104,6 +113,7 @@ pub(in crate::sync) fn admit_work(
     kind: WorkKind,
     payload: &[u8],
     writes: u64,
+    admitted_update: Option<&[u8]>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     admit_work_at(
         vault,
@@ -112,6 +122,7 @@ pub(in crate::sync) fn admit_work(
         kind,
         payload,
         (writes, vault.now_recorded_at()),
+        admitted_update,
     )
 }
 
@@ -122,6 +133,7 @@ fn admit_work_at(
     kind: WorkKind,
     payload: &[u8],
     sample: (u64, u64),
+    admitted_update: Option<&[u8]>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     let (writes, now) = sample;
     peer.revalidate(vault)?;
@@ -130,24 +142,40 @@ fn admit_work_at(
         // Duplicate/reconnected requests replay the exact durable item. They
         // neither add a debit nor go through the burst policy a second time.
         if let Some(saved) = work.load_in_txn(vault, txn)? {
-            return Ok((FederationBurstDecision::Allow(saved.inputs), Some(saved)));
+            let decision = if saved.isolated_update.is_some()
+                && !observations::replay_ready_in_txn(vault, txn, peer, now)?
+            {
+                FederationBurstDecision::IsolateAndPropose {
+                    request_id: saved.id,
+                    bundle_id: peer.digest(),
+                    inputs: saved.inputs,
+                }
+            } else {
+                FederationBurstDecision::Allow(saved.inputs)
+            };
+            return Ok((decision, Some(saved)));
         }
-        let inputs = observations::observe_in_txn(vault, txn, peer, writes, now)?;
-        // One is equality with this peer's baseline at this vault size, NOT
-        // an absolute write/window count. Structural failures lower confidence.
-        if f64::from(inputs.rate_ratio) * (1.0 + f64::from(inputs.streak)) > 1.0 {
-            let work = work.with_inputs(inputs);
-            work.put_in_txn(vault, txn)?;
-            Ok((
-                FederationBurstDecision::Defer {
-                    request_id: work.id,
-                    inputs,
-                },
-                Some(work),
-            ))
+        let health = observations::observe_in_txn(vault, txn, peer, writes, now)?;
+        if !health.unusual_rate() {
+            return Ok((FederationBurstDecision::Allow(health.inputs), None));
+        }
+        let mut work = work.with_inputs(health.inputs);
+        let decision = if health.isolate() && admitted_update.is_some() {
+            work.isolated_update = admitted_update.map(<[u8]>::to_vec);
+            work.streak_ratio = health.streak_ratio;
+            FederationBurstDecision::IsolateAndPropose {
+                request_id: work.id,
+                bundle_id: peer.digest(),
+                inputs: health.inputs,
+            }
         } else {
-            Ok((FederationBurstDecision::Allow(inputs), None))
-        }
+            FederationBurstDecision::Defer {
+                request_id: work.id,
+                inputs: health.inputs,
+            }
+        };
+        work.put_in_txn(vault, txn)?;
+        Ok((decision, Some(work)))
     })
 }
 
