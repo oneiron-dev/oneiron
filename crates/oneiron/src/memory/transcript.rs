@@ -314,7 +314,7 @@ impl Memory<'_> {
             .port_edges(txn, target, EdgeDirection::In, Some(kind), None)?
         {
             let id = edge?.target;
-            let raw = self.vault.store.entities.get(txn, id.as_bytes())?;
+            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, txn, &id)?;
             if let Some(header) = raw.as_deref().and_then(EntityMetadataHeader::parse) {
                 rows.push((id, header));
             }
