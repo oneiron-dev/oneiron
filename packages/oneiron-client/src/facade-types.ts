@@ -67,6 +67,16 @@ export type WorkCompanionSetRequest = {
 export type TaskRequest = {
   task_ref: string
 }
+export type ProjectConversationRequest = {
+  conversation_ref: string
+}
+export type ProjectCardRequest = {
+  card_id: string
+}
+export type ProjectCardDismissal = {
+  card_id: string
+  dismissed: boolean
+}
 export type DescribeRequest = {
   task_ref?: string | null
   self?: boolean
