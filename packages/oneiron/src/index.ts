@@ -205,6 +205,13 @@ export class Oneiron {
     packs: {
       put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
     },
+    lenses: {
+      propose: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesPropose(input) as unknown),
+      activate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesActivate(input) as unknown),
+      deactivate: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDeactivate(input) as unknown),
+      list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesList(input) as unknown),
+      default: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDefault(input) as unknown),
+    },
     hooks: {
       replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
     },
