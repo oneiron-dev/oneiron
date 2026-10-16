@@ -169,8 +169,10 @@ pub use measurement::{
 };
 pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
-    TradeoffRule, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, skill_tradeoff_ask,
-    skill_tradeoff_preferences,
+    SkillTradeoffRole, SkillTradeoffRoleAuthentication, SkillTradeoffRoles, TradeoffRule,
+    escalate_skill_tradeoff_ask, register_skill_tradeoff_roles, set_skill_tradeoff_preferences,
+    set_skill_tradeoff_responsible_role, settle_skill_tradeoff_ask, settle_skill_tradeoff_role_ask,
+    skill_tradeoff_ask, skill_tradeoff_preferences,
 };
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,

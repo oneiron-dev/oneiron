@@ -132,6 +132,7 @@
 
 mod ask_band;
 mod brief;
+mod decisions;
 mod dials;
 mod gate;
 mod goal_axes;
@@ -151,6 +152,7 @@ pub use self::brief::{
     SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
     skill_optimize_call_purpose,
 };
+pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair};
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
@@ -181,13 +183,15 @@ pub use gate::{
     HeldOutReplayScorer, HeldOutVerdict, JevTradeoffVerdict, JudgeMeasurements, PreferredResponse,
     SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME,
     SkillEditCycle, SkillEditDisposition, SkillTradeoffAsk, SkillTradeoffPreferences,
-    SkillTradeoffQuestion, TradeoffChoice, TradeoffResolution, TradeoffRule, TradeoffRung,
-    WorldAxisScore, admit_optimized_skill_revision, dev_receipts, held_out_receipt_set_digest,
-    held_out_receipts, is_skill_edit_verdict_receipt, receipt_is_held_out,
-    register_held_out_replay_scorer, resolve_skill_edit_tradeoff,
-    resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit, score_gate_skill_edit_in_cycle,
-    score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
-    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, skill_body_binding_digest,
+    SkillTradeoffQuestion, SkillTradeoffRole, SkillTradeoffRoleAuthentication, SkillTradeoffRoles,
+    TradeoffChoice, TradeoffResolution, TradeoffRule, TradeoffRung, WorldAxisScore,
+    admit_optimized_skill_revision, dev_receipts, escalate_skill_tradeoff_ask,
+    held_out_receipt_set_digest, held_out_receipts, is_skill_edit_verdict_receipt,
+    receipt_is_held_out, register_held_out_replay_scorer, register_skill_tradeoff_roles,
+    resolve_skill_edit_tradeoff, resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit,
+    score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap,
+    set_skill_edit_goal_axes, set_skill_tradeoff_preferences, set_skill_tradeoff_responsible_role,
+    settle_skill_tradeoff_ask, settle_skill_tradeoff_role_ask, skill_body_binding_digest,
     skill_edit_cycle_cap, skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal, skill_tradeoff_ask, skill_tradeoff_preferences,
     supersede_skill_edit_judge,

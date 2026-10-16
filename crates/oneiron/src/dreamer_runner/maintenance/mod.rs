@@ -2,6 +2,8 @@
 //! authority, and the Coach's nightly retrieval tune on the same lane.
 mod curator;
 mod evaluation;
+pub(crate) mod optimize;
+pub use optimize::CoachSkillOptimizer;
 mod proposals;
 pub mod representation;
 #[cfg(test)]

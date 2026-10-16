@@ -201,8 +201,10 @@ pub enum TradeoffRung {
     /// token, so the rename touches code only.
     #[serde(rename = "jev")]
     Judgment,
-    /// The authenticated person: the owner door or an A/B pick.
+    /// The authenticated person at the explicit owner door.
     Person,
+    /// The authenticated holder of the pending A/B ask's authorised role.
+    Role,
 }
 
 /// The decision on a mixed (non-floor) goal vector: approve the candidate or
