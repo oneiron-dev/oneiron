@@ -73,6 +73,11 @@ declare const vault: {
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
   };
+  authority: {
+    handoff_alarms: ((input: object) => Promise<unknown>) & {
+      acknowledge(input: { signer: string }): Promise<unknown>;
+    };
+  };
   claims: {
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
@@ -100,6 +105,12 @@ declare const vault: {
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
   };
+  members: {
+    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
+    leave(input: { vault_id: number }): Promise<unknown>;
+    remove(input: { member: string; vault_id: number }): Promise<unknown>;
+  };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
   };
@@ -120,6 +131,15 @@ declare const vault: {
     trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
   };
   search(input: { limit?: number | null; query: string }): Promise<unknown>;
+  shared: {
+    deletion(input: object): Promise<unknown>;
+    execute(input: { act_id: string }): Promise<unknown>;
+    outcomes(input: { vault_id: number }): Promise<unknown>;
+    propose_delete(input: { vault_id: number }): Promise<unknown>;
+    propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
+    propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
+    receipt(input: { receipt_id: string }): Promise<unknown>;
+  };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
   workspace: {
     work_companion: {

@@ -213,6 +213,7 @@ pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
 pub use super::sdk_connector::*;
 pub use super::sdk_host::*;
 pub use super::sdk_self::*;
+pub use super::sdk_shared::*;
 
 /// `vault.receipts`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

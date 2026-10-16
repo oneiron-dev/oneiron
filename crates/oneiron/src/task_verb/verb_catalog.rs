@@ -23,6 +23,19 @@ pub enum AgentVerb {
     VaultKvSearch,
     VaultKvNamespaces,
     VaultPacksPut,
+    VaultSharedProposeDelete,
+    VaultSharedProposeTransfer,
+    VaultSharedProposeRemoveOwner,
+    VaultSharedExecute,
+    VaultSharedReceipt,
+    VaultSharedOutcomes,
+    VaultSharedDeletion,
+    VaultMembersAdd,
+    VaultMembersChange,
+    VaultMembersRemove,
+    VaultMembersLeave,
+    VaultAuthorityHandoffAlarms,
+    VaultAuthorityHandoffAlarmsAcknowledge,
     VaultArtifactsView,
     VaultArtifactsExport,
     VaultArtifactsBornFrom,
@@ -101,6 +114,19 @@ impl AgentVerb {
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
         Self::VaultPacksPut,
+        Self::VaultSharedProposeDelete,
+        Self::VaultSharedProposeTransfer,
+        Self::VaultSharedProposeRemoveOwner,
+        Self::VaultSharedExecute,
+        Self::VaultSharedReceipt,
+        Self::VaultSharedOutcomes,
+        Self::VaultSharedDeletion,
+        Self::VaultMembersAdd,
+        Self::VaultMembersChange,
+        Self::VaultMembersRemove,
+        Self::VaultMembersLeave,
+        Self::VaultAuthorityHandoffAlarms,
+        Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
         Self::VaultArtifactsBornFrom,
@@ -182,6 +208,21 @@ impl AgentVerb {
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
+            Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
+            Self::VaultSharedProposeRemoveOwner => "vault.shared.propose_remove_owner",
+            Self::VaultSharedExecute => "vault.shared.execute",
+            Self::VaultSharedReceipt => "vault.shared.receipt",
+            Self::VaultSharedOutcomes => "vault.shared.outcomes",
+            Self::VaultSharedDeletion => "vault.shared.deletion",
+            Self::VaultMembersAdd => "vault.members.add",
+            Self::VaultMembersChange => "vault.members.change",
+            Self::VaultMembersRemove => "vault.members.remove",
+            Self::VaultMembersLeave => "vault.members.leave",
+            Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => {
+                "vault.authority.handoff_alarms.acknowledge"
+            }
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
@@ -259,6 +300,19 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultSharedReceipt
+                | Self::VaultSharedOutcomes
+                | Self::VaultSharedDeletion
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
@@ -344,6 +398,19 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultSharedReceipt
+                | Self::VaultSharedOutcomes
+                | Self::VaultSharedDeletion
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
@@ -413,6 +480,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultSharedOutcomes
+                | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultArtifactsProposals
                 | Self::Peek
                 | Self::TasksOutcomes
@@ -451,6 +520,19 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultSharedReceipt
+                | Self::VaultSharedOutcomes
+                | Self::VaultSharedDeletion
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
                 | Self::VaultArtifactsBornFrom
@@ -522,6 +604,15 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultSharedProposeDelete
+                | Self::VaultSharedProposeTransfer
+                | Self::VaultSharedProposeRemoveOwner
+                | Self::VaultSharedExecute
+                | Self::VaultMembersAdd
+                | Self::VaultMembersChange
+                | Self::VaultMembersRemove
+                | Self::VaultMembersLeave
+                | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -580,6 +671,19 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultSharedProposeDelete => &["spec"],
+            Self::VaultSharedProposeTransfer => &["spec"],
+            Self::VaultSharedProposeRemoveOwner => &["spec"],
+            Self::VaultSharedExecute => &["spec"],
+            Self::VaultSharedReceipt => &["spec"],
+            Self::VaultSharedOutcomes => &["spec"],
+            Self::VaultSharedDeletion => &[],
+            Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersChange => &["spec"],
+            Self::VaultMembersRemove => &["spec"],
+            Self::VaultMembersLeave => &["spec"],
+            Self::VaultAuthorityHandoffAlarms => &[],
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
@@ -659,6 +763,19 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultSharedProposeDelete => &["spec"],
+            Self::VaultSharedProposeTransfer => &["spec"],
+            Self::VaultSharedProposeRemoveOwner => &["spec"],
+            Self::VaultSharedExecute => &["spec"],
+            Self::VaultSharedReceipt => &["spec"],
+            Self::VaultSharedOutcomes => &["spec"],
+            Self::VaultSharedDeletion => &[],
+            Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersChange => &["spec"],
+            Self::VaultMembersRemove => &["spec"],
+            Self::VaultMembersLeave => &["spec"],
+            Self::VaultAuthorityHandoffAlarms => &[],
+            Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
