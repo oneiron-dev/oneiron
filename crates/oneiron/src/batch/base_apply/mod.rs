@@ -171,8 +171,19 @@ pub(super) fn apply_ops_with_origin(
     let mut nsw_plans = std::mem::take(&mut gate_mode.nsw_plans);
 
     // The owner's `secrets` switch is read in this transaction, so a batch
-    // and the mode it was admitted under are one snapshot.
-    secret_scan::scan_batch_ops(store, &*wtxn, &ops)?;
+    // and the mode it was admitted under are one snapshot. A secret the door
+    // places goes to custody and leaves its handle (OF-560); a file keeps
+    // its bytes and is marked.
+    let masked_files = secret_scan::mask_batch_ops(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        &mut ops.ops,
+        text_index_trusted,
+        !replay,
+        mutation_recorded_at,
+    )?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
     // parent slot BEFORE the overlay is built, so the winner add and the stored
     // losers' deletes are one atomic strict batch — cardinality is already one
@@ -806,6 +817,8 @@ pub(super) fn apply_ops_with_origin(
             crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
         }
     }
+
+    masked_files.restrict(store, wtxn)?;
 
     finalize_batch_indexes(
         store,

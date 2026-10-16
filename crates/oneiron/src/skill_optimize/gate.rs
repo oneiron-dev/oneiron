@@ -97,8 +97,8 @@
 //!
 //! A posterior recomputed over held-out receipts cannot be measured offline for
 //! instructions that were never run, so the honest v1 score is a REPLAY:
-//! [`HeldOutReplayScorer`] is asked to judge the same held-out evidence against
-//! each instruction version in turn. The seam is the [`crate::skill_attribution::AttributionDecisions`]
+//! the shared decision path judges the replays [`HeldOutReplayNotes`] supplies
+//! against each instruction version in turn. The seam is the [`crate::skill_attribution::AttributionDecisions`]
 //! posture — a host-supplied LLM tier under [`skill_edit_score_call_purpose`],
 //! injectable in tests, and structurally not the optimizer grading its own
 //! homework. No epsilon: strict `>` is the anti-Goodhart floor, and a tie is a
@@ -155,7 +155,7 @@ pub use admission::{
     resolve_skill_edit_tradeoff_in_cycle,
 };
 pub use basis::{
-    HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayScorer, SkillEditCycle, dev_receipts,
+    HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle, dev_receipts,
     held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,
     register_held_out_replay_scorer, set_skill_edit_cycle_cap, skill_body_binding_digest,
     skill_edit_cycle_cap, skill_edit_score_call_purpose,
@@ -173,8 +173,8 @@ pub use ledger::{
 };
 pub use live::{measure_skill_edit_goal_axes, skill_edit_goal_axis_report, skill_goal_axis_plan};
 pub use measurement::{
-    AuditPair, BlindPreference, HonestyReplayObservation, JudgeMeasurements, PreferredResponse,
-    WorldAxisScore,
+    AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation, JudgeMeasurements,
+    PreferredResponse, WorldAxisScore,
 };
 pub use project_goal::{
     ProjectGoalRevisionProposal, TradeoffRole, dismiss_project_goal_revision_proposal,

@@ -88,6 +88,8 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
@@ -414,9 +416,13 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
         )
+        // OF-181: the app's one action layer, for its buttons and its agents.
+        .merge(self::facade::action_routes::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
         .merge(self::report::routes())
+        // OF-495: an agent role holder's skill tradeoff asks and picks.
+        .merge(self::facade::role_picks::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",

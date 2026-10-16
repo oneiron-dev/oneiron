@@ -259,6 +259,9 @@ side_tables! {
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
     PACK_BYTE_MAP_LOCAL_HEAD: VaultMeta b"pack_byte_map:local_head:v1" Raw;
+    /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
+    /// on. Key: id16 (PERSON).
+    PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -333,6 +336,18 @@ side_tables! {
     PROJECT_ORIGIN_MESSAGE: VaultMeta b"project.origin_message.v1/" Raw;
     /// The project a room thread was converted into. Key: id16 (room id) + id16 (thread id).
     PROJECT_ORIGIN_THREAD: VaultMeta b"project.origin_thread.v1/" Raw;
+    /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
+    /// and its state. Key: blake3 hash32 of the card id.
+    PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named;
+    /// The source message of each card shown in one conversation. Key: id16 (conversation) +
+    /// blake3 hash32 of the card id.
+    PROJECT_PROPOSAL_CONVERSATION: VaultMeta b"project.proposal.conversation.v1/" Raw;
+    /// A conversation's latest person turn awaiting the project question. Key: id16
+    /// (conversation).
+    PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named;
+    /// The project question's yes, or its ask of a person, on one source message, with its
+    /// decision receipt. Key: id16 (source message).
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -487,6 +502,13 @@ side_tables! {
     /// Chronological index of every turn in a room, walked for paged message history. Key: id16
     /// (room) + u64be (at) + id16 (turn).
     ROOMS_HISTORY: VaultMeta b"rooms.history.v1/" Raw;
+    /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
+    /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
+    /// join ref).
+    ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson;
+    /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
+    /// subject hex "/" branch hex or "-").
+    ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

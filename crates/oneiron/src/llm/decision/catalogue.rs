@@ -1,7 +1,8 @@
 //! The engine's registered typed-question families, in one place. A family names what a
 //! caller asks, at which version and class; the wording is the host's configuration, never
-//! text here. A question's id derives from its family, the caller's key parts and the exact
-//! wording, so changed wording is a new question with its own bands.
+//! text here, save the one default [`TASK_REALIZE_INSTRUCTION`] a host may replace. A
+//! question's id derives from its family, the caller's key parts and the exact wording, so
+//! changed wording is a new question with its own bands.
 
 use super::{AnswerContract, DecisionClass, DecisionQuestion};
 use crate::entity_id::derived_domains::DECISION_QUESTION;
@@ -79,7 +80,8 @@ pub const REACTION_MEANING: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
-/// Replay scores, independent judge audits, blind preferences and skill tradeoffs.
+/// Replay scores, independent judge audits, blind preferences, hidden-flaw findings per
+/// objective (`honesty`) and skill tradeoffs.
 pub const SKILL_OPTIMIZE_JUDGMENT: QuestionFamily = QuestionFamily {
     name: "skill_optimize.judgment",
     version: 1,
@@ -132,6 +134,16 @@ pub const AI_VERDICT: QuestionFamily = QuestionFamily {
     name: "ai.verdict",
     version: 1,
     class: DecisionClass::Judgment,
+};
+
+/// A routine driver step through `ai.verdict` (OF-523, the CUA-S1 pattern): which of the
+/// step's candidates the driver acts on (NONE, reobserve or ask up reserved), or where its
+/// target is in a screenshot. Keyed by the answer contract, as [`AI_VERDICT`] is, so a
+/// step's bands learn apart from plain verdicts.
+pub const AI_VERDICT_ROUTINE: QuestionFamily = QuestionFamily {
+    name: "ai.verdict.routine",
+    version: 1,
+    class: DecisionClass::Triage,
 };
 
 /// The paired yes/no question every decision read asks beside the labels: does this need
@@ -240,6 +252,42 @@ pub const BOOKING_OFF_TOPIC: QuestionFamily = QuestionFamily {
     class: DecisionClass::Triage,
 };
 
+/// Does this conversation turn sound like a project (yes or no)? Asked by the house mind on a
+/// person's on-record turn; no key parts, so every conversation asks the one question.
+pub const PROJECT_PROPOSAL: QuestionFamily = QuestionFamily {
+    name: "conversation.project_proposal",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// How well one arm of a session-branch claim edit fits the owner's held-out labels, from 0
+/// to 1. Unkeyed: the wording is the key.
+pub const CLAIM_REPLAY: QuestionFamily = QuestionFamily {
+    name: "skill_hub.claim_replay",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How does the Dreamer realize a TASK routed to it? One model step answers the TASK's spec
+/// and brief, and the answer becomes the research NOTE the TASK's result names. The one
+/// family that ships its wording, so a Dreamer-lane TASK realizes out of the box; the host's
+/// own wording replaces it. Keyed by the TASK.
+pub const TASK_REALIZE: QuestionFamily = QuestionFamily {
+    name: "dreamer.task_realize",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// [`TASK_REALIZE`]'s shipped wording, the system message of its step.
+pub const TASK_REALIZE_INSTRUCTION: &str = "You realize one task a person or agent routed to \
+the background worker of their knowledge vault. The next message carries the task's spec as \
+JSON and, when it has one, its brief: the objective, the intent, the constraints, the context \
+handles, what done means and when to escalate. Do the task's work in writing and reply with \
+the result itself, in Markdown, ready to be kept as a research note every reader of the vault \
+may open. Meet each done-means criterion and keep to every constraint. Name context only by \
+the handles you were given; never invent a fact, a source or a handle. When the task cannot \
+be done from what you were given, say plainly what is missing instead of guessing.";
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -254,6 +302,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     DESCRIPTION_FIT,
     AUTO_CHECK,
     AI_VERDICT,
+    AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
     POLICY_OWNER_ROW,
@@ -267,4 +316,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     POLICY_OWNER_VIOLATION,
     POLICY_HOSTED_VIOLATION,
     BOOKING_OFF_TOPIC,
+    PROJECT_PROPOSAL,
+    CLAIM_REPLAY,
+    TASK_REALIZE,
 ];
