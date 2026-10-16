@@ -49,7 +49,7 @@
     {
       "name": "self.memory.diary",
       "input": "DiaryEntryRequest",
-      "output": "DiaryEntryReceipt",
+      "output": "crate::task_verb::sdk::DiaryEntryReceipt",
       "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -93,7 +93,7 @@
     {
       "name": "steer",
       "input": "SteerRequest",
-      "output": "SteerReceipt",
+      "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -508,7 +508,7 @@
     {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
-      "output": "PackPutReceipt",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
@@ -722,7 +722,7 @@
     {
       "name": "ai.options",
       "input": "AiOptionsRequest",
-      "output": "AiOptions",
+      "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
       "host_door": true,
       "scope": "Read",
@@ -732,7 +732,7 @@
     {
       "name": "ai.image",
       "input": "AiCallRequest",
-      "output": "AiAnswer",
+      "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
       "host_door": true,
       "scope": "Write",
@@ -742,7 +742,7 @@
     {
       "name": "ai.speech",
       "input": "AiCallRequest",
-      "output": "AiAnswer",
+      "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
       "host_door": true,
       "scope": "Write",
@@ -752,7 +752,7 @@
     {
       "name": "ai.transcribe",
       "input": "AiCallRequest",
-      "output": "AiAnswer",
+      "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
       "host_door": true,
       "scope": "Write",
@@ -762,7 +762,7 @@
     {
       "name": "ai.embed",
       "input": "AiCallRequest",
-      "output": "AiAnswer",
+      "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
       "host_door": true,
       "scope": "Write",
@@ -772,7 +772,7 @@
     {
       "name": "ai.video",
       "input": "AiCallRequest",
-      "output": "AiVideoTicket",
+      "output": "crate::task_verb::sdk::AiVideoTicket",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
       "host_door": true,
       "scope": "Write",
@@ -782,7 +782,7 @@
     {
       "name": "ai.video.poll",
       "input": "AiVideoJobRequest",
-      "output": "AiVideoJob",
+      "output": "crate::task_verb::sdk::AiVideoJob",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
       "host_door": true,
       "scope": "Read",
@@ -792,7 +792,7 @@
     {
       "name": "ai.video.cancel",
       "input": "AiVideoJobRequest",
-      "output": "AiVideoCancelled",
+      "output": "crate::task_verb::sdk::AiVideoCancelled",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
       "host_door": true,
       "scope": "Write",

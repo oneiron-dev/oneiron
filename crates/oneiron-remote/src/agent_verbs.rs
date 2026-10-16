@@ -200,7 +200,7 @@ impl OneironClient {
     pub fn self_memory_diary(
         &self,
         input: &oneiron::task_verb::sdk::DiaryEntryRequest,
-    ) -> Result<DiaryEntryReceipt, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::DiaryEntryReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -229,7 +229,7 @@ impl OneironClient {
     pub fn steer(
         &self,
         input: &oneiron::task_verb::sdk::SteerRequest,
-    ) -> Result<SteerReceipt, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::SteerReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -461,7 +461,7 @@ impl OneironClient {
     pub fn vault_packs_put(
         &self,
         input: &oneiron::task_verb::sdk::PackPutRequest,
-    ) -> Result<PackPutReceipt, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::PackPutReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -643,7 +643,7 @@ impl OneironClient {
     pub fn ai_options(
         &self,
         input: &oneiron::task_verb::sdk::AiOptionsRequest,
-    ) -> Result<AiOptions, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiOptions, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -655,7 +655,7 @@ impl OneironClient {
     pub fn ai_image(
         &self,
         input: &oneiron::task_verb::sdk::AiCallRequest,
-    ) -> Result<AiAnswer, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -667,7 +667,7 @@ impl OneironClient {
     pub fn ai_speech(
         &self,
         input: &oneiron::task_verb::sdk::AiCallRequest,
-    ) -> Result<AiAnswer, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -679,7 +679,7 @@ impl OneironClient {
     pub fn ai_transcribe(
         &self,
         input: &oneiron::task_verb::sdk::AiCallRequest,
-    ) -> Result<AiAnswer, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -691,7 +691,7 @@ impl OneironClient {
     pub fn ai_embed(
         &self,
         input: &oneiron::task_verb::sdk::AiCallRequest,
-    ) -> Result<AiAnswer, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -703,7 +703,7 @@ impl OneironClient {
     pub fn ai_video(
         &self,
         input: &oneiron::task_verb::sdk::AiCallRequest,
-    ) -> Result<AiVideoTicket, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiVideoTicket, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -715,7 +715,7 @@ impl OneironClient {
     pub fn ai_video_poll(
         &self,
         input: &oneiron::task_verb::sdk::AiVideoJobRequest,
-    ) -> Result<AiVideoJob, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiVideoJob, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -727,7 +727,7 @@ impl OneironClient {
     pub fn ai_video_cancel(
         &self,
         input: &oneiron::task_verb::sdk::AiVideoJobRequest,
-    ) -> Result<AiVideoCancelled, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::AiVideoCancelled, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

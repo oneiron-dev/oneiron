@@ -947,7 +947,7 @@ pub fn self_focus_unsubscribe<S: crate::board_verb::LiveBoardSource>(
 pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
-) -> MemoryResult<DiaryEntryReceipt> {
+) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
     crate::task_verb::sdk::self_memory_diary_write(memory, input)
 }
 pub fn cancel(
@@ -958,7 +958,10 @@ pub fn cancel(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
 }
-pub fn steer(memory: &Memory<'_>, input: SteerRequest) -> MemoryResult<SteerReceipt> {
+pub fn steer(
+    memory: &Memory<'_>,
+    input: SteerRequest,
+) -> MemoryResult<crate::task_verb::sdk::SteerReceipt> {
     crate::task_verb::sdk::steer_child(memory, input)
 }
 pub fn describe(
@@ -1079,7 +1082,10 @@ pub fn vault_kv_namespaces(
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
 }
-pub fn vault_packs_put(memory: &Memory<'_>, input: PackPutRequest) -> MemoryResult<PackPutReceipt> {
+pub fn vault_packs_put(
+    memory: &Memory<'_>,
+    input: PackPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
 }
 pub fn can(
@@ -1199,31 +1205,52 @@ pub fn vault_rooms_speak(
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
 }
-pub fn ai_options(memory: &Memory<'_>, input: AiOptionsRequest) -> MemoryResult<AiOptions> {
+pub fn ai_options(
+    memory: &Memory<'_>,
+    input: AiOptionsRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiOptions> {
     crate::task_verb::sdk::host_only(memory, "ai.options", &input)
 }
-pub fn ai_image(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+pub fn ai_image(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
     crate::task_verb::sdk::host_only(memory, "ai.image", &input)
 }
-pub fn ai_speech(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+pub fn ai_speech(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
     crate::task_verb::sdk::host_only(memory, "ai.speech", &input)
 }
-pub fn ai_transcribe(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+pub fn ai_transcribe(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
     crate::task_verb::sdk::host_only(memory, "ai.transcribe", &input)
 }
-pub fn ai_embed(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiAnswer> {
+pub fn ai_embed(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
     crate::task_verb::sdk::host_only(memory, "ai.embed", &input)
 }
-pub fn ai_video(memory: &Memory<'_>, input: AiCallRequest) -> MemoryResult<AiVideoTicket> {
+pub fn ai_video(
+    memory: &Memory<'_>,
+    input: AiCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVideoTicket> {
     crate::task_verb::sdk::host_only(memory, "ai.video", &input)
 }
-pub fn ai_video_poll(memory: &Memory<'_>, input: AiVideoJobRequest) -> MemoryResult<AiVideoJob> {
+pub fn ai_video_poll(
+    memory: &Memory<'_>,
+    input: AiVideoJobRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiVideoJob> {
     crate::task_verb::sdk::host_only(memory, "ai.video.poll", &input)
 }
 pub fn ai_video_cancel(
     memory: &Memory<'_>,
     input: AiVideoJobRequest,
-) -> MemoryResult<AiVideoCancelled> {
+) -> MemoryResult<crate::task_verb::sdk::AiVideoCancelled> {
     crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
 }
 pub fn connector_list(
