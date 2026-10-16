@@ -17,8 +17,8 @@ mod log;
 use super::gate::{CompactionCheck, CompactionRefusal};
 
 use super::epoch::{
-    mint_epoch_summary_in_overlay, mint_epoch_summary_with, prior_epoch_in_txn,
-    validate_epoch_boundary, validate_window_span,
+    mint_epoch_summary_guarded, mint_epoch_summary_in_overlay, mint_epoch_summary_with,
+    prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
 };
 
 /// Registered class of a compaction backend.
@@ -492,6 +492,12 @@ impl CompactionDriver {
                 profile: profile.clone(),
             })),
         }
+    }
+
+    /// The resolved memory profile this driver runs on.
+    #[must_use]
+    pub const fn memory_profile(&self) -> &MemoryProfile {
+        &self.profile
     }
 
     /// The backend this driver resolved.

@@ -2,6 +2,7 @@
 use super::refinement_admission::{
     RefinementAdmissionProof, RefinementState, RefinementTarget, put_control, read_control,
 };
+use super::decisions::{UsefulUpstreamDecisions, shared_skill_state};
 use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
 use crate::{
@@ -11,26 +12,13 @@ use crate::{
     error::{ArtifactError, Error, Result},
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-        PairedReading, TypedDecision,
+        PairedReading, Reversibility, TypedDecision,
     },
     skill::{SkillLifecycle, SkillRecord},
-    skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
+    skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes},
     temporal::TimeRange,
 };
 
-/// The host's OF-493 answerer runs the configured typed question with a System One
-/// or escalation seat first. It sees submitted bytes, never the branch vault. The gate checks
-/// its typed receipt before any held-out replay or state change.
-pub trait UsefulUpstreamJudge {
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        resident: EntityId,
-        base: &SkillRecord,
-        candidate: &HubPackage,
-        delta: &SharedSkillDelta,
-    ) -> Result<TypedDecision>;
-}
 #[derive(Debug, Clone)]
 pub struct SharedSkillMergeAsk {
     candidate: EntityId,
@@ -162,14 +150,17 @@ impl Vault {
     /// a delta that widens the skill's permissions, or whose scan sets
     /// `ProposedRequired`, returns `PendingConsent` until the owner approves
     /// that exact effect.
-    /// Both host callbacks run without a read or write transaction held. The
+    /// The useful-upstream question runs on the host's ladder with a System One or
+    /// escalation seat first; it reads submitted bytes, never the branch vault, and
+    /// its typed receipt is checked before any held-out replay or state change.
+    /// It and the replay run without a read or write transaction held. The
     /// binding, which covers the scan posture, and any owner answer are
     /// rechecked when activation + supersession commit together.
     pub fn merge_shared_skill_delta(
         &self,
         ask: &SharedSkillMergeAsk,
-        useful: &dyn UsefulUpstreamJudge,
-        scorer: &dyn HeldOutReplayScorer,
+        useful: &UsefulUpstreamDecisions<'_>,
+        scorer: &dyn HeldOutReplayNotes,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SharedSkillMergeDisposition> {
@@ -188,12 +179,19 @@ impl Vault {
             }
             snapshot
         };
+        let state = shared_skill_state(
+            ask.resident,
+            (snapshot.base_id, &snapshot.base, &snapshot.baseline),
+            (ask.candidate, &snapshot.record, &snapshot.package),
+            &snapshot.delta,
+        );
+        // The merge is reversible: a rollback restores the displaced revision.
         let decision = useful.decide(
             &ask.question,
             ask.resident,
-            &snapshot.base,
-            &snapshot.package,
-            &snapshot.delta,
+            &[ask.candidate, snapshot.base_id],
+            &state,
+            Reversibility::ReversibleRead,
         )?;
         let useful_upstream = checked_useful_decision(&ask.question, ask.resident, &decision)?;
         let judge_revision = if useful_upstream {
@@ -616,7 +614,7 @@ impl Vault {
     }
 }
 fn replay(
-    scorer: &dyn HeldOutReplayScorer,
+    scorer: &dyn HeldOutReplayNotes,
     snapshot: &MergeSnapshot,
 ) -> Result<(Option<f32>, Option<f32>)> {
     let instructions = snapshot
