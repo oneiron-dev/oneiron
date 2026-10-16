@@ -44,6 +44,11 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::WindowsPerConnection => {
             crate::handler::window_row_tests::cross_the_windows(CALLERS).await
         }
+        LimitRow::BookingWindows => {
+            tokio::task::spawn_blocking(|| crate::api::booking::cross_the_booking_windows(CALLERS))
+                .await
+                .unwrap()
+        }
         LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes) => {
             crate::api::facade::tests::cross_the_keyed_filters(CALLERS).await
         }
