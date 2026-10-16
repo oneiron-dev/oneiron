@@ -296,6 +296,25 @@ Routes: `GET /v1/owner/secret-scan` and `POST /v1/owner/secret-scan` with `{"mod
 way. Each change is receipted with its revision, the owner who made it and the previous
 setting. Only a live owner of the vault can switch it.
 
+## Hand a served repository's origin to another host
+
+A repository this vault serves at `/git/<repo>` has no origin authority until you set one. With
+none, this vault takes its pushes. Setting one names the epoch, the residence (`local-vault` or
+`cloud-vault`), the writer host and whether this copy is a read-only mirror:
+
+```sh
+oneiron api raw GET '/v1/owner/origin-authority?repo=demo'   # the row, and this host's machine id
+oneiron api raw POST /v1/owner/origin-authority \
+  --data '{"repo": "demo", "expected_epoch": null, "residence": "local-vault"}'
+```
+
+`writer` defaults to this host's machine id; name another host's to hand it the repository.
+`expected_epoch` is the epoch you read (`null` before the first cutover), and a cutover whose epoch
+moved since is refused. One is also refused while the repository has a push or publication
+in flight; retry once it drains. After the cutover, a push here runs under this host's lease when
+it is the writer. Otherwise the push gets 403 naming the epoch: at a mirror (`"mirror": true`),
+or when another host writes the repository. Reads still serve. Only a live owner can cut over.
+
 ## Approve an import in one act
 
 To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
