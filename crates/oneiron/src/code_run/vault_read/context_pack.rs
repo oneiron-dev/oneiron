@@ -189,6 +189,8 @@ pub enum CoreContextPackEmptyReason {
     AllActivated,
     /// Every candidate scored below threshold.
     BelowThreshold,
+    /// The reader's profile takes no optional memory, so no retrieval ran.
+    SkippedByProfile,
 }
 
 /// Structured empty-context record.
