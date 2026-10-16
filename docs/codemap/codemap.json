@@ -60073,7 +60073,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -60104,6 +60104,16 @@
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put` and…",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/role_picks.rs",
+     "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -60757,7 +60767,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/skill_judge_routes.rs",
@@ -64731,7 +64741,7 @@
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -65753,7 +65763,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 242,
+     "files": 243,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66042,7 +66052,7 @@
    },
    "over_bar": 23,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 457,
+   "source_files": 458,
    "test_files": 182
   },
   "oneiron-spawn": {
