@@ -184,9 +184,9 @@ pub(super) fn decode_scope(value: &Value) -> Result<CompanionScope> {
 
 pub(super) fn encode_subject(subject: &CompanionSubject) -> Value {
     match subject {
-        CompanionSubject::Persona { persona_ref } => Value::Map(vec![
-            (Value::from(SUBJECT_KEYS[0]), Value::from("persona")),
-            (Value::from(SUBJECT_KEYS[1]), entity_value(persona_ref)),
+        CompanionSubject::Person { person_ref } => Value::Map(vec![
+            (Value::from(SUBJECT_KEYS[0]), Value::from("person")),
+            (Value::from(SUBJECT_KEYS[1]), entity_value(person_ref)),
         ]),
         CompanionSubject::Relationship {
             source_ref,
@@ -216,7 +216,7 @@ pub(super) fn decode_subject(value: &Value) -> Result<CompanionSubject> {
     };
 
     let mut kind: Option<&str> = None;
-    let mut persona_ref: Option<EntityId> = None;
+    let mut person_ref: Option<EntityId> = None;
     let mut relationship_ref: Option<(EntityId, EntityId)> = None;
     let mut seen = [false; SUBJECT_KEYS.len()];
 
@@ -226,7 +226,7 @@ pub(super) fn decode_subject(value: &Value) -> Result<CompanionSubject> {
         };
         let Some(index) = SUBJECT_KEYS.iter().position(|known| *known == key) else {
             return Err(invalid_companion(
-                "subject key is not kind|persona_ref|relationship_ref",
+                "subject key is not kind|person_ref|relationship_ref",
             ));
         };
         if seen[index] {
@@ -242,10 +242,10 @@ pub(super) fn decode_subject(value: &Value) -> Result<CompanionSubject> {
                         .ok_or(invalid_companion("subject.kind must be a string"))?,
                 );
             }
-            "persona_ref" => {
-                persona_ref = Some(entity_from_value(
+            "person_ref" => {
+                person_ref = Some(entity_from_value(
                     value,
-                    "subject.persona_ref must be entity id",
+                    "subject.person_ref must be entity id",
                 )?);
             }
             "relationship_ref" => relationship_ref = Some(decode_relationship_ref(value)?),
@@ -254,11 +254,10 @@ pub(super) fn decode_subject(value: &Value) -> Result<CompanionSubject> {
     }
 
     match kind.ok_or(invalid_companion("subject missing kind"))? {
-        "persona" if relationship_ref.is_none() => Ok(CompanionSubject::Persona {
-            persona_ref: persona_ref
-                .ok_or(invalid_companion("persona subject requires persona_ref"))?,
+        "person" if relationship_ref.is_none() => Ok(CompanionSubject::Person {
+            person_ref: person_ref.ok_or(invalid_companion("person subject requires person_ref"))?,
         }),
-        "relationship" if persona_ref.is_none() => {
+        "relationship" if person_ref.is_none() => {
             let (source_ref, target_ref) = relationship_ref.ok_or(invalid_companion(
                 "relationship subject requires relationship_ref",
             ))?;

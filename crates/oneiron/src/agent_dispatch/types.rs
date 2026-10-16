@@ -389,6 +389,219 @@ pub struct DispatchHealer {
     pub now: u64,
 }
 
+/// How much a spawn cares (ARCH-0079 #spawn): the same five words vendors
+/// use for reasoning effort, so a model reads `care: xhigh` without
+/// explanation. On one call it sets reasoning effort; on a spawn the planner
+/// reads it with the need and the budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CareLevel {
+    Light,
+    Medium,
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    Max,
+}
+
+impl CareLevel {
+    /// Every care level, cheapest first.
+    pub const ALL: [Self; 5] = [
+        Self::Light,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+        Self::Max,
+    ];
+
+    /// Stable wire token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+
+    /// Parse a wire token.
+    pub fn from_token(token: &str) -> crate::error::Result<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "light" => Ok(Self::Light),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" => Ok(Self::XHigh),
+            "max" => Ok(Self::Max),
+            _ => Err(super::widen_record::invalid("unknown care level")),
+        }
+    }
+
+    /// Ladder position, 0 (light) to 4 (max).
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Light => 0,
+            Self::Medium => 1,
+            Self::High => 2,
+            Self::XHigh => 3,
+            Self::Max => 4,
+        }
+    }
+
+    /// The reasoning effort one call at this care level runs. The effort
+    /// ladder tops out at `xhigh`, so `max` care spends its extra care on
+    /// team shape and budget instead.
+    #[must_use]
+    pub const fn reasoning_effort(self) -> crate::llm::ReasoningEffort {
+        match self {
+            Self::Light => crate::llm::ReasoningEffort::Low,
+            Self::Medium => crate::llm::ReasoningEffort::Medium,
+            Self::High => crate::llm::ReasoningEffort::High,
+            Self::XHigh | Self::Max => crate::llm::ReasoningEffort::XHigh,
+        }
+    }
+}
+
+/// One spawn field as the parent set it (ARCH-0079 #seed-pin): a seed sets
+/// where the planner starts, with a weight counted in runs; a pin fixes the
+/// value and the planner never overrides it. Unset fields are the planner's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SpawnOverride<T> {
+    Seed { value: T, weight_runs: f64 },
+    Pin { value: T },
+}
+
+impl<T> SpawnOverride<T> {
+    #[must_use]
+    pub const fn value(&self) -> &T {
+        match self {
+            Self::Seed { value, .. } | Self::Pin { value } => value,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_pin(&self) -> bool {
+        matches!(self, Self::Pin { .. })
+    }
+
+    /// Prior weight in runs; a pin is a seed of infinite weight.
+    #[must_use]
+    pub fn weight_runs(&self) -> f64 {
+        match self {
+            Self::Seed { weight_runs, .. } => *weight_runs,
+            Self::Pin { .. } => f64::INFINITY,
+        }
+    }
+}
+
+/// What a parent says when it spawns (ARCH-0079 #spawn): the required need,
+/// separate from the prompt, plus optional care, notes and seeded or pinned
+/// model, width, pattern and budget. The planner routes on the need and
+/// fills in everything unset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpawnNeed {
+    /// What the parent needs, in one or two lines. Required, non-blank.
+    pub need: String,
+    /// How much the parent cares; inferred from the need when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub care: Option<CareLevel>,
+    /// Constraints and preferences (a model family, a time limit, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// The task's ONE TASK TYPE stamp (OF-543), the planner-card key; an
+    /// absent or unknown type reads the root card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<SpawnOverride<crate::llm::ModelId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<SpawnOverride<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<SpawnOverride<super::team_shape::CoordinationPattern>>,
+    /// Hard spend cap for the whole spawn, in lease units. A seed or pin
+    /// here only ever narrows the caller's budget, never widens it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_cap_units: Option<SpawnOverride<u64>>,
+}
+
+impl SpawnNeed {
+    #[must_use]
+    pub fn new(need: impl Into<String>) -> Self {
+        Self {
+            need: need.into(),
+            care: None,
+            notes: None,
+            task_type: None,
+            model: None,
+            width: None,
+            pattern: None,
+            budget_cap_units: None,
+        }
+    }
+
+    /// The door every planner entry runs first: the need is required and
+    /// non-blank, a width override names at least one agent, and a seed
+    /// weight is a positive finite run count.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if self.need.trim().is_empty() {
+            return Err(super::widen_record::invalid("spawn need is required"));
+        }
+        if let Some(width) = &self.width
+            && *width.value() == 0
+        {
+            return Err(super::widen_record::invalid("spawn width must be at least 1"));
+        }
+        let weights = [
+            self.model.as_ref().map(SpawnOverride::weight_runs),
+            self.width.as_ref().map(SpawnOverride::weight_runs),
+            self.pattern.as_ref().map(SpawnOverride::weight_runs),
+            self.budget_cap_units
+                .as_ref()
+                .map(SpawnOverride::weight_runs),
+        ];
+        if weights
+            .into_iter()
+            .flatten()
+            .any(|w| w != f64::INFINITY && (!w.is_finite() || w <= 0.0))
+        {
+            return Err(super::widen_record::invalid(
+                "spawn seed weight must be positive",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The pinned model, when the parent pinned one.
+    #[must_use]
+    pub fn pinned_model(&self) -> Option<&crate::llm::ModelId> {
+        self.model
+            .as_ref()
+            .filter(|o| o.is_pin())
+            .map(SpawnOverride::value)
+    }
+
+    /// The pinned width, when the parent pinned one.
+    #[must_use]
+    pub fn pinned_width(&self) -> Option<u32> {
+        self.width
+            .as_ref()
+            .filter(|o| o.is_pin())
+            .map(|o| *o.value())
+    }
+
+    /// The pinned pattern, when the parent pinned one.
+    #[must_use]
+    pub fn pinned_pattern(&self) -> Option<super::team_shape::CoordinationPattern> {
+        self.pattern
+            .as_ref()
+            .filter(|o| o.is_pin())
+            .map(|o| *o.value())
+    }
+}
+
 /// Typed healer-slot outcome.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HealerSlotOutcome {
