@@ -12,14 +12,14 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
+use crate::authority::{Destination, WorldPrivacyView};
 use crate::sync::client::SyncClientConfig;
 use crate::sync::manager::WindowManager;
-use crate::{EntityId, Vault};
-use crate::authority::{Destination, WorldPrivacyView};
 use crate::sync::residence::{SEALED_SHELF_PAGE_MAX, discover_local_window_keys};
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 use crate::world_keys::{SealedContentKind, SealedResidenceContent};
+use crate::{EntityId, Vault};
 
 /// The encoded version vector of this machine's last put of one window.
 const PUT_PREFIX: &str = "rsp:";
@@ -115,8 +115,8 @@ impl Relayer<'_> {
     /// this machine cannot name: an unknown destination.
     fn sealable_worlds(&self) -> crate::error::Result<BTreeSet<EntityId>> {
         let txn = self.vault.store.env.read_txn()?;
-        let private = WorldPrivacyView::load_in(self.vault, &txn)?
-            .withheld_for(Destination::Unknown)?;
+        let private =
+            WorldPrivacyView::load_in(self.vault, &txn)?.withheld_for(Destination::Unknown)?;
         let mut sealable = BTreeSet::new();
         for world in private {
             if self

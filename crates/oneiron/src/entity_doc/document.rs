@@ -37,6 +37,27 @@ impl EntityDoc {
         Self::open_initialized(LoroDoc::new(), entity, initial, actor, at, |_| Ok(()), None)
     }
 
+    pub(super) fn open_with_metadata(
+        entity: EntityId,
+        initial: &str,
+        metadata: &std::collections::BTreeMap<String, Vec<u8>>,
+        actor: WriteActor,
+        at: u64,
+    ) -> Result<Self> {
+        Self::open_initialized(
+            LoroDoc::new(),
+            entity,
+            initial,
+            actor,
+            at,
+            |doc| {
+                Self::replace_metadata(doc, metadata)?;
+                Self::set_record_fields(doc, &metadata.keys().cloned().collect::<Vec<_>>())
+            },
+            None,
+        )
+    }
+
     // The caller may bind the fresh peer before choosing the birth timestamp.
     pub(crate) fn open_initialized(
         doc: LoroDoc,

@@ -344,6 +344,7 @@ impl Memory<'_> {
             state: Some(TaskExecutionState::Queued),
             provenance: provenance.clone(),
             created_at: now,
+            type_ref: Some(validated.type_ref.clone()),
             refusal: None,
             brief,
         });

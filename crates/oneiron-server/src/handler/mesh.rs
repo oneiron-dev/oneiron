@@ -120,7 +120,8 @@ mod host {
 
     /// Work a route needs done while the listener runs, such as re-driving
     /// jobs that wait for a node.
-    pub(crate) type MeshTick = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+    pub(crate) type MeshTick =
+        Arc<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
     /// The route table: one service per ALPN, and the ticks the routes need.
     #[derive(Default)]

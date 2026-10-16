@@ -14,11 +14,11 @@ use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::serialize::msgpack_value_to_json;
 use crate::deletion::{DeleteReason, DeletionGateContext};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind};
+use crate::serialize::msgpack_value_to_json;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor};
 
@@ -86,7 +86,7 @@ pub struct CommitReceipt {
 
 /// Named deletion reasons (S7). There is deliberately NO bare bool delete on
 /// this surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SafeDeleteReason {
     /// Tombstone delete: local body scrubbed to a shell, no receipt.

@@ -2,6 +2,9 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// One typed-decision ask the ladder queued for the vault owner role, and its answer once
+    /// given. Key: u64be(sequence).
+    DECISION_ASK: VaultMeta b"decision:ask:v1:" Named;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
@@ -352,6 +355,14 @@ side_tables! {
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
     /// it. Key: hex64.
     FEEDBACK_RECEIVED_DIGEST: VaultMeta b"feedback:received:v1:" Raw;
+    /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
+    FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
+    /// T2 report membership and vectors, keyed by the first ISSUE id.
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    /// Owner disclosure preference, keyed by the resolved publisher reference.
+    FEEDBACK_REPORT_DISCLOSURE: VaultMeta b"feedback:report-disclosure:v1:" Named;
+    /// Host-stamped subject provenance or owner routing policy. Key: subject reference.
+    FEEDBACK_REPORT_ROUTE: VaultMeta b"feedback:report-route:v1:" Named;
     /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent introduction.
     /// Key: id16.
     GATE_FOREIGN_AGENT_INTRODUCTION: VaultMeta b"gate.foreign-agent.v1:" Named;
@@ -488,6 +499,30 @@ side_tables! {
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
+    /// A hook block: the rows one AddBlock pins for a recipient's board deliveries, its lifetime
+    /// and its consumption. Key: id16 (block).
+    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named;
+    /// An owner check a hook's causal chain raised (a cycle or a deep chain). Key: hash32 (run key).
+    HOOKS_CHECK: VaultMeta b"hooks:check:v1:" Named;
+    /// A fact hook's cursor in one source. Key: id16 (binding) + u8 (source).
+    HOOKS_CURSOR: VaultMeta b"hooks:cursor:v1:" Named;
+    /// The vault's `hooks.enabled` switch; absent is on. Key: ().
+    HOOKS_ENABLED: VaultMeta b"hooks:enabled:v1" Named;
+    /// The owner's grant on one hook binding. Key: id16 (binding).
+    HOOKS_GRANT: VaultMeta b"hooks:grant:v1:" Named;
+    /// Queued work a hook run saved before its cursor moved, and whether it landed. Key: hash32
+    /// (run key).
+    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named;
+    /// The hook chain behind a row a hook landed. Key: id16 (row).
+    HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
+    /// A hook run's saved result and pinned input. Key: hash32 (run key).
+    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
+    /// A hook run's Hook receipt. Key: hash32 (run key).
+    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
+    HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
+    /// The last settlement sequence handed out. Key: ().
+    HOOKS_SETTLED_NEXT: VaultMeta b"hooks:settled_next:v1" Named;
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
@@ -578,6 +613,8 @@ side_tables! {
     LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
+    /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
+    LLM_ENCODER_EXPORT: VaultMeta b"llm:encoder_export:v1" Named;
     /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
     LLM_EXTRACTION_TEACHER_PROBE: VaultMeta b"llm:extraction_teacher_probe:v1" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
