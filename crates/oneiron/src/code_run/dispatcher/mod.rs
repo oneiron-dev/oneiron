@@ -4,6 +4,7 @@ mod emission;
 mod envelope;
 mod fold_verbs;
 mod human_speech;
+mod leader;
 mod memory_verbs;
 mod wake_policy;
 
@@ -378,6 +379,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
             SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
+            SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),

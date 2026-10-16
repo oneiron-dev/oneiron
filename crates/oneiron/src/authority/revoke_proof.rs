@@ -23,9 +23,6 @@ enum Restriction {
     Actor {
         authority_key: AuthorityKey,
         epoch: u64,
-        /// The revoke's own folded state, kept to judge its signer against the
-        /// floors that survive the fold.
-        proof: Box<FoldState>,
     },
     /// A verified `SlipRevoke`: the withdrawn id.
     SlipRevoke([u8; 32]),
@@ -63,7 +60,6 @@ impl RevokeFacts {
                 Restriction::Actor {
                     authority_key,
                     epoch,
-                    ..
                 } => record_actor_revoke(state, authority_key, *epoch, fact.entry_hash),
                 Restriction::SlipRevoke(slip_id) => {
                     state.slips.revoked.insert(*slip_id);
@@ -155,7 +151,6 @@ pub(super) fn derive_revoke_facts(
             } => Restriction::Actor {
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
-                proof: Box::new(state),
             },
             AuthorityOp::MachineProfile(profile) => {
                 let Some((admitter, chain)) = state
@@ -263,47 +258,6 @@ impl RevokeFacts {
     ) {
         self.by_hash
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
-    }
-
-    /// Forgets every actor revocation that falls under a floor that survived
-    /// the fold and that the revoke did not precede (H411): its signer is
-    /// below it, or its consent or quorum rested on a cosigner below it. The
-    /// fold refuses such a row; its proof re-folds only the revoke's own
-    /// branch, where that floor does not exist, so an outranked key's old
-    /// signature would otherwise still revoke, at any epoch it chose.
-    pub(super) fn forget_below_concurrent_floors(
-        &mut self,
-        survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-        context: FoldContext<'_>,
-    ) {
-        let floors = super::tier_floor::concurrent_tier_floors(survivors, entries, &|_| true);
-        self.by_hash.retain(|hash, fact| match &fact.kind {
-            Restriction::Actor { proof, .. } => {
-                survivors.contains_key(hash)
-                    || super::tier_floor::below_a_concurrent_floor(
-                        hash,
-                        proof,
-                        entries,
-                        ancestors,
-                        &floors,
-                        // A revoke changes no roster, floor or consent input,
-                        // so its own state judges its participants as its
-                        // parents' merged state would.
-                        &|floor| {
-                            super::tier_floor::participants_with_floor(
-                                (**proof).clone(),
-                                &entries[hash],
-                                floor,
-                                context,
-                            )
-                        },
-                    )
-                    .is_none()
-            }
-            _ => true,
-        });
     }
 
     /// Forgets every restriction proved through a handoff that did not take
