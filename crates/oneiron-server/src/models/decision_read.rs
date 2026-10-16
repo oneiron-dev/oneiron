@@ -495,7 +495,11 @@ fn status(code: u16) -> LlmResult<()> {
     match code {
         200..=299 => Ok(()),
         401 | 403 => Err(FatalLlmError::Auth.into()),
-        429 => Err(RetryableLlmError::RateLimited { retry_after: None }.into()),
+        429 => Err(RetryableLlmError::RateLimited {
+            retry_after: None,
+            resets_at: Vec::new(),
+        }
+        .into()),
         400..=499 => Err(FatalLlmError::InvalidRequest.into()),
         _ => Err(RetryableLlmError::ServerError.into()),
     }
