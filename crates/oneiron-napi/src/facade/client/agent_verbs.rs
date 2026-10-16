@@ -401,6 +401,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_legal_holds_place(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.place", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_legal_holds_widen(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.widen", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_legal_holds_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_legal_holds_log(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.log", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_legal_holds_lift_and_erase(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.legal_holds.lift_and_erase", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_propose(
         &self,
         input: serde_json::Value,

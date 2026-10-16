@@ -33,6 +33,8 @@ use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::shared_act_doors::*;
+// The owner's legal-hold doors (OF-470) too.
+pub(crate) use super::legal_hold_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the

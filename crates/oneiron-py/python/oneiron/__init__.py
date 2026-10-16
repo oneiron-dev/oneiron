@@ -331,6 +331,9 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
+            return Oneiron._VaultLegalHoldsVerbs(self._client)
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
         @property
@@ -485,6 +488,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms(json.dumps(spec))))
         def acknowledge(self, spec):
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultLegalHoldsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def place(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_place(json.dumps(spec))))
+        def widen(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_widen(json.dumps(spec))))
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_list(json.dumps(spec))))
+        def log(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_log(json.dumps(spec))))
+        def lift_and_erase(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

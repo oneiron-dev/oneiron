@@ -44,6 +44,7 @@ mod diary_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
+mod legal_hold_routes;
 mod pack_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
@@ -90,6 +91,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(diary_routes::routes())
         .merge(history_routes::routes())
         .merge(inbox_routes::routes())
+        .merge(legal_hold_routes::routes())
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())

@@ -55,6 +55,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.authority.handoff_alarms.acknowledge",
             post(vault_authority_handoff_alarms_acknowledge),
         )
+        .route("/vault.legal_holds.place", post(vault_legal_holds_place))
+        .route("/vault.legal_holds.widen", post(vault_legal_holds_widen))
+        .route("/vault.legal_holds.list", post(vault_legal_holds_list))
+        .route("/vault.legal_holds.log", post(vault_legal_holds_log))
+        .route(
+            "/vault.legal_holds.lift_and_erase",
+            post(vault_legal_holds_lift_and_erase),
+        )
         .route("/vault.lenses.propose", post(vault_lenses_propose))
         .route("/vault.lenses.activate", post(vault_lenses_activate))
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
@@ -940,6 +948,82 @@ async fn vault_authority_handoff_alarms_acknowledge(
             facade_input(value)?,
         )
         .await?,
+    )?))
+}
+async fn vault_legal_holds_place(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.legal_holds.place")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.legal_holds.place", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_legal_holds_place(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_legal_holds_widen(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.legal_holds.widen")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.legal_holds.widen", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_legal_holds_widen(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_legal_holds_list(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.legal_holds.list")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.legal_holds.list", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_legal_holds_list(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_legal_holds_log(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.legal_holds.log")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.legal_holds.log", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_legal_holds_log(&server, &auth, facade_input(value)?).await?,
+    )?))
+}
+async fn vault_legal_holds_lift_and_erase(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.legal_holds.lift_and_erase")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.legal_holds.lift_and_erase", &value)?;
+    Ok(Json(facade_output(
+        super::host_doors::vault_legal_holds_lift_and_erase(&server, &auth, facade_input(value)?)
+            .await?,
     )?))
 }
 async fn vault_lenses_propose(

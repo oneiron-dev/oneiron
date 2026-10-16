@@ -724,6 +724,51 @@ Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
 signer is 404, and acknowledging an acknowledged alarm changes nothing.
 
+## Legal holds
+
+A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
+agents, timers, members and you alike, and every other verb keeps working. A hold names records,
+or a claim's gate-decision key partition, and can carry an opaque matter reference (1 to 128 of
+`A-Z a-z 0-9 . _ : - /`, never free text). You can widen a hold. You lift it only through one
+confirm, "Lift the hold and erase?", which lifts your holds on the records it names and erases
+them. The hold log keeps ids, times and reason codes only, for the hold's life and 24 months
+after.
+
+```sh
+oneiron legal-holds place --record HEX [--record HEX] [--gate-partition HEX|none] [--matter-ref REF]
+oneiron legal-holds widen HOLD --record HEX
+oneiron legal-holds list
+oneiron legal-holds log
+oneiron legal-holds lift-and-erase RECORD [RECORD] --yes   # prints the prompt; acts only with --yes
+```
+
+Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
+`{"gate_partition": null}` (the claim-free partition):
+
+- `POST /v1/owner/legal-holds` with `{"targets": [...], "matter_ref": "..."}` places a hold, and
+  `GET /v1/owner/legal-holds` lists the holds you may see.
+- `POST /v1/owner/legal-holds/widen` with `{"hold_id": "<hex>", "targets": [...]}`.
+- `GET /v1/owner/legal-holds/log` reads the log, oldest first.
+- `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
+  before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
+  receipt, `completion_pending` where Oneiron hosts the bytes until the deletion receipt
+  completes, `kept_by_legal_order`, or `failed` (the hold is lifted; a plain delete retries).
+
+The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
+same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
+can also hold records. You cannot lift it, and an erase you confirm waits until it ends.
+
+## Erase a text's history
+
+`POST /v1/owner/history/erase` with `{"entity": "<hex>"}` (and optionally `"through"`, a base64
+frontier) drops a text's edit history below its oldest pin. In a personal vault, or a shared one
+with one live Owner, it erases at once and answers `"outcome": "erased"` with the receipt. In a
+shared vault with two or more live Owners it erases nothing yet: it answers `"outcome":
+"waiting"` with the vault's started `erase` act, and every other Owner is told. Once the window
+passes with no objection, `POST /v1/owner/history/erase/execute` with `{"act_id": "..."}` runs
+it, and a retry returns the same receipt. `GET /v1/owner/history?entity=<hex>` lists the erases
+filed for a text. A legal hold on the text refuses the erase.
+
 ## The model catalog
 
 The model catalog comes from the first-party hub as the knowledge pack `oneiron.models`

@@ -42,6 +42,11 @@ pub enum AgentVerb {
     VaultMembersLeave,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
+    VaultLegalHoldsPlace,
+    VaultLegalHoldsWiden,
+    VaultLegalHoldsList,
+    VaultLegalHoldsLog,
+    VaultLegalHoldsLiftAndErase,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -186,6 +191,11 @@ impl AgentVerb {
         Self::VaultMembersLeave,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
+        Self::VaultLegalHoldsPlace,
+        Self::VaultLegalHoldsWiden,
+        Self::VaultLegalHoldsList,
+        Self::VaultLegalHoldsLog,
+        Self::VaultLegalHoldsLiftAndErase,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -335,6 +345,11 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
             }
+            Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
+            Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
+            Self::VaultLegalHoldsList => "vault.legal_holds.list",
+            Self::VaultLegalHoldsLog => "vault.legal_holds.log",
+            Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -478,6 +493,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -629,6 +649,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -743,6 +768,8 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultSharedOutcomes
                 | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -815,6 +842,11 @@ impl AgentVerb {
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsList
+                | Self::VaultLegalHoldsLog
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -936,6 +968,9 @@ impl AgentVerb {
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultLegalHoldsPlace
+                | Self::VaultLegalHoldsWiden
+                | Self::VaultLegalHoldsLiftAndErase
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1045,6 +1080,11 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultLegalHoldsPlace => &["spec"],
+            Self::VaultLegalHoldsWiden => &["spec"],
+            Self::VaultLegalHoldsList => &[],
+            Self::VaultLegalHoldsLog => &[],
+            Self::VaultLegalHoldsLiftAndErase => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1190,6 +1230,11 @@ impl AgentVerb {
             Self::VaultMembersLeave => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultLegalHoldsPlace => &["spec"],
+            Self::VaultLegalHoldsWiden => &["spec"],
+            Self::VaultLegalHoldsList => &[],
+            Self::VaultLegalHoldsLog => &[],
+            Self::VaultLegalHoldsLiftAndErase => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
