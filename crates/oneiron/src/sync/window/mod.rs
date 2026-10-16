@@ -33,6 +33,7 @@ mod reverse;
 #[doc(hidden)]
 pub mod test_hooks;
 mod tombstones;
+mod withdrawn;
 
 #[cfg(test)]
 pub(in crate::sync) use self::admission::validate_window_update_residence;
@@ -75,6 +76,7 @@ pub use self::tombstones::{
 };
 #[cfg(test)]
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
+pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).

@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use super::{ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource};
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::{DeckEditContext, EditOutcome};
-use crate::edit_settle::{KeepUndo, NativeOutput, PendingProposalView, SettleConsent};
+use crate::edit_settle::{
+    KeepUndo, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
+};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
@@ -121,6 +123,12 @@ pub struct ProposalSettleRequest {
     /// Why a proposal was discarded.
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+/// Whether a held organ call was let go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleasedWait {
+    pub released: bool,
 }
 
 /// A kept proposal: the version it became, the threads it moved, its receipt.
@@ -275,6 +283,25 @@ impl Memory<'_> {
         Ok(self
             .vault()
             .pending_proposals(&entity(&input.artifact_ref)?)?)
+    }
+
+    /// `vault.artifacts.waits`: the organ calls held beside one artifact
+    /// until one of the owner's nodes can run them, each saying why it waits.
+    pub fn artifacts_waits(&self, input: &ArtifactRefRequest) -> MemoryResult<Vec<OrganWaitView>> {
+        Ok(self.vault().organ_waits(&entity(&input.artifact_ref)?)?)
+    }
+
+    /// `vault.artifacts.release_wait`: lets one held organ call go, by its
+    /// run ref (`proposal_ref`), under the consent a Discard needs.
+    pub fn artifacts_release_wait(
+        &self,
+        input: &ProposalSettleRequest,
+    ) -> MemoryResult<ReleasedWait> {
+        self.artifact_consent(input.brief_ref.clone())?;
+        let released = self
+            .vault()
+            .release_organ_wait(&entity(&input.artifact_ref)?, &input.proposal_ref)?;
+        Ok(ReleasedWait { released })
     }
 
     /// `vault.artifacts.propose_deck`: runs one native deck transaction over
