@@ -142,6 +142,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::Fold(_) if self.effect != SelfEffect::Fold => Err(
                 invalid_code_run_replay("fold answer belongs to another effect"),
             ),
+            SelfDispatchOutcome::TaskRefusal(_) if self.effect != SelfEffect::TasksRefuse => Err(
+                invalid_code_run_replay("task refusal belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(

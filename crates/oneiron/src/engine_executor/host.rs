@@ -68,6 +68,10 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// calls and recorded-output reads in the step are refused as after a
     /// hard failure.
     left_a_gap: bool,
+    /// The TASK the agent's own refusal declined in this step (OF-533). The
+    /// run does nothing more for it: later calls and recorded-output reads
+    /// are refused, and the step closes the run.
+    pub(super) declined: Option<EntityId>,
 }
 
 impl<'a, 's> RecordingJsHost<'a, 's> {
@@ -97,6 +101,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             durable_wait: None,
             hard_failure: None,
             left_a_gap: false,
+            declined: None,
         }
     }
 
@@ -377,6 +382,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         if self.hard_failure.is_some() || self.left_a_gap {
             return Err(refused("host_bridge_halted"));
         }
+        if self.declined.is_some() {
+            return Err(refused("task_declined"));
+        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq: self.next_seq,
@@ -505,7 +513,10 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // Past a wait or a halt the bridge answers without dispatching, but a
         // session-bound run is still answered as its participant stands: once
         // they left the room it hears `NotInRoom`, never the wait or the halt.
-        if (self.durable_wait.is_some() || self.hard_failure.is_some() || self.left_a_gap)
+        if (self.durable_wait.is_some()
+            || self.hard_failure.is_some()
+            || self.left_a_gap
+            || self.declined.is_some())
             && let Some(storage) = self.storage
             && let Err(err) = storage.answered(|| Ok(()))
         {
@@ -519,14 +530,21 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome));
         }
-        if self.hard_failure.is_some() || self.left_a_gap {
+        if self.hard_failure.is_some() || self.left_a_gap || self.declined.is_some() {
             // Fail-closed after the first hard failure or unrecorded call:
             // no further gate dispatches; the guest sees a typed Failed
             // response (budget attached) and the replay row records exactly
-            // that.
+            // that. A declined TASK is closed the same way, without failing
+            // the step.
+            let error =
+                if self.declined.is_some() && self.hard_failure.is_none() && !self.left_a_gap {
+                    "task_declined"
+                } else {
+                    "host_bridge_halted"
+                };
             let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
-                error: "host_bridge_halted".to_owned(),
+                error: error.to_owned(),
             });
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
@@ -575,6 +593,11 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome
         {
             self.durable_wait = Some(wait.clone());
+        }
+        if let SelfDispatchOutcome::TaskRefusal(refusal) = &outcome
+            && refusal.declined()
+        {
+            self.declined = Some(refusal.task_ref);
         }
         self.bridge_calls.push(row);
         Ok(self.respond(outcome))
