@@ -270,7 +270,10 @@ async fn a_batch_omits_an_image_whose_text_is_past_its_body_budget() {
     assert_eq!(status, StatusCode::OK, "{batch}");
     assert_eq!(batch["results"][0]["outcome"], "live", "{batch}");
     let item = &batch["results"][0]["result"]["item"];
-    assert_eq!(item["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED", "{item}");
+    assert_eq!(
+        item["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED",
+        "{item}"
+    );
     assert!(item.get("text").is_none(), "{item}");
 
     let marker = &item["bodyOmitted"]["ref"];
