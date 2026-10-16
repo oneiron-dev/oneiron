@@ -73,30 +73,34 @@ impl GitWire<'_> {
         self.publish_refs(repo, vec![publication], now)
     }
 
-    /// Fails a still-prepared attempt at exactly this compare-and-set without
-    /// running it, for a caller that has refused the move itself. Left alone,
-    /// such an attempt stays runnable by any recovery once the ref carries the
-    /// expected value again.
-    pub(crate) fn void_prepared_ref_cas(
+    /// Drops every still-prepared attempt that contains exactly this move,
+    /// direct, staged or batched, without running it, for a caller that has
+    /// refused the move itself. Left alone, such an attempt stays runnable by
+    /// any recovery once the ref carries the expected value again. Dropped,
+    /// not failed: a failed record would answer a later, separately decided
+    /// attempt at the same move with this refusal.
+    pub(crate) fn void_prepared_ref_move(
         &self,
         repo: &GitWireRepo,
         name: &GitRefName,
         expected: Option<&GitOid>,
         next: &GitOid,
-        reason: GitWireRejection,
-        now: u64,
     ) -> GitWireResult<()> {
-        let publications = vec![GitRefPublication::update(
-            name.clone(),
-            GitRefExpectation::from_observed(expected),
-            next.clone(),
-        )];
+        let expected = GitRefExpectation::from_observed(expected);
         let _guard = lock_repository(&repo.common_dir)?;
-        let key = ref_record_key(repo.identity(), &publications);
-        if let Some(record) = self.load_record(repo, &key)?
-            && GitWireRecordState::parse(&record.state)? == GitWireRecordState::Prepared
-        {
-            self.reject(repo, record, reason, now)?;
+        for record in self.prepared_records(repo)? {
+            let carries_move =
+                publications_from_stored(&record.publications)?
+                    .iter()
+                    .any(|publication| {
+                        publication.name == *name
+                            && publication.expected == expected
+                            && publication.next.as_ref() == Some(next)
+                    });
+            if carries_move {
+                self.release_keep_refs(repo, &record)?;
+                self.drop_record(repo, &record.record_key)?;
+            }
         }
         Ok(())
     }
@@ -461,6 +465,13 @@ fn validate_publications(publications: &[GitRefPublication]) -> Result<()> {
             .any(|earlier| earlier.name == publication.name)
         {
             return Err(invalid("git wire publication set names one ref twice"));
+        }
+        // A publication states what it was decided against: an unconditional
+        // write could never be matched to the owner of the move it makes.
+        if publication.expected == GitRefExpectation::Any {
+            return Err(invalid(
+                "git wire publication must state what it was decided against",
+            ));
         }
     }
     Ok(())

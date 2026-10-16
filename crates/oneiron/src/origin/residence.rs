@@ -5,9 +5,7 @@ use super::publication::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{
-    GitRefExpectation, GitRefPublication, GitWire, GitWireRepo, lock_repository,
-};
+use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
 use crate::side_table::{self, Named, Raw, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};

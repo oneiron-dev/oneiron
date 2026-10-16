@@ -659,13 +659,11 @@ impl Vault {
         // A refusal decided before the wire ran must not leave an earlier
         // uncertain attempt at this move runnable by generic recovery. Voided
         // first: a crash before the refusal re-decides on the same evidence.
-        git.void_prepared_ref_cas(
+        git.void_prepared_ref_move(
             repo,
             &record.ref_name,
             record.expected_old_oid.as_ref(),
             &record.new_oid,
-            reason,
-            learned_at,
         )?;
         let status = if reason == GitWireRejection::RefMoved {
             OriginPublicationStatus::Conflicted
