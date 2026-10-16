@@ -133,6 +133,7 @@
 mod ask_band;
 mod brief;
 mod dials;
+mod eval_set;
 mod gate;
 mod goal_axes;
 mod goal_binding;
@@ -154,6 +155,12 @@ pub use self::brief::{
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
+};
+pub use self::eval_set::{
+    DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalExposure, EvalExposureCounts,
+    EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat,
+    FamilyPurpose, SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict,
+    UnknownReason, WaitingDecision, sufficiency_card,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
