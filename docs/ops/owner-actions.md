@@ -657,7 +657,7 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
 - Backups open only on the device that took them for now: the CLI unlocks the backup's key with
-  this device's keystore at its default location, and takes no password, passkey or escrow
+  this device's keystore (the `[keystore]` settings), and takes no password, passkey or escrow
   secret yet. A server with `[keystore] backend = "off"` cannot take a backup.
 - A backup is signed (Ed25519 and SLH-DSA) by the install that took it, and chained to the one
   before it. A restore refuses a signer it does not trust: the CLI trusts only the signers this

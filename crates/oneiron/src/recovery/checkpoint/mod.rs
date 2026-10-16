@@ -117,6 +117,9 @@ enum Source<'a> {
         first: LiveCustody,
         #[cfg(unix)]
         shared: Option<crate::store::SharedPath>,
+        /// The install's configured keystore; the platform's at its defaults
+        /// when none was given ([`SideRestoreSource::with_keystore`]).
+        keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
     },
 }
 impl SideRestoreSource<'static> {
@@ -133,7 +136,20 @@ impl SideRestoreSource<'static> {
             first,
             #[cfg(unix)]
             shared: crate::store::shared_vault_root(vault_dir)?,
+            keystore: None,
         }))
+    }
+
+    /// The source read off the disk, whose checkpoints open with `keystore`:
+    /// the install's configured one.
+    pub fn with_keystore(
+        mut self,
+        keystore: std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>,
+    ) -> Self {
+        if let Source::Disk { keystore: slot, .. } = &mut self.0 {
+            *slot = Some(keystore);
+        }
+        self
     }
 }
 impl SideRestoreSource<'_> {
@@ -156,6 +172,14 @@ impl SideRestoreSource<'_> {
     pub fn checkpoint_key(&self, checkpoint: &Path) -> Result<CheckpointKey> {
         match &self.0 {
             Source::Open(vault) => vault.checkpoint_key(),
+            Source::Disk {
+                keystore: Some(keystore),
+                ..
+            } => Ok(CheckpointKey::unlock(
+                checkpoint,
+                &crate::world_keys::VaultKeyUnlock::Device(keystore.as_ref()),
+            )?
+            .trusting_device(std::sync::Arc::clone(keystore))),
             Source::Disk { dir, .. } => CheckpointKey::unlock_on_this_device(checkpoint, dir),
         }
     }
