@@ -5,6 +5,8 @@
 //! section tags nothing and commits no tagging marker. Naming it selects a
 //! provider, defaulting to the in-process local one (ARCH-0036: extraction
 //! defaults to the device). Local models load a hash-bound artifact bundle.
+//! A host may keep several local bundles as named tiers
+//! (`[oneironer.tiers.<label>]`) and serve the one `tier` names.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -149,6 +151,29 @@ impl FromStr for OneironerMode {
     }
 }
 
+/// One named local tagger candidate, `[oneironer.tiers.<label>]`: a bundle
+/// and its identity. The label is data (`tiny`, `medium`, ...), never an
+/// engine constant. Which candidate wins is measured outside the engine and
+/// bound by the vault's manifest (ARCH-0036: the size ladder is retired and
+/// the served tagger is a manifest row); `TaggerSlot::selected_by` holds the
+/// host to that binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OneironerTier {
+    /// Directory containing the bundle's oneironer.json.
+    pub model_dir: PathBuf,
+    /// The bundle's checkpoint, as `checkpoint_sha16` above.
+    pub checkpoint_sha16: String,
+    /// The bundle's stack, when pinned, as `stack_sha16` above.
+    #[serde(default)]
+    pub stack_sha16: Option<String>,
+    /// How many labels the bundle reports.
+    pub label_count: u32,
+    /// The bundle's own window ceiling, when it differs from the section's.
+    #[serde(default)]
+    pub max_input_tokens: Option<usize>,
+}
+
 /// Fully resolved `[oneironer]` section.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OneironerConfig {
@@ -166,6 +191,11 @@ pub struct OneironerConfig {
     /// Native window ceiling, including context and special tokens. A current
     /// turn beyond it fails rather than silently saving a truncated tag set.
     pub max_input_tokens: usize,
+    /// The named tier this host serves. Naming one takes the bundle and its
+    /// identity from its row in `tiers`, over the section's own keys.
+    pub tier: Option<String>,
+    /// Named local tagger candidates, by label.
+    pub tiers: BTreeMap<String, OneironerTier>,
     /// Base URL of the tagger server; the slot appends `/v1/model` and
     /// `/v1/extract`. Loopback only in this build.
     pub url: Option<String>,
@@ -217,6 +247,8 @@ impl Default for OneironerConfig {
             backbone: OneironerBackbone::default(),
             device: EmbedderDevice::Auto,
             max_input_tokens: 2048,
+            tier: None,
+            tiers: BTreeMap::new(),
             url: None,
             checkpoint_sha16: None,
             stack_sha16: None,
@@ -344,6 +376,44 @@ impl OneironerConfig {
         if let Some(value) = over.trace_history_max_age_secs {
             self.trace_history_max_age_secs = value;
         }
+        // Last, so a layer that names a tier serves its row's bundle.
+        let reselect = over.tier.is_some() || over.tiers.is_some();
+        if over.tier.is_some() {
+            self.tier = over.tier;
+        }
+        if let Some(tiers) = over.tiers {
+            self.tiers = tiers;
+        }
+        if reselect {
+            self.select_tier();
+        }
+    }
+
+    /// Takes the named tier's bundle and identity onto the section's keys.
+    fn select_tier(&mut self) {
+        let Some(row) = self
+            .tier
+            .as_ref()
+            .and_then(|tier| self.tiers.get(tier))
+            .cloned()
+        else {
+            return;
+        };
+        self.model_dir = Some(row.model_dir);
+        self.checkpoint_sha16 = Some(row.checkpoint_sha16);
+        self.stack_sha16 = row.stack_sha16;
+        self.label_count = Some(row.label_count);
+        if let Some(cap) = row.max_input_tokens {
+            self.max_input_tokens = cap;
+        }
+    }
+
+    /// The configured tier whose bundle serves `checkpoint`, if any.
+    pub fn tier_serving(&self, checkpoint: &str) -> Option<&str> {
+        self.tiers
+            .iter()
+            .find(|(_, row)| row.checkpoint_sha16 == checkpoint)
+            .map(|(label, _)| label.as_str())
     }
 
     /// Refuses a section that cannot produce a working native or endpoint slot.
@@ -367,6 +437,29 @@ impl OneironerConfig {
             if !oneiron::tagging::label_kind_admitted(byte) {
                 anyhow::bail!(
                     "oneironer.labels maps a label to {kind}, a kind with no identity key; leave the label out to keep it a tag"
+                );
+            }
+        }
+        for (label, row) in &self.tiers {
+            if label.is_empty() || label.len() > MAX_LABEL_BYTES {
+                anyhow::bail!("oneironer.tiers labels must be 1 to 64 bytes");
+            }
+            if row.model_dir.as_os_str().is_empty()
+                || oneiron::tagging::TaggingMarkerConfig::new(&row.checkpoint_sha16).is_err()
+                || row.label_count == 0
+            {
+                anyhow::bail!(
+                    "oneironer.tiers.{label} requires model_dir, checkpoint_sha16 (16 lowercase hex digits) and a nonzero label_count"
+                );
+            }
+        }
+        if let Some(tier) = &self.tier {
+            if !self.tiers.contains_key(tier) {
+                anyhow::bail!("oneironer.tier = {tier:?} names no [oneironer.tiers] row");
+            }
+            if self.provider == OneironerProvider::Endpoint {
+                anyhow::bail!(
+                    "oneironer.tier selects a local bundle; it requires provider = \"local\""
                 );
             }
         }
@@ -444,6 +537,8 @@ pub struct OneironerConfigOverride {
     pub backbone: Option<OneironerBackbone>,
     pub device: Option<EmbedderDevice>,
     pub max_input_tokens: Option<usize>,
+    pub tier: Option<String>,
+    pub tiers: Option<BTreeMap<String, OneironerTier>>,
     pub url: Option<String>,
     pub checkpoint_sha16: Option<String>,
     pub stack_sha16: Option<String>,
@@ -489,6 +584,9 @@ pub struct OneironerArgs {
     /// Native window ceiling, including context and special tokens.
     #[arg(long = "oneironer-max-input-tokens")]
     pub oneironer_max_input_tokens: Option<usize>,
+    /// The named tier to serve, from the file's `[oneironer.tiers]`.
+    #[arg(long = "oneironer-tier")]
+    pub oneironer_tier: Option<String>,
     /// Base URL of a loopback tagger server.
     #[arg(long = "oneironer-url")]
     pub oneironer_url: Option<String>,
@@ -519,6 +617,7 @@ impl From<&OneironerArgs> for OneironerConfigOverride {
             backbone: args.oneironer_backbone,
             device: args.oneironer_device,
             max_input_tokens: args.oneironer_max_input_tokens,
+            tier: args.oneironer_tier.clone(),
             url: args.oneironer_url.clone(),
             checkpoint_sha16: args.oneironer_checkpoint_sha16.clone(),
             stack_sha16: args.oneironer_stack_sha16.clone(),
@@ -556,6 +655,8 @@ pub(super) fn lookup_oneironer_override(
         backbone: lookup_parse(lookup, "ONEIRON_ONEIRONER_BACKBONE")?,
         device: lookup_parse(lookup, "ONEIRON_ONEIRONER_DEVICE")?,
         max_input_tokens: lookup_parse(lookup, "ONEIRON_ONEIRONER_MAX_INPUT_TOKENS")?,
+        tier: lookup("ONEIRON_ONEIRONER_TIER"),
+        tiers: None,
         url: lookup("ONEIRON_ONEIRONER_URL"),
         checkpoint_sha16: lookup("ONEIRON_ONEIRONER_CHECKPOINT_SHA16"),
         stack_sha16: lookup("ONEIRON_ONEIRONER_STACK_SHA16"),

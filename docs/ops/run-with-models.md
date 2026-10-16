@@ -1077,3 +1077,51 @@ The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
 escalation read is metered on `models.raw_budget_units`. A model rung blocks
 on the server's runtime, so a caller runs a ladder call on a blocking thread.
+
+## 14. Tagger tiers and the teacher's handoff
+
+A host may keep several local tagger bundles as named tiers and serve one.
+The label is yours (`tiny`, `medium`, ...); which candidate wins is measured
+outside the engine and bound by the vault's model manifest.
+
+```toml
+[oneironer]
+provider = "local"
+tier = "tiny"                   # or --oneironer-tier / ONEIRON_ONEIRONER_TIER
+
+[oneironer.tiers.tiny]
+model_dir = "/models/oneironer-tiny"
+checkpoint_sha16 = "0123456789abcdef"
+label_count = 9
+
+[oneironer.tiers.medium]
+model_dir = "/models/oneironer-medium"
+checkpoint_sha16 = "fedcba9876543210"
+label_count = 9
+max_input_tokens = 512          # its own window, when it differs
+```
+
+The named tier's row sets `model_dir` and the identity keys. `oneiron init
+--oneironer local --oneironer-model-dir <dir> --oneironer-tier tiny` writes
+the first row. A vault whose manifest binds `extraction_encoder` at another
+tier's checkpoint stops tagging and names that tier in the log.
+
+The extraction teacher is offline by default. It runs the Dreamer's
+extraction passes and teaches the tagger, and the manifest refuses a served
+call through it (chat, checks, routing, voice). To route a seat to it, set
+`"disposition": "served"` on its manifest row. That changes the teacher's
+binding, so the row needs a passing probe approval again.
+
+The distillation handoff runs with the server stopped:
+
+```sh
+# One job per student: the candidate manifest's extraction_encoder row.
+oneiron oneironer distill --candidate candidate.json --fork fork.json \
+  --recipe-blake3 <hex> --corpus-blake3 <hex> --out job.json
+# The model project trains the student, then binds it to the job.
+oneiron oneironer export --request job.json --checkpoint student.pack --out export.json
+# Pin the student and its provenance with the candidate manifest.
+oneiron oneironer publish --manifest candidate.json --export export.json --checkpoint student.pack
+```
+
+`publish` prints the configured tier that serves the student, if any.
