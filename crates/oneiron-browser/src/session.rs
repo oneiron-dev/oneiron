@@ -1,16 +1,26 @@
 //! A browser session: one Chromium guest in a container and the CDP driver
 //! attached to it, with the host's rules in front of the driver.
 //!
-//! The rules here are the pilot's floor until per-action-class send grants
-//! land: only http and https pages open, and a click on a control whose name
-//! says it sends, pays, submits or signs in stops with `needs_press`.
+//! The browser runs only inside the isolated guest, never as a process on
+//! the host. Cookies and the profile live and die in that guest; raw CDP
+//! never leaves this crate.
+//!
+//! A click whose control name says it sends, pays, signs in, publishes or
+//! deletes falls in an effect class. The vault's grant for the class, as
+//! the host resolved it into a [`SendPolicy`], decides the press: one per
+//! send, one for a reviewed batch, or none. A payment keeps a person's
+//! press whatever the policy says. Every effect lands a receipt naming the
+//! page it acted on, with a masked screenshot as its evidence when one can
+//! be captured.
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
-    BrowserDriver, BrowserError, ClickInput, ExpectInput, ExpectOutput, FindInput, FindOutput,
-    Observation, ObserveInput, OpenInput, ScreenshotInput, ScreenshotOutput, SelectInput,
-    TypeInput, WaitForInput, WaitForOutput,
+    BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
+    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput,
+    FindOutput, ImageOutput, Observation, ObserveInput, OpenInput, PressMode, Row, ScreenshotInput,
+    ScreenshotOutput, ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, ZoomInput,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -19,33 +29,33 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Words in a control's name that mark an effect a person presses for.
-const PRESS_PHRASES: &[&[&str]] = &[
-    &["send"],
-    &["submit"],
-    &["pay"],
-    &["buy"],
-    &["purchase"],
-    &["order"],
-    &["checkout"],
-    &["connect"],
-    &["delete"],
-    &["remove"],
-    &["sign", "in"],
-    &["log", "in"],
-    &["login"],
-    &["sign", "up"],
-    &["register"],
-    &["confirm"],
-    &["publish"],
-    &["post"],
-    &["invite"],
-    &["accept"],
-    &["transfer"],
-    &["donate"],
-    &["subscribe"],
-    &["book"],
-    &["reserve"],
+/// Words in a control's name that mark its effect class.
+const EFFECT_PHRASES: &[(&str, &[&str])] = &[
+    (EFFECT_PAY, &["pay"]),
+    (EFFECT_PAY, &["buy"]),
+    (EFFECT_PAY, &["purchase"]),
+    (EFFECT_PAY, &["order"]),
+    (EFFECT_PAY, &["checkout"]),
+    (EFFECT_PAY, &["donate"]),
+    (EFFECT_PAY, &["subscribe"]),
+    (EFFECT_PAY, &["transfer"]),
+    (EFFECT_ACCOUNT, &["sign", "in"]),
+    (EFFECT_ACCOUNT, &["log", "in"]),
+    (EFFECT_ACCOUNT, &["login"]),
+    (EFFECT_ACCOUNT, &["sign", "up"]),
+    (EFFECT_ACCOUNT, &["register"]),
+    (EFFECT_PUBLISH, &["publish"]),
+    (EFFECT_PUBLISH, &["post"]),
+    (EFFECT_DESTRUCTIVE, &["delete"]),
+    (EFFECT_DESTRUCTIVE, &["remove"]),
+    (EFFECT_SEND, &["send"]),
+    (EFFECT_SEND, &["submit"]),
+    (EFFECT_SEND, &["invite"]),
+    (EFFECT_SEND, &["connect"]),
+    (EFFECT_SEND, &["accept"]),
+    (EFFECT_SEND, &["confirm"]),
+    (EFFECT_SEND, &["book"]),
+    (EFFECT_SEND, &["reserve"]),
 ];
 
 /// How the host starts browser guests. Its bounds are the host's manifest rows.
@@ -56,6 +66,8 @@ pub struct BrowserGuest {
     pub limits: GuestLimits,
     /// The longest `wait_for` one call holds the run for.
     pub wait_cap: Duration,
+    /// The press each effect class runs under, from the vault's grants.
+    pub policy: SendPolicy,
     /// A host directory served read-only on the guest's loopback, for checks.
     pub fixture: Option<PathBuf>,
 }
@@ -64,6 +76,9 @@ pub struct BrowserSession {
     driver: CdpDriver,
     guest: Box<dyn SessionLease>,
     manifest: SessionManifest,
+    policy: SendPolicy,
+    receipts: Vec<EffectReceipt>,
+    receipt_seq: u64,
 }
 
 impl BrowserSession {
@@ -93,6 +108,9 @@ impl BrowserSession {
             driver,
             guest: lease,
             manifest,
+            policy: config.policy.clone(),
+            receipts: Vec::new(),
+            receipt_seq: 0,
         })
     }
 
@@ -115,6 +133,27 @@ impl BrowserSession {
         self.driver.image(image)
     }
 
+    /// Every effect this session receipted, in order.
+    #[must_use]
+    pub fn receipts(&self) -> &[EffectReceipt] {
+        &self.receipts
+    }
+
+    /// The press policy as it stands, batch counts spent down.
+    #[must_use]
+    pub fn policy(&self) -> &SendPolicy {
+        &self.policy
+    }
+
+    /// Records a person's press over a reviewed batch of `count` sends of
+    /// `class`. Its sends then run without a press each until spent.
+    pub fn approve_batch(&mut self, class: &str, count: u32) {
+        self.policy
+            .modes
+            .insert(class.to_owned(), PressMode::PerBatch);
+        *self.policy.batch.entry(class.to_owned()).or_default() += count;
+    }
+
     #[must_use]
     pub fn abandoned(&self) -> bool {
         self.guest.abandoned()
@@ -130,18 +169,77 @@ impl BrowserSession {
             Err(BrowserError::GuestLost)
         }
     }
+
+    /// Whether an effect of `class` on `row` may run now, and under what
+    /// press. A spent batch falls back to a press per send.
+    fn press_for(&mut self, class: &str, row: &Row) -> Result<PressMode, BrowserError> {
+        let refused =
+            || BrowserError::NeedsPress(format!("{} \"{}\" ({class})", row.role, row.name));
+        if SendPolicy::person_only(class) {
+            return Err(refused());
+        }
+        match self.policy.mode_for(class) {
+            PressMode::PerSend => Err(refused()),
+            PressMode::None => Ok(PressMode::None),
+            PressMode::PerBatch => {
+                let left = self.policy.batch.entry(class.to_owned()).or_default();
+                if *left == 0 {
+                    Err(refused())
+                } else {
+                    *left -= 1;
+                    Ok(PressMode::PerBatch)
+                }
+            }
+        }
+    }
+
+    /// Stamps `observation` with the receipt of the effect that made it.
+    /// The receipt's screenshot is best-effort: an effect that already
+    /// happened is receipted even when its evidence could not be captured.
+    fn receipt(
+        &mut self,
+        verb: &str,
+        target: Option<&Row>,
+        effect_class: Option<&str>,
+        press: PressMode,
+        observation: &mut Observation,
+    ) {
+        self.receipt_seq += 1;
+        let screenshot = self
+            .driver
+            .screenshot(ScreenshotInput {
+                trigger: ScreenshotTrigger::EffectReceipt,
+            })
+            .ok()
+            .map(|shot| shot.image);
+        let receipt = EffectReceipt {
+            seq: self.receipt_seq,
+            verb: verb.to_owned(),
+            url: observation.url.clone(),
+            title: observation.title.clone(),
+            target: target.map(|row| row.target.clone()),
+            target_name: target.map(|row| row.name.clone()),
+            effect_class: effect_class.map(str::to_owned),
+            press: press.as_str().to_owned(),
+            screenshot,
+        };
+        self.receipts.push(receipt.clone());
+        observation.receipt = Some(receipt);
+    }
 }
 
-fn needs_press(name: &str) -> bool {
+/// The effect class a control's name marks, when it marks one.
+fn effect_class(name: &str) -> Option<&'static str> {
     let words: Vec<String> = name
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
         .collect();
-    PRESS_PHRASES.iter().any(|phrase| {
+    EFFECT_PHRASES.iter().find_map(|(class, phrase)| {
         words
             .windows(phrase.len())
             .any(|w| w.iter().zip(*phrase).all(|(a, b)| a == b))
+            .then_some(*class)
     })
 }
 
@@ -154,7 +252,9 @@ impl BrowserDriver for BrowserSession {
         if !matches!(scheme.as_deref(), Some("http" | "https")) {
             return Err(BrowserError::Url(input.url));
         }
-        self.live()?.open(input)
+        let mut observation = self.live()?.open(input)?;
+        self.receipt("open", None, None, PressMode::None, &mut observation);
+        Ok(observation)
     }
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
@@ -166,23 +266,35 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
-        let driver = self.live()?;
-        let row = driver.row(&input.target)?;
-        if needs_press(&row.name) {
-            return Err(BrowserError::NeedsPress(format!(
-                "{} \"{}\"",
-                row.role, row.name
-            )));
-        }
-        driver.click(input)
+        let row = self.live()?.row(&input.target)?;
+        let class = effect_class(&row.name);
+        let press = match class {
+            Some(class) => self.press_for(class, &row)?,
+            None => PressMode::None,
+        };
+        let mut observation = self.driver.click(input)?;
+        self.receipt("click", Some(&row), class, press, &mut observation);
+        Ok(observation)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
-        self.live()?.type_text(input)
+        let row = self.live()?.row(&input.target)?;
+        let mut observation = self.driver.type_text(input)?;
+        self.receipt("type", Some(&row), None, PressMode::None, &mut observation);
+        Ok(observation)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
-        self.live()?.select(input)
+        let row = self.live()?.row(&input.target)?;
+        let mut observation = self.driver.select(input)?;
+        self.receipt(
+            "select",
+            Some(&row),
+            None,
+            PressMode::None,
+            &mut observation,
+        );
+        Ok(observation)
     }
 
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
@@ -195,5 +307,17 @@ impl BrowserDriver for BrowserSession {
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
         self.live()?.screenshot(input)
+    }
+
+    fn view(&mut self, input: ViewInput) -> Result<ImageOutput, BrowserError> {
+        self.live()?.view(input)
+    }
+
+    fn crop(&mut self, input: CropInput) -> Result<ImageOutput, BrowserError> {
+        self.live()?.crop(input)
+    }
+
+    fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError> {
+        self.live()?.zoom(input)
     }
 }

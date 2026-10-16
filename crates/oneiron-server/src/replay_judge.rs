@@ -19,6 +19,7 @@ use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, TypedDecision,
 };
+use oneiron::learning::honesty::HONESTY_AXIS;
 use oneiron::posterior::Posterior;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::retrieval_depth::RetrievalDeadline;
@@ -412,10 +413,15 @@ impl HeldOutReplayNotes for ServeReplayJudge {
             .sync_state_put(&format!("{JOURNAL}{}", EntityId::now().to_hex()), &bytes)
     }
 
+    /// The goal's task axes: the honesty floor is the engine's own audit,
+    /// never a scorer declaration, so it is left out as the gate requires.
     fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
         let axes = skill_edit_goal(&self.vault, &case.skill)?.axes;
         self.word_axes(&axes);
-        Ok(axes)
+        Ok(axes
+            .into_iter()
+            .filter(|axis| axis.name != HONESTY_AXIS)
+            .collect())
     }
 
     /// One objective per reserved run, its task, beside the run's response;
@@ -484,6 +490,17 @@ pub fn register(server: &SyncServer) {
     }
 }
 
+impl ServeReplayJudge {
+    /// Words every axis of `skill`'s goal before a measurement asks about
+    /// them, so a standalone measure in a fresh process asks worded questions.
+    /// # Errors
+    /// An unreadable goal.
+    pub fn word_skill_axes(&self, skill: &EntityId) -> Result<()> {
+        self.word_axes(&skill_edit_goal(&self.vault, skill)?.axes);
+        Ok(())
+    }
+}
+
 /// The judge this process registered.
 pub fn registered() -> Option<&'static ServeReplayJudge> {
     JUDGE.get().copied()
@@ -540,6 +557,12 @@ impl ServeAxisBandit {
             vault,
             taken: Mutex::new(BTreeSet::new()),
         })
+    }
+
+    /// The active skill the proposal revises, whose goal it is measured on.
+    #[must_use]
+    pub fn incumbent_skill(&self) -> EntityId {
+        self.incumbent.skill
     }
 }
 

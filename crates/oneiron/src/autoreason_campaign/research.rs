@@ -557,6 +557,62 @@ pub fn research_rounds(vault: &Vault, root: AttemptId) -> Result<Vec<SelectionRe
         .collect())
 }
 
+/// Every bound campaign's root, in root order: the scheduler's worklist.
+/// # Errors
+/// Storage errors.
+pub fn bound_research_roots(vault: &Vault) -> Result<Vec<AttemptId>> {
+    let txn = vault.store.env.read_txn()?;
+    BINDING
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .map(|(root, _)| AttemptId::from_bytes(&root))
+        .collect()
+}
+
+/// Whether the scheduler should run [`select_next`] for this campaign now:
+/// it has an eligible measured branch, no round stopped it, and its last
+/// round either paused on budget or saw a different branch set than the
+/// campaign holds now. A campaign with nothing new since its last round
+/// waits; the scheduler never re-rules unchanged evidence.
+/// # Errors
+/// Storage errors.
+pub fn research_round_due(vault: &Vault, root: AttemptId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let nodes = nodes_in_txn(vault, &txn, root)?;
+    let last = ROUND
+        .scan_from(&vault.store, &txn, root.as_bytes())?
+        .into_iter()
+        .map(|(_, round)| round)
+        .last();
+    let eligible: BTreeSet<[u8; 16]> = nodes
+        .values()
+        .filter(|node| {
+            node.search.is_some()
+                && node.invalid.is_none()
+                && !pruned_lineage(&nodes, &node.attempt)
+        })
+        .map(|node| *node.attempt.as_bytes())
+        .collect();
+    if eligible.is_empty() {
+        return Ok(false);
+    }
+    Ok(match last {
+        None => true,
+        Some(round) => match round.step {
+            ResearchStep::StoppedPlateau | ResearchStep::StoppedOracle => false,
+            ResearchStep::PausedBudget => true,
+            ResearchStep::Fork { .. } | ResearchStep::EscalatePlateau => {
+                round
+                    .branches
+                    .iter()
+                    .map(|branch| *branch.attempt.as_bytes())
+                    .collect::<BTreeSet<_>>()
+                    != eligible
+            }
+        },
+    })
+}
+
 /// Whether this node or any recorded ancestor was pruned.
 pub(super) fn pruned_lineage(
     nodes: &BTreeMap<[u8; 16], ExperimentNode>,
