@@ -5,6 +5,7 @@
 
 use crate::admission::Crossing;
 use crate::wire_telemetry::LimitRow;
+use oneiron::limit_ask::EngineLimit;
 
 /// Callers per row: enough to cross a bound of one several times over.
 const CALLERS: usize = 8;
@@ -43,6 +44,26 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::WindowsPerConnection => {
             crate::handler::window_row_tests::cross_the_windows(CALLERS).await
         }
+        LimitRow::LiveSessions => crate::livequery::rule5_tests::cross_the_sessions(CALLERS).await,
+        LimitRow::LiveSubscriptions => {
+            crate::livequery::rule5_tests::cross_the_subscriptions(CALLERS).await
+        }
+        LimitRow::MessageStreams => tokio::task::spawn_blocking(|| {
+            crate::server::live_rows_tests::cross_the_streams(CALLERS)
+        })
+        .await
+        .unwrap(),
+        LimitRow::LiveDocuments => tokio::task::spawn_blocking(|| {
+            crate::server::live_rows_tests::cross_the_documents(CALLERS)
+        })
+        .await
+        .unwrap(),
+        LimitRow::RetainedMemoryBytes => {
+            crate::livequery::rule5_tests::cross_the_retained_bytes(CALLERS)
+        }
+        LimitRow::ResidenceIndexPages | LimitRow::ResidenceIndexBytes => {
+            crate::livequery::rule5_tests::cross_the_index(row, CALLERS).await
+        }
         LimitRow::DecisionReads => {
             crate::api::llm::decision_read::tests::cross_the_decision_reads(CALLERS).await
         }
@@ -50,6 +71,9 @@ async fn cross(row: LimitRow) -> Crossing {
             tokio::task::spawn_blocking(|| crate::api::booking::cross_the_booking_windows(CALLERS))
                 .await
                 .unwrap()
+        }
+        LimitRow::Engine(EngineLimit::KeyedFilterJsonBytes) => {
+            crate::api::facade::tests::cross_the_keyed_filters(CALLERS).await
         }
     }
 }

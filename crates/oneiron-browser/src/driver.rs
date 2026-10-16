@@ -298,9 +298,10 @@ impl BrowserDriver for CdpDriver {
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
         let wanted = input.timeout_ms.map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
         let bound = wanted.min(self.wait_cap);
+        let query = input.query();
         let start = Instant::now();
         loop {
-            let rows = self.matching(&input.find)?;
+            let rows = self.matching(&query)?;
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
@@ -312,9 +313,10 @@ impl BrowserDriver for CdpDriver {
 
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError> {
         let rows = self.lines()?.into_iter().map(|line| line.row);
+        let query = input.query();
         let row = match &input.target {
             Some(target) => rows.into_iter().find(|row| &row.target == target),
-            None => rows.into_iter().find(|row| input.find.matches(row)),
+            None => rows.into_iter().find(|row| query.matches(row)),
         };
         let met = match (&row, input.absent) {
             (None, absent) => absent,

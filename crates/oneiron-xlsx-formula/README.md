@@ -20,9 +20,20 @@ local UTC offset their date and time use, and the seed of RAND, RANDBETWEEN and 
 core takes it from the host session (`EditSession::recalc_clock`), else samples the host's
 clock, its local offset and a fresh seed from the operating system when the recalc runs,
 which is what the host's own recalc reads. The same clock and seed recalculate the same
-bytes. OFFSET, INDIRECT (A1 and R1C1 text) and CELL's `col`, `contents`, `row` and `type`,
-and `address` of a reference written without a sheet, read the workbook alone and
-recalculate natively. A defined name evaluates for the formula that uses it, as Excel
+bytes. Like the clock, where the workbook was opened from belongs to the host: the caller may
+pass a `DocumentLocation`, the folder as Excel for Windows prints it with its trailing separator
+and the file's name (`C:\Reports\` and `Budget.xlsx`; `DocumentLocation::from_path` splits
+`C:\Reports\Budget.xlsx`), and the core takes it from the host session
+(`EditSession::recalc_location`). CELL("filename") then prints Excel's text,
+`C:\Reports\[Budget.xlsx]Sheet1` for the reference's sheet, and CELL("address") of another
+sheet's cell names the file, `[Budget.xlsx]Other!$B$2`, quoted as Excel quotes it
+(ops/excel-hostinfo-probe-20261008.md). Without a location the recalc reads the one Excel last
+saved: the workbook's own cached CELL("filename") values, when each names a folder, a file and
+one of the workbook's sheets and they agree; a workbook that reads its location and has neither
+falls back. OFFSET, INDIRECT (A1 and R1C1 text) and CELL's `col`, `contents`, `row` and `type`,
+`address` of a reference written without a sheet and text that is no info type (`#VALUE!`), and
+INFO's `memavail`, `memused` and `totmem` (`#N/A`) and text that is no type (`#VALUE!`), read
+the workbook alone and recalculate natively. A defined name evaluates for the formula that uses it, as Excel
 evaluates it: relative R1C1 text and ROW() in a name read the calling cell
 (`Prev = INDIRECT("RC[-1]",FALSE)` in B2 reads A2), and a random call in a name is one more
 draw of the calling formula, so the same clock and seed still recalculate the same bytes.
@@ -33,12 +44,14 @@ refused workbooks only. The adapter refuses, before any output:
 - the external links the engine cannot read as Excel does with the linked workbook closed (see
   "Linked workbooks" below); `preserve_external_links` refuses host output that alters or drops
   a link;
-- a formula, in a cell or a defined name, that reads what only the host knows: INFO (the
-  environment), and CELL without a reference (the active cell), with `"filename"` (the file's
-  path), with `"address"` of a reference that names a sheet or is computed (Excel writes
-  another sheet's cell as `'[Book.xlsx]Other'!$B$2`, the file's name), or with any info type
-  but `address`, `col`, `contents`, `row` and `type` given as text (`format`, `width` and the
-  others read formatting the engine does not model), or CELL passed by name (`_xleta.CELL`);
+- a formula, in a cell or a defined name, that reads what only the host knows: INFO's
+  `directory`, `numfile`, `origin`, `osversion`, `recalc`, `release` and `system` (the
+  application that calculates) or a computed INFO type; CELL without a reference (the active
+  cell), with `"format"`, `"color"`, `"parentheses"`, `"prefix"`, `"protect"` or `"width"` (cell
+  formatting the engine does not model), with a computed info type, or passed by name
+  (`_xleta.CELL`); and CELL with `"filename"`, or with `"address"` of a reference that names a
+  sheet or is computed, when neither the caller nor the workbook's caches give the location
+  (above). Each reason names the call;
 - INDIRECT text that names a workbook (`'[Book.xlsx]Sheet1'!A1`, `Book.xlsx!Total`), literal
   or computed: Excel reads it from that workbook when it is open, this one under the name it
   was saved with, which the recalc does not know. The writer refuses the workbook as soon as
@@ -73,7 +86,17 @@ refused workbooks only. The adapter refuses, before any output:
   characters. It decodes no escape in a literal `t="str"` value, a cell formula, a defined
   name or its formula, or a sheet, table or table-column name, so any escape there falls
   back (`"_x20AC_"` in a defined name is `"€"` to Excel);
-- precision-as-displayed (`fullPrecision="0"`): the writer calculates at full precision;
+- under "Set precision as displayed" (`fullPrecision="0"`), a number format whose stored values
+  the writer does not know: one Excel will not open a workbook with (a lowercase exponent
+  `0.00e+00`, `0.0@`, `@;0`, `0;0;0;0`, `# ?/100000`, `0.0 ?/?`, `E+0`, `[Foo]0`, `[Red][Blue]0`,
+  three conditions, a bare `g`, more than 126 characters), a scientific format scaled by a comma
+  (`0.0,E+0`), a fixed fraction denominator past 32768 (Excel stores those unrounded or by another
+  rule), a style or format id the workbook does not define, a section of literal text only
+  (`0;"none"`) that a formula's number would show, and a number its format rounds past the largest
+  double (Excel saves `#NUM!` for it, yet compares the cell as a number); and a live circular
+  reference (Excel keeps the saved values of the cycle and of every formula reading it). The last
+  three are refused after evaluation. The writer otherwise stores each formula result as its cell's
+  format shows it, as Excel for Windows does, and formulas read the stored value (see below);
 - a formula over the size, token or nesting bound that keeps evaluation off deep recursion,
   or one the parser cannot read;
 - what the writer cannot write exactly, such as a dynamic array larger than its saved extent;
@@ -83,6 +106,26 @@ refused workbooks only. The adapter refuses, before any output:
   of a new `#SPILL!` or `#CALC!`), which the gate passes through byte for byte, or a changed
   worksheet holding a modern function without its OOXML prefix (the writer never rewrites
   formula text).
+
+## Precision as displayed
+
+With Excel's "Set precision as displayed" on (`<calcPr fullPrecision="0"/>`), Excel stores each
+formula's numeric result as the cell's number format shows it, and every formula that reads the
+cell reads that stored value; constants keep the values the file holds. The writer does the same,
+as measured on Excel for Windows 16.0.20430 (532 cases, `ops/excel-precision-probe-20261008.md` in
+the calc workspace): General, text (`@`), empty and date or time sections keep 15 significant
+digits (`=1/3` is 0.333333333333333; a value exactly halfway goes toward zero, 100000000000001.5 is
+100000000000001); a number section keeps the decimal it shows after its percent signs and scaling
+commas, rounded half away from zero from the 15-digit value (2.675 under `0.00` is 2.68); a
+scientific section keeps one more significant digit than its decimal places, and two more for each
+percent sign; a fraction section keeps the whole number plus the fraction it shows (Excel's
+continued-fraction convergent, not always the closest fraction; a fixed denominator up to 32768,
+`# ?/05` being fifths); a positive value takes the first section and a negative one the second,
+whatever their conditions, and the last of two or three sections holding `@` formats text only
+(`0;@` stores -2/3 as -1); an empty section passes the value on to the next; a value below the
+smallest normal double is 0. Each cell an array formula fills or
+spills into is rounded by its own format, and a file's own definition of a built-in format id wins,
+as in Excel.
 
 ## Linked workbooks
 
@@ -156,15 +199,16 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.12): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.13): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
-stage 2's linked workbooks and caller-context functions, and five commits picked from upstream's
-`main`). `docs/ops/forked-dependencies.md` records the fork branch, the rev and the patches.
+stage 2's linked workbooks and caller-context functions, five commits picked from upstream's
+`main`, and stage 2 wave 2: linked workbooks, host information, parsing and precision as
+displayed). `docs/ops/forked-dependencies.md` records the fork branch, the rev and the patches.
 Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `23207d03`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `f01d8eff`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
@@ -196,14 +240,21 @@ that fell back for caller context, 260 recalculate natively (the 6 that read the
 through `[0]` since 0.9.3-oneiron.12); 12 read CELL("filename") and 2 pass the token bound. The
 checks for escaped names and formulas, related tables and malformed workbook metadata change no
 corpus workbook's decision or output bytes.
+CELL("filename") reads the caller's location, else the workbook's cached path (measured at fork
+`d890db6d`, before the linked-workbook forms above: 6 of the 12 CELL("filename") workbooks then
+recalculate past CELL and stop at the depth bound, and given the file the Excel truth was recorded
+from, `recalc_native --location`, the 6 of SpreadsheetBench 342-46 recalculate natively and match
+Excel).
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.13`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
 Binaries: `measure` scores the pinned compatibility corpus
-(`crates/oneiron-docedit/tests/fixtures/spreadsheet-compat`), and `recalc_native INPUT
-OUTPUT` runs the shipped adapter on one workbook. It writes the native recalculation and
-exits 0, or writes nothing and exits 3 when the adapter refuses the workbook to the
-fallback, 4 when the engine fails (the round trip falls back too) and 2 when the round trip
-refuses the package outright; stdout carries a JSON report with the reason.
+(`crates/oneiron-docedit/tests/fixtures/spreadsheet-compat`), and `recalc_native
+[--location PATH] INPUT OUTPUT` runs the shipped adapter on one workbook, with PATH the file as
+the host that opened it names it (`C:\Reports\Budget.xlsx`), else without a location. It
+writes the native recalculation and exits 0, or writes nothing and exits 3 when the adapter
+refuses the workbook to the fallback, 4 when the engine fails (the round trip falls back too)
+and 2 when the round trip refuses the package outright; stdout carries a JSON report with the
+reason.

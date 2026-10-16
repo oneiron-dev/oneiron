@@ -80,7 +80,15 @@ turn LinkedIn off at any time.
    revoked the seat verb catalog, and later dispatch suppresses with
    `linkedin.kill_switch_engaged`.
 
-The test harness in `crates/oneiron/tests/linkedin_connector_adapter.rs` covers
-config, consent copy, secret custody, and kill-switch host calls. The outbound
-unit tests in `crates/oneiron/src/outbound/tests.rs` cover engine-side cap, cadence,
-no-sweep, and kill-switch enforcement before MCP transport.
+Existing tests:
+
+- `crates/oneiron/tests/it/linkedin_connector_adapter.rs` covers the sandbox
+  config and cookie custody, the kill-switch host calls, and inbox
+  normalization and sync.
+- `crates/oneiron/src/outbound/tests/linkedin_send.rs` covers the kill switch
+  before MCP transport, verified-send observation, and the retry guard.
+- `crates/oneiron/src/outbound/tests/linkedin_connect.rs` covers connect-request
+  observation, retries, and the daily connect-request cap.
+
+No test checks the DM cap, the profile-read cap, cadence, the no-sweep rule, or
+the consent copy. Steps 5–8 of the checklist above are the only check for them.

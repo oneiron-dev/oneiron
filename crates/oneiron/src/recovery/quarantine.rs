@@ -15,7 +15,7 @@ const QUARANTINE_NAME_ATTEMPTS: usize = 8;
 
 pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Result<PathBuf> {
     // A changed source is not the artifact we validated. Leave it alone.
-    if !fs::symlink_metadata(path)?.file_type().is_file() || fs::read(path)? != expected {
+    if !fs::symlink_metadata(path)?.file_type().is_file() || !holds_exactly(path, expected)? {
         return Err(Error::ConcurrentWrite(
             "recovery artifact changed before quarantine",
         ));
@@ -33,7 +33,7 @@ pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Resul
                 // Rename consumes exactly one directory entry, not a later
                 // replacement. If a writer raced between read and rename,
                 // preserve the moved bytes, stop recovery and never delete them.
-                if fs::read(&candidate)? != expected {
+                if !holds_exactly(&candidate, expected)? {
                     let _ = rename_no_replace(&candidate, path);
                     return Err(Error::ConcurrentWrite(
                         "recovery artifact changed during quarantine",
@@ -50,6 +50,33 @@ pub(super) fn quarantine_invalid_artifact(path: &Path, expected: &[u8]) -> Resul
         path: path.to_path_buf(),
     }
     .into())
+}
+
+/// Opens `path` for reading only if it is a regular file, without blocking
+/// on a FIFO swapped in at that name.
+pub(super) fn open_regular(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "recovery artifact is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Whether `path` holds exactly `expected`, reading at most one byte more.
+fn holds_exactly(path: &Path, expected: &[u8]) -> io::Result<bool> {
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(
+        &mut io::Read::take(open_regular(path)?, expected.len() as u64 + 1),
+        &mut bytes,
+    )?;
+    Ok(bytes == expected)
 }
 
 #[cfg(unix)]

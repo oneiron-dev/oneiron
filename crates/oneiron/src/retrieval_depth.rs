@@ -429,8 +429,7 @@ fn run_direct_channel(
         SearchProbe::Text { query } => {
             acc.mark(SIGNAL_TEXT);
             acc.attempt(RetrievalSignal::Text);
-            let hits =
-                scoped.search_text_revisioned(query, request.channel_limit(scoped, true)?, None)?;
+            let hits = scoped.search_text_revisioned(query, request.channel_limit(), None)?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
@@ -441,11 +440,7 @@ fn run_direct_channel(
         SearchProbe::Vector { embedding, .. } => {
             acc.mark(SIGNAL_VECTOR);
             acc.attempt(RetrievalSignal::Vector);
-            let hits = scoped.search_vector_revisioned(
-                embedding,
-                request.channel_limit(scoped, false)?,
-                None,
-            )?;
+            let hits = scoped.search_vector_revisioned(embedding, request.channel_limit(), None)?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
@@ -482,8 +477,7 @@ fn run_subquery_channels(
         // channel, and must not claim the signal.
         acc.mark(SIGNAL_SUBQUERIES);
         acc.attempt(RetrievalSignal::Text);
-        let hits =
-            scoped.search_text_revisioned(&subquery, request.channel_limit(scoped, true)?, None)?;
+        let hits = scoped.search_text_revisioned(&subquery, request.channel_limit(), None)?;
         acc.narrowing.push(hits.receipt);
         let narrowed =
             request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;
@@ -582,11 +576,7 @@ fn run_deep_rounds(
                 break;
             }
             acc.attempt(RetrievalSignal::Text);
-            let hits = scoped.search_text_revisioned(
-                &subquery,
-                request.channel_limit(scoped, true)?,
-                None,
-            )?;
+            let hits = scoped.search_text_revisioned(&subquery, request.channel_limit(), None)?;
             acc.narrowing.push(hits.receipt);
             let narrowed =
                 request.narrow_hits(scoped, hits.hits, &hits.revisions, &mut acc.narrowing)?;

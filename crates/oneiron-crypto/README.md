@@ -8,8 +8,9 @@ call into it.
 
 ## Library choice and audit status
 
-Every primitive comes from RustCrypto, pinned to an exact release. A version bump is a
-reviewed change that reruns the known-answer tests in `tests/kat.rs`.
+Every primitive is pinned to an exact release. `x25519-dalek` and `ed25519-dalek` come
+from the dalek-cryptography project; every other primitive crate comes from RustCrypto.
+The known-answer tests in `tests/kat.rs` check these exact versions.
 
 | Crate | Pin | Used for | Audit status (as stated upstream, 2026-10-08) |
 |---|---|---|---|
@@ -125,9 +126,12 @@ salt and its stricter cost floor are specified with the kit.
 ### Nonce rules
 
 Salt (32 bytes) and nonce are fresh random bytes from the caller's CSPRNG for every
-envelope; an RNG failure is `Error::Rng`, never a weaker envelope. Because the salt makes
-`K` unique per envelope, a key/nonce pair does not repeat even with AES-256-GCM's 96-bit
-random nonce under a long-lived KEK. `NonceLedger` adds a stricter, optional in-memory
+envelope; an RNG failure is `Error::Rng`, never a weaker envelope. Two envelopes under
+one wrap secret can derive the same `K` only if their 256-bit salts collide, which for
+`n` envelopes has probability about `n²/2^257`. That bound, not a guarantee, is what
+keeps a key/nonce pair from repeating with AES-256-GCM's 96-bit random nonce under a
+long-lived KEK, and it holds only if the caller's RNG is a real CSPRNG.
+`NonceLedger` adds a stricter, optional in-memory
 check: it refuses a second envelope with the same `(key id, nonce)` it has seen. It is
 not durable and should only be fed envelopes this process sealed or already opened.
 
@@ -231,7 +235,8 @@ Merkle tree rules, which are E4's.
   `tests/vectors/kat.json`.
 - `tests/envelope.rs`, `tests/record.rs`: round trips for every wrap type, the fail-closed
   list, tampering of every header field, ciphertext swaps, the hybrid capsule, the roster.
-- `tests/parser_props.rs`: bounded property fuzzing of both parsers in the normal gate.
+- `tests/parser_props.rs`: bounded property fuzzing of both parsers, as an ordinary test
+  target.
 - `fuzz/`: coverage-guided cargo-fuzz targets for both parsers (nightly; outside the
   workspace): `cargo +nightly fuzz run envelope_parse -- -max_total_time=60`.
 

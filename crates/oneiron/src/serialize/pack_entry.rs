@@ -255,42 +255,45 @@ pub fn serialize_assembled_context(bundle: &AssembledContext) -> Vec<u8> {
 ///
 /// The preview is deterministic and intentionally lossy: invalid UTF-8 is
 /// replaced, runs of whitespace collapse to one ASCII space, and the result is
-/// capped by `max_chars`.
+/// capped by `max_chars`. It stops reading at the cap, so a large output costs
+/// no more memory than a small one.
 #[must_use]
 pub fn compressed_code_run_output_preview(raw: &[u8], max_chars: usize) -> (String, bool) {
     if raw.is_empty() || max_chars == 0 {
         return (String::new(), !raw.is_empty());
     }
 
-    let mut compact = String::new();
-    let mut previous_was_space = true;
-    for ch in String::from_utf8_lossy(raw).chars() {
-        if ch.is_whitespace() {
-            if !previous_was_space {
-                compact.push(' ');
-                previous_was_space = true;
-            }
-        } else {
-            compact.push(ch);
-            previous_was_space = false;
-        }
-    }
-
-    if compact.ends_with(' ') {
-        compact.pop();
-    }
-
+    // `String::from_utf8_lossy`'s replacement, one chunk at a time.
+    let chars = raw.utf8_chunks().flat_map(|chunk| {
+        chunk
+            .valid()
+            .chars()
+            .chain((!chunk.invalid().is_empty()).then_some(char::REPLACEMENT_CHARACTER))
+    });
     let mut preview = String::new();
-    let mut truncated = false;
-    for (index, ch) in compact.chars().enumerate() {
-        if index >= max_chars {
-            truncated = true;
-            break;
+    let mut kept = 0_usize;
+    // A whitespace run becomes one space only once a later character follows
+    // it, so the preview never ends in one.
+    let mut space_pending = false;
+    let mut previous_was_space = true;
+    for ch in chars {
+        if ch.is_whitespace() {
+            space_pending |= !previous_was_space;
+            previous_was_space = true;
+            continue;
         }
-        preview.push(ch);
+        for ch in space_pending.then_some(' ').into_iter().chain([ch]) {
+            if kept == max_chars {
+                return (preview, true);
+            }
+            preview.push(ch);
+            kept += 1;
+        }
+        space_pending = false;
+        previous_was_space = false;
     }
 
-    (preview, truncated)
+    (preview, false)
 }
 
 fn serialize_json(

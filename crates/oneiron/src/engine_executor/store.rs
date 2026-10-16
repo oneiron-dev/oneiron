@@ -3,6 +3,7 @@
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome};
 use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage};
+use crate::compaction::output::OutputRef;
 use crate::entity_id::EntityId;
 use crate::{Error, Result};
 use serde_json::json;
@@ -89,11 +90,49 @@ pub(super) fn decode_text_output(path: &str, raw: Vec<u8>) -> Result<String> {
         .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
 }
 
+/// What model context needs of one committed observation: its reference and
+/// overview, never its body.
+#[derive(Debug, Clone)]
+pub(super) struct ObservationRef {
+    pub(super) source: OutputRef,
+    pub(super) overview: String,
+}
+
+/// Derives an observation's reference in one pass over its stored bytes,
+/// read in place: the digest is checked, nothing body-sized is copied.
+pub(super) fn observation_ref(
+    storage: &ExecutorStorage<'_>,
+    output: &CodeRunRawOutput,
+) -> EngineExecutorResult<ObservationRef> {
+    let observation = storage.with_code_run_raw_output_bytes(output, |raw| {
+        output.verify_bytes(raw)?;
+        let text = std::str::from_utf8(text_output_body(&output.path, raw)?)
+            .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))?;
+        Ok(ObservationRef {
+            source: OutputRef::from_bytes(text.as_bytes()),
+            overview: text.chars().take(128).collect(),
+        })
+    })?;
+    Ok(observation.ok_or(Error::CorruptedIndex("executor replay output bytes"))?)
+}
+
+/// The text a stored text envelope carries, borrowed.
+pub(super) fn text_output_body<'a>(path: &str, raw: &'a [u8]) -> Result<&'a [u8]> {
+    let rest = raw
+        .strip_prefix(TEXT_OUTPUT_PREFIX)
+        .ok_or(Error::CorruptedIndex(
+            "executor replay text output envelope",
+        ))?;
+    rest.strip_prefix(path.as_bytes())
+        .and_then(|rest| rest.strip_prefix(b"\n"))
+        .ok_or(Error::CorruptedIndex("executor replay text output path"))
+}
+
 pub(super) fn load_utf8_output(
     storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
     path: &str,
-) -> EngineExecutorResult<String> {
+) -> Result<String> {
     let output = record
         .outputs
         .iter()
@@ -102,7 +141,7 @@ pub(super) fn load_utf8_output(
     let raw = storage
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-    Ok(decode_text_output(path, raw)?)
+    decode_text_output(path, raw)
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).
