@@ -9,7 +9,9 @@
 //!        │              │  RETURNED, not re-scored (retries are free)
 //!        │              ├─ judged replay: score both bodies on each goal axis
 //!        │              ├─ vector dominance (ties and floor regressions reject; tradeoffs await a decision)
+//!        │              ├─ project goal: its axes join, primary axes from the live report
 //!        │              ├─ tradeoff ladder: preference rule, then judgment band, then A/B ask
+//!        │              │  up the responsible-role chain
 //!        │              ├─ commit-time: held-out set recomputed and compared
 //!        │              ├─ accept-time governance_tier recheck
 //!        │              └─ per-cycle ACCEPT cap, counted in PROPOSALS
@@ -142,7 +144,9 @@ mod basis;
 mod decision;
 mod goal_axis;
 mod ledger;
+mod live;
 mod measurement;
+mod project_goal;
 mod tradeoff;
 mod verdict;
 
@@ -159,17 +163,26 @@ pub use basis::{
 pub use decision::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
 };
-pub use goal_axis::{GoalAxisKind, GoalAxisScore, GoalAxisSpec, set_skill_edit_goal_axes};
+pub use goal_axis::{
+    GoalAxisKind, GoalAxisScore, GoalAxisSpec, SkillEditGoal, set_skill_edit_goal_axes,
+    skill_edit_goal,
+};
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
+pub use live::{measure_skill_edit_goal_axes, skill_edit_goal_axis_report, skill_goal_axis_plan};
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
 };
+pub use project_goal::{
+    ProjectGoalRevisionProposal, TradeoffRole, project_goal_revision_proposals,
+    set_skill_goal_project, skill_goal_project,
+};
 pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
-    TradeoffRule, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, skill_tradeoff_ask,
+    TradeoffRule, escalate_skill_tradeoff_ask, set_skill_tradeoff_preferences,
+    settle_skill_tradeoff_ask, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
 pub use verdict::{
@@ -209,8 +222,8 @@ use decision::{
     standing_verdict_in_txn,
 };
 use goal_axis::{
-    GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, is_tradeoff,
-    score_goal_axes, validate_goal_vector,
+    GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
+    is_tradeoff, score_goal_axes, validate_goal_vector,
 };
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{measure, validate_measurements, world_labels_digest};
