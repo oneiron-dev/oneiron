@@ -22,8 +22,8 @@ pub(super) enum Passed {
     },
     /// It failed another way, of this closed class.
     Failed { kind: &'static str, sent: bool },
-    /// It rests from an earlier refusal until then.
-    Resting { until: u64 },
+    /// It rests from an earlier refusal, as kept.
+    Resting { rest: Rest },
     /// A fallback to it would take the work off the device, and the call's
     /// world stays on it.
     KeptOnDevice,
@@ -108,9 +108,9 @@ impl Walk {
                         row["passed"] = json!("failed");
                         row["class"] = json!(kind);
                     }
-                    Passed::Resting { until } => {
+                    Passed::Resting { rest } => {
                         row["passed"] = json!("cooling_down");
-                        row["cooldown_until"] = json!(until);
+                        row["cooldown_until"] = json!(rest.until);
                     }
                     Passed::KeptOnDevice => row["passed"] = json!("kept_on_device"),
                 }
@@ -134,6 +134,27 @@ impl Walk {
             .any(|passed| matches!(passed, Passed::KeptOnDevice))
     }
 
+    /// Each rung of `rungs` with the rest it was last found in, when every
+    /// one is parked: resting, or refused for a limit and resting since. A
+    /// rung the call kept the work from counts as neither; one it never
+    /// reached, or one that failed another way, means not every rung
+    /// parked. `None` too when none rests.
+    pub(super) fn parked(&self, rungs: usize) -> Option<Vec<(usize, Rest)>> {
+        let latest = self.latest();
+        let mut parked = Vec::new();
+        for index in 0..rungs {
+            match latest.get(&index)? {
+                Passed::Refused {
+                    rest: Some(rest), ..
+                }
+                | Passed::Resting { rest } => parked.push((index, *rest)),
+                Passed::KeptOnDevice => {}
+                Passed::Refused { rest: None, .. } | Passed::Failed { .. } => return None,
+            }
+        }
+        (!parked.is_empty()).then_some(parked)
+    }
+
     /// Whether every rung the call could use rests: none it passed failed
     /// but by a limit refusal.
     pub(super) fn limited(&self) -> bool {
@@ -148,7 +169,7 @@ impl Passed {
     /// When a rung passed for a limit is back in rotation.
     pub(super) fn back(&self) -> Option<u64> {
         match self {
-            Self::Resting { until } => Some(*until),
+            Self::Resting { rest } => Some(rest.until),
             Self::Refused {
                 rest: Some(rest), ..
             } => Some(rest.until),
@@ -162,7 +183,7 @@ impl Passed {
     fn same_state(&self, found: &Self) -> bool {
         match found {
             Self::KeptOnDevice => matches!(self, Self::KeptOnDevice),
-            Self::Resting { until } => self.back() == Some(*until),
+            Self::Resting { rest } => self.back() == Some(rest.until),
             Self::Refused { .. } | Self::Failed { .. } => false,
         }
     }
