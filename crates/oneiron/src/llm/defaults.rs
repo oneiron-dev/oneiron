@@ -23,7 +23,7 @@ use super::{
 const POLICY: SideTable<(), PurposeDefaultTable, LegacyJson> =
     SideTable::new(&side_table::LLM_PURPOSE_DEFAULTS);
 
-pub(super) fn read_effective_defaults(
+pub(crate) fn read_effective_defaults(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<ValidatedPurposeDefaults> {
@@ -53,13 +53,16 @@ impl Vault {
     }
 
     /// The delegated agent door is narrower than the host's owner-authored
-    /// setter. Compare and replace inside one write transaction.
+    /// setter. Admit the caller, compare and replace inside one write
+    /// transaction.
     pub(crate) fn set_resident_purpose_default_table(
         &self,
         next: &PurposeDefaultTable,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         next.validate()?;
         let mut txn = self.store.env.write_txn()?;
+        admit(&txn)?;
         let prior = read_effective_defaults(&self.store, &txn)?.table().clone();
         if next.purposes.iter().any(|(key, row)| {
             locality_rank(row.locality) > locality_rank(prior.purposes[key].locality)

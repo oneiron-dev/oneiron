@@ -8,7 +8,6 @@ use crate::channel_identity::{
 use crate::edge::EdgeActorClass;
 use crate::receipt::{ReceiptRecord, SendReceiptOutcome, persist_send_receipt};
 use crate::store::GateDecisionId;
-use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 fn fixture(
@@ -33,16 +32,7 @@ fn fixture_with_config(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), config).unwrap();
-    let owner_id = entity(0x51);
-    vault
-        .put_entity(
-            &owner_id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
         .unwrap();
@@ -2128,6 +2118,28 @@ mod foreign_owner_proof {
         );
         vault
             .set_channel_identity_autonomy_mode(state.mode, &owner, crate::unix_seconds_now())
+            .unwrap();
+    }
+}
+
+/// F18 tier flip: autonomy mints standing grants on the owner's authority,
+/// so a live person who does not own this vault sets none.
+mod non_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_non_owner_persons_proof_applies_no_autonomy() {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        let person = crate::test_util::non_owner_proof(&vault);
+        assert_eq!(
+            vault
+                .apply_channel_identity_autonomy(&request, &person)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        vault
+            .apply_channel_identity_autonomy(&request, &owner)
             .unwrap();
     }
 }

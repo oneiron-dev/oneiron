@@ -557,6 +557,40 @@ fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
     Ok(())
 }
 
+/// H14: the same one-way link, but the HOLDER is deleted. The target's
+/// exception record must forget it rather than list a dead holder forever.
+#[test]
+fn deleting_a_one_way_holder_drops_it_from_the_exception_record() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), small_graph_config(4, 1, 8))?;
+    let target = id_from_u64(1);
+    let holder = id_from_u64(2); // keeps a one-way link `holder -> target`
+    let near = id_from_u64(3);
+    for id in [target, holder, near] {
+        vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+    }
+    vault.put_vector(&target, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&holder, &[0.8, 0.6, 0.0, 0.0])?;
+    vault.put_vector(&near, &[0.99, 0.14, 0.0, 0.0])?;
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(
+            read_one_way_exception_holders(&vault.store, &rtxn, &target)?,
+            vec![holder],
+        );
+    }
+
+    vault.delete_entity_with_reason(&holder, crate::deletion::DeleteReason::UserHardDelete)?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        read_one_way_exception_holders(&vault.store, &rtxn, &target)?.is_empty(),
+        "a deleted holder stays listed on its target"
+    );
+    assert_symmetric_links(&vault.store, &rtxn)?;
+    Ok(())
+}
+
 #[test]
 fn symmetric_marker_corruption_fails_closed() -> Result<()> {
     let temp_dir = tempdir()?;

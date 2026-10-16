@@ -111,7 +111,8 @@ pub use self::paths::{
     origin_repo_dir, origin_serving_root, validate_repo_name,
 };
 pub use self::serve::{
-    ServeReport, ServeSink, serve, serve_bounded, serve_with_authority, serve_with_provenance,
+    ExchangeBounds, ServeReport, ServeSink, push_queue_key, serve, serve_bounded,
+    serve_with_authority, serve_with_provenance,
 };
 pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 

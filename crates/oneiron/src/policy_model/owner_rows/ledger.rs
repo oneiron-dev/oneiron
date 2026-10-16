@@ -199,7 +199,8 @@ impl Vault {
         now: u64,
     ) -> Result<Vec<PolicyRowProposal>> {
         let txn = self.store.env.read_txn()?;
-        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
+        // Person tier: a holder reads the proposals addressed to them.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         let mut rows = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&txn, PROPOSAL)? {
             let (_, value) = entry?;

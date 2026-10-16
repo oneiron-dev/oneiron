@@ -98,14 +98,9 @@ fn generic_write(vault: &Vault, door: Door, id: &EntityId, body: &ClaimBody) -> 
                 )
                 .apply(txn)
         }),
-        Door::CodeRunCandidate => vault.put_claim_candidate_without_lexical_query_reconcile(
-            id,
-            candidate,
-            &envelope,
-            at,
-            200,
-            |_| Ok(()),
-        ),
+        Door::CodeRunCandidate => {
+            vault.put_claim_candidate_with_landing(id, candidate, &envelope, at, 200, |_| Ok(()))
+        }
     }
 }
 
