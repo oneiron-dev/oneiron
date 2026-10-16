@@ -261,6 +261,31 @@ impl ModelSession {
         user: &str,
         lease: Option<&BudgetLease>,
     ) -> BeamResult<(String, CostComponentReport)> {
+        let (text, cost, capped) = self.invoke_reader(pin, purpose, system, user, lease)?;
+        if capped {
+            return Err(refusal("model response did not finish normally"));
+        }
+        Ok((text, cost))
+    }
+    /// A reader call that may stop at its pinned output cap. The cut is
+    /// reported, not refused, so measured rows can count truncation.
+    pub(super) fn invoke_capped(
+        &self,
+        pin: &ModelPin,
+        purpose: CallPurpose,
+        system: &str,
+        user: &str,
+    ) -> BeamResult<(String, CostComponentReport, bool)> {
+        self.invoke_reader(pin, purpose, system, user, None)
+    }
+    fn invoke_reader(
+        &self,
+        pin: &ModelPin,
+        purpose: CallPurpose,
+        system: &str,
+        user: &str,
+        lease: Option<&BudgetLease>,
+    ) -> BeamResult<(String, CostComponentReport, bool)> {
         let request = LlmRequest {
             model: pin.model_id.clone(),
             envelope: CallEnvelope {
@@ -328,9 +353,11 @@ impl ModelSession {
             &response.usage,
             started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
         )?;
-        if response.finish_reason != oneiron::FinishReason::Stop {
-            return Err(refusal("model response did not finish normally"));
-        }
+        let capped = match response.finish_reason {
+            oneiron::FinishReason::Stop => false,
+            oneiron::FinishReason::Length => true,
+            _ => return Err(refusal("model response did not finish normally")),
+        };
         let text = response
             .message
             .content
@@ -347,7 +374,7 @@ impl ModelSession {
         if text.trim().is_empty() {
             return Err(refusal("model returned no text"));
         }
-        Ok((text, cost))
+        Ok((text, cost, capped))
     }
 }
 fn message(role: LlmMessageRole, text: &str) -> LlmMessage {
