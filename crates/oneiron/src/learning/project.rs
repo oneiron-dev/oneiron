@@ -81,8 +81,9 @@ impl StoredEstimateClaim {
     }
 
     pub(crate) fn from_value(value: &rmpv::Value) -> Result<Self> {
-        rmpv::ext::from_value(value.clone())
-            .map_err(|_| Error::InvalidClaimBody("a learning claim value is an estimate with its cell"))
+        rmpv::ext::from_value(value.clone()).map_err(|_| {
+            Error::InvalidClaimBody("a learning claim value is an estimate with its cell")
+        })
     }
 }
 
@@ -95,7 +96,9 @@ impl StoredEstimateClaim {
 pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> {
     let stored = StoredEstimateClaim::from_value(&body.value)?;
     if stored.kind != VALUE_KIND {
-        return Err(Error::InvalidClaimBody("a learning claim's value kind is estimate"));
+        return Err(Error::InvalidClaimBody(
+            "a learning claim's value kind is estimate",
+        ));
     }
     if stored.cell.predicate.as_str() != body.predicate {
         return Err(Error::InvalidClaimBody(
@@ -124,7 +127,8 @@ pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> 
 
 /// The window in force: the catalog half-life, in seconds.
 pub(crate) fn window_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Window> {
-    let days = learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_WINDOW_HALF_LIFE_DAYS)?;
+    let days =
+        learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_WINDOW_HALF_LIFE_DAYS)?;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let half_life = (days * DAY_SECS).round().max(1.0) as u64;
     Ok(Window { half_life })
@@ -173,7 +177,14 @@ pub(crate) fn fold_cell_in_txn(
                     *losses += w;
                 }
             }
-            (OwnTally::Mean { sum_w, sum_wx, sum_wxx }, Observation::Magnitude(x)) => {
+            (
+                OwnTally::Mean {
+                    sum_w,
+                    sum_wx,
+                    sum_wxx,
+                },
+                Observation::Magnitude(x),
+            ) => {
                 *sum_w += w;
                 *sum_wx += w * x;
                 *sum_wxx += w * x * x;
@@ -264,7 +275,12 @@ pub(crate) fn project_cell_in_txn(
 
     let stored = StoredEstimateClaim::new(&row.cell, &estimate);
     let value = stored.to_value()?;
-    let evidence = rmpv::Value::Array(cited.iter().map(|r| rmpv::Value::from(r.as_str())).collect());
+    let evidence = rmpv::Value::Array(
+        cited
+            .iter()
+            .map(|r| rmpv::Value::from(r.as_str()))
+            .collect(),
+    );
     let unchanged = match heads.as_slice() {
         [(_, body, _)] => body.value == value && body.evidence.as_ref() == Some(&evidence),
         _ => false,
@@ -285,13 +301,21 @@ pub(crate) fn project_cell_in_txn(
             wtxn,
             &claim_id,
             &body,
-            TimeRange { start: now, end: now },
+            TimeRange {
+                start: now,
+                end: now,
+            },
             now,
         )?;
         // Every active head goes, not just the first: two replicas that both
         // projected this cell hold two distinct heads after a sync.
         for (head_id, _, head_start) in &heads {
-            vault.supersede_reserved_claim_in_txn(wtxn, &claim_id, head_id, now.max(*head_start))?;
+            vault.supersede_reserved_claim_in_txn(
+                wtxn,
+                &claim_id,
+                head_id,
+                now.max(*head_start),
+            )?;
         }
     }
     cache_setting_fit_in_txn(vault, wtxn, &row.cell, Some(&estimate), now)?;
@@ -305,12 +329,15 @@ pub(crate) fn project_cell_in_txn(
 ///
 /// Storage errors; the first failing cell aborts the sweep.
 pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
+    crate::critic::review::project_all_review_dissent(vault, now)?;
     let digests: Vec<[u8; 32]> = {
         let rtxn = vault.store.env.read_txn()?;
         CELL.scan_keys(&vault.store, &rtxn, &[])?
     };
     for digest in &digests {
-        vault.with_write_txn_grouped(|wtxn| project_cell_in_txn(vault, wtxn, digest, now).map(|_| ()))?;
+        vault.with_write_txn_grouped(|wtxn| {
+            project_cell_in_txn(vault, wtxn, digest, now).map(|_| ())
+        })?;
     }
     Ok(digests.len())
 }
@@ -368,7 +395,11 @@ pub(crate) fn active_heads_in_txn(
     Ok(rows)
 }
 
-fn entity_header(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<EntityMetadataHeader> {
+fn entity_header(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EntityMetadataHeader> {
     let raw = vault
         .store
         .port_entity_record(txn, id)?
@@ -418,7 +449,10 @@ fn cache_setting_fit_in_txn(
         || cell.executor.is_some()
         || cell.axis.is_some()
         || cell.consent_scope.is_some()
-        || !cell.type_ref.as_ref().is_some_and(super::cell::TypeRef::is_root)
+        || !cell
+            .type_ref
+            .as_ref()
+            .is_some_and(super::cell::TypeRef::is_root)
     {
         return Ok(());
     }
