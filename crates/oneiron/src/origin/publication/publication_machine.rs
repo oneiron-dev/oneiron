@@ -341,7 +341,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Failed,
+                GitWireRejection::Unauthorized,
                 "origin authority epoch no longer permits this publication",
                 learned_at,
             );
@@ -351,7 +351,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Conflicted,
+                GitWireRejection::RefMoved,
                 "live ref no longer equals the expected value",
                 learned_at,
             );
@@ -371,7 +371,7 @@ impl Vault {
                 git,
                 repo,
                 record,
-                OriginPublicationStatus::Failed,
+                GitWireRejection::ObjectsUnavailable,
                 &failure,
                 learned_at,
             );
@@ -414,22 +414,22 @@ impl Vault {
         // Retrying it is exactly how the second writer would clobber the first,
         // so neither arm below ever loops.
         if let GitWireCommitOutcome::Rejected { reason, .. } = outcome {
-            let (status, failure) = match reason {
-                GitWireRejection::RefMoved => (
-                    OriginPublicationStatus::Conflicted,
+            let failure = match reason {
+                GitWireRejection::RefMoved => {
                     "compare-and-swap found a value on the ref that nobody decided against"
-                        .to_owned(),
-                ),
-                GitWireRejection::ObjectsUnavailable => (
-                    OriginPublicationStatus::Failed,
-                    "the git wire found required objects unavailable".to_owned(),
-                ),
+                }
+                GitWireRejection::ObjectsUnavailable => {
+                    "the git wire found required objects unavailable"
+                }
+                GitWireRejection::Unauthorized => {
+                    "origin authority epoch no longer permits this publication"
+                }
                 GitWireRejection::EffectUnconfirmed => {
                     return Err(Error::ConcurrentWrite("origin CAS effect is uncertain"));
                 }
             };
             let mut refused =
-                self.refuse_origin_publication(git, repo, record, status, &failure, learned_at)?;
+                self.refuse_origin_publication(git, repo, record, reason, failure, learned_at)?;
             refused.wire = Some(outcome);
             return Ok(refused);
         }
@@ -652,10 +652,26 @@ impl Vault {
         git: &GitWire<'_>,
         repo: &GitWireRepo,
         record: OriginPublicationRecord,
-        status: OriginPublicationStatus,
+        reason: GitWireRejection,
         failure: &str,
         learned_at: u64,
     ) -> Result<OriginAdvance> {
+        // A refusal decided before the wire ran must not leave an earlier
+        // uncertain attempt at this move runnable by generic recovery. Voided
+        // first: a crash before the refusal re-decides on the same evidence.
+        git.void_prepared_ref_cas(
+            repo,
+            &record.ref_name,
+            record.expected_old_oid.as_ref(),
+            &record.new_oid,
+            reason,
+            learned_at,
+        )?;
+        let status = if reason == GitWireRejection::RefMoved {
+            OriginPublicationStatus::Conflicted
+        } else {
+            OriginPublicationStatus::Failed
+        };
         let mut refused = record;
         refused.status = status;
         refused.failure = Some(bounded_failure(failure));

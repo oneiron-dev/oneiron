@@ -5,7 +5,9 @@ use super::publication::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
+use crate::git_wire::{
+    GitRefExpectation, GitRefPublication, GitWire, GitWireRepo, lock_repository,
+};
 use crate::side_table::{self, Named, Raw, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -199,24 +201,70 @@ impl Vault {
         repo: &GitWireRepo,
         publication: EntityId,
     ) -> Result<()> {
+        match self.origin_authority_refusal(repo, publication)? {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
+    }
+    /// Why the current authority refuses this publication, or `None` when it
+    /// permits it. A read failure is an error, never a refusal.
+    fn origin_authority_refusal(
+        &self,
+        repo: &GitWireRepo,
+        publication: EntityId,
+    ) -> Result<Option<Error>> {
         let Some(row) = self.origin_authority(repo)? else {
-            return Ok(());
+            return Ok(None);
         };
         if row.mirror {
-            return Err(Error::InvariantViolation(
+            return Ok(Some(Error::InvariantViolation(
                 "mirror is read-only; import through the authoritative origin",
-            ));
+            )));
         }
         let txn = self.store.env.read_txn()?;
         if AUTHORITY_PERMIT
             .get(&self.store, &txn, &publication)?
             .is_none_or(|epoch| epoch != row.epoch)
         {
-            return Err(Error::ConcurrentWrite(
+            return Ok(Some(Error::ConcurrentWrite(
                 "origin publication requires the current authority epoch",
-            ));
+            )));
         }
-        Ok(())
+        Ok(None)
+    }
+    /// Whether a saved GitWire effect would move a ref that an origin
+    /// publication owns without that publication's current authority. GitWire
+    /// asks this at the effect itself, so no door to a saved effect re-applies
+    /// one the origin no longer permits. A move no publication owns is not
+    /// the origin's to judge.
+    pub(crate) fn origin_effect_unauthorized(
+        &self,
+        repo: &GitWireRepo,
+        publications: &[GitRefPublication],
+    ) -> Result<bool> {
+        let repo_id = crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())?;
+        for publication in publications {
+            let Some(next) = publication.next() else {
+                continue;
+            };
+            let expected = match publication.expected() {
+                GitRefExpectation::Absent => None,
+                GitRefExpectation::Value(oid) => Some(oid),
+                GitRefExpectation::Any => continue,
+            };
+            let Some(owner) =
+                self.origin_move_owner(repo_id, publication.name(), expected, next)?
+            else {
+                continue;
+            };
+            if self
+                .origin_authority_refusal(repo, owner.publication_id)?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     /// Admission has no commit pin yet, including an empty first-push origin.
     /// Resolve the canonical object-store identity without inventing a commit.

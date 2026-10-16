@@ -73,6 +73,34 @@ impl GitWire<'_> {
         self.publish_refs(repo, vec![publication], now)
     }
 
+    /// Fails a still-prepared attempt at exactly this compare-and-set without
+    /// running it, for a caller that has refused the move itself. Left alone,
+    /// such an attempt stays runnable by any recovery once the ref carries the
+    /// expected value again.
+    pub(crate) fn void_prepared_ref_cas(
+        &self,
+        repo: &GitWireRepo,
+        name: &GitRefName,
+        expected: Option<&GitOid>,
+        next: &GitOid,
+        reason: GitWireRejection,
+        now: u64,
+    ) -> GitWireResult<()> {
+        let publications = vec![GitRefPublication::update(
+            name.clone(),
+            GitRefExpectation::from_observed(expected),
+            next.clone(),
+        )];
+        let _guard = lock_repository(&repo.common_dir)?;
+        let key = ref_record_key(repo.identity(), &publications);
+        if let Some(record) = self.load_record(repo, &key)?
+            && GitWireRecordState::parse(&record.state)? == GitWireRecordState::Prepared
+        {
+            self.reject(repo, record, reason, now)?;
+        }
+        Ok(())
+    }
+
     /// Writes a ref, binding the value it currently holds into the effect.
     ///
     /// The observation is taken under the coordinator and becomes part of the
@@ -231,6 +259,12 @@ impl GitWire<'_> {
         }
         if !publications_expected(&publications, &observed) {
             return self.reject(repo, record, GitWireRejection::RefMoved, now);
+        }
+        // Every door to a saved effect passes here -- a first attempt, an
+        // interrupted one finished again, a staged commit, generic recovery --
+        // so the origin judges a move it owns here, at the effect itself.
+        if self.vault.origin_effect_unauthorized(repo, &publications)? {
+            return self.reject(repo, record, GitWireRejection::Unauthorized, now);
         }
         if !self.publication_objects_available(repo, &publications)? {
             return self.reject(repo, record, GitWireRejection::ObjectsUnavailable, now);
