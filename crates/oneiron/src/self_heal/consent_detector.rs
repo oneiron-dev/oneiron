@@ -3,7 +3,7 @@
 use super::{
     DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
-    MAX_EVENTS_PER_RUN, run_deterministic_detectors, validate_working_set,
+    MAX_EVENTS_PER_RUN, validate_working_set,
 };
 use crate::Vault;
 use crate::consent::{CONSENT_CONTENT_KIND, CONSENT_REASON_DENIED};
@@ -117,7 +117,7 @@ impl Vault {
             scope_ref,
             observations: &observations,
         };
-        let ids = run_deterministic_detectors(self, &input, &[&ConsentDeniedDetector])?;
+        let ids = super::tripwires::signed(self, &input, &[&ConsentDeniedDetector])?;
         self.capture_tier1_point_producer(&ids)?;
         Ok(ids)
     }

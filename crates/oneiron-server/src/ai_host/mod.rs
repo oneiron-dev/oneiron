@@ -30,6 +30,7 @@ mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
+mod harness;
 mod policy;
 mod status;
 mod step;

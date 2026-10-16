@@ -2,7 +2,7 @@
 use super::{
     DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
-    MAX_EVENTS_PER_RUN, run_deterministic_detectors,
+    MAX_EVENTS_PER_RUN,
 };
 use crate::{
     EntityId, Result, Vault,
@@ -496,6 +496,11 @@ impl Vault {
         )
     }
 }
+/// The scheduled detector instance every tier-1 tripwire signs as (ARCH-0066
+/// §4). A run that fails to sign or to verify emits nothing: a tripwire's
+/// fail direction is silence, never a spurious heal.
+pub const TIER1_DETECTOR_INSTANCE: &str = "tier1";
+
 fn run(
     vault: &Vault,
     scope: &str,
@@ -508,7 +513,18 @@ fn run(
         scope_ref: scope,
         observations: &observations,
     };
-    run_deterministic_detectors(vault, &input, detectors)
+    signed(vault, &input, detectors)
+}
+
+/// Signs the run as [`TIER1_DETECTOR_INSTANCE`] and accepts it, so every
+/// stored tier-1 diagnostic has a verified signed run behind it.
+pub(super) fn signed(
+    vault: &Vault,
+    input: &DiagnosticWorkingSet<'_>,
+    detectors: &[&dyn DeterministicDetector],
+) -> Result<Vec<EntityId>> {
+    let run = vault.sign_detector_run(TIER1_DETECTOR_INSTANCE, input, detectors)?;
+    vault.accept_signed_detector_run(&run)
 }
 
 /// Gate receipts keep the original predicate, not the claim value. The fact
