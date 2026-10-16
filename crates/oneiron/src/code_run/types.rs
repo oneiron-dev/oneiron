@@ -21,6 +21,13 @@ pub enum SelfCall {
     TasksAsk(Box<crate::task_verb::TaskAskSpec>),
     /// Requests a C9 wait for this handle, only at the caller's idle point.
     TasksWait(crate::task_verb::TaskAskHandle),
+    /// The agent's own refusal of the run's bound TASK, through her refusal
+    /// dial (OF-533). The TASK comes from the host binding.
+    TasksRefuse(SelfTaskRefuseCall),
+    /// `self.skills.call` (OF-353): one agent-callable skill, run as a step
+    /// of its own under the running attempt's lease, with the caller's host
+    /// as its bridge. The lease, executor and runtime are the host's.
+    SkillsCall(SelfSkillCall),
     /// Fixture for `vault.search(...)`.
     MemorySearch(SelfMemorySearchCall),
     /// Internal fixture proving dispatcher-stamped writes use the batch/gate path.
@@ -64,6 +71,9 @@ pub enum SelfCall {
     WakePolicyWrite(SelfWakePolicyWriteCall),
     /// A verb at its SDK path (`vault.recall(input)`): one row of the SDK verb table.
     AgentVerb(SelfAgentVerbCall),
+    /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
+    /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
+    Fold(crate::compaction::SelfFoldCall),
 }
 
 impl SelfCall {
@@ -75,6 +85,8 @@ impl SelfCall {
             Self::AgentsPut(_) => SelfEffect::AgentsPut,
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
+            Self::TasksRefuse(_) => SelfEffect::TasksRefuse,
+            Self::SkillsCall(_) => SelfEffect::SkillsCall,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
@@ -92,6 +104,7 @@ impl SelfCall {
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
+            Self::Fold(_) => SelfEffect::Fold,
         }
     }
 
@@ -126,6 +139,10 @@ pub enum SelfEffect {
     AgentsSpawn,
     TasksAsk,
     TasksWait,
+    /// The agent's own refusal of its bound TASK (OF-533).
+    TasksRefuse,
+    /// An agent-callable skill run on the caller's lease (OF-353).
+    SkillsCall,
     MemorySearch,
     MemoryWriteFixture,
     MemoryPutClaim,
@@ -154,6 +171,8 @@ pub enum SelfEffect {
     WakePolicyWrite,
     /// One SDK verb-table call, run by the host's bound verb door.
     AgentVerb,
+    /// A fold verb on the run's own log, answered by its fold ledger.
+    Fold,
 }
 
 impl SelfEffect {
@@ -165,6 +184,8 @@ impl SelfEffect {
             Self::AgentsPut => "vault.agents.put",
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
+            Self::TasksRefuse => "tasks.refuse",
+            Self::SkillsCall => "self.skills.call",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
             Self::MemoryPutClaim => "self.memory.put_claim",
@@ -183,6 +204,7 @@ impl SelfEffect {
             Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
+            Self::Fold => "self.fold",
         }
     }
 
@@ -202,6 +224,8 @@ impl SelfEffect {
             | Self::AgentsPut
             | Self::TasksAsk
             | Self::TasksWait
+            | Self::TasksRefuse
+            | Self::SkillsCall
             | Self::MemorySearch
             | Self::MemoryWriteFixture
             | Self::MemoryPutClaim
@@ -215,7 +239,7 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite | Self::AgentVerb => None,
+            Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
         }
     }
 
@@ -496,6 +520,18 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Whether a result the run retained stays on this device for the door's
+    /// caller now (DEC-0005), re-checked at each read of it: `rows` are the
+    /// rows the run was served producing it, `None` when one of its answers
+    /// was recorded with no row set. A door whose caller sits on this device
+    /// withholds nothing.
+    fn withholds_retained(
+        &self,
+        _rows: Option<&[EntityId]>,
+    ) -> std::result::Result<bool, AgentVerbRefusal> {
+        Ok(false)
+    }
 }
 
 /// One call a run serves itself, as its host door is asked about it.
@@ -536,6 +572,70 @@ pub enum SelfDispatchOutcome {
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
     /// The verb's answer: its JSON output and the rows that produced it.
     AgentVerb(AgentVerbAnswer),
+    /// A fold verb's answer, as JSON.
+    Fold(String),
+    /// What the agent's dial made of her refusal.
+    TaskRefusal(SelfTaskRefusalResult),
+    /// What one callable skill returned.
+    SkillCall(SelfSkillCallResult),
+}
+
+/// `self.skills.call(...)`: the skill and the arguments its call contract
+/// takes. No lease, executor or runtime comes from the guest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfSkillCall {
+    pub skill: EntityId,
+    pub args: serde_json::Value,
+}
+
+/// What one callable skill returned: JSON its contract's `returns` shape
+/// admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfSkillCallResult {
+    pub skill: EntityId,
+    pub output: serde_json::Value,
+}
+
+/// `tasks.refuse(...)`. The reason stays the caller's string until the
+/// dispatcher resolves it against the vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfTaskRefuseCall {
+    /// The TASK the guest named, if any; it must be the bound one.
+    pub task_ref: Option<EntityId>,
+    pub domain: crate::agent_def::RefusalDomain,
+    pub reason_ref: String,
+    pub at: u64,
+}
+
+/// What one self-refusal became.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfTaskRefusalResult {
+    pub task_ref: EntityId,
+    /// Where her dial sat; the outcome is the level's.
+    pub level: crate::agent_def::RefusalLevel,
+    /// A byte-identical retry answered by the first decision.
+    pub replay: bool,
+}
+
+impl SelfTaskRefusalResult {
+    /// Whether the refusal declined the TASK: the run does nothing more for it.
+    #[must_use]
+    pub const fn declined(&self) -> bool {
+        matches!(
+            self.level.outcome(),
+            crate::agent_def::RefusalOutcome::Decline
+        )
+    }
+
+    /// The outcome's wire word.
+    #[must_use]
+    pub const fn outcome_word(&self) -> &'static str {
+        match self.level.outcome() {
+            crate::agent_def::RefusalOutcome::Proceed => "proceed",
+            crate::agent_def::RefusalOutcome::Object => "object",
+            crate::agent_def::RefusalOutcome::Decline => "decline",
+        }
+    }
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

@@ -21,6 +21,14 @@
 //!    anywhere in this module, and no direct socket: network access exists
 //!    only through an injected [`ByoaEgressPort`].
 //!
+//! Named runners (Claude Code, Codex, OpenCode) are [`DreamerProviderAdapter`]s
+//! in a [`ProviderAdapterRegistry`]. An owner's [`RunnerSeatPolicy`] orders the
+//! seats a Dreamer's work may run on, and [`ByoaDispatcher::route_runner_terminal`]
+//! routes a spent seat's work under it: park, next seat, or back to the
+//! Dreamer's own model roles. A vendor login never crosses this seam; it stays
+//! with the official CLI on a runtime its vendor's terms allow
+//! ([`login_placement`]).
+//!
 //! Credentials cross this seam as [`SandboxCredentialHandle`](crate::code_sandbox::SandboxCredentialHandle) references and
 //! never as bytes. That is the whole redaction story: there is no secret in
 //! any type here to leak into an attempt payload, a `Debug` rendering, or a
@@ -36,14 +44,31 @@
 
 mod provider;
 pub use provider::{
-    ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter, DreamerProviderInput, OpenCodeRunner,
-    ProviderAdapterRegistry,
+    CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter,
+    DreamerProviderInput, OPENCODE_PROGRAM, OpenCodeRunner, ProviderAdapterRegistry,
+};
+mod seat;
+pub use seat::{
+    LoginPlacement, MAX_RUNNER_SEATS, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat,
+    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatRoute, SeatSpent, login_placement, spent_seat_in,
 };
 mod connector;
 mod dispatcher;
 mod error;
 mod exhaust;
+pub mod official_seats;
 mod validate;
+
+pub use self::official_seats::{
+    ANTHROPIC_API_BASE_URL, ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter,
+    DispatchOfficialSeat, DrySeatDecision, DrySeatFallback, GrokApiKeySeatAdapter,
+    OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatInput, OfficialSeatRegistry,
+    OfficialSeatRoute, OfficialSeatSpec, OfficialSeatStamp, OfficialSeatVendor,
+    SIWC_AUTHORIZE_ENDPOINT, SIWC_RESPONSES_BASE_URL, SeatLoginPlan, SeatPlacementApproval,
+    SeatPlanWindow, SignInWithChatGptAdapter, SiwcAuthorizeRequest, XAI_API_BASE_URL,
+    check_seat_placement, decide_dry_seat, pkce_s256_challenge, seat_login_plan,
+    siwc_authorize_url, validate_official_seat,
+};
 
 pub use self::connector::{
     BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE,

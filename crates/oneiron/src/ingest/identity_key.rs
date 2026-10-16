@@ -31,7 +31,7 @@ fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
     let value = if let Ok(value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
     {
-        crate::companion::companion_value_to_json(&value)
+        crate::serialize::msgpack_value_to_json(&value)
     } else if let Ok(value) = serde_json::from_slice(bytes) {
         value
     } else {

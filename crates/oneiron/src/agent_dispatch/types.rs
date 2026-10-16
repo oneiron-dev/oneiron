@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 14] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
     "schema_version",
     "target",
     "agent_def",
@@ -43,8 +43,10 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 14] = [
     "spawn_intent",
     "scope",
     "healer_case",
+    "task_type_ref",
     "budget",
     "launch",
+    "origin_conversation",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -66,8 +68,11 @@ pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
 pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
-pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[12];
-pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_TASK_TYPE_REF: &str = AGENT_DISPATCH_INPUT_KEYS[12];
+pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[14];
+/// OF-221: the conversation a root dispatch's host stamped as its origin.
+pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[15];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -133,6 +138,10 @@ pub struct AgentDispatchInput {
     /// Exact branch-resource restriction, never a replacement for live authority.
     /// An absent value grants no branch-resource access.
     pub scope: Option<crate::llm::Scope>,
+    /// OF-543 ONE TASK TYPE stamp, placed once at spawn. Required: every
+    /// spawn carries a `typeRef`, and an unsure placement is the root —
+    /// never an absent/untyped spawn.
+    pub type_ref: crate::task_type::TaskTypeRef,
     /// The spawn's requested `budget` (OF-532): a hard carve under the parent's
     /// cap, in the parent scope's unit.
     pub budget: Option<u64>,
@@ -145,7 +154,7 @@ pub struct AgentDispatchInput {
 impl AgentDispatchInput {
     /// The pre-ONE-1709 payload shape: no spawn context, no depth budget.
     #[must_use]
-    pub const fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
+    pub fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
         Self {
             target,
             definition,
@@ -156,6 +165,7 @@ impl AgentDispatchInput {
             project_ref: None,
             spawn_intent: None,
             scope: None,
+            type_ref: crate::task_type::TaskTypeRef::seeded_root(),
             budget: None,
             launch: None,
         }
@@ -179,6 +189,10 @@ pub struct AgentSpawnContext {
     /// None inherits the stored parent's resource restriction. A root with
     /// None has deny-all resource scope; ordinary non-resource calls still run.
     pub scope: Option<crate::llm::Scope>,
+    /// OF-543: the placed task type, when the spawner (or the placement
+    /// skill it routed) already placed this spawn. None means dispatch
+    /// places it as the root — the unsure answer — never untyped.
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The canon spawn table's `budget` (optional; set = pin): a hard carve
     /// under the parent's cap the child can never pass. Unset, the child holds
     /// its calibrated expected spend and may top up to the ancestor's cap.
@@ -186,6 +200,11 @@ pub struct AgentSpawnContext {
     /// A ROOT launch's spend scope. A child spends under its parent's and
     /// never names one. A root without one runs unmetered by any lease tree.
     pub spend: Option<super::SpawnSpend>,
+    /// OF-221: the conversation whose request starts this work, stamped by
+    /// the host at its admission boundary. Read for a root only; a child
+    /// always inherits its parent's stored origin, so a spawning agent can
+    /// never name one.
+    pub origin_conversation: Option<EntityId>,
 }
 
 impl AgentSpawnContext {
@@ -213,6 +232,12 @@ impl AgentSpawnContext {
     }
 
     #[must_use]
+    pub fn with_type_ref(mut self, type_ref: crate::task_type::TaskTypeRef) -> Self {
+        self.type_ref = Some(type_ref);
+        self
+    }
+
+    #[must_use]
     pub const fn with_budget(mut self, budget: u64) -> Self {
         self.budget = Some(budget);
         self
@@ -221,6 +246,12 @@ impl AgentSpawnContext {
     #[must_use]
     pub fn with_spend(mut self, spend: super::SpawnSpend) -> Self {
         self.spend = Some(spend);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_origin_conversation(mut self, conversation: EntityId) -> Self {
+        self.origin_conversation = Some(conversation);
         self
     }
 }
@@ -359,6 +390,221 @@ pub struct DispatchHealer {
     pub case: HealerCase,
     pub run_id: Option<String>,
     pub now: u64,
+}
+
+/// How much a spawn cares (ARCH-0079 #spawn): the same five words vendors
+/// use for reasoning effort, so a model reads `care: xhigh` without
+/// explanation. On one call it sets reasoning effort; on a spawn the planner
+/// reads it with the need and the budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CareLevel {
+    Light,
+    Medium,
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    Max,
+}
+
+impl CareLevel {
+    /// Every care level, cheapest first.
+    pub const ALL: [Self; 5] = [
+        Self::Light,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+        Self::Max,
+    ];
+
+    /// Stable wire token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+
+    /// Parse a wire token.
+    pub fn from_token(token: &str) -> crate::error::Result<Self> {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "light" => Ok(Self::Light),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" => Ok(Self::XHigh),
+            "max" => Ok(Self::Max),
+            _ => Err(super::widen_record::invalid("unknown care level")),
+        }
+    }
+
+    /// Ladder position, 0 (light) to 4 (max).
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Light => 0,
+            Self::Medium => 1,
+            Self::High => 2,
+            Self::XHigh => 3,
+            Self::Max => 4,
+        }
+    }
+
+    /// The reasoning effort one call at this care level runs. The effort
+    /// ladder tops out at `xhigh`, so `max` care spends its extra care on
+    /// team shape and budget instead.
+    #[must_use]
+    pub const fn reasoning_effort(self) -> crate::llm::ReasoningEffort {
+        match self {
+            Self::Light => crate::llm::ReasoningEffort::Low,
+            Self::Medium => crate::llm::ReasoningEffort::Medium,
+            Self::High => crate::llm::ReasoningEffort::High,
+            Self::XHigh | Self::Max => crate::llm::ReasoningEffort::XHigh,
+        }
+    }
+}
+
+/// One spawn field as the parent set it (ARCH-0079 #seed-pin): a seed sets
+/// where the planner starts, with a weight counted in runs; a pin fixes the
+/// value and the planner never overrides it. Unset fields are the planner's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SpawnOverride<T> {
+    Seed { value: T, weight_runs: f64 },
+    Pin { value: T },
+}
+
+impl<T> SpawnOverride<T> {
+    #[must_use]
+    pub const fn value(&self) -> &T {
+        match self {
+            Self::Seed { value, .. } | Self::Pin { value } => value,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_pin(&self) -> bool {
+        matches!(self, Self::Pin { .. })
+    }
+
+    /// Prior weight in runs; a pin is a seed of infinite weight.
+    #[must_use]
+    pub fn weight_runs(&self) -> f64 {
+        match self {
+            Self::Seed { weight_runs, .. } => *weight_runs,
+            Self::Pin { .. } => f64::INFINITY,
+        }
+    }
+}
+
+/// What a parent says when it spawns (ARCH-0079 #spawn): the required need,
+/// separate from the prompt, plus optional care, notes and seeded or pinned
+/// model, width, pattern and budget. The planner routes on the need and
+/// fills in everything unset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpawnNeed {
+    /// What the parent needs, in one or two lines. Required, non-blank.
+    pub need: String,
+    /// How much the parent cares; inferred from the need when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub care: Option<CareLevel>,
+    /// Constraints and preferences (a model family, a time limit, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// The task's ONE TASK TYPE stamp (OF-543), the planner-card key; an
+    /// absent or unknown type reads the root card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<SpawnOverride<crate::llm::ModelId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<SpawnOverride<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<SpawnOverride<super::team_shape::CoordinationPattern>>,
+    /// Hard spend cap for the whole spawn, in lease units. A seed or pin
+    /// here only ever narrows the caller's budget, never widens it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_cap_units: Option<SpawnOverride<u64>>,
+}
+
+impl SpawnNeed {
+    #[must_use]
+    pub fn new(need: impl Into<String>) -> Self {
+        Self {
+            need: need.into(),
+            care: None,
+            notes: None,
+            task_type: None,
+            model: None,
+            width: None,
+            pattern: None,
+            budget_cap_units: None,
+        }
+    }
+
+    /// The door every planner entry runs first: the need is required and
+    /// non-blank, a width override names at least one agent, and a seed
+    /// weight is a positive finite run count.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if self.need.trim().is_empty() {
+            return Err(super::widen_record::invalid("spawn need is required"));
+        }
+        if let Some(width) = &self.width
+            && *width.value() == 0
+        {
+            return Err(super::widen_record::invalid(
+                "spawn width must be at least 1",
+            ));
+        }
+        let weights = [
+            self.model.as_ref().map(SpawnOverride::weight_runs),
+            self.width.as_ref().map(SpawnOverride::weight_runs),
+            self.pattern.as_ref().map(SpawnOverride::weight_runs),
+            self.budget_cap_units
+                .as_ref()
+                .map(SpawnOverride::weight_runs),
+        ];
+        if weights
+            .into_iter()
+            .flatten()
+            .any(|w| w != f64::INFINITY && (!w.is_finite() || w <= 0.0))
+        {
+            return Err(super::widen_record::invalid(
+                "spawn seed weight must be positive",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The pinned model, when the parent pinned one.
+    #[must_use]
+    pub fn pinned_model(&self) -> Option<&crate::llm::ModelId> {
+        self.model
+            .as_ref()
+            .filter(|o| o.is_pin())
+            .map(SpawnOverride::value)
+    }
+
+    /// The pinned width, when the parent pinned one.
+    #[must_use]
+    pub fn pinned_width(&self) -> Option<u32> {
+        self.width
+            .as_ref()
+            .filter(|o| o.is_pin())
+            .map(|o| *o.value())
+    }
+
+    /// The pinned pattern, when the parent pinned one.
+    #[must_use]
+    pub fn pinned_pattern(&self) -> Option<super::team_shape::CoordinationPattern> {
+        self.pattern
+            .as_ref()
+            .filter(|o| o.is_pin())
+            .map(|o| *o.value())
+    }
 }
 
 /// Typed healer-slot outcome.

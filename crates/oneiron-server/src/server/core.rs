@@ -87,8 +87,10 @@ pub struct SyncServer {
     /// that supplies the control-plane checker. `None`: account keys are
     /// never admitted.
     pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
-    /// Tenant usage ledger over the server vault.
+    /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    /// Stable across served runs and policy refreshes; empty until the host grants.
+    host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
@@ -134,6 +136,14 @@ pub struct SyncServer {
     pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
     /// Reads that route holds at once (`limits.decision_reads`).
     pub(crate) decision_reads: crate::admission::Admission<()>,
+    /// The host's decision ladder: the rule table and the owner's ask queue
+    /// on every server, with the rungs `[models]` binds once the AI host
+    /// attaches.
+    pub(crate) decisions: crate::decision_host::DecisionHost,
+    /// The hook sandbox the fact-hook runner runs bodies on, set by `serve`
+    /// once it loads; `vault.hooks.replay` replays on the same one. Empty
+    /// under `--no-hooks`, or when the sandbox did not load.
+    pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -308,12 +318,14 @@ impl SyncServer {
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        crate::models::outbound_wait::install(&vault);
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
+        let decisions = crate::decision_host::DecisionHost::new(&vault);
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
@@ -323,6 +335,7 @@ impl SyncServer {
             retained,
             presence,
             usage_ledger: UsageLedger::new(vault.clone()),
+            host_account: oneiron::llm::run_admission::HostAccount::new(),
             transfers: crate::api::Transfers::new(
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
@@ -359,6 +372,8 @@ impl SyncServer {
             llm: None,
             decision_read: None,
             decision_reads,
+            decisions,
+            hook_runtime: std::sync::OnceLock::new(),
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
@@ -502,7 +517,44 @@ impl SyncServer {
         meter: oneiron::BudgetGuard,
     ) -> Self {
         self.decision_read = Some((door, meter));
+        self.decisions = self
+            .decisions
+            .clone()
+            .with_house_read(self.decision_read.as_ref());
         self
+    }
+
+    /// The live allocation shared by all this vault's served runs. The
+    /// trusted host grants newer generations and updates holds on this same
+    /// account; admitted work keeps the allocation it already reserved.
+    #[must_use]
+    pub fn host_account(&self) -> Arc<oneiron::llm::run_admission::HostAccount> {
+        Arc::clone(&self.host_account)
+    }
+
+    /// Enables durable usage facts for the owner the trusted host resolved.
+    /// The vault id comes from the authority log, never an HTTP payload.
+    /// Bind before starting work so every admission has attribution.
+    pub fn with_usage_metering(
+        self,
+        owner: impl Into<String>,
+    ) -> Result<Self, crate::usage::UsageError> {
+        let vault_id = self.vault.authority_fold()?.vault_id.ok_or(
+            crate::usage::UsageError::InvalidField {
+                field: "vaultId",
+                message: "usage metering requires an authority-log genesis",
+            },
+        )?;
+        let vault_id = vault_id.iter().map(|byte| format!("{byte:02x}")).collect();
+        let usage =
+            crate::runtime::VaultUsage::new(self.usage_ledger.clone(), owner.into(), vault_id)?;
+        self.run_receipts.meter(usage);
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn vault_usage(&self) -> Option<Arc<crate::runtime::VaultUsage>> {
+        self.run_receipts.usage()
     }
 
     /// Writes every model call's run receipts to `receipts` instead of the
@@ -532,6 +584,11 @@ impl SyncServer {
         if let (Some(door), Some(raw)) = (ai.decision_read(), &self.llm) {
             self.decision_read = Some((door, raw.meter().clone()));
         }
+        // The house read fills the ladder's escalation rung.
+        self.decisions = self
+            .decisions
+            .clone()
+            .with_house_read(self.decision_read.as_ref());
         self.ai = ai;
         self
     }

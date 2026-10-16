@@ -14,9 +14,9 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
-    SecretScanSwitch, SecretsCommand, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmsCommand, ImportCommand, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
+    SecretScanArgs, SecretScanSwitch, SecretsCommand, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -237,9 +237,15 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .backup
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
+    // A backup opens with this install's keystore, as configured.
+    let keystore = config.keystore.open(&config.vault_path)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
-        let source = oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+        let mut source =
+            oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+        if let Some(keystore) = keystore {
+            source = source.with_keystore(keystore);
+        }
         return emit(&backup::rehearse(
             backup,
             vault_config(&config),
@@ -251,6 +257,7 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         backup,
         &config.vault_path,
         vault_config(&config),
+        keystore,
     )?)
 }
 
@@ -411,20 +418,21 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         .memory(owner, oneiron::edge::EdgeActorClass::Human)
         .export(&oneiron::memory::ExportOptions {
             format: Some(args.format),
+            include_secrets: Some(args.include_secrets),
         })
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let Some(out) = args.out else {
-        io::stdout().lock().write_all(export.rendered.as_bytes())?;
+        io::stdout().lock().write_all(&export.archive)?;
         return Ok(());
     };
     write_new_file(&out, |file| {
-        file.write_all(export.rendered.as_bytes())?;
+        file.write_all(&export.archive)?;
         file.sync_all()
     })?;
     emit(&Exported {
         file: &out,
         format: export.format,
-        bytes: export.rendered.len(),
+        bytes: export.archive.len(),
     })
 }
 
@@ -598,6 +606,46 @@ fn read_batch(source: &str) -> anyhow::Result<Batch> {
     read.map_err(|error| anyhow::anyhow!("batch JSON: {error}"))
 }
 
+#[derive(Serialize)]
+struct ImportedArchive {
+    inserted_entities: usize,
+    unchanged_entities: usize,
+    omitted_entities: usize,
+    archived_receipt_sources: usize,
+    imported_results: usize,
+    withheld_results: usize,
+    restored_secrets: usize,
+    unchanged_secrets: usize,
+    /// Secrets the archive carried as handles only: re-enter each one.
+    missing_secrets: Vec<String>,
+}
+
+/// Re-imports a whole-vault archive through the vault's import doors.
+fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
+    let bytes = std::fs::read(&args.path)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
+    let receipt = vault
+        .import_whole_vault_archive(&bytes)
+        .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
+    emit(&ImportedArchive {
+        inserted_entities: receipt.inserted_entities,
+        unchanged_entities: receipt.unchanged_entities,
+        omitted_entities: receipt.omitted_entities,
+        archived_receipt_sources: receipt.archived_receipt_sources,
+        imported_results: receipt.imported_results,
+        withheld_results: receipt.withheld_results,
+        restored_secrets: receipt.restored_secrets,
+        unchanged_secrets: receipt.unchanged_secrets,
+        missing_secrets: receipt
+            .missing_secrets
+            .into_iter()
+            .map(|secret| secret.name)
+            .collect(),
+    })
+}
+
 pub fn import(command: ImportCommand) -> anyhow::Result<()> {
     use oneiron::ingest::history::HistorySource;
     // A batch decision: preview, or approve / decline with the digest.
@@ -618,6 +666,7 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
             return super::history_import::import_history(HistorySource::HookTranscript, *args);
         }
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
+        ImportCommand::Archive(args) => return import_archive(*args),
         ImportCommand::Preview(args) => (args.batch, None, args.serve),
         ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
         ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),
@@ -659,6 +708,24 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
     Ok(())
+}
+
+/// The saved fork alarms a held root handoff left, and the owner's
+/// acknowledgement of one; `serve` answers the same at
+/// `/v1/owner/authority/handoff-alarms`.
+pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
+    let serve = match &command {
+        HandoffAlarmsCommand::List(args) => &args.serve,
+        HandoffAlarmsCommand::Acknowledge(args) => &args.serve,
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
+    match command {
+        HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
+        HandoffAlarmsCommand::Acknowledge(args) => {
+            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
+        }
+    }
 }
 
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {

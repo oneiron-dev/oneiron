@@ -18,6 +18,7 @@
 
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
+import type * as Facade from "./facade-types.js"
 import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, TaskAskPersonEvidence, TaskAskPreflight, TaskAskQuestion, TaskAskReceipt, TaskAskShort, TaskAskSpec, TaskAskWait, TaskAskWho, TaskAskWord, TaskCancelReceipt, TaskCanAskRequest, TaskDescription } from "./agent-verbs.js"
 
 import { itemFromWire, keyedJson } from "./key-value.js"
@@ -127,8 +128,23 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  report(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.report(input) as unknown) }
+  readonly self = {
+    memory: {
+      diary: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiary(input) as unknown), {
+        reads: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReads(input) as unknown),
+        review: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryReview(input) as unknown),
+      }),
+    },
+    skills: {
+      save: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsSave(input) as unknown),
+      fork: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsFork(input) as unknown),
+      callables: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfSkillsCallables(input) as unknown),
+    },
+  }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }
+  steer(input: Record<string, unknown>): unknown { return this.#call(() => this.#client.steer(input) as unknown) }
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   readonly tasks = {
@@ -148,6 +164,10 @@ export class Oneiron {
     claims: {
       /** Upserts one claim. The consent gate, not this call, decides approval. */
       upsert: (claim: ClaimInput): CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(claim)),
+      retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
+      list: (input: Facade.ClaimListFilter): {value: (Facade.ClaimView)[]; narrowing: unknown} => this.#call(() => this.#client.vaultClaimsList(input) as {value: (Facade.ClaimView)[]; narrowing: unknown}),
+      history: (input: Facade.ClaimRefRequest): {value: (Facade.ClaimView)[]; narrowing: unknown} => this.#call(() => this.#client.vaultClaimsHistory(input) as {value: (Facade.ClaimView)[]; narrowing: unknown}),
+      admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
     },
     /**
    * Recalls a memory pack.
@@ -160,10 +180,16 @@ export class Oneiron {
    * deadline), answering with the best results ready, marked `partial`.
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)),
-    /** Exports the live vault as toon (default), md, json, yaml, or txt. */
+    /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */
-    receipts: (limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)),
+    receipts: Object.assign((limit: number = 100): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit)), {
+      get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultReceiptsGet(input) as unknown),
+    }),
+    images: {
+      /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
+      view: (request: ImageViewRequest): PulledImage => this.#call(() => {  const result = JSON.parse(this.#client.vaultImagesView(keyedJson(request))) as PulledImage; return result }),
+    },
     kv: {
       /** Exact actor-owned worldless key lookup, never recall. */
       get: (request: KeyValueAddress): KeyValueItem | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultKvGet(keyedJson(request))) as WireItem | null; return result === null ? null : itemFromWire(result) }),
@@ -176,6 +202,39 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    packs: {
+      put: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultPacksPut(input) as unknown),
+    },
+    hooks: {
+      replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
+    },
+    artifacts: {
+      /** One artifact's kind, head and versions, each with its made_by and born-from. */
+      view: (request: ArtifactRefRequest): ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as ArtifactView | null; return result === null ? null : result }),
+      /** One version's export file (base64), with its pinned name and media type. */
+      export: (request: ArtifactExportRequest): ArtifactExportFile | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsExport(keyedJson(request))) as ArtifactExportFile | null; return result === null ? null : result }),
+      /** The artifacts and versions a task, ask, run, skill or agent run produced. */
+      born_from: (request: BornFromRequest): BornFromView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBornFrom(keyedJson(request))) as BornFromView; return result }),
+      /** The proposals waiting beside one artifact for Keep or Discard. */
+      proposals: (request: ArtifactRefRequest): PendingProposalView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposals(keyedJson(request))) as PendingProposalView[]; return result.map(item => item) }),
+      /** The organ calls held beside one artifact until one of your nodes can run them, each with why it waits. */
+      waits: (request: ArtifactRefRequest): OrganWaitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsWaits(keyedJson(request))) as OrganWaitView[]; return result.map(item => item) }),
+      /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
+      release_wait: (request: ProposalSettleRequest): ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as ReleasedWait; return result }),
+      /** Runs one native deck transaction over the head and holds the proposal for Keep. */
+      propose_deck: (request: DeckProposeRequest): DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as DeckProposeOutcome; return result }),
+      /** Offers one native organ result as the artifact's next version, held for Keep. */
+      propose_output: (request: NativeOutputRequest): PendingProposalView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeOutput(keyedJson(request))) as PendingProposalView; return result }),
+      /** Keeps one waiting proposal as a new version, once, with its receipt. */
+      keep: (request: ProposalSettleRequest): KeptProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsKeep(keyedJson(request))) as KeptProposal; return result }),
+      /** Discards one waiting proposal, once, with its receipt. */
+      discard: (request: ProposalSettleRequest): DiscardedProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsDiscard(keyedJson(request))) as DiscardedProposal; return result }),
+      /** Undoes one Keep with a new version; the settle stays consumed. */
+      undo: (request: ProposalSettleRequest): UndoneKeep => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsUndo(keyedJson(request))) as UndoneKeep; return result }),
+      put: (input: Facade.BlobArtifactInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultArtifactsPut(input) as Facade.EntityRefReceipt),
+      append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
+      read: (input: Facade.ReadBlobVersionRequest): Facade.BlobContent | null => this.#call(() => this.#client.vaultArtifactsRead(input) as Facade.BlobContent | null),
+    },
     rooms: {
       list: (): unknown[] => this.#call(() => this.#client.vaultRoomsList({}) as unknown[]),
       messages: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
@@ -183,8 +242,52 @@ export class Oneiron {
       find: (roomRef: string, after?: string, limit?: number): {rows: unknown[]; next_after: string | null} => this.#call(() => this.#client.vaultRoomsFind({room_ref: roomRef, after, limit}) as {rows: unknown[]; next_after: string | null}),
       get: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsGet({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       trunk: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsTrunk({room_ref: roomRef, turn_ref: turnRef}) as unknown),
+      reply_strips: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as unknown),
       claim: (roomRef: string, turnRef: string): unknown => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as unknown),
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
+      host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
+      sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
+    },
+    conversations: {
+      turn: {
+        continue: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnContinue(input) as unknown),
+        retry: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as unknown),
+      },
+    },
+    companions: {
+      sharing: {
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as unknown),
+      },
+    },
+    workspace: {
+      work_companion: {
+        get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as unknown),
+        set: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as unknown),
+      },
+    },
+    commit: (input: Facade.CommitRequest): (Facade.CommitReceipt)[] => this.#call(() => this.#client.vaultCommit(input) as (Facade.CommitReceipt)[]),
+    remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
+    forget: (input: Facade.ForgetRequest): (Facade.CommitReceipt)[] => this.#call(() => this.#client.vaultForget(input) as (Facade.CommitReceipt)[]),
+    delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),
+    writes: {
+      pending: (input: Facade.ReceiptsRequest): (Facade.PendingWrite)[] => this.#call(() => this.#client.vaultWritesPending(input) as (Facade.PendingWrite)[]),
+    },
+    hydrate: (input: Facade.HydrateRequest): {value: (Facade.EntityView)[]; narrowing: unknown} => this.#call(() => this.#client.vaultHydrate(input) as {value: (Facade.EntityView)[]; narrowing: unknown}),
+    get: (input: Facade.EntityRequest): {value: Facade.EntityView | null; narrowing: unknown} => this.#call(() => this.#client.vaultGet(input) as {value: Facade.EntityView | null; narrowing: unknown}),
+    search: {
+      bm25: (input: Facade.QueryBm25Request): {value: (Facade.LexicalHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultSearchBm25(input) as {value: (Facade.LexicalHit)[]; narrowing: unknown}),
+    },
+    neighbors: (input: Facade.NeighborsRequest): {value: (Facade.NeighborHit)[]; narrowing: unknown} => this.#call(() => this.#client.vaultNeighbors(input) as {value: (Facade.NeighborHit)[]; narrowing: unknown}),
+    structural: {
+      put: (input: Facade.StructuralPutInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultStructuralPut(input) as Facade.EntityRefReceipt),
+    },
+    habits: {
+      checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
+    },
+    notes: {
+      create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
+      from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
+      edit: (input: Facade.EditNoteRequest): unknown => this.#call(() => this.#client.vaultNotesEdit(input) as unknown),
     },
   }
   /** Read-only ask routing or attributed partial answers. */
@@ -193,6 +296,25 @@ export class Oneiron {
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
   ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as TaskAskWait) }
+  readonly ai = {
+    options: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiOptions(input) as unknown),
+    image: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiImage(input) as unknown),
+    speech: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiSpeech(input) as unknown),
+    transcribe: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiTranscribe(input) as unknown),
+    embed: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiEmbed(input) as unknown),
+    video: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideo(input) as unknown), {
+      poll: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoPoll(input) as unknown),
+      cancel: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVideoCancel(input) as unknown),
+    }),
+    verdict: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.aiVerdict(input) as unknown),
+  }
+  readonly connector = {
+    list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorList(input) as unknown),
+    status: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorStatus(input) as unknown),
+    outbound: {
+      schedule: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.connectorOutboundSchedule(input) as unknown),
+    },
+  }
 
 // END GENERATED FACADE VERBS
 
@@ -208,5 +330,6 @@ export class Oneiron {
 
 export { OneironError }
 export type * from "./types.js"
+export type * as Facade from "./facade-types.js"
 
 export type { OutcomeBinding, CalibrationPair, TaskAssignee, ConsultPayloadRef, TaskAskOptionId, TaskAskTarget, TaskAskWho, TaskAskShort, TaskAskLadderPrediction, TaskAskQuestion, TaskAskElectorate, TaskAskNeed, TaskAskDecide, TaskAskDefault, TaskAskDisagree, TaskAskClass, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskCanAskRequest, TaskAskPreflight, TaskAskPreflightRecipient, TaskAskPersonKind, TaskAskPersonEvidence, TaskAskWord, TaskAskAnswer, TaskAskCoverage, TaskAskDecision, TaskAskFallback, TaskAskEffectAuthorization, TaskAskEvidence, TaskAskSettlement, TaskAskResult, TaskAskStatus, TaskAskWait, TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"

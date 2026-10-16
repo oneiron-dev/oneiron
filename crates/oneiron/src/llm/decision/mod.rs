@@ -1,12 +1,18 @@
 //! Typed question records and shared outcome projection.
 
+mod asks;
+pub use asks::{AskAnswer, AskPrior, DecisionAsk, DecisionAsks};
 pub mod catalogue;
 mod codec;
+mod generated;
+pub use generated::{GeneratedDecisions, GeneratedRung};
 mod held;
 pub use held::HeldLadder;
 pub(crate) use held::{cut_text, fit_state};
 mod ladder;
 mod local;
+mod media;
+pub use media::*;
 mod policy;
 pub use local::{
     DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression,

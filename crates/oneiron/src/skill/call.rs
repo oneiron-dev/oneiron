@@ -106,7 +106,7 @@ fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
     reason = "the caller lends its existing lease, runtime, host, and deterministic step identity"
 )]
 pub fn execute_callable_skill(
-    vault: &Vault,
+    vault: &std::sync::Arc<Vault>,
     leased: &AttemptRecord,
     skill: &EntityId,
     executor: &str,
@@ -168,12 +168,24 @@ pub fn execute_callable_skill(
         seq,
         None,
     )?;
+    if tier != SandboxGuestTier::FirstPartyDreamer {
+        runtime.bind_foreign_egress(std::sync::Arc::new(
+            crate::code_sandbox::egress::OpenEgressProxy::new(
+                std::sync::Arc::clone(vault),
+                run_id,
+                crate::code_sandbox::egress::EgressConfig::from_env()
+                    .map_err(|e| Error::InvalidConfig(e.to_string()))?,
+            ),
+        ))?;
+    }
     let outcome = runtime.run_step(
         JsCodeModeStep {
             run_id,
             seq,
             script: &script,
-            boundary: SandboxBoundaryContract::for_tier(tier),
+            // A callable keeps its tier's imports but never the host file or
+            // credential services: the cut #1491 made for the executor.
+            boundary: SandboxBoundaryContract::for_tier(tier).without_host_services(),
             determinism,
         },
         &mut SkillHost(host),

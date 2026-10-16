@@ -134,6 +134,9 @@ pub const ENTITY_TYPE_FEDERATION_GRANT: u8 = 66;
 /// live.
 pub const ENTITY_TYPE_DIAGNOSTIC: u8 = 73;
 
+/// OF-537 actor-bound problem/proposal record, in the audit family.
+pub const ENTITY_TYPE_ISSUE: u8 = 76;
+
 // Byte 75 SUSPICIOUS_WAKE and byte 91 CLAIM_CLASS_DESCRIPTOR
 // are canon-reserved system bytes with no engine substrate yet. They
 // stay deliberately unregistered — present in the canon conformance census as

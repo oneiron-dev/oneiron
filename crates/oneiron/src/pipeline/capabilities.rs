@@ -5,7 +5,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::CapabilityHit;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
@@ -19,6 +19,14 @@ pub(super) const SKILL_RANK_CANDIDATE_LIMIT: usize = 256;
 
 pub(super) fn is_capability(kind: u8) -> bool {
     matches!(kind, ENTITY_TYPE_SKILL | ENTITY_TYPE_AGENT_DEF)
+}
+
+/// `learning.*` claims are measured state for the learning views only; they
+/// never enter companion memory.
+fn is_learning_claim(kind: u8, body: &[u8]) -> bool {
+    kind == ENTITY_TYPE_CLAIM
+        && crate::claim::decode_claim_body(body, true)
+            .is_ok_and(|claim| crate::learning::is_learning_predicate(&claim.predicate))
 }
 
 pub(crate) fn capability_hit(
@@ -70,6 +78,7 @@ pub(super) fn partition_capabilities(
     txn: &RoTxn<'_>,
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     executor: Option<&str>,
+    reliability: Option<&crate::skill_reliability::SkillReliabilityQuery>,
 ) -> Result<Vec<ScoredEntity>> {
     let mut memory = Vec::with_capacity(scores.len());
     let mut eligible = Vec::new();
@@ -100,10 +109,15 @@ pub(super) fn partition_capabilities(
     let mut total_pulls = 0_u32;
     let mut posteriors = HashMap::with_capacity(skill_ids.len());
     for id in &skill_ids {
-        let posterior =
-            crate::skill_reliability::selection_posterior_in_txn(vault, txn, id, executor)?;
-        // Observations are positive integer-valued Beta weights. Saturation
-        // keeps an extremely large candidate set from wrapping the horizon.
+        let posterior = crate::skill_reliability::selection_posterior_for_query_in_txn(
+            vault,
+            txn,
+            id,
+            executor,
+            reliability,
+        )?;
+        // Fractional own runs and weighted priors share the UCB horizon.
+        // Saturation keeps an extremely large set from wrapping it.
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -228,6 +242,7 @@ pub(super) fn memory_candidate_count(
         if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &scored.id)?
             && let Some(header) = EntityMetadataHeader::parse(&raw)
             && !is_capability(header.entity_type)
+            && !is_learning_claim(header.entity_type, &raw[ENTITY_METADATA_HEADER_LEN..])
         {
             count += 1;
         }
@@ -257,7 +272,8 @@ impl CapabilityLane {
             return Ok(false);
         };
         match self {
-            Self::Memory => Ok(!is_capability(header.entity_type)),
+            Self::Memory => Ok(!is_capability(header.entity_type)
+                && !is_learning_claim(header.entity_type, &raw[ENTITY_METADATA_HEADER_LEN..])),
             Self::Skill | Self::Agent => {
                 let expected = if self == Self::Skill {
                     ENTITY_TYPE_SKILL

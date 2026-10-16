@@ -88,6 +88,12 @@ pub(crate) trait RevokedTokenJtis {
     ) -> Option<ApiError> {
         None
     }
+    /// Whether `proof`'s facet bounds leave its holder unbound, the owner
+    /// exemption the read lane applies (owner ruling FACET-READ = A). Fails
+    /// closed: an unreadable owner check exempts nothing.
+    fn credential_facets_owner_exempt(&self, _proof: &oneiron::authority::VerifiedSlip) -> bool {
+        false
+    }
 }
 
 /// The server-local persistent registry: one `sync_state` row per revoked
@@ -126,6 +132,10 @@ impl RevokedTokenJtis for oneiron::Vault {
              `oneiron serve` and run `oneiron recover-clock`"
         );
         Some(ApiError::proof_clock_ahead())
+    }
+
+    fn credential_facets_owner_exempt(&self, proof: &oneiron::authority::VerifiedSlip) -> bool {
+        oneiron::Vault::credential_facets_owner_exempt(self, proof).unwrap_or(false)
     }
 
     fn is_revoked(&self, jti: &str) -> Result<bool, ()> {
@@ -263,6 +273,12 @@ pub(crate) struct CoreAuth {
     /// device until the request's own connection says otherwise; see
     /// [`caller_locality`].
     locality: CallerLocality,
+    /// The slip's facet bounds leave its holder unbound: the vault owner's
+    /// own credential, or a narrower one the owner still holds, judged by
+    /// the engine's read-key rule when the proof verified. A door that
+    /// refuses a facet narrowing admits this one; the read lane still judges
+    /// the owner binding in each read's own snapshot.
+    facets_owner_exempt: bool,
 }
 
 impl CoreAuth {
@@ -368,6 +384,7 @@ impl CoreAuth {
             verified_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
         })
     }
 
@@ -384,6 +401,7 @@ impl CoreAuth {
             verified_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
+            facets_owner_exempt: false,
         }
     }
 
@@ -674,6 +692,7 @@ fn core_auth_for_live_claims(
         verified_slip: None,
         instrument: None,
         locality: CallerLocality::OffDevice,
+        facets_owner_exempt: false,
     })
 }
 

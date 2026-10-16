@@ -5,14 +5,20 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use super::super::{BrokerIsolation, BudgetDenied, ModelId, ModelLocality};
+use super::super::{
+    BrokerIsolation, BudgetDenied, LlmInputUsage, LlmOutputUsage, ModelId, ModelLocality,
+};
 use super::admission::RunDenied;
 use super::declaration::{DeclarationEditor, LeaseUnit};
 use super::host::{AllocationRef, Payer};
+use crate::EntityId;
 
 /// One receipt row, with the run and the declaration revision it ran under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunReceipt {
+    /// Unique even when a host reuses a run name and a meter starts over.
+    pub instance: EntityId,
+    pub occurred_at: u64,
     pub run: String,
     pub revision: u32,
     #[serde(flatten)]
@@ -50,6 +56,12 @@ pub enum RunEvent {
     },
     Settled {
         lease: String,
+        dispatched: bool,
+        /// Provider token counts only; raw provider payloads never enter a receipt.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<RunTokenUsage>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        service_quantity: Option<u64>,
         units: u64,
         unit: LeaseUnit,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,6 +80,13 @@ pub enum RunEvent {
     },
 }
 
+/// Token facts reported by one physical model call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunTokenUsage {
+    pub input: LlmInputUsage,
+    pub output: LlmOutputUsage,
+}
+
 /// Everything one permit binds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PermitFacts {
@@ -75,6 +94,8 @@ pub struct PermitFacts {
     pub selector: Option<String>,
     /// The model id, or the paid connector.
     pub subject: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelId>,
     pub offer: String,
     pub route: String,
     pub locality: ModelLocality,
@@ -86,6 +107,8 @@ pub struct PermitFacts {
     pub unit: LeaseUnit,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allocation: Option<AllocationRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_unit: Option<LeaseUnit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allocation_reserved_units: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

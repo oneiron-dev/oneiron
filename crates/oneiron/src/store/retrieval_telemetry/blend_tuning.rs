@@ -29,6 +29,10 @@ pub(in crate::store) const RETRIEVAL_BLEND_WEIGHT_TABLE_KEY: &[u8] =
 const TABLE: SideTable<(), RetrievalBlendWeightTableEntry, Raw> =
     SideTable::new(&side_table::RETRIEVAL_BLEND_WEIGHTS_ACTIVE);
 
+/// ARCH-0037's hold-out: the newest accepted run and every fifth after it
+/// never train the update; they judge it against the active weights.
+const RETRIEVAL_BLEND_HOLDOUT_EVERY: usize = 5;
+
 impl RawValue for RetrievalBlendWeightTableEntry {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
         Ok(encode_retrieval_blend_weight_table(self)?)
@@ -87,6 +91,8 @@ impl Store {
         let mut reward_count = 0_usize;
         let mut component_count = 0_usize;
         let mut data_window = RetrievalBlendWeightDataWindow::default();
+        let mut holdout_gradient = [0.0_f64; 4];
+        let mut holdout_rewards = 0_usize;
 
         let mut accepted_runs = 0_usize;
         // Provisional runs are read and passed over until the sample is full:
@@ -106,6 +112,7 @@ impl Store {
                 return Err(Error::CorruptedIndex("retrieval run telemetry"));
             }
             accepted_runs += 1;
+            let held_out = (accepted_runs - 1) % RETRIEVAL_BLEND_HOLDOUT_EVERY == 0;
 
             let outcomes = retrieval_outcomes_for_run_in_txn(self, &rtxn, run_id)?;
             let run_reward_count_before = reward_count;
@@ -148,6 +155,13 @@ impl Store {
                 if outcome_component_count == 0 {
                     continue;
                 }
+                if held_out {
+                    for (total, outcome) in holdout_gradient.iter_mut().zip(outcome_gradient) {
+                        *total += outcome;
+                    }
+                    holdout_rewards += 1;
+                    continue;
+                }
                 for (total, outcome) in gradient.iter_mut().zip(outcome_gradient) {
                     *total += outcome;
                 }
@@ -185,6 +199,25 @@ impl Store {
             config.learning_rate,
             reward_count,
         )?;
+        // The update replaces the active row only when it does no worse than
+        // the active weights on the held-out runs it never trained on.
+        if holdout_rewards == 0 {
+            return Ok(Err(
+                "retrieval blend tuning requires a held-out reward outcome".to_owned(),
+            ));
+        }
+        let held_out_score = |w: RetrievalBlendWeights| -> f64 {
+            [w.recency, w.salience, w.confidence, w.gravity]
+                .into_iter()
+                .zip(holdout_gradient)
+                .map(|(weight, credit)| f64::from(weight) * credit)
+                .sum()
+        };
+        if held_out_score(weights) < held_out_score(previous.weights) {
+            return Ok(Err(
+                "retrieval blend tuning update did not pass the held-out gate".to_owned(),
+            ));
+        }
         let mut provenance = BTreeMap::new();
         provenance.insert("source".to_owned(), "RetrievalOutcomeRecord".to_owned());
         provenance.insert(

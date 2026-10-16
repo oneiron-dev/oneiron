@@ -8,7 +8,7 @@ pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;
 pub(crate) use pending_index::{defer_index_inputs, drop_staged_vectors};
-pub(crate) use phonetic::defer_phonetic;
+pub(crate) use phonetic::{defer_phonetic, index_name_phonetic};
 mod storage;
 mod turn_text;
 #[cfg(test)]
@@ -22,11 +22,11 @@ mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;
 
 #[cfg(feature = "sync")]
-pub(crate) use storage::entity_has_pending_revision;
+pub(crate) use storage::{capture_entity_document, entity_has_pending_revision};
 pub(crate) use storage::{
-    capture_entity_revision, ensure_document, entity_owns_revision_in_txn, publish_room_revision,
-    read_entity_revision_from_store_in_txn, read_entity_revision_in_txn, remove_entity_revisions,
-    revision_for_mode_in_txn, storage_manages_text, vectors_embed_body,
+    capture_entity_revision, ensure_document, entity_owns_revision_in_txn, fork_revision,
+    publish_room_revision, read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
+    remove_entity_revisions, revision_for_mode_in_txn, storage_manages_text, vectors_embed_body,
 };
 pub use types::{
     EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder,

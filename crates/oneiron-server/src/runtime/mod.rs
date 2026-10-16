@@ -3,9 +3,14 @@ mod gpu;
 pub use gpu::{
     GPU_LEASE_SECONDS, GPU_RENEW_SECONDS, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
 };
+mod gpu_pool;
+pub use gpu_pool::{GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPoolConfig};
 mod defaults;
 mod mode;
 mod routes;
+mod usage;
+pub use usage::VaultUsage;
+pub mod seat_login;
 
 pub use self::config::RuntimeConfig;
 pub use self::defaults::{

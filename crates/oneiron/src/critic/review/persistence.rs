@@ -86,6 +86,8 @@ pub(super) fn persist_review(
             receipts: Vec::new(),
         };
         let stored = StoredReview {
+            principal: request.actor.entity_ref(),
+            dissent: BTreeMap::new(),
             verdict: id.to_hex(),
             triage: triage.clone(),
             artifacts: artifacts.to_vec(),
@@ -150,67 +152,27 @@ pub(super) fn write_claim(
 
 pub(super) fn read_reliabilities(
     vault: &Vault,
-    session: &EntityId,
-    catalog: &LensCatalog,
+    artifacts: &[CritiqueArtifact],
 ) -> Result<Vec<CriticReliability>> {
     let mut rows = BTreeMap::new();
-    let rtxn = vault.store.env.read_txn()?;
-    for id in vault.claims_for_subject_in_txn(&rtxn, session)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
-            continue;
-        };
-        if !crate::claim::claim_surfaceable(&body) || !trusted_claim(vault, &rtxn, &id, &body)? {
+    for artifact in artifacts.iter().filter(|artifact| !artifact.out_of_scope) {
+        let cell = &artifact.calibration;
+        if rows.contains_key(&cell.digest()) {
             continue;
         }
-        for lens in &catalog.lenses {
-            if body.predicate == critic_reliability_predicate(&lens.domain, &lens.id)?
-                && crate::gate::claim_consolidation_eligible_in_txn(
-                    &vault.store,
-                    &rtxn,
-                    &id,
-                    crate::gate::ConsolidationReader::CriticReliability,
-                )?
-            {
-                rows.insert(
-                    (lens.domain.clone(), lens.id.clone()),
-                    reliability_from_body(&body, &lens.id, &lens.domain)?,
-                );
-            }
-        }
+        let estimate = crate::learning::read_learning(vault, cell, &[])?.estimate;
+        rows.insert(
+            cell.digest(),
+            CriticReliability::new(cell.clone(), estimate)?,
+        );
     }
     Ok(rows.into_values().collect())
-}
-pub(super) fn reliability_from_body(
-    body: &ClaimBody,
-    lens: &str,
-    domain: &str,
-) -> Result<CriticReliability> {
-    let Value::Map(fields) = &body.value else {
-        return Err(invalid_critic_config("invalid critic posterior"));
-    };
-    let field = |key| {
-        fields
-            .iter()
-            .find(|(k, _)| k.as_str() == Some(key))
-            .map(|(_, v)| v)
-    };
-    CriticReliability::new(
-        lens,
-        domain,
-        field("alpha")
-            .and_then(Value::as_f64)
-            .ok_or_else(|| invalid_critic_config("posterior alpha"))?,
-        field("beta")
-            .and_then(Value::as_f64)
-            .ok_or_else(|| invalid_critic_config("posterior beta"))?,
-        field("observations")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| invalid_critic_config("posterior observations"))?,
-    )
 }
 
 #[derive(Serialize, Deserialize)]
 struct StoredReview {
+    principal: EntityId,
+    dissent: BTreeMap<String, ReviewDissent>,
     verdict: String,
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
@@ -226,6 +188,20 @@ fn review_identity_hash(request: &ReviewRequest) -> Result<[u8; 32]> {
         request.actor.entity_ref().to_hex(),
         request.actor.actor_class() as u8,
         request.auto_resolve_threshold,
+        &request.type_ref,
+        &request.axis,
+        request
+            .critics
+            .iter()
+            .map(|critic| {
+                (
+                    &critic.lens_id,
+                    critic.lens_ref,
+                    critic.actor.entity_ref(),
+                    critic.actor.actor_class() as u8,
+                )
+            })
+            .collect::<Vec<_>>(),
     ))
     .map_err(|_| invalid_critic_config("review identity encode"))?;
     Ok(*blake3::hash(&bytes).as_bytes())
@@ -292,4 +268,81 @@ pub(super) fn persisted_artifact(
         .into_iter()
         .find(|artifact| artifact.artifact_id == artifact_id && !artifact.out_of_scope)
         .ok_or_else(|| invalid_critic_config("artifact is not a finding in this persisted review"))
+}
+
+/// Resume partial dissent retention without creating a second note or question.
+pub(super) fn dissent_state(
+    vault: &Vault,
+    verdict: &EntityId,
+    artifact: &str,
+) -> Result<(EntityId, ReviewDissent, CritiqueVerdict)> {
+    let txn = vault.store.env.read_txn()?;
+    let body = vault
+        .get_claim_in_txn(&txn, verdict)?
+        .ok_or(Error::EntityNotFound)?;
+    if !trusted_claim(vault, &txn, verdict, &body)? {
+        return Err(invalid_critic_config(
+            "dissent requires a producer-bound review",
+        ));
+    }
+    let hash = result_hash(vault, &txn, verdict)?;
+    let stored = RESULT
+        .get(&vault.store, &txn, &hash)?
+        .ok_or(Error::EntityNotFound)?;
+    let state = stored
+        .dissent
+        .get(artifact)
+        .cloned()
+        .unwrap_or_else(|| ReviewDissent {
+            artifact_id: artifact.to_owned(),
+            note: None,
+            question: None,
+            settled_fact: None,
+        });
+    Ok((stored.principal, state, stored.triage.verdict))
+}
+
+pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDissent) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let hash = result_hash(vault, txn, verdict)?;
+        let mut stored = RESULT
+            .get(&vault.store, txn, &hash)?
+            .ok_or(Error::EntityNotFound)?;
+        stored
+            .dissent
+            .insert(state.artifact_id.clone(), state.clone());
+        RESULT.put(&vault.store, txn, &hash, &stored)
+    })
+}
+
+fn result_hash(vault: &Vault, txn: &heed::RoTxn<'_>, verdict: &EntityId) -> Result<[u8; 32]> {
+    let pointer = RESULT_ID
+        .get(&vault.store, txn, verdict)?
+        .ok_or(Error::EntityNotFound)?;
+    pointer
+        .strip_prefix(RESULT.decl().prefix)
+        .and_then(|hash| hash.try_into().ok())
+        .ok_or(Error::CorruptedIndex("review result identity"))
+}
+
+pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
+    let txn = vault.store.env.read_txn()?;
+    RESULT
+        .scan_from(&vault.store, &txn, &[])?
+        .into_iter()
+        .filter(|(_, stored)| {
+            stored
+                .dissent
+                .values()
+                .any(|state| state.question.is_some())
+        })
+        .map(|(_, stored)| {
+            Ok(ReviewResult {
+                verdict_claim: EntityId::from_hex(&stored.verdict)?,
+                triage: stored.triage,
+                artifacts: stored.artifacts,
+                receipts: Vec::new(),
+            })
+        })
+        .collect()
 }

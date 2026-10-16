@@ -22,8 +22,8 @@ export_facade! {
 "vault.artifacts.put" => fn vault_artifacts_put(&self, input: BlobArtifactInput) -> EntityRefReceipt;
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView;
 "vault.artifacts.read" => fn vault_artifacts_read(&self, artifact_ref: String, version: u64) -> Option<Vec<u8>>;
+"connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt;
 "vault.consolidation.enqueue" => fn vault_consolidation_enqueue(&self, input: ConsolidationJobInput) -> DreamerJobRef;
 "vault.consolidation.status" => fn vault_consolidation_status(&self, job_ref: String) -> Option<DreamerJobView>;
 "vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt>;
-"connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt;
 }

@@ -273,6 +273,17 @@ side_tables! {
     /// This machine's residence choice (sync all or sync what it opened) and when it was made;
     /// node-local, never synced. Key: ().
     SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw;
+    /// The home's label beside a shelved sealed packet (OF-534 G7): u64be arrival ‖ the window
+    /// label its sender named. Key: hex64 (tag) ":" hex64 (packet digest).
+    SYNC_RESIDENCE_SEALED_LABEL: SyncState b"rsh:" Raw;
+    /// The home's next sealed-packet arrival number (u64be). Key: ().
+    SYNC_RESIDENCE_SEALED_NEXT: SyncState b"rsn" Raw;
+    /// The encoded Loro version vector of the last sealed packet this machine put on its home
+    /// for one window. Key: window key.
+    SYNC_RESIDENCE_SEALED_PUT: SyncState b"rsp:" Raw;
+    /// The last home arrival number this machine took sealed packets in through (u64be).
+    /// Key: ().
+    SYNC_RESIDENCE_SEALED_TAKEN: SyncState b"rst" Raw;
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;
@@ -280,6 +291,9 @@ side_tables! {
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
     /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.
     DEFERRED_SPAWNED_BY_ENDPOINT: SyncState b"se:" Raw;
+    /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
+    /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
+    SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
     /// An entity document's shallow-since version vector (document family). Key: hex32 (NOTE head
     /// id).
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
@@ -337,6 +351,15 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// The newest withdrawn generation (u64be `learned_at`) of a derived artifact whose
+    /// historical sweep finished: sync ingest refuses a body of that generation or older that is
+    /// not its content-free keyframe, and every sweep keeps rewriting such a carrier. Outlives
+    /// the `hw:` row it replaces. Key: hex32 (entity id).
+    DELETION_WITHDRAWN_GENERATION_FENCE: SyncState b"wg:" Raw;
+    /// The serve health check past a threshold (OF-520): one check per crossing subject, and
+    /// how far the check has read each kind of kept crossing. Key: "check:" string (the
+    /// subject) | "cursor:" string (the crossing kind, and a limits row's key).
+    WIRE_HEALTH_CHECK: SyncState b"wire:health:v1:" Named;
     /// A crossed `[limits]` row's question (OF-520) for one minute: the row's bound, the most it
     /// saw, and how many times it was crossed. Key: string (the row's key) ":" u64 (decimal,
     /// zero-padded to 20 digits; window start).

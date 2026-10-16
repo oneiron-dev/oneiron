@@ -26,6 +26,10 @@ impl AttemptPromotionSink {
 }
 
 impl ConsolidationSink for AttemptPromotionSink {
+    fn fork(&self) -> Option<Box<dyn ConsolidationSink>> {
+        Some(Box::new(Self::new(Arc::clone(&self.vault))))
+    }
+
     /// Unsealed candidates carry no run, so this sink refuses them.
     fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
         Err(Error::InvalidClaimBody(
@@ -46,6 +50,18 @@ impl ConsolidationSink for AttemptPromotionSink {
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
         };
         let outcome = promote_scoped_consolidation(&self.vault, &run, write, None)?;
+        let outputs: Vec<_> = outcome
+            .landed
+            .iter()
+            .chain(&outcome.pended)
+            .chain(&outcome.held)
+            .copied()
+            .collect();
+        crate::dreamer_consolidation::nightly_merge::record_outputs(
+            &self.vault,
+            attempt_id,
+            &outputs,
+        )?;
         if outcome.rejected.is_empty() {
             Ok(())
         } else {

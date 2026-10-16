@@ -25,12 +25,15 @@ mod admission;
 pub mod ai_host;
 mod api;
 mod auth;
+mod big_rung;
 mod broadcast;
 mod byte_line;
 pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod control_keys;
+pub mod decision_host;
+mod decision_verdict;
 mod device_local;
 mod embedder;
 pub mod error;
@@ -50,10 +53,14 @@ mod oneironer;
 mod owner;
 pub mod projection;
 mod protocol;
+pub mod replay_judge;
 pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
+mod wake_adapters;
+pub mod web_client;
+pub mod wire_health;
 pub mod wire_telemetry;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.
@@ -83,9 +90,32 @@ pub use crate::projection::View;
 /// which a `LocalSet` forbids; on a current-thread runtime they hold the only
 /// executor thread while they read.
 pub fn build_app(server: Arc<SyncServer>) -> Router {
+    let position = if server.managed_issuer.is_some() || server.vault().is_host_readable() {
+        web_client::DeploymentPosition::Cloud
+    } else {
+        web_client::DeploymentPosition::LocalDaemon
+    };
+    build_app_for_position(server, position)
+}
+
+/// The shared HTTP surface over a host-selected transport, including an
+/// in-process app's channel. A binding that embeds the router declares
+/// `Embedded` so discovery never describes its grants as a process boundary.
+pub fn build_app_for_position(
+    server: Arc<SyncServer>,
+    position: web_client::DeploymentPosition,
+) -> Router {
+    let mode = if server.managed_issuer.is_some() {
+        oneiron::HostingPrivacyPosture::Hosted
+    } else {
+        server.vault().privacy_posture()
+    };
     Router::new()
         .merge(handler::ws_routes(server.clone()))
         .merge(api::api_routes(server))
+        .merge(web_client::routes(web_client::EndpointDescriptor::engine(
+            position, mode,
+        )))
 }
 
 /// Builds the artifact-only app: `/a/` and nothing else, for a listener of

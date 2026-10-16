@@ -60,8 +60,60 @@ const SURFACE_PROBE: &str =
     r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
 const SURFACE_PROBE_ID: &str = "oneiron-mcp-bridge";
 
+/// Poll cadence and request bound for this small handoff, independent of
+/// the potentially much longer deadline of an agent's tool call.
+const WAKE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const WAKE_POLL_TIMEOUT: Duration = Duration::from_secs(8);
+
+struct WakePump(tokio::task::JoinHandle<()>);
+
+impl WakePump {
+    fn start(bridge: Arc<Bridge>, path: &Path) -> anyhow::Result<Self> {
+        let instance = crate::wake_adapters::Instance::load(path)?;
+        let runtime = tokio::runtime::Handle::try_current()?;
+        Ok(Self(runtime.spawn(async move {
+            let mut failed = false;
+            loop {
+                let polling = Arc::clone(&bridge);
+                let key = instance.key.clone();
+                let polled = tokio::task::spawn_blocking(move || polling.wakes(&key)).await;
+                match polled {
+                    Ok(Ok(delivery)) => {
+                        failed = false;
+                        instance.deliver(delivery, &bridge.named_env).await;
+                    }
+                    Ok(Err(refusal)) => {
+                        if !failed {
+                            eprintln!("oneiron wake: {}", refusal.rpc_error(&Value::Null));
+                        }
+                        failed = true;
+                    }
+                    Err(error) => {
+                        if !failed {
+                            eprintln!("oneiron wake poll did not finish: {error}");
+                        }
+                        failed = true;
+                    }
+                }
+                tokio::time::sleep(WAKE_POLL_INTERVAL).await;
+            }
+        })))
+    }
+}
+
+impl Drop for WakePump {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
+    let _wakes = args
+        .wake_config
+        .as_deref()
+        .map(|path| WakePump::start(Arc::clone(&bridge), path))
+        .transpose()?;
     let stdout = Arc::new(Mutex::new(io::stdout()));
     let mut stdin = io::stdin().lock();
     let mut in_flight: Vec<JoinHandle<()>> = Vec::new();
@@ -373,6 +425,29 @@ impl Bridge {
         )
     }
 
+    /// One host instance's wake handoff, never forwarded to MCP stdout.
+    fn wakes(
+        &self,
+        instance_key: &str,
+    ) -> Result<crate::wake_adapters::board_stream::BoardDelivery, Refusal> {
+        let id = json!("oneiron-wake-adapter");
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "oneiron/wakes",
+            "params": { "instance_key": instance_key },
+        });
+        let until = Instant::now() + self.deadline.min(WAKE_POLL_TIMEOUT);
+        let answer = self
+            .post(body.to_string().into_bytes(), until)?
+            .answer_to(&id)?;
+        let Some(delivery) = answer.get("result").cloned() else {
+            return Err(Refusal::Refused(answer));
+        };
+        serde_json::from_value(delivery)
+            .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
+    }
+
     fn post(&self, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
         let endpoint = self.endpoint(until)?;
         self.post_to(&endpoint, body, until)
@@ -509,7 +584,7 @@ impl Refusal {
                 id,
                 -32001,
                 "mcp_auth_required",
-                "the server refused this credential before MCP; it may be revoked or expired, so ask the vault owner for a new one",
+                "the server refused this credential before MCP; check --url names the vault that minted it. If revoked or expired, stop that vault, re-mint with `oneiron token agent --name <name> --tier <tier> --out <new-file> --config <vault-config>`, restart `oneiron serve --config <vault-config>`, and update --credential-file",
                 Some(body.clone()),
             ),
             Self::Refused(answer) => match answer.get("error") {
@@ -525,9 +600,16 @@ impl Refusal {
             Self::Server(message, body) => {
                 rpc_error(id, -32000, "server_error", message, Some(body.clone()))
             }
-            Self::Unreachable(message) => {
-                rpc_error(id, -32000, "server_unreachable", message, None)
-            }
+            Self::Unreachable(message) => rpc_error(
+                id,
+                -32000,
+                "server_unreachable",
+                &format!(
+                    "{message}; start the vault with `oneiron serve --config <vault-config>` \
+                         and check --url matches its host and port; MCP does not start a vault"
+                ),
+                None,
+            ),
             Self::TooLarge => rpc_error(
                 id,
                 -32000,
@@ -575,8 +657,13 @@ fn credential_env(name: &str) -> anyhow::Result<String> {
 /// its owner may read it, by its mode and by any ACL: a file the agent's
 /// other users can read is a credential they hold too.
 fn read_credential_file(path: &Path) -> anyhow::Result<(String, String)> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
+    let mut file = std::fs::File::open(path).map_err(|error| {
+        anyhow::anyhow!(
+            "open {}: {error}; pass the file written by `oneiron token agent --name \
+                 <name> --out <new-file> --config <vault-config>` (with the vault stopped)",
+            path.display()
+        )
+    })?;
     super::credential_file::admit(path, &file)?;
     let mut text = String::new();
     file.read_to_string(&mut text)

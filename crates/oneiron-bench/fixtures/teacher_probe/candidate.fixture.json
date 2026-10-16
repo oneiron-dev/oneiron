@@ -13,7 +13,7 @@
     },
     "extraction_encoder": {
       "model": "fixture/extraction_encoder@v1",
-      "slot": "llm",
+      "slot": "oneironer",
       "tier": "configured"
     },
     "extraction_teacher": {
@@ -68,6 +68,11 @@
     },
     "tts_deferred": {
       "model": "fixture/tts_deferred@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
+    "local_vision": {
+      "model": "fixture/local_vision@v1",
       "slot": "llm",
       "tier": "configured"
     }
