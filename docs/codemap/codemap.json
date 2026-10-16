@@ -59297,7 +59297,7 @@
      "path": "src/context.rs",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
