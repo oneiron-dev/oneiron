@@ -162,10 +162,11 @@ fn json_field<T: serde::de::DeserializeOwned>(
 ) -> MemoryResult<Option<T>> {
     match value {
         None | Some(serde_json::Value::Null) => Ok(None),
-        Some(value) => Ok(Some(
-            serde_json::from_value(value)
-                .map_err(|_| invalid(&format!("{field} is not a valid value")))?,
-        )),
+        Some(value) => {
+            Ok(Some(serde_json::from_value(value).map_err(|_| {
+                invalid(&format!("{field} is not a valid value"))
+            })?))
+        }
     }
 }
 
@@ -176,7 +177,13 @@ impl Memory<'_> {
 
     fn artifact_moment(&self) -> (TimeRange, u64) {
         let now = self.vault().now_recorded_at();
-        (TimeRange { start: now, end: now }, now)
+        (
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
     }
 
     /// A person's settle is the owner's consent; an agent's rides a standing
@@ -185,8 +192,8 @@ impl Memory<'_> {
         if self.actor_class() == EdgeActorClass::Human {
             return Ok(SettleConsent::OwnerConsent { brief_ref });
         }
-        let brief_ref =
-            brief_ref.ok_or_else(|| invalid("an agent's settle names the brief its grant covers"))?;
+        let brief_ref = brief_ref
+            .ok_or_else(|| invalid("an agent's settle names the brief its grant covers"))?;
         Ok(SettleConsent::StandingGrant { brief_ref })
     }
 
@@ -244,10 +251,10 @@ impl Memory<'_> {
             }
             (None, None, None, None, Some(run_ref)) => BornFromSource::AgentRun(run_ref.clone()),
             _ => {
-                return Err(
-                    invalid("name exactly one of task_ref, ask_ref, run_ref, skill_ref or agent_run")
-                        .into(),
-                );
+                return Err(invalid(
+                    "name exactly one of task_ref, ask_ref, run_ref, skill_ref or agent_run",
+                )
+                .into());
             }
         };
         let born = match &source {

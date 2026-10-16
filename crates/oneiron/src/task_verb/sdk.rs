@@ -93,6 +93,34 @@ pub struct RoomClaimRequest {
     pub room_ref: String,
     pub turn_ref: String,
 }
+/// `vault.rooms.host`: the room, and the live session whose participants
+/// count as present beside the caller.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoomHostRequest {
+    pub room_ref: String,
+    #[serde(default)]
+    pub session_ref: Option<String>,
+}
+/// `vault.companions.sharing.get`: a companion's PERSON and the contact her
+/// source vault's clearance is about.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionSharingRequest {
+    pub companion_ref: String,
+    pub contact_ref: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRefRequest {
+    pub workspace_ref: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkCompanionSetRequest {
+    pub workspace_ref: String,
+    pub policy: crate::workspace_roster::WorkCompanionPolicy,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -182,6 +210,9 @@ pub struct RecallRequest {
 }
 
 pub use super::recall_door::{RecallDoor, recall_at_door, recall_with_vector};
+pub use super::sdk_connector::*;
+pub use super::sdk_host::*;
+pub use super::sdk_self::*;
 
 /// `vault.receipts`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
