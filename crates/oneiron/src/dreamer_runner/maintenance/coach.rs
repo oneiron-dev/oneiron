@@ -49,13 +49,42 @@ pub const COACH_TRIPWIRES_FACET: &str = "coach.tripwires";
 /// ARCH-0079): a pending skill tradeoff ask that waited out a reminder window
 /// climbs one rung of its role chain, ending at the vault owners.
 pub const COACH_TRADEOFF_ESCALATION_FACET: &str = "coach.tradeoff_escalation";
+/// Training offers (OF-577), drafted on the host from the offer skill's draft
+/// and recorded through [`Vault::run_coach_training_offer`].
+pub const COACH_TRAINING_OFFER_FACET: &str = "coach.training_offer";
+/// One offer's promise check, queued for the host on the offer's check date.
+/// The host reads the receipts since and records what they showed through
+/// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
+pub const COACH_OFFER_CHECK_FACET: &str = "coach.offer_check";
+/// The nightly offer pass: each pending offer reaches every owner's inbox
+/// once, and each offer whose check date came queues its promise check.
+pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
+/// Autoresearch (OF-351): one selection round for each bound campaign whose
+/// measured evidence moved, under the campaign's lease.
+pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
+/// Observe, learning upkeep: the cell re-projection that keeps the window
+/// fading runs no new evidence reached, and the coordination re-derivation
+/// of every labeled or projected run.
+pub const COACH_LEARNING_SWEEP_FACET: &str = "coach.learning_sweep";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
+/// Producer name of a pending training offer's inbox NOTIFICATION.
+pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 3] = [
+const HOST_FACETS: [&str; 4] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
+    COACH_TRAINING_OFFER_FACET,
+];
+/// The Coach's closed-form nightly jobs, which the wake driver runs.
+const MAINTENANCE_FACETS: [&str; 6] = [
+    COACH_READ_HARDENING_FACET,
+    COACH_TRIPWIRES_FACET,
+    COACH_TRADEOFF_ESCALATION_FACET,
+    COACH_TRAINING_OFFERS_FACET,
+    COACH_RESEARCH_SELECT_FACET,
+    COACH_LEARNING_SWEEP_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
@@ -117,57 +146,20 @@ impl DreamerRunnerStore<'_> {
                 now,
             )?;
         }
-        self.enqueue_kind_in_txn(
-            txn,
-            MAINTENANCE_QUEUE_KIND,
-            DreamerAttemptPayload {
-                attempt_type: COACH_READ_HARDENING_FACET.into(),
-                input: Value::Nil,
-                parent_attempt,
-            },
-            wake_key.map(|key| {
-                format!(
-                    "{COACH_READ_HARDENING_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
-            run_id.clone(),
-            now,
-        )?;
-        self.enqueue_kind_in_txn(
-            txn,
-            MAINTENANCE_QUEUE_KIND,
-            DreamerAttemptPayload {
-                attempt_type: COACH_TRIPWIRES_FACET.into(),
-                input: Value::Nil,
-                parent_attempt,
-            },
-            wake_key.map(|key| {
-                format!(
-                    "{COACH_TRIPWIRES_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
-            run_id.clone(),
-            now,
-        )?;
-        self.enqueue_kind_in_txn(
-            txn,
-            MAINTENANCE_QUEUE_KIND,
-            DreamerAttemptPayload {
-                attempt_type: COACH_TRADEOFF_ESCALATION_FACET.into(),
-                input: Value::Nil,
-                parent_attempt,
-            },
-            wake_key.map(|key| {
-                format!(
-                    "{COACH_TRADEOFF_ESCALATION_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
-            run_id,
-            now,
-        )?;
+        for facet in MAINTENANCE_FACETS {
+            self.enqueue_kind_in_txn(
+                txn,
+                MAINTENANCE_QUEUE_KIND,
+                DreamerAttemptPayload {
+                    attempt_type: facet.into(),
+                    input: Value::Nil,
+                    parent_attempt,
+                },
+                wake_key.map(|key| format!("{facet}:{}", blake3::hash(key.as_bytes()).to_hex())),
+                run_id.clone(),
+                now,
+            )?;
+        }
         Ok(())
     }
 
@@ -326,6 +318,40 @@ impl Vault {
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.
+    /// Records the offer skill's draft as the Coach, under a leased
+    /// `coach.training_offer` attempt. The offer waits on the owner; the
+    /// nightly offer pass delivers it.
+    pub fn run_coach_training_offer(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        draft: crate::skill_optimize::TrainingOfferDraft,
+        now: u64,
+    ) -> Result<crate::skill_optimize::TrainingOffer> {
+        self.require_coach_attempt(attempt, COACH_TRAINING_OFFER_FACET)?;
+        let offer =
+            crate::skill_optimize::record_training_offer(self, attempt.status.attempt.id, draft, now)?;
+        self.with_write_txn_grouped(|txn| {
+            let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
+            notify_offer_in_txn(self, txn, &owners, &offer)
+        })?;
+        // The digest deadline re-reads: a pending offer arms it.
+        self.store.notify_proactivity_changes();
+        Ok(offer)
+    }
+
+    /// Records what the receipts since showed against one offer's promise,
+    /// under the leased `coach.offer_check` attempt its check date queued.
+    pub fn run_coach_offer_check(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        input: crate::skill_optimize::OfferCheckInput,
+        now: u64,
+    ) -> Result<crate::skill_optimize::OfferCheck> {
+        self.require_coach_attempt(attempt, COACH_OFFER_CHECK_FACET)?;
+        let offer = offer_check_target(&attempt.status.payload.input)?;
+        crate::skill_optimize::record_offer_check(self, &offer, input, now)
+    }
+
     fn require_coach_attempt(&self, attempt: &DreamerAdmittedAttempt, facet: &str) -> Result<()> {
         let stamp = self
             .dreamer_attempt_authority(attempt.status.attempt.id)?
@@ -394,6 +420,122 @@ pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
             }
             Ok(())
         })?;
+    }
+    Ok(())
+}
+
+/// The offer a `coach.offer_check` job checks.
+fn offer_check_target(input: &Value) -> Result<EntityId> {
+    match input {
+        Value::Map(fields) if fields.len() == 1 && fields[0].0.as_str() == Some("offer") => {
+            EntityId::from_hex(fields[0].1.as_str().ok_or_else(invalid)?).map_err(|_| invalid())
+        }
+        _ => Err(invalid()),
+    }
+}
+
+/// One pending offer in every owner's inbox, keyed by offer and owner: a
+/// replay finds the row, so an owner's seen and acked marks stay theirs.
+fn notify_offer_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owners: &[EntityId],
+    offer: &crate::skill_optimize::TrainingOffer,
+) -> Result<()> {
+    let id = offer.id.to_hex();
+    for owner in owners {
+        vault.record_notification_in_txn(
+            txn,
+            &crate::inbox::NotificationEvent {
+                kind: crate::inbox::NotificationKind::Ask,
+                source: crate::inbox::NotificationSource {
+                    producer: TRAINING_OFFER_NOTIFICATION_PRODUCER.to_owned(),
+                    event: format!("{id}:{}", owner.to_hex()),
+                    result: Some(id.clone()),
+                    ..crate::inbox::NotificationSource::default()
+                },
+                subject_refs: Vec::new(),
+                recipient: Some(*owner),
+                created_at: offer.offered_at,
+                origin_conversation: None,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// The nightly offer pass. Each pending offer reaches every owner's inbox as
+/// one NOTIFICATION keyed by offer and owner, so a replayed night delivers
+/// nothing twice and the owner's seen and acked marks stay theirs. Each
+/// offer whose check date came, and that has no check yet, queues its
+/// promise check for the host; the queue's dedupe keeps one per offer.
+pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
+    let pending = crate::skill_optimize::pending_training_offers(vault)?;
+    let mut due = Vec::new();
+    for (offer, _) in crate::skill_optimize::training_offers(vault, None)? {
+        if offer.check_at <= now
+            && crate::skill_optimize::training_offer_checks(vault, &offer.id)?.is_empty()
+        {
+            due.push(offer.id);
+        }
+    }
+    if pending.is_empty() && due.is_empty() {
+        return Ok(());
+    }
+    let store = DreamerRunnerStore::new(vault);
+    vault.with_write_txn_grouped(|txn| {
+        let owners = crate::policy_model::owners_in_txn(vault, &*txn)?;
+        for offer in &pending {
+            notify_offer_in_txn(vault, txn, &owners, offer)?;
+        }
+        for offer in &due {
+            store.enqueue_kind_in_txn(
+                txn,
+                COACH_HOST_QUEUE_KIND,
+                DreamerAttemptPayload {
+                    attempt_type: COACH_OFFER_CHECK_FACET.into(),
+                    input: Value::Map(vec![(Value::from("offer"), Value::from(offer.to_hex()))]),
+                    parent_attempt: None,
+                },
+                Some(format!("{COACH_OFFER_CHECK_FACET}:{}", offer.to_hex())),
+                None,
+                now,
+            )?;
+        }
+        Ok(())
+    })
+}
+
+/// The autoresearch tick: one selection round for each bound campaign the
+/// loop's own record says is due. The round reads the campaign's lease and
+/// pauses, never fails, on an empty budget. A campaign whose round errs is
+/// left for the next night; the others still run.
+pub(super) fn run_research_select(vault: &Vault, now: u64) -> Result<()> {
+    use crate::autoreason_campaign::research;
+    for root in research::bound_research_roots(vault)? {
+        if !research::research_round_due(vault, root)? {
+            continue;
+        }
+        if let Err(error) = research::select_next(
+            vault,
+            root,
+            crate::autoreason_campaign::selection::OracleSignal::NoSignal,
+            now,
+        ) {
+            tracing::warn!(kind = ?error.kind(), "autoresearch round did not run");
+        }
+    }
+    Ok(())
+}
+
+/// The nightly learning upkeep. A run whose coordination will not derive is
+/// left for the next night; the others still run.
+pub(super) fn run_learning_sweep(vault: &Vault, now: u64) -> Result<()> {
+    crate::learning::reproject_all_cells(vault, now)?;
+    for run in crate::learning::coordination_runs(vault)? {
+        if let Err(error) = crate::learning::project_run_coordination(vault, &run, now) {
+            tracing::warn!(kind = ?error.kind(), "run coordination did not derive");
+        }
     }
     Ok(())
 }

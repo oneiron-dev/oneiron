@@ -67,6 +67,9 @@ pub enum NotificationKind {
     ImportFinished,
     /// A built proactivity digest; `source.result` names its id.
     Digest,
+    /// A decision waiting on its recipient; `source.producer` names what
+    /// asks and `source.result` the thing to answer.
+    Ask,
 }
 
 impl NotificationKind {

@@ -1,6 +1,8 @@
 //! `/v1/owner/proactivity`, `/v1/owner/stewardship` and
 //! `/v1/owner/representation` (OF-194): the owner's read of a delivered
 //! digest, their keep-in-touch rules, and the review of a drafted follow-up.
+//! `/v1/owner/coach/training-offers` (OF-577) answers the Coach's offers the
+//! inbox and digest deliver; an answer records an intent and applies nothing.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -18,6 +20,7 @@ use oneiron::dreamer_runner::maintenance::representation::{
 };
 use oneiron::dreamer_runner::maintenance::stewardship::{StewardshipRule, StewardshipRules};
 use oneiron::memory::OutboundScheduleContext;
+use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, TrainingOffer};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -34,6 +37,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/representation", get(review_representation))
         .route("/representation/approve", post(approve_representation))
         .route("/representation/decline", post(decline_representation))
+        .route("/coach/training-offers", get(training_offers))
+        .route("/coach/training-offers/answer", post(answer_training_offer))
 }
 
 fn now_secs() -> u64 {
@@ -253,4 +258,53 @@ async fn decline_representation(
     })
     .await?;
     Ok(Json(()))
+}
+
+/// `GET /v1/owner/coach/training-offers`: the offers awaiting the owner.
+async fn training_offers(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<TrainingOffer>> {
+    owner(&auth, &server)?;
+    let offers = blocking(move || {
+        Ok(oneiron::skill_optimize::pending_training_offers(
+            server.vault(),
+        )?)
+    })
+    .await?;
+    Ok(Json(offers))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnswerTrainingOffer {
+    /// An offer id, as 32 hex.
+    offer: String,
+    /// The offer's `digest`: the answer binds the snapshot shown.
+    digest: String,
+    answer: OfferAnswer,
+}
+
+/// `POST /v1/owner/coach/training-offers/answer`: the owner's answer to the
+/// exact offer they saw.
+async fn answer_training_offer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<AnswerTrainingOffer>, JsonRejection>,
+) -> OwnerReply<OfferAnswerRecord> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let record = blocking(move || -> OwnerResult<OfferAnswerRecord> {
+        let offer = entity_id("offer", &request.offer)?;
+        Ok(oneiron::skill_optimize::settle_training_offer(
+            server.vault(),
+            &owner,
+            &offer,
+            &request.digest,
+            request.answer,
+            now_secs(),
+        )?)
+    })
+    .await?;
+    Ok(Json(record))
 }

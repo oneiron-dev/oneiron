@@ -149,6 +149,15 @@ pub(crate) fn execute(
         coach::COACH_TRADEOFF_ESCALATION_FACET => {
             coach::run_tradeoff_escalation(ctx.vault, ctx.now_ms / 1000)?;
         }
+        coach::COACH_TRAINING_OFFERS_FACET => {
+            coach::run_training_offers(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_RESEARCH_SELECT_FACET => {
+            coach::run_research_select(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        coach::COACH_LEARNING_SWEEP_FACET => {
+            coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;
+        }
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })

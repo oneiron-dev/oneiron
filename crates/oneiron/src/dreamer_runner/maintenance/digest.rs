@@ -23,6 +23,8 @@ const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
 /// Producer name of a delivered digest's inbox NOTIFICATION.
 pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
+/// The derived group pending training offers (OF-577) render under.
+pub const TRAINING_OFFER_GROUP: &str = "coach.training_offer";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -109,6 +111,16 @@ pub struct DigestProposal {
     pub revision: [u8; 32],
     pub summary: String,
 }
+/// One pending training offer the digest carries to the owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DigestOffer {
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub offer: EntityId,
+    /// The offer digest the owner's answer binds.
+    pub digest: String,
+    pub summary: String,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityDigest {
@@ -121,6 +133,9 @@ pub struct ProactivityDigest {
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
     pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
+    /// Pending training offers not carried by an earlier digest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offers: Vec<DigestOffer>,
     pub rendered: String,
     pub voice_style: String,
 }
@@ -130,6 +145,10 @@ struct DigestState {
     last_regular: Option<u64>,
     last_digest_id: Option<[u8; 32]>,
     seen: BTreeMap<String, [u8; 32]>,
+    /// Training offers a digest already carried. An offer is immutable, so
+    /// its id is enough.
+    #[serde(default)]
+    offers_seen: std::collections::BTreeSet<String>,
 }
 impl Vault {
     pub fn set_proactivity_cadence(
@@ -214,6 +233,7 @@ impl Vault {
     /// arms its existing deadline timer from this row; no engine poll exists.
     pub fn next_proactivity_digest_at(&self) -> Result<Option<u64>> {
         let authority = self.dreamer_authority()?.entity_ref();
+        let offers = crate::skill_optimize::pending_training_offers(self)?;
         let txn = self.store.env.read_txn()?;
         let cadence = load_cadence(self, &txn)?;
         let state = load_state(self, &txn)?;
@@ -223,7 +243,9 @@ impl Vault {
         if self.store.proactivity_digest_suspended() {
             return Ok(None);
         }
-        if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty() {
+        if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty()
+            && unseen_offers(&offers, &state).is_empty()
+        {
             return Ok(None);
         }
         Ok(Some(state.last_regular.map_or(0, |last| {
@@ -279,6 +301,7 @@ impl Vault {
         urgent: Option<&UrgentDigestWake>,
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
+        let pending_offers = crate::skill_optimize::pending_training_offers(self)?;
         self.with_write_txn_grouped(|txn| {
             let recipient = owner
                 .map(|owner| super::validate_owner_in_txn(self, txn, owner))
@@ -344,7 +367,13 @@ impl Vault {
                 }
                 _ => Vec::new(),
             };
-            if groups.is_empty() && judge_asks.is_empty() {
+            // Offers ride the regular cadence; an urgent wake is about its intent.
+            let offers = if due {
+                unseen_offers(&pending_offers, &state)
+            } else {
+                Vec::new()
+            };
+            if groups.is_empty() && judge_asks.is_empty() && offers.is_empty() {
                 return Ok(None);
             }
             let mut rendered = String::new();
@@ -363,12 +392,29 @@ impl Vault {
                         .insert(proposal.claim_ref.to_hex(), proposal.revision);
                 }
             }
+            if !offers.is_empty() {
+                let group = presentation
+                    .group_aliases
+                    .get(TRAINING_OFFER_GROUP)
+                    .map_or(TRAINING_OFFER_GROUP, String::as_str);
+                rendered.push_str(&presentation.group_template.replace("{group}", group));
+                for offer in &offers {
+                    rendered.push_str(
+                        &presentation
+                            .item_template
+                            .replace("{summary}", &offer.summary)
+                            .replace("{ref}", &offer.offer.to_hex()),
+                    );
+                    state.offers_seen.insert(offer.offer.to_hex());
+                }
+            }
             let is_urgent = !due && breakthrough && !groups.is_empty();
             let identity = serde_json::to_vec(&(
                 now,
                 recipient,
                 &groups,
                 &judge_asks,
+                &offers,
                 is_urgent,
                 &rendered,
                 &presentation.voice_style,
@@ -381,6 +427,7 @@ impl Vault {
                 urgent: is_urgent,
                 groups,
                 judge_asks,
+                offers,
                 rendered,
                 voice_style: presentation.voice_style,
             };
@@ -414,7 +461,7 @@ impl Vault {
             }
             // The vault state and board pointer follow the shared proposals;
             // an asks-only digest is the recipient's and moves only its mark.
-            if !digest.groups.is_empty() {
+            if !digest.groups.is_empty() || !digest.offers.is_empty() {
                 if due {
                     state.last_regular = Some(now);
                 }
@@ -470,6 +517,7 @@ impl Vault {
                     digest.recipient,
                     &digest.groups,
                     &digest.judge_asks,
+                    &digest.offers,
                     digest.urgent,
                     &digest.rendered,
                     &digest.voice_style,
@@ -486,6 +534,24 @@ impl Vault {
 #[cfg(test)]
 mod tests;
 
+/// The pending offers no digest carried yet, as the digest shows them.
+fn unseen_offers(
+    pending: &[crate::skill_optimize::TrainingOffer],
+    state: &DigestState,
+) -> Vec<DigestOffer> {
+    pending
+        .iter()
+        .filter(|offer| !state.offers_seen.contains(&offer.id.to_hex()))
+        .map(|offer| DigestOffer {
+            offer: offer.id,
+            digest: offer.digest.clone(),
+            summary: format!(
+                "{TRAINING_OFFER_GROUP}: {}",
+                serde_json::to_string(&offer.candidate).unwrap_or_default()
+            ),
+        })
+        .collect()
+}
 fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCadence> {
     let row: ProactivityCadence = match CADENCE.get(&vault.store, txn, &())? {
         Some(row) => row,
