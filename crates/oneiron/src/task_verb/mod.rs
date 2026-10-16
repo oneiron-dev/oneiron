@@ -18,6 +18,7 @@ mod ask_soft_confirm_types;
 mod ask_types;
 mod board_task;
 pub(crate) use board_task::board_task_for_id;
+mod brief;
 mod consts;
 mod consult_fanout_admission;
 mod consult_fanout_facade;
@@ -31,9 +32,16 @@ mod consult_result;
 mod create_facade;
 mod create_spec;
 mod create_validation;
+mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
 mod follow_up;
+mod highway;
+mod highway_accept;
+mod highway_post;
+mod highway_report;
+mod highway_status;
+mod highway_types;
 mod lifecycle_facade;
 mod linear_store;
 mod owner_index;
@@ -93,6 +101,19 @@ pub use terminal_state::{
     TaskTerminalRecord, board_status_for_disposition, merge_task_terminal_register,
 };
 pub use verb_kind::{TaskAssignee, TaskKind, TaskTtl};
+
+pub use brief::{
+    BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion,
+    DoneMeans, EscalationRule, EscalationTrigger, PinnedPack, PinnedRef, QueueTaskBrief, SpawnPins,
+    StoredBrief, TypeRef, brief_digest,
+};
+pub use decision_port::TaskDecisions;
+pub(crate) use highway_post::settle_task_proposal_in_txn;
+pub use highway_types::{
+    AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
+    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
+    TaskStatusQuery, TaskStatusView, TaskVia,
+};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
