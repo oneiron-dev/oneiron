@@ -688,7 +688,7 @@ fn an_act_whose_record_was_erased_without_its_claim_reads_as_erased() {
     let act = hold_b(&owners);
     owners
         .vault
-        .delete_entity_with_reason(&owners.b, DeleteReason::UserHardDelete)
+        .delete_entity_with_reason(&owners.b, crate::deletion::DeleteReason::UserHardDelete)
         .expect("another delete erases the held record");
     owners.clock.set(100 + WEEK);
 

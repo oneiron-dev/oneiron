@@ -893,6 +893,7 @@ fn an_act_row_stored_before_execution_state_reads_as_unexecuted() -> Result<()> 
             .vault_meta
             .get(&txn, &row)?
             .ok_or_else(invalid)?
+            .to_vec()
     };
     let before: StoredBefore =
         serde_json::from_slice(&stored).expect("an earlier build reads an unexecuted row");
