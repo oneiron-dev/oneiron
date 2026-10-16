@@ -115,7 +115,8 @@ pub fn calibration_pairs(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             true,
         )?;
-        let derived_from = derived_rows(question, answer, outcome.fact, &body);
+        let mut derived_from = derived_rows(question, answer, outcome.fact, &body);
+        derived_from.extend(crate::reaction::outcome_sources(&body)?);
         if !kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)? {
             continue;
         }

@@ -42,7 +42,10 @@ pub trait ReceiptAttributionSource {
     /// A terminal self-report is not an anchor. Return a later held-out,
     /// owner, world or audit receipt only when that observation has settled.
     /// Receipts are revisited, so a late outcome need not arrive at capture.
-    fn anchored_outcome(&self, _receipt: &ReceiptRecord) -> Result<Option<super::AnchoredPackOutcome>> {
+    fn anchored_outcome(
+        &self,
+        _receipt: &ReceiptRecord,
+    ) -> Result<Option<super::AnchoredPackOutcome>> {
         Ok(None)
     }
 }
@@ -141,14 +144,20 @@ pub fn run_task_attribution_sweep_with_decisions(
             }
         };
         match super::project_anchored_pack_outcome(
-            vault, &receipt.receipt_id, &outcome, crate::unix_seconds_now(),
+            vault,
+            &receipt.receipt_id,
+            &outcome,
+            crate::unix_seconds_now(),
         ) {
             Ok(credit) => {
-                for subject in credit.direct_subjects.iter()
+                for subject in credit
+                    .direct_subjects
+                    .iter()
                     .chain(credit.shares.iter().map(|share| &share.subject))
                 {
                     if vault.get_raw(subject)?.and_then(|raw| {
-                        crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.entity_type)
+                        crate::batch::EntityMetadataHeader::parse(&raw)
+                            .map(|header| header.entity_type)
                     }) == Some(crate::registry::ENTITY_TYPE_SKILL)
                         && !report.skills.contains(subject)
                     {

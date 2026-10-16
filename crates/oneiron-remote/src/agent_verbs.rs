@@ -34,181 +34,207 @@ impl OneironClient {
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
-            Backend::Remote(client) => {
-                match verb {
-                    "self.memory.diary" => remote_agent_verb_output::<
-                        oneiron::task_verb::sdk::DiaryEntryReceipt,
-                    >(client, verb, &input),
-                    "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
+            Backend::Remote(client) => match verb {
+                "self.memory.diary" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DiaryEntryReceipt,
+                >(client, verb, &input),
+                "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
+                    client, verb, &input,
+                ),
+                "steer" => remote_agent_verb_output::<oneiron::task_verb::sdk::SteerReceipt>(
+                    client, verb, &input,
+                ),
+                "describe" => remote_agent_verb_output::<oneiron::task_verb::TaskDescription>(
+                    client, verb, &input,
+                ),
+                "tasks.create" => {
+                    remote_agent_verb_output::<oneiron::task_verb::TaskCreateReceipt>(
                         client, verb, &input,
-                    ),
-                    "steer" => remote_agent_verb_output::<oneiron::task_verb::sdk::SteerReceipt>(
-                        client, verb, &input,
-                    ),
-                    "describe" => remote_agent_verb_output::<oneiron::task_verb::TaskDescription>(
-                        client, verb, &input,
-                    ),
-                    "tasks.create" => remote_agent_verb_output::<
-                        oneiron::task_verb::TaskCreateReceipt,
-                    >(client, verb, &input),
-                    "tasks.update" => remote_agent_verb_output::<
-                        oneiron::task_verb::TaskUpdateReceipt,
-                    >(client, verb, &input),
-                    "vault.witness" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
-                        client, verb, &input,
-                    ),
-                    "vault.claims.upsert" => remote_agent_verb_output::<
-                        oneiron::memory::CommitReceipt,
-                    >(client, verb, &input),
-                    "vault.recall" => remote_agent_verb_output::<oneiron::memory::MemoryPack>(
-                        client, verb, &input,
-                    ),
-                    "vault.export" => remote_agent_verb_output::<oneiron::memory::MemoryExport>(
-                        client, verb, &input,
-                    ),
-                    "vault.receipts" => remote_agent_verb_output::<
-                        Vec<oneiron::memory::MemoryReceipt>,
-                    >(client, verb, &input),
-                    "vault.kv.get" => remote_agent_verb_output::<
-                        Option<oneiron::memory::KeyValueItem>,
-                    >(client, verb, &input),
-                    "vault.kv.put" => {
-                        remote_agent_verb_output::<oneiron::memory::KeyValuePutReceipt>(
-                            client, verb, &input,
-                        )
-                    }
-                    "vault.kv.delete" => remote_agent_verb_output::<
-                        oneiron::memory::KeyValueDeleteReceipt,
-                    >(client, verb, &input),
-                    "vault.kv.search" => remote_agent_verb_output::<
-                        Vec<oneiron::memory::KeyValueItem>,
-                    >(client, verb, &input),
-                    "vault.kv.namespaces" => {
-                        remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
-                    }
-                    "vault.packs.put" => remote_agent_verb_output::<
-                        oneiron::task_verb::sdk::PackPutReceipt,
-                    >(client, verb, &input),
-                    "vault.artifacts.view" => remote_agent_verb_output::<
-                        Option<oneiron::blob_artifact::ArtifactView>,
-                    >(client, verb, &input),
-                    "vault.artifacts.export" => remote_agent_verb_output::<
-                        Option<oneiron::blob_artifact::ArtifactExportFile>,
-                    >(client, verb, &input),
-                    "vault.artifacts.born_from" => remote_agent_verb_output::<
-                        oneiron::blob_artifact::BornFromView,
-                    >(client, verb, &input),
-                    "vault.artifacts.proposals" => remote_agent_verb_output::<
-                        Vec<oneiron::edit_settle::PendingProposalView>,
-                    >(client, verb, &input),
-                    "vault.artifacts.waits" => remote_agent_verb_output::<
-                        Vec<oneiron::edit_settle::OrganWaitView>,
-                    >(client, verb, &input),
-                    "vault.artifacts.release_wait" => remote_agent_verb_output::<
-                        oneiron::blob_artifact::ReleasedWait,
-                    >(client, verb, &input),
-                    "vault.artifacts.propose_deck" => remote_agent_verb_output::<
-                        oneiron::blob_artifact::DeckProposeOutcome,
-                    >(client, verb, &input),
-                    "vault.artifacts.propose_output" => remote_agent_verb_output::<
-                        oneiron::edit_settle::PendingProposalView,
-                    >(client, verb, &input),
-                    "vault.artifacts.keep" => remote_agent_verb_output::<
-                        oneiron::blob_artifact::KeptProposal,
-                    >(client, verb, &input),
-                    "vault.artifacts.discard" => remote_agent_verb_output::<
-                        oneiron::blob_artifact::DiscardedProposal,
-                    >(client, verb, &input),
-                    "vault.artifacts.undo" => remote_agent_verb_output::<
-                        oneiron::blob_artifact::UndoneKeep,
-                    >(client, verb, &input),
-                    "can" => remote_agent_verb_output::<oneiron::task_verb::TaskAskPreflight>(
-                        client, verb, &input,
-                    ),
-                    "peek" => remote_agent_verb_output::<
-                        Vec<oneiron::task_verb::TaskAskPersonEvidence>,
-                    >(client, verb, &input),
-                    "ask" => remote_agent_verb_output::<oneiron::task_verb::TaskAskReceipt>(
-                        client, verb, &input,
-                    ),
-                    "wait" => remote_agent_verb_output::<oneiron::task_verb::TaskAskWait>(
-                        client, verb, &input,
-                    ),
-                    "tasks.answer" => {
-                        remote_agent_verb_output::<oneiron::task_verb::TaskAskAnswer>(
-                            client, verb, &input,
-                        )
-                    }
-                    "tasks.outcomes" => remote_agent_verb_output::<
-                        Vec<oneiron::llm::decision::questions::CalibrationPair>,
-                    >(client, verb, &input),
-                    "vault.rooms.list" => remote_agent_verb_output::<
-                        Vec<oneiron::task_verb::sdk::RoomEntry>,
-                    >(client, verb, &input),
-                    "vault.rooms.messages" => remote_agent_verb_output::<
-                        oneiron::workspace_roster::RoomPage,
-                    >(client, verb, &input),
-                    "vault.rooms.render" => {
-                        remote_agent_verb_output::<Vec<String>>(client, verb, &input)
-                    }
-                    "vault.rooms.find" => remote_agent_verb_output::<
-                        oneiron::workspace_roster::RoomThreadPage,
-                    >(client, verb, &input),
-                    "vault.rooms.get" => remote_agent_verb_output::<
-                        Option<oneiron::workspace_roster::RoomThread>,
-                    >(client, verb, &input),
-                    "vault.rooms.trunk" => remote_agent_verb_output::<
-                        oneiron::workspace_roster::RoomTrunk,
-                    >(client, verb, &input),
-                    "vault.rooms.claim" => remote_agent_verb_output::<
-                        oneiron::workspace_roster::RoomClaimOutcome,
-                    >(client, verb, &input),
-                    "vault.rooms.speak" => remote_agent_verb_output::<
-                        oneiron::memory::WitnessReceipt,
-                    >(client, verb, &input),
-                    "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
-                        client, verb, &input,
-                    ),
-                    "ai.image" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
-                        client, verb, &input,
-                    ),
-                    "ai.speech" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
-                        client, verb, &input,
-                    ),
-                    "ai.transcribe" => {
-                        remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
-                            client, verb, &input,
-                        )
-                    }
-                    "ai.embed" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
-                        client, verb, &input,
-                    ),
-                    "ai.video" => {
-                        remote_agent_verb_output::<oneiron::task_verb::sdk::AiVideoTicket>(
-                            client, verb, &input,
-                        )
-                    }
-                    "ai.video.poll" => remote_agent_verb_output::<
-                        oneiron::task_verb::sdk::AiVideoJob,
-                    >(client, verb, &input),
-                    "ai.video.cancel" => remote_agent_verb_output::<
-                        oneiron::task_verb::sdk::AiVideoCancelled,
-                    >(client, verb, &input),
-                    "connector.list" => remote_agent_verb_output::<
-                        Vec<oneiron::task_verb::sdk::ConnectorEntry>,
-                    >(client, verb, &input),
-                    "connector.status" => remote_agent_verb_output::<
-                        Option<oneiron::task_verb::sdk::ConnectorView>,
-                    >(client, verb, &input),
-                    "connector.outbound.schedule" => remote_agent_verb_output::<
-                        oneiron::memory::OutboundIntentReceipt,
-                    >(client, verb, &input),
-                    _ => Err(crate::error::bad_request(
-                        "unknown SDK agent verb",
-                        &["Use a verb from the SDK catalog."],
-                    )),
+                    )
                 }
-            }
+                "tasks.update" => {
+                    remote_agent_verb_output::<oneiron::task_verb::TaskUpdateReceipt>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.witness" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
+                    client, verb, &input,
+                ),
+                "vault.claims.upsert" => {
+                    remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
+                }
+                "vault.recall" => {
+                    remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
+                }
+                "vault.export" => {
+                    remote_agent_verb_output::<oneiron::memory::MemoryExport>(client, verb, &input)
+                }
+                "vault.receipts" => {
+                    remote_agent_verb_output::<Vec<oneiron::memory::MemoryReceipt>>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.kv.get" => {
+                    remote_agent_verb_output::<Option<oneiron::memory::KeyValueItem>>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.kv.put" => remote_agent_verb_output::<oneiron::memory::KeyValuePutReceipt>(
+                    client, verb, &input,
+                ),
+                "vault.kv.delete" => remote_agent_verb_output::<
+                    oneiron::memory::KeyValueDeleteReceipt,
+                >(client, verb, &input),
+                "vault.kv.search" => {
+                    remote_agent_verb_output::<Vec<oneiron::memory::KeyValueItem>>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.kv.namespaces" => {
+                    remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
+                }
+                "vault.packs.put" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PackPutReceipt,
+                >(client, verb, &input),
+                "vault.artifacts.view" => remote_agent_verb_output::<
+                    Option<oneiron::blob_artifact::ArtifactView>,
+                >(client, verb, &input),
+                "vault.artifacts.export" => remote_agent_verb_output::<
+                    Option<oneiron::blob_artifact::ArtifactExportFile>,
+                >(client, verb, &input),
+                "vault.artifacts.born_from" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::BornFromView,
+                >(client, verb, &input),
+                "vault.artifacts.proposals" => remote_agent_verb_output::<
+                    Vec<oneiron::edit_settle::PendingProposalView>,
+                >(client, verb, &input),
+                "vault.artifacts.waits" => remote_agent_verb_output::<
+                    Vec<oneiron::edit_settle::OrganWaitView>,
+                >(client, verb, &input),
+                "vault.artifacts.release_wait" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::ReleasedWait,
+                >(client, verb, &input),
+                "vault.artifacts.propose_deck" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::DeckProposeOutcome,
+                >(client, verb, &input),
+                "vault.artifacts.propose_output" => remote_agent_verb_output::<
+                    oneiron::edit_settle::PendingProposalView,
+                >(client, verb, &input),
+                "vault.artifacts.keep" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::KeptProposal,
+                >(client, verb, &input),
+                "vault.artifacts.discard" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::DiscardedProposal,
+                >(client, verb, &input),
+                "vault.artifacts.undo" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::UndoneKeep,
+                >(client, verb, &input),
+                "can" => remote_agent_verb_output::<oneiron::task_verb::TaskAskPreflight>(
+                    client, verb, &input,
+                ),
+                "peek" => {
+                    remote_agent_verb_output::<Vec<oneiron::task_verb::TaskAskPersonEvidence>>(
+                        client, verb, &input,
+                    )
+                }
+                "ask" => remote_agent_verb_output::<oneiron::task_verb::TaskAskReceipt>(
+                    client, verb, &input,
+                ),
+                "wait" => remote_agent_verb_output::<oneiron::task_verb::TaskAskWait>(
+                    client, verb, &input,
+                ),
+                "tasks.answer" => remote_agent_verb_output::<oneiron::task_verb::TaskAskAnswer>(
+                    client, verb, &input,
+                ),
+                "tasks.outcomes" => remote_agent_verb_output::<
+                    Vec<oneiron::llm::decision::questions::CalibrationPair>,
+                >(client, verb, &input),
+                "vault.rooms.list" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::RoomEntry>,
+                >(client, verb, &input),
+                "vault.rooms.messages" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomPage,
+                >(client, verb, &input),
+                "vault.rooms.render" => {
+                    remote_agent_verb_output::<Vec<String>>(client, verb, &input)
+                }
+                "vault.rooms.find" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomThreadPage,
+                >(client, verb, &input),
+                "vault.rooms.get" => remote_agent_verb_output::<
+                    Option<oneiron::workspace_roster::RoomThread>,
+                >(client, verb, &input),
+                "vault.rooms.trunk" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomTrunk,
+                >(client, verb, &input),
+                "vault.rooms.claim" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomClaimOutcome,
+                >(client, verb, &input),
+                "vault.rooms.speak" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
+                    client, verb, &input,
+                ),
+                "vault.rooms.host" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomStanding,
+                >(client, verb, &input),
+                "vault.rooms.sharing" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomSharingView,
+                >(client, verb, &input),
+                "vault.companions.sharing.get" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::CompanionSharingView,
+                >(client, verb, &input),
+                "vault.workspace.work_companion.get" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::WorkCompanionPolicy,
+                >(client, verb, &input),
+                "vault.workspace.work_companion.set" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::WorkCompanionPolicy,
+                >(client, verb, &input),
+                "self.skills.save" => remote_agent_verb_output::<
+                    oneiron::memory::SkillAuthoringReceipt,
+                >(client, verb, &input),
+                "self.skills.fork" => remote_agent_verb_output::<
+                    oneiron::memory::SkillAuthoringReceipt,
+                >(client, verb, &input),
+                "self.skills.callables" => remote_agent_verb_output::<
+                    Vec<oneiron::skill::helper::CallableCardView>,
+                >(client, verb, &input),
+                "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
+                    client, verb, &input,
+                ),
+                "ai.image" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
+                    client, verb, &input,
+                ),
+                "ai.speech" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
+                    client, verb, &input,
+                ),
+                "ai.transcribe" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
+                    client, verb, &input,
+                ),
+                "ai.embed" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiAnswer>(
+                    client, verb, &input,
+                ),
+                "ai.video" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiVideoTicket>(
+                    client, verb, &input,
+                ),
+                "ai.video.poll" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiVideoJob>(
+                    client, verb, &input,
+                ),
+                "ai.video.cancel" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AiVideoCancelled,
+                >(client, verb, &input),
+                "connector.list" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::ConnectorEntry>,
+                >(client, verb, &input),
+                "connector.status" => remote_agent_verb_output::<
+                    Option<oneiron::task_verb::sdk::ConnectorView>,
+                >(client, verb, &input),
+                "connector.outbound.schedule" => remote_agent_verb_output::<
+                    oneiron::memory::OutboundIntentReceipt,
+                >(client, verb, &input),
+                _ => Err(crate::error::bad_request(
+                    "unknown SDK agent verb",
+                    &["Use a verb from the SDK catalog."],
+                )),
+            },
         }
     }
     fn typed_agent_verb<R: serde::de::DeserializeOwned>(
@@ -815,6 +841,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn vault_rooms_host(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomHostRequest,
+    ) -> Result<oneiron::workspace_roster::RoomStanding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.host", value)
+    }
+    pub fn vault_rooms_sharing(
+        &self,
+        input: &oneiron::task_verb::sdk::RoomRefRequest,
+    ) -> Result<oneiron::workspace_roster::RoomSharingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.sharing", value)
+    }
+    pub fn vault_companions_sharing_get(
+        &self,
+        input: &oneiron::task_verb::sdk::CompanionSharingRequest,
+    ) -> Result<oneiron::workspace_roster::CompanionSharingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.companions.sharing.get", value)
+    }
+    pub fn vault_workspace_work_companion_get(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkspaceRefRequest,
+    ) -> Result<oneiron::workspace_roster::WorkCompanionPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.work_companion.get", value)
+    }
+    pub fn vault_workspace_work_companion_set(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkCompanionSetRequest,
+    ) -> Result<oneiron::workspace_roster::WorkCompanionPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.work_companion.set", value)
+    }
+    pub fn self_skills_save(
+        &self,
+        input: &oneiron::skill::helper::SkillSaveRequest,
+    ) -> Result<oneiron::memory::SkillAuthoringReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.save", value)
+    }
+    pub fn self_skills_fork(
+        &self,
+        input: &oneiron::skill::helper::SkillForkRequest,
+    ) -> Result<oneiron::memory::SkillAuthoringReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.fork", value)
+    }
+    pub fn self_skills_callables(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::skill::helper::CallableCardView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.callables", value)
     }
     pub fn ai_options(
         &self,
