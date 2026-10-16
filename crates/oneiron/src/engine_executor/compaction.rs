@@ -18,7 +18,7 @@ use crate::compaction::{
     CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
-    EpochPlacement, GatedCompaction, gate_compaction,
+    EpochPlacement, FoldLedger, GatedCompaction, fold_handle, gate_compaction,
 };
 use crate::entity_id::EntityId;
 use crate::tokenizer::count_context_pack_tokens;
@@ -49,7 +49,7 @@ struct LiveSeat {
     placement: EpochPlacement,
     hot_steps: u64,
     spawn: Arc<dyn CompactionSpawn>,
-    flight: Option<Receiver<PassOutcome>>,
+    flight: Option<Receiver<FlightOutcome>>,
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
     last_feed: Option<(Instant, u64)>,
@@ -63,6 +63,41 @@ enum PassOutcome {
     Accepted(Box<GatedCompaction>),
     Rejected(CompactionGateFailure),
     Refused(CompactionRefusal),
+}
+
+/// What one breakpoint sends to the backend in one flight: the next epoch's
+/// window, when one is due, and every fold mark it applies (ARCH-0067 §2.2).
+#[derive(Default)]
+pub(super) struct Flight {
+    pub(super) epoch: Option<CompactionRequest>,
+    pub(super) folds: Vec<FoldJob>,
+}
+
+/// One mark of a batch, sealed: its request, and what its stub lists beside
+/// the summary.
+pub(super) struct FoldJob {
+    pub(super) run_id: EntityId,
+    pub(super) fold: u64,
+    pub(super) from: u64,
+    pub(super) through: u64,
+    pub(super) request: CompactionRequest,
+    /// The ids the span's turns name.
+    pub(super) ids: Vec<String>,
+    /// A handle to each step's output and every stored result the span names.
+    pub(super) handles: Vec<String>,
+}
+
+/// What a flight answered.
+struct FlightOutcome {
+    epoch: Option<PassOutcome>,
+    folds: Vec<(FoldJob, PassOutcome)>,
+}
+
+/// A landed flight: the epoch pass, if it ran one, and each fold of its
+/// batch, accepted or with why not.
+pub(super) struct FinishedFlight {
+    pub(super) epoch: Option<Result<GatedCompaction, CompactionSuppression>>,
+    pub(super) folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
 }
 
 /// What a caller can know about a run's compaction after a call.
@@ -144,6 +179,11 @@ impl RunCompaction {
         &self.report
     }
 
+    /// Whether a backend can fold this run's log.
+    pub(super) const fn is_live(&self) -> bool {
+        matches!(self.seat, Seat::Live(_))
+    }
+
     /// The run credential's world and facet: its epoch summaries are born
     /// there, as its other records are. `None` (a vault-wide run) is base
     /// reality and the vault's default facet.
@@ -188,30 +228,31 @@ impl RunCompaction {
         }
     }
 
-    /// Takes a finished pass, if one is ready, without waiting.
-    pub(super) fn take_finished(
-        &mut self,
-    ) -> Option<Result<GatedCompaction, CompactionSuppression>> {
+    /// Takes a finished flight, if one is ready, without waiting.
+    pub(super) fn take_finished(&mut self) -> Option<FinishedFlight> {
         let Seat::Live(seat) = &mut self.seat else {
             return None;
         };
         let outcome = match seat.flight.as_ref()?.try_recv() {
             Ok(outcome) => outcome,
             Err(TryRecvError::Empty) => return None,
-            Err(TryRecvError::Disconnected) => PassOutcome::Refused(CompactionRefusal {
-                suppression: CompactionSuppression::TurnScoped { check: None },
-                detail: "the compaction pass ended without an answer".to_owned(),
-            }),
+            Err(TryRecvError::Disconnected) => FlightOutcome {
+                epoch: Some(PassOutcome::Refused(CompactionRefusal {
+                    suppression: CompactionSuppression::TurnScoped { check: None },
+                    detail: "the compaction pass ended without an answer".to_owned(),
+                })),
+                folds: Vec::new(),
+            },
         };
         seat.flight = None;
         self.report.in_flight = false;
-        match outcome {
-            PassOutcome::Accepted(gated) => Some(Ok(*gated)),
+        let epoch = outcome.epoch.map(|outcome| match outcome {
+            PassOutcome::Accepted(gated) => Ok(*gated),
             PassOutcome::Rejected(failure) => {
                 tracing::warn!(%failure, "a compaction pass failed the pre-swap gate on every try");
-                Some(Err(CompactionSuppression::TurnScoped {
+                Err(CompactionSuppression::TurnScoped {
                     check: Some(failure.check),
-                }))
+                })
             }
             PassOutcome::Refused(refusal) => {
                 // The detail can quote a provider's error body: never logged.
@@ -219,9 +260,30 @@ impl RunCompaction {
                     reason = refusal.suppression.as_str(),
                     "the compaction backend refused a pass"
                 );
-                Some(Err(refusal.suppression))
+                Err(refusal.suppression)
             }
-        }
+        });
+        // A failed fold keeps its mark, saying why; the detail of a refusal
+        // can quote a provider's error body, so only its reason is kept.
+        let folds = outcome
+            .folds
+            .into_iter()
+            .map(|(job, outcome)| {
+                let answer = match outcome {
+                    PassOutcome::Accepted(gated) => Ok(*gated),
+                    PassOutcome::Rejected(failure) => Err(format!(
+                        "its summary failed the {} check",
+                        failure.check.as_str()
+                    )),
+                    PassOutcome::Refused(refusal) => Err(format!(
+                        "the compaction backend refused it ({})",
+                        refusal.suppression.as_str()
+                    )),
+                };
+                (job, answer)
+            })
+            .collect();
+        Some(FinishedFlight { epoch, folds })
     }
 
     /// The pass did not swap: the run keeps its raw window, and this reason
@@ -249,17 +311,18 @@ impl RunCompaction {
         }
     }
 
-    /// Feeds one assembled request's size. On a crossing, `window` builds
-    /// the snapshot (steps `start..=watermark`) and a pass starts in the
-    /// background. Returns why the run must park, when its window is full.
+    /// Feeds one assembled request's size. At a breakpoint (a crossing, or
+    /// the agent's `self.compact` ask), `build` seals the flight: the next
+    /// epoch's snapshot (steps `start..=watermark`) when one is due, and
+    /// every fold mark that applies (`marks`), all in one background flight.
+    /// Returns why the run must park, when its window is full.
     pub(super) fn feed(
         &mut self,
         used_tokens: u64,
         completed_steps: u64,
-        build: impl FnOnce(
-            &mut CompactionDriver,
-            u64,
-        ) -> super::EngineExecutorResult<Option<CompactionRequest>>,
+        asked: bool,
+        marks: bool,
+        build: impl FnOnce(&mut CompactionDriver, Option<u64>) -> super::EngineExecutorResult<Flight>,
     ) -> Option<WindowFullReason> {
         self.report.used_tokens = used_tokens;
         let Seat::Live(seat) = &mut self.seat else {
@@ -275,43 +338,65 @@ impl RunCompaction {
         }
         seat.last_feed = Some((now, used_tokens));
         self.report.compact_at = seat.driver.compact_at();
-        if seat.flight.is_none() && seat.held.is_none() {
-            match completed_steps.checked_sub(seat.hot_steps.saturating_add(1)) {
-                None => {}
-                Some(watermark) => {
-                    let directive = seat.driver.observe_positioned(
-                        used_tokens,
-                        CompactionWatermark {
-                            learned_at: 0,
-                            turn_id: None,
-                            turn: Some(watermark),
-                        },
-                    );
-                    if let CompactionDirective::Begin { .. } = directive {
-                        match build(&mut seat.driver, watermark) {
-                            Ok(Some(request)) => {
-                                let backend = Arc::clone(seat.driver.backend());
-                                let policy = seat.policy;
-                                let (sender, receiver) = channel();
-                                seat.spawn.spawn(Box::new(move || {
-                                    let _ = sender.send(run_pass(&*backend, &request, &policy));
-                                }));
-                                seat.flight = Some(receiver);
-                                self.report.in_flight = true;
-                            }
-                            Ok(None) => seat.driver.abandon(),
-                            Err(error) => {
-                                tracing::warn!(
-                                    variant = error.variant(),
-                                    kind = ?error.engine_kind(),
-                                    "a compaction window could not be sealed"
-                                );
-                                seat.driver.abandon();
-                                let held = CompactionSuppression::TurnScoped { check: None };
-                                seat.held = Some(held);
-                                self.report.suppressed = Some(held);
-                            }
+        let crossing = used_tokens >= seat.driver.compact_at();
+        if seat.flight.is_none() && seat.held.is_none() && (asked || crossing) {
+            // The agent's breakpoint keeps the crossing's watermark law: the
+            // hot steps stay raw, and the watermark must advance.
+            let epoch = completed_steps
+                .checked_sub(seat.hot_steps.saturating_add(1))
+                .filter(|watermark| {
+                    let position = CompactionWatermark {
+                        learned_at: 0,
+                        turn_id: None,
+                        turn: Some(*watermark),
+                    };
+                    let directive = if asked {
+                        seat.driver.begin_positioned(position)
+                    } else {
+                        seat.driver.observe_positioned(used_tokens, position)
+                    };
+                    matches!(directive, CompactionDirective::Begin { .. })
+                });
+            if epoch.is_some() || asked || marks {
+                match build(&mut seat.driver, epoch) {
+                    Ok(Flight {
+                        epoch: request,
+                        folds,
+                    }) => {
+                        if epoch.is_some() && request.is_none() {
+                            seat.driver.abandon();
                         }
+                        if request.is_some() || !folds.is_empty() {
+                            let backend = Arc::clone(seat.driver.backend());
+                            let policy = seat.policy;
+                            let (sender, receiver) = channel();
+                            seat.spawn.spawn(Box::new(move || {
+                                let epoch = request
+                                    .as_ref()
+                                    .map(|request| run_pass(&*backend, request, &policy));
+                                let folds = folds
+                                    .into_iter()
+                                    .map(|job| {
+                                        let outcome = run_pass(&*backend, &job.request, &policy);
+                                        (job, outcome)
+                                    })
+                                    .collect();
+                                let _ = sender.send(FlightOutcome { epoch, folds });
+                            }));
+                            seat.flight = Some(receiver);
+                            self.report.in_flight = true;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            variant = error.variant(),
+                            kind = ?error.engine_kind(),
+                            "a compaction window could not be sealed"
+                        );
+                        seat.driver.abandon();
+                        let held = CompactionSuppression::TurnScoped { check: None };
+                        seat.held = Some(held);
+                        self.report.suppressed = Some(held);
                     }
                 }
             }
@@ -564,20 +649,64 @@ pub(super) fn compacted_frame(
     frame
 }
 
-/// The model-facing message for step `seq` when a swapped epoch covers it:
-/// `Some(Some(frame))` at the epoch's first step, `Some(None)` for its other
-/// steps, `None` when no epoch covers the step.
+/// What a request renders in place of a run's raw steps: its swapped
+/// epochs with their summaries' prose, and its fold ledger.
+pub(super) struct RunFrames {
+    pub(super) epochs: Vec<(crate::code_run::CodeRunCompactionCoverage, Option<String>)>,
+    pub(super) folds: FoldLedger,
+}
+
+impl RunFrames {
+    /// Whether nothing is compacted, folded, marked or unfolded.
+    pub(super) fn is_empty(&self) -> bool {
+        self.epochs.is_empty() && self.folds.is_empty()
+    }
+
+    /// Whether the place just before step `seq` lies inside one compacted or
+    /// folded span: an unfold appended there went with the span.
+    pub(super) fn hides(&self, run_id: EntityId, seq: u64) -> bool {
+        seq > 0
+            && (self
+                .epochs
+                .iter()
+                .any(|(row, _)| row.covers(run_id, seq) && row.covers(run_id, seq - 1))
+                || self
+                    .folds
+                    .covering(seq)
+                    .is_some_and(|fold| fold.from < seq))
+    }
+}
+
+/// The model-facing message for step `seq` when a swapped epoch or a fold
+/// covers it: `Some(Some(frame))` at the span's first step, `Some(None)` for
+/// its other steps, `None` when the step stands raw. An epoch comes first; a
+/// fold whose head an epoch covers shows its stub at its first step past it.
 pub(super) fn epoch_frame(
-    epochs: &[(crate::code_run::CodeRunCompactionCoverage, Option<String>)],
+    frames: &RunFrames,
     run_id: EntityId,
     seq: usize,
     views: &[crate::compaction::output::OutputContextView],
 ) -> super::EngineExecutorResult<Option<Option<crate::LlmMessage>>> {
+    let epochs = &frames.epochs;
     let Some((row, text)) = epochs
         .iter()
         .find(|(row, _)| row.covers(run_id, seq as u64))
     else {
-        return Ok(None);
+        let Some(fold) = frames.folds.covering(seq as u64) else {
+            return Ok(None);
+        };
+        let head = (fold.from..=fold.through)
+            .find(|step| !epochs.iter().any(|(row, _)| row.covers(run_id, *step)))
+            .unwrap_or(fold.from);
+        if seq as u64 != head {
+            return Ok(Some(None));
+        }
+        return Ok(Some(Some(crate::LlmMessage {
+            role: crate::LlmMessageRole::User,
+            content: vec![ContentPart::Text {
+                text: fold.stub.clone(),
+            }],
+        })));
     };
     if seq as u64 != row.first() {
         return Ok(Some(None));
@@ -609,4 +738,81 @@ pub(super) fn epoch_frame(
             ),
         }],
     })))
+}
+
+/// The most ids a stub lists itself; `describe({fold})` lists them all.
+const STUB_IDS: usize = 64;
+
+/// A fold's one stub, written once when its batch lands and kept byte for
+/// byte, so the cached log holds: its handle and span, the accepted summary
+/// (model output), the ids its turns name that the summary does not, and a
+/// handle to every result the span covers.
+pub(super) fn fold_stub(job: &FoldJob, summary: &str) -> String {
+    let mut stub = format!(
+        "⟨{} · t{}–t{}⟩ {}",
+        fold_handle(job.fold),
+        job.from,
+        job.through,
+        escape_compacted_text(summary)
+    );
+    let ids: Vec<&str> = job
+        .ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !summary.contains(id))
+        .collect();
+    if !ids.is_empty() {
+        stub.push_str("\nids: ");
+        stub.push_str(&ids[..ids.len().min(STUB_IDS)].join(", "));
+        if ids.len() > STUB_IDS {
+            stub.push_str(&format!(
+                " and {} more (describe({{fold: \"{}\"}}))",
+                ids.len() - STUB_IDS,
+                fold_handle(job.fold)
+            ));
+        }
+    }
+    for handle in &job.handles {
+        stub.push('\n');
+        stub.push_str(handle);
+    }
+    stub
+}
+
+/// Every entity id the window's text names, in order.
+pub(super) fn span_ids(window: &[CompactionWindowMessage]) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for message in window {
+        hex_ids(&message.content, &mut found);
+    }
+    found.iter().map(EntityId::to_hex).collect()
+}
+
+/// Every stored result's read path `text` names.
+pub(super) fn result_reads(text: &str, found: &mut std::collections::BTreeSet<String>) {
+    let mut rest = text;
+    while let Some(at) = rest.find(super::store::RESULT_READ_ROOT) {
+        let tail = &rest[at..];
+        let end = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || "/._-".contains(c)))
+            .unwrap_or(tail.len());
+        found.insert(tail[..end].to_owned());
+        rest = &tail[end..];
+    }
+}
+
+/// The request identity of one fold's pass: stable per (run, fold).
+pub(super) fn fold_request_id(run_id: EntityId, fold: u64) -> EntityId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:executor-fold-request:v1");
+    hasher.update(run_id.as_bytes());
+    hasher.update(&fold.to_be_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    loop {
+        if let Ok(id) = EntityId::from_bytes(bytes) {
+            return id;
+        }
+        bytes[0] ^= 0x42;
+    }
 }

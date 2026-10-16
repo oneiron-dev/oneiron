@@ -115,7 +115,8 @@ impl Vault {
         let room = crate::conversation_dag::room_turn_owner(&self.store, txn, id)?.or(
             crate::conversation::room_message_owner_in(&self.store, txn, *id)?,
         );
-        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
+        else {
             if room.is_none()
                 || (room.is_some()
                     && gate
@@ -244,10 +245,7 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             if crate::deletion::topology_delete_reservation_in_txn(&self.store, &rtxn, id)?
                 .is_some()
-                && self
-                    .store
-                    .entities
-                    .get(&rtxn, id.as_bytes())?
+                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &rtxn, id)?
                     .is_some_and(|raw| raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
             {
                 // A previous soft scrub already committed its propagation

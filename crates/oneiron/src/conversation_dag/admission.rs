@@ -279,7 +279,7 @@ fn guard_erased_person(
     room: &EntityId,
     record: &EntityId,
 ) -> Result<()> {
-    let Some(raw) = store.entities().get(txn, record.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, record)? else {
         return Ok(());
     };
     if raw.first() != Some(&ENTITY_TYPE_TURN) {
@@ -302,9 +302,7 @@ fn guard_erased_author_body(
         // admissible, as recipients do: a peer may deliver the TURN before
         // (or without) its author's PERSON row. The erasure fence is keyed by
         // id and still applies.
-        if store
-            .entities()
-            .get(txn, person.as_bytes())?
+        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &person)?
             .is_some_and(|row| row.first() != Some(&crate::registry::ENTITY_TYPE_PERSON))
         {
             return Err(invalid("room TURN author must be a PERSON"));
@@ -334,9 +332,7 @@ pub(crate) fn room_turn_owner(
         None,
     )? {
         let target = row?.target;
-        if store
-            .entities()
-            .get(txn, target.as_bytes())?
+        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, &target)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
             && owner.replace(target).is_some()
         {
@@ -351,7 +347,7 @@ pub(crate) fn guard_room_turn_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         // Refuse reuse even after a prior purge removed the TURN bytes.
         if room_turn_owner(store, txn, id)?.is_some() {
             return Err(invalid("room TURN deletion requires the actor-bound door"));
@@ -377,14 +373,10 @@ pub(crate) fn guard_room_membership_delete(
     conversation: &EntityId,
 ) -> Result<()> {
     if kind == EdgeKind::ChildOf
-        && store
-            .entities()
-            .get(txn, record.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, record)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
         && (room_turn_owner(store, txn, record)? == Some(*conversation)
-            || store
-                .entities()
-                .get(txn, conversation.as_bytes())?
+            || crate::ports::EntityStoreRead::port_entity_raw(store, txn, conversation)?
                 .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION)))
     {
         return Err(invalid(
@@ -402,13 +394,9 @@ pub(crate) fn pin_membership(
     conversation: &EntityId,
 ) -> Result<()> {
     if kind == EdgeKind::ChildOf
-        && store
-            .entities()
-            .get(txn, record.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, record)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
-        && store
-            .entities()
-            .get(txn, conversation.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, conversation)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
         guard_erased_person(store, txn, conversation, record)?;
@@ -460,13 +448,9 @@ pub(crate) fn keep_membership_pin(
     conversation: &EntityId,
 ) -> Result<()> {
     if kind == EdgeKind::ChildOf
-        && store
-            .entities()
-            .get(txn, record.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, record)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_TURN))
-        && store
-            .entities()
-            .get(txn, conversation.as_bytes())?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, txn, conversation)?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
     {
         if let Some(owner) = ROOM_OWNERS.get(store, txn, record)? {
@@ -589,7 +573,7 @@ pub(crate) fn addressed_to_echo_in_txn(
     target: &EntityId,
     fields: crate::edge::DecodedEdgeValue,
 ) -> Result<bool> {
-    let Some(raw) = store.entities.get(txn, source.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, source)? else {
         return Ok(false);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
