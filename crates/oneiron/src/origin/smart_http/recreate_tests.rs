@@ -375,3 +375,58 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
     );
     assert_eq!(publications_of(&vault, TOPIC), vec![owner.record]);
 }
+
+/// Push `topic` at A and delete it, then push A to `topic` again and, in the
+/// same push, a new branch carrying a large file. The large file is the new
+/// branch's alone, so `topic` lands on its earlier publication and both refs
+/// publish, as they do when pushed one at a time.
+#[test]
+fn a_ref_recreated_beside_a_new_large_file_lands_on_its_earlier_publication() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo_dir, first, _second) = served_repo(&vault);
+    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let url = origin.url();
+    let create = format!("{}:{TOPIC}", first.as_str());
+    git(source.path(), &["push", &url, &create]);
+    let original = publications_of(&vault, TOPIC);
+    git(source.path(), &["push", &url, &format!(":{TOPIC}")]);
+    let (pointer, bytes) = large_file();
+    vault
+        .put_lfs_object(pointer.oid, &bytes, landing_time(), landing_time().start)
+        .expect("the large file's bytes are held");
+    let assets = commit_file(
+        source.path(),
+        &pointer.path,
+        &pointer_file(pointer.oid, pointer.size_bytes),
+    );
+
+    let pushed = std::process::Command::new("git")
+        .current_dir(source.path())
+        .args([
+            "push",
+            &url,
+            &create,
+            &format!("{}:refs/heads/assets", assets.as_str()),
+        ])
+        .output()
+        .expect("run git push");
+    assert!(
+        pushed.status.success(),
+        "both refs publish: {}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    assert_eq!(
+        advertised(&vault, "git-upload-pack", TOPIC),
+        vec![first.as_str().to_owned()]
+    );
+    assert_eq!(fetched(&url, "refs/heads/assets"), assets.as_str());
+    assert_eq!(
+        publications_of(&vault, TOPIC),
+        original,
+        "topic landed on its earlier publication, unchanged"
+    );
+    vault
+        .reconcile_receive_pack_operations(&repo_dir)
+        .expect("reconcile");
+    assert_eq!(vault.receive_pack_intent_rows_for_test(&repo_dir), 0);
+}

@@ -592,3 +592,75 @@ fn availability_checks_take_the_hosts_room_for_each_manifest_they_read() {
         "the wait decided no publication: {statuses:?}"
     );
 }
+
+/// Two branches pushed together carry different large files at one path.
+/// Each needs its own file alone: it references only that object, and once
+/// the owner deletes the other branch's file it is still advertised and
+/// still fetches, while the branch that needed the deleted file is hidden.
+#[test]
+fn branches_pushed_together_need_only_their_own_large_file_at_a_shared_path() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo_dir, _first, second) = served_repo(&vault);
+    let held = |bytes: &[u8]| {
+        let oid = LfsOid::digest(bytes);
+        vault
+            .put_lfs_object(oid, bytes, landing_time(), LANDING_LEARNED_AT)
+            .expect("the large file's bytes are held");
+        (oid, u64::try_from(bytes.len()).expect("length fits u64"))
+    };
+    let (left_oid, left_size) = held(b"the left branch's asset bytes");
+    let (right_oid, right_size) = held(b"the right branch's asset bytes, another object");
+    let branch = |name: &str, oid: LfsOid, size: u64| {
+        git(source.path(), &["checkout", "-b", name, second.as_str()]);
+        commit_file(source.path(), "assets/logo.bin", &pointer_file(oid, size))
+    };
+    let left = branch("left", left_oid, left_size);
+    let right = branch("right", right_oid, right_size);
+    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let url = origin.url();
+    git(
+        source.path(),
+        &[
+            "push",
+            &url,
+            &format!("{}:refs/heads/left", left.as_str()),
+            &format!("{}:refs/heads/right", right.as_str()),
+        ],
+    );
+    let repo_id = landed_repo_id(&vault, &unpinned_repo_ref(&repo_dir), &repo_dir);
+    let references = |name: &str| {
+        vault
+            .lfs_git_ref_objects(repo_id, name)
+            .expect("read ref rows")
+    };
+    let (left_rows, right_rows) = (
+        references("refs/heads/left"),
+        references("refs/heads/right"),
+    );
+
+    assert!(
+        vault
+            .delete_lfs_object(right_oid)
+            .expect("the owner deletes")
+    );
+    let advertised = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+    assert!(
+        advertised.contains(&("refs/heads/left".to_owned(), left.as_str().to_owned())),
+        "left needs only its own file: {advertised:?}"
+    );
+    assert!(
+        !advertised
+            .iter()
+            .any(|(name, _)| name == "refs/heads/right"),
+        "right needs the deleted file: {advertised:?}"
+    );
+    let client = tempfile::tempdir().expect("stock client");
+    git(client.path(), &["init", "--initial-branch=main"]);
+    git(client.path(), &["fetch", &url, "refs/heads/left"]);
+    assert_eq!(
+        git(client.path(), &["rev-parse", "FETCH_HEAD"]),
+        left.as_str()
+    );
+    assert_eq!(left_rows, vec![left_oid]);
+    assert_eq!(right_rows, vec![right_oid]);
+}
