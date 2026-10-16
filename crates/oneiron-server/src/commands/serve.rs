@@ -228,12 +228,12 @@ pub(super) async fn serve_with_config(
     let questions = Arc::clone(sync_server.wire_telemetry.limit_questions());
     #[cfg(unix)]
     let vault_id = super::local_servers::vault_id(sync_server.vault());
-    let mesh_vault = Arc::clone(&sync_server.vault);
+    let mesh_server = Arc::clone(&sync_server);
     let app = build_app(sync_server).layer(cors_layer);
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address.
     let mesh = crate::handler::mesh::start(
-        mesh_vault,
+        mesh_server,
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
         config.limits.connections().header_read_timeout,
