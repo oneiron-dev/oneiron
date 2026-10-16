@@ -313,15 +313,30 @@ pub enum ProjectDisposition {
     },
     /// A parent cycle leaves revisions undefined (`joint.rs`): the deepest
     /// state every candidate passes serves, with the meet of the candidates.
+    /// A fork and the cycle are one decision (ruling (a)): `forks` are the
+    /// forks its worlds leave open, which a board resolution may settle.
     ParentCycle {
         anchor: ProjectRevisionHash,
         undefined: BTreeSet<ProjectRevisionHash>,
+        forks: Vec<ProjectForkConflict>,
     },
     /// Past the budget: the persisted frozen frontier and the state it froze in.
     OverBudget {
         state: ProjectHistoryOverBudget,
         frozen: Box<ProjectDisposition>,
     },
+}
+
+/// One fork a parent cycle leaves open (ruling (a)): its worlds tie there,
+/// or install different children there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectForkConflict {
+    pub anchor: ProjectRevisionHash,
+    pub rank: ProjectRank,
+    /// Every child of `anchor` some world keeps in contention or installs.
+    pub contenders: BTreeSet<ProjectRevisionHash>,
+    /// The causal resolution tips at `anchor` (ruling (b)).
+    pub resolution_tips: BTreeSet<ProjectRevisionHash>,
 }
 
 impl ProjectDisposition {

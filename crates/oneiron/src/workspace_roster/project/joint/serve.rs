@@ -1,7 +1,8 @@
 //! The served side of a component's decision: each member's frontier,
 //! checked under its parents' served views, and the bound's dark answer.
 use super::super::fold::{
-    ProjectDisposition, ProjectEffective, ProjectFold, ProjectFrontier, ProjectWitness, reason,
+    ProjectDisposition, ProjectEffective, ProjectFold, ProjectForkConflict, ProjectFrontier,
+    ProjectRank, ProjectWitness, rank_at, reason,
 };
 use super::super::history_policy::{
     ProjectDependencies, ProjectEvidenceSet, counted_set, frozen_frontier,
@@ -165,11 +166,13 @@ impl Solver<'_, '_, '_> {
             .filter(|(_, label)| **label == Label::Open)
             .map(|(hash, _)| *hash)
             .collect();
+        let forks = self.open_forks(member, carrier, &first, &worlds)?;
         let frontier = ProjectFrontier {
             id,
             disposition: ProjectDisposition::ParentCycle {
                 anchor: carrier,
                 undefined,
+                forks,
             },
             witness: Some(ProjectWitness {
                 head: carrier,
@@ -179,6 +182,80 @@ impl Solver<'_, '_, '_> {
         };
         let dependencies = self.combined(path[..=common].to_vec(), &first, &worlds, &verdicts);
         Ok((frontier.clone(), Some(fold(frontier, dependencies))))
+    }
+
+    /// The forks a member's disagreeing worlds leave open (ruling (a)): each
+    /// world's own tie, and, where the worlds' walks part at the served state
+    /// `carrier`, the children they installed there. No world's ranked or
+    /// resolved winner is final; the causal tips come from a fold where the
+    /// anchor stands.
+    fn open_forks(
+        &self,
+        member: &Member,
+        carrier: Hash,
+        first: &World,
+        others: &[World],
+    ) -> Result<Vec<ProjectForkConflict>> {
+        let worlds: Vec<&World> = std::iter::once(first).chain(others).collect();
+        let mut forks: BTreeMap<Hash, ProjectForkConflict> = BTreeMap::new();
+        for world in &worlds {
+            let ProjectDisposition::Fork {
+                anchor,
+                rank,
+                contenders,
+                resolution_tips,
+            } = &world.fold.frontier.disposition
+            else {
+                continue;
+            };
+            let fork = forks.entry(*anchor).or_insert_with(|| ProjectForkConflict {
+                anchor: *anchor,
+                rank: *rank,
+                contenders: BTreeSet::new(),
+                resolution_tips: BTreeSet::new(),
+            });
+            fork.rank = fork.rank.max(*rank);
+            fork.contenders.extend(contenders.iter().copied());
+            fork.resolution_tips.extend(resolution_tips.iter().copied());
+        }
+        let taken: BTreeSet<Hash> = (worlds.iter())
+            .filter_map(|world| {
+                let path = &world.fold.dependencies.path;
+                let at = path.iter().position(|node| *node == carrier)?;
+                path.get(at + 1).copied()
+            })
+            .collect();
+        self.charge(worlds.len() as u64 + taken.len() as u64);
+        if taken.len() > 1 {
+            let facts = &member.facts;
+            let authority = (facts.held.get(&carrier)).and_then(|row| row.revision.authority());
+            let rank = (taken.iter())
+                .filter_map(|child| rank_at(authority?, facts.signers.get(child)?))
+                .max()
+                .unwrap_or(ProjectRank::Leader);
+            // The carrier stands in every world, so its envelopes are judged
+            // as each world judges them.
+            let cx = FoldCx::seeded(
+                self.reader,
+                member.id,
+                &facts.held,
+                self.labels(member, reason::CYCLE).unwrap_or_default(),
+                facts.signers.clone(),
+                BTreeMap::new(),
+            );
+            let tips = cx.resolution_tips(carrier)?;
+            self.charge(cx.visits());
+            let fork = forks.entry(carrier).or_insert_with(|| ProjectForkConflict {
+                anchor: carrier,
+                rank,
+                contenders: BTreeSet::new(),
+                resolution_tips: BTreeSet::new(),
+            });
+            fork.rank = fork.rank.max(rank);
+            fork.contenders.extend(taken);
+            fork.resolution_tips.extend(tips);
+        }
+        Ok(forks.into_values().collect())
     }
 
     /// Every world's dependencies on one record (Astra #1434c F1): `path`,

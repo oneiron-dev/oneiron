@@ -68,8 +68,10 @@ impl Vault {
 
     /// A board holder of the fork anchor writes `next` (a fresh v3 sibling
     /// over the anchor, or a contender) with the envelope in one transaction.
-    /// `prior` must equal the current resolution tips at the anchor. Refused
-    /// unless the fold with both has `next` as its head.
+    /// The fork is the frontier's own, or one a parent cycle leaves open: the
+    /// fork and the cycle are one decision (ruling (a)). `prior` must equal
+    /// the fork's causal resolution tips (ruling (b)). Refused unless the
+    /// fold with both has `next` as its head, in every world of a cycle.
     pub fn resolve_project_fork(
         &self,
         id: EntityId,
@@ -91,20 +93,29 @@ impl Vault {
                 let Some(frontier) = reader.frontier(id)? else {
                     return Err(Error::EntityNotFound);
                 };
-                let ProjectDisposition::Fork {
-                    anchor,
-                    rank: ProjectRank::Board,
-                    ..
-                } = frontier.disposition
-                else {
-                    return Err(unresolved(id, "no board fork to resolve"));
+                let tips = match frontier.disposition {
+                    ProjectDisposition::Fork {
+                        anchor,
+                        rank: ProjectRank::Board,
+                        resolution_tips,
+                        ..
+                    } => {
+                        if anchor != resolution.anchor {
+                            return Err(unresolved(id, "the resolution names another anchor"));
+                        }
+                        resolution_tips
+                    }
+                    ProjectDisposition::ParentCycle { forks, .. } => {
+                        let Some(fork) = forks.into_iter().find(|fork| {
+                            fork.anchor == resolution.anchor && fork.rank == ProjectRank::Board
+                        }) else {
+                            return Err(unresolved(id, "no board fork to resolve"));
+                        };
+                        fork.resolution_tips
+                    }
+                    _ => return Err(unresolved(id, "no board fork to resolve")),
                 };
-                if anchor != resolution.anchor {
-                    return Err(unresolved(id, "the resolution names another anchor"));
-                }
-                let held = held_in_txn(&self.store, txn, id, kind)?;
-                let cx = reader.door_cx(id, &held)?;
-                if cx.resolution_tips(anchor)? != resolution.prior {
+                if tips.into_iter().collect::<Vec<_>>() != resolution.prior {
                     return Err(unresolved(
                         id,
                         "the resolution must build on the current resolution tips",
