@@ -1859,7 +1859,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/mod.rs` | src | s | 1 re-export | — | Vault-local durable RSI budget ledger |
 | `src/llm/budget/rsi.rs` | src | m | 5 struct · 3 enum · 12 fn | RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose | Vault-local durable reserve/settle/refund ledger for research-loop spend |
 | `src/llm/decision/codec.rs` | src | s | 6 crate-vis | — | Canonical entity references for typed-decision wire records |
-| `src/llm/decision/ladder.rs` | src | m | 6 struct · 3 trait · 4 fn · 1 crate-vis | DecisionLadder, DecisionModel, DecisionProvider, HumanDecisionQueue, HumanDecisionRequest, ModelDecisionProvider, PairedAnswer, ProviderDecision +1 | Host-injected, one-step decision ladder |
+| `src/llm/decision/ladder.rs` | src | m | 6 struct · 3 trait · 4 fn · 3 crate-vis | DecisionLadder, DecisionModel, DecisionProvider, HumanDecisionQueue, HumanDecisionRequest, ModelDecisionProvider, PairedAnswer, ProviderDecision +1 | Host-injected, one-step decision ladder |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/mod.rs` | src | s | 1 mod · 7 re-export | — | Typed question records and shared outcome projection |
 | `src/llm/decision/policy.rs` | src | s | 2 struct · 2 enum · 3 fn | BandMode, DecisionBandPolicy, LearnedBand, Reversibility | Question- and reversibility-scoped escalation bands; learning starts in shadow |
@@ -1880,7 +1880,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/seat/tests.rs` | test | s | — | — | — |
 | `src/llm/decision/slides_policy.rs` | src | m | 3 struct · 1 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
 | `src/llm/decision/tests.rs` | test | m | — | — | — |
-| `src/llm/decision/types.rs` | src | s | 8 struct · 5 enum · 6 fn · 1 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +5 | Closed answer contracts and engine-owned decision receipts |
+| `src/llm/decision/types.rs` | src | s | 8 struct · 5 enum · 6 fn · 3 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +5 | Closed answer contracts and engine-owned decision receipts |
 | `src/llm/defaults.rs` | src | s | 4 fn · 3 crate-vis | — | Vault-local inference defaults: the stored, owner-editable purpose-default table and the vault doors that… |
 | `src/llm/defaults/tests.rs` | test | m | — | — | Purpose policy and binding regressions |
 | `src/llm/entity_refs.rs` | src | s | 5 crate-vis | — | Validated entity-reference wire encoding for model policy DTOs |
@@ -2606,6 +2606,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query/support.rs` | src | s | 15 crate-vis | — | — |
 | `src/saved_query/tests.rs` | test | m | — | — | — |
 | `src/scan_check.rs` | src | m | 1 struct · 1 enum · 4 fn · 4 const · 8 crate-vis | EngineScan, ScanCheck | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
+| `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |
 | `src/scope_summary/codec.rs` | src | m | 2 struct · 2 fn · 5 crate-vis | ScopeSummaryBody, SummarySourceMessage | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
 | `src/scope_summary/doors.rs` | src | m | 1 struct · 5 fn · 15 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
 | `src/scope_summary/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | Retained spawned sub-sessions and Dreamer-composed scope summaries |
@@ -3220,8 +3221,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/actors_memory.rs` | src | m | 1 struct · 23 fn · 2 crate-vis | ActorBound | Vault actor binding, structural kinds and code-memory attachment |
 | `src/vault/database_digests.rs` | src | s | 1 fn · 3 crate-vis | — | One BLAKE3 digest per named database: the comparison two vaults given the same writes can be held to… |
 | `src/vault/doctor_manifest.rs` | src | m | 4 struct · 1 enum · 2 fn · 11 crate-vis | TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport | Vault doctor report and text-index manifest handshake |
-| `src/vault/edges.rs` | src | m | 13 fn · 7 crate-vis | — | Vault edge writes, adjacency queries and graph traversal |
-| `src/vault/entities.rs` | src | m | 1 struct · 19 fn · 17 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
+| `src/vault/edges.rs` | src | m | 1 struct · 13 fn · 8 crate-vis | IdScanPage | Vault edge writes, adjacency queries and graph traversal |
+| `src/vault/entities.rs` | src | m | 1 struct · 19 fn · 15 crate-vis | HydratedShortId | Vault entity, vector, short-id and type-index reads and writes |
 | `src/vault/entity_revision/citations.rs` | src | m | 6 fn · 1 crate-vis | — | Revision-pinned short references and Loro cursor citations |
 | `src/vault/entity_revision/idle.rs` | src | m | 6 fn · 3 crate-vis | — | Idle debounce and atomic BM25/vector/frontier publication |
 | `src/vault/entity_revision/mod.rs` | src | s | 1 re-export · 8 crate-vis | — | Per-entity Loro history, exact reads, and idle-only index publication |
@@ -3233,7 +3234,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/types.rs` | src | s | 7 struct · 1 enum · 1 trait · 4 fn | EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation +1 | Exact read frontiers and idle refresh contracts for editable entity text |
 | `src/vault/entity_revision/vector_refill.rs` | src | s | 3 crate-vis | — | Published revisions whose vectors an embedding-space swap dropped, waiting to be embedded again at idle |
 | `src/vault/identity.rs` | src | s | 4 crate-vis | — | One vault identity, resolved once at open and held on the handle |
-| `src/vault/mod.rs` | src | s | 1 struct · 6 re-export · 12 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
+| `src/vault/mod.rs` | src | s | 1 struct · 7 re-export · 12 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `src/vault/open/config_validation.rs` | src | s | 1 crate-vis | — | — |
 | `src/vault/open/lease_door.rs` | src | s | 3 crate-vis | — | The open a restore uses for its copy: under the writer lease the restore took when it made the copy's… |
 | `src/vault/open/mod.rs` | src | L | 12 fn · 9 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |

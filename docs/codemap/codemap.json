@@ -22911,7 +22911,7 @@
      "path": "src/llm/decision/ladder.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 6,
       "trait": 3
@@ -23199,7 +23199,7 @@
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 6,
       "struct": 8
@@ -31733,6 +31733,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/scan_check/table_tests.rs",
+     "purpose": "The code's own list of engine scans: none refuses for how many rows it reads (rule 5)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopeSummaryBody",
@@ -38874,12 +38882,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "IdScanPage"
+     ],
      "path": "src/vault/edges.rs",
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
-      "crate-vis": 7,
-      "fn": 13
+      "crate-vis": 8,
+      "fn": 13,
+      "struct": 1
      }
     },
     {
@@ -38891,7 +38902,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "fn": 19,
       "struct": 1
      }
@@ -39031,7 +39042,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 12,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -42788,10 +42799,10 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
@@ -43134,7 +43145,7 @@
    "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2595,
-   "test_files": 880
+   "test_files": 881
   },
   "oneiron-android": {
    "files": [
@@ -46819,6 +46830,7 @@
      "path": "src/design_plan/brief.rs",
      "purpose": "The brief: the kept, typed outline a design is compiled from (ARCH-0077, \"Create: an approved argument, then…",
      "surface": {
+      "crate-vis": 1,
       "enum": 8,
       "fn": 3,
       "struct": 8
@@ -46880,7 +46892,7 @@
      "path": "src/design_plan/mod.rs",
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 12,
       "fn": 10,
       "re-export": 1,
@@ -47291,7 +47303,7 @@
      "path": "src/native_patch/workbook.rs",
      "purpose": "The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
