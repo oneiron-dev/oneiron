@@ -293,7 +293,7 @@ pub use crate::calendar::{
 };
 pub use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, EmailThreadHeaders,
 };
 pub use crate::channel_identity_selection::{
     ChannelIdentityCandidate, ChannelIdentityFace, ChannelIdentitySelectionDecision,
