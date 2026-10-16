@@ -280,8 +280,7 @@ fn deliver_to_parked_runs(
 ) -> Result<()> {
     let reply = serde_json::to_value(TaskAskStatus::Settled(Box::new(result.clone())))
         .map_err(|_| crate::Error::InvariantViolation("a settled ask status is not JSON"))?;
-    crate::code_run::deliver_wait_in_txn(vault, txn, id, &reply, now.saturating_mul(1000))
-        .map(drop)
+    crate::code_run::deliver_wait_in_txn(vault, txn, id, &reply, now.saturating_mul(1000)).map(drop)
 }
 
 pub(super) fn question_digest(

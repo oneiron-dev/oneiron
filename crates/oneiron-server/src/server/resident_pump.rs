@@ -501,7 +501,9 @@ fn park_on_wait(
     let attempt = &status.attempt;
     let parked = outcome
         .parked_wait()
-        .ok_or(oneiron::Error::InvariantViolation("a waiting run parked on no wait"))?;
+        .ok_or(oneiron::Error::InvariantViolation(
+            "a waiting run parked on no wait",
+        ))?;
     let now_ms = now.saturating_mul(1000);
     let trap = open_trap(
         vault,

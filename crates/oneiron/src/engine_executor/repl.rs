@@ -8,8 +8,8 @@ use super::host::{
 use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
     completed_step_count, load_terminal_status, parked_wait_at, previous_state_hash,
-    record_config_marker, record_terminal_output, step_state_hash,
-    validate_executor_config_marker, wait_key,
+    record_config_marker, record_terminal_output, step_state_hash, validate_executor_config_marker,
+    wait_key,
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES,
@@ -460,12 +460,8 @@ impl EngineNativeExecutor<'_> {
                 // here, with no round trip through its host.
                 if let EngineExecutorStatus::Waiting(wait) = &status
                     && let Some(key) = self.park(&record, wait)?
-                    && let Some(generation) = self.resume_delivered_wait(
-                        &mut record,
-                        wait,
-                        &key,
-                        Some(next_generation),
-                    )?
+                    && let Some(generation) =
+                        self.resume_delivered_wait(&mut record, wait, &key, Some(next_generation))?
                 {
                     expected_generation = Some(generation);
                     continue;
@@ -1102,8 +1098,9 @@ impl EngineNativeExecutor<'_> {
         seq: u64,
         output: &CodeRunRawOutput,
     ) -> EngineExecutorResult<LlmMessage> {
-        let wait = parked_wait_at(&self.storage, record, seq)?
-            .ok_or(Error::CorruptedIndex("executor resumed reply without a wait"))?;
+        let wait = parked_wait_at(&self.storage, record, seq)?.ok_or(Error::CorruptedIndex(
+            "executor resumed reply without a wait",
+        ))?;
         let head = format!(
             "The call parked at step {seq} ({}, wait {}) answered",
             wait.effect.as_str(),

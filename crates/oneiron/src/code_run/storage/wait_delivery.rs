@@ -144,7 +144,9 @@ pub(crate) fn deliver_wait_in_txn(
         }
     };
     let mut delivered = 0;
-    for ((_, _, run), generation) in WAITERS.scan_from(&vault.store, txn, &waiter_prefix(wait_id))? {
+    for ((_, _, run), generation) in
+        WAITERS.scan_from(&vault.store, txn, &waiter_prefix(wait_id))?
+    {
         let key = WaitKey {
             run,
             wait_id,
@@ -243,7 +245,9 @@ impl ExecutorStorage<'_> {
                 let settled = binding
                     .session
                     .side_table_get(&SETTLED, &(SETTLED_TAG, wait_id))?
-                    .ok_or(Error::InvariantViolation("a settled code-run wait has no row"))?;
+                    .ok_or(Error::InvariantViolation(
+                        "a settled code-run wait has no row",
+                    ))?;
                 let waiters = {
                     let view = binding.session.read_view()?;
                     let txn = view.read().base().env.read_txn()?;
