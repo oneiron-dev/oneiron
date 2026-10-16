@@ -24,7 +24,7 @@ use crate::origin::lfs::{
 };
 use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use heed::RwTxn;
@@ -392,8 +392,8 @@ impl Vault {
             ScanCount::start(
                 &self.store,
                 &rtxn,
-                OriginScan::ReceivePackIntents,
-                Some(lfs_repo_id(&repo_identity_hex)?),
+                EngineScan::ReceivePackIntents,
+                lfs_repo_id(&repo_identity_hex)?.as_bytes(),
             )?
         };
         let mut pending = Vec::new();
