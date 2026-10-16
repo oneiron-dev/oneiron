@@ -1275,3 +1275,62 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
         );
     }
 }
+
+#[tokio::test]
+async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refused_whole() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let grant_id = seeded_test_entity_id(0x1218_0301);
+    let principal_ref = seeded_test_entity_id(0x1218_0302);
+    let person_ref = seeded_test_entity_id(0x1218_0303);
+    let persona_ref = seeded_test_entity_id(0x1218_0304);
+    let stored_source = seeded_test_entity_id(0x1218_0305);
+    seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+    let profile = oneiron::PsychProfile::new(
+        persona_ref,
+        "bounded compact",
+        "bounded text",
+        "Bounded narrative.",
+        vec![stored_source],
+        oneiron::psych_profile::PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
+    )
+    .expect("profile");
+    server
+        .vault
+        .put_psych_profile(&persona_ref, &profile)
+        .expect("put profile");
+    let refresh_path = format!(
+        "/v1/companion/profiles/{}?person_ref={}",
+        persona_ref.to_hex(),
+        person_ref.to_hex()
+    );
+    let refresh = |count: usize| {
+        let ids = (0x2218_0000_u128..)
+            .take(count)
+            .map(|n| seeded_test_entity_id(n).to_hex())
+            .collect::<Vec<_>>();
+        core_request_with_principal_ref(
+            "POST",
+            &refresh_path,
+            "companion:profile:read",
+            &principal_ref.to_hex(),
+            Some(&json!({ "sourceRevisionIds": ids })),
+        )
+    };
+    let bound = oneiron::psych_profile::MAX_PSYCH_PROFILE_SOURCE_REVISIONS;
+
+    let (status, _) = route_json(server.clone(), refresh(bound + 1)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, body) = route_json(server.clone(), refresh(bound)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["state"], Value::from("stale"));
+    assert_eq!(
+        body["stale_reason"]["expectedSourceRevisionIds"]
+            .as_array()
+            .map(Vec::len),
+        Some(bound)
+    );
+}
