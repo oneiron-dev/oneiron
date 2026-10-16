@@ -50,6 +50,7 @@ impl Vault {
         {
             return Err(invalid("requested pack content hash drift"));
         }
+        let advisories = self.pack_advisories(&source, true, learned_at)?;
         let pinned = reference.clone();
         self.with_write_txn_grouped(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
@@ -60,6 +61,7 @@ impl Vault {
             // The hub path's scan evidence lands with the bytes, before any fit
             // ask reads it; skill-less packs get the same hash-bound ledger.
             self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, learned_at)?;
+            self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, learned_at)?;
             self.record_pack_fetch_in_txn(txn, &id, &pinned, publisher)?;
             Ok((id, pinned))
         })

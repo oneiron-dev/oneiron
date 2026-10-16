@@ -40,12 +40,16 @@ impl Vault {
         let source = PackSource::from_files(files)?;
         refuse_engine_namespace(&source)?;
         let hub = put_ref(&source)?;
+        // The put is the owner's consent, advisories included: the tree's OSV
+        // row is evidence on its hash, and holds nothing here.
+        let advisories = self.pack_advisories(&source, false, crate::unix_seconds_now())?;
         self.with_write_txn_grouped(|txn| {
             let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
             let source_id = self.stage_pack_source_in_txn(txn, &source, occurred, at)?;
             self.scan_and_ingest_pack_source_in_txn(txn, &source, occurred, at)?;
+            self.ingest_pack_advisories_in_txn(txn, &advisories, occurred, at)?;
             if let Some(reason) = self.screen_pack_in_txn(txn, &source, &[], &holder)? {
                 return Ok(PackInstallDisposition::Blocked { reason });
             }

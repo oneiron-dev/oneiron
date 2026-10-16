@@ -4,7 +4,10 @@
 //! authority stays with the content hash, its scan verdicts and the install door.
 use serde::{Deserialize, Serialize};
 
-use super::{HubPin, HubRef, HubSyncPolicy, TrackedHubRef};
+use super::{
+    GitEndpointSkillHubAdapter, HttpEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy,
+    SkillHubKind, TrackedHubRef,
+};
 use crate::{
     Vault,
     consent::AuthenticatedOwner,
@@ -39,6 +42,59 @@ fn check_policy_pin(policy: HubSyncPolicy, pin: &HubPin) -> Result<()> {
         | (HubSyncPolicy::ContentHashFrozen, HubPin::ContentHash(_)) => Ok(()),
         _ => Err(invalid("hub ref pin does not fit its sync policy")),
     }
+}
+
+/// A ref with no stored row follows the policy its own pin implies.
+pub(crate) fn pinned_tracking(hub_ref: HubRef) -> Result<TrackedHubRef> {
+    let policy = match &hub_ref.pin {
+        HubPin::Commit(_) => HubSyncPolicy::PinnedCommit,
+        HubPin::Tag(_) | HubPin::Semver(_) => HubSyncPolicy::PinnedRef,
+        HubPin::ContentHash(_) => HubSyncPolicy::ContentHashFrozen,
+        HubPin::None => return Err(invalid("hub ref sync needs a pin")),
+    };
+    Ok(TrackedHubRef::new(hub_ref, policy))
+}
+
+/// The Git transport a tracked ref resolves to now, with the commit-pinned
+/// reference a pack fetch records. A followed tag pins what it names at this
+/// fetch; a frozen hash refetches at the commit last trusted, else
+/// `fallback_commit`, and hard-fails on drift.
+pub(crate) fn git_ref_adapter(
+    hub: EntityId,
+    endpoint: &str,
+    tracked: &TrackedHubRef,
+    fallback_commit: Option<&str>,
+) -> Result<(GitEndpointSkillHubAdapter, HubRef)> {
+    match &tracked.hub_ref.pin {
+        HubPin::Commit(commit) => Ok((
+            GitEndpointSkillHubAdapter::new(hub, endpoint, commit)?,
+            tracked.hub_ref.clone(),
+        )),
+        HubPin::Tag(tag) | HubPin::Semver(tag) => {
+            let adapter = GitEndpointSkillHubAdapter::at_tag(hub, endpoint, tag)?;
+            let commit = HubPin::Commit(adapter.resolved_commit().to_owned());
+            let reference = HubRef::new(hub, tracked.hub_ref.ref_string.clone(), commit)?;
+            Ok((adapter, reference))
+        }
+        HubPin::ContentHash(_) => {
+            let commit = tracked
+                .latest_trusted
+                .as_deref()
+                .or(fallback_commit)
+                .ok_or_else(|| invalid("a frozen hash ref has no trusted commit to fetch"))?;
+            Ok((
+                GitEndpointSkillHubAdapter::new(hub, endpoint, commit)?,
+                tracked.hub_ref.clone(),
+            ))
+        }
+        HubPin::None => Err(invalid("hub ref is unpinned")),
+    }
+}
+
+/// One sync's configured transport and the reference a pack fetch records.
+pub(crate) enum RefFetch {
+    Git(GitEndpointSkillHubAdapter, HubRef),
+    Http(HttpEndpointSkillHubAdapter, HubRef),
 }
 
 impl RefSyncRow {
@@ -122,6 +178,28 @@ impl Vault {
             REF_SYNC.put(&self.store, txn, &key, &RefSyncRow::from_tracked(&tracked)?)?;
             Ok(tracked)
         })
+    }
+
+    /// The configured hub's transport for a tracked ref, at its policy.
+    pub(crate) fn hub_ref_fetch(
+        &self,
+        tracked: &TrackedHubRef,
+        fallback_commit: Option<&str>,
+    ) -> Result<RefFetch> {
+        let hub = tracked.hub_ref.hub_id;
+        let row = self.skill_hub_record(&hub)?;
+        match row.kind {
+            SkillHubKind::Git => {
+                let (adapter, reference) =
+                    git_ref_adapter(hub, &row.endpoint, tracked, fallback_commit)?;
+                Ok(RefFetch::Git(adapter, reference))
+            }
+            SkillHubKind::HttpIndex => Ok(RefFetch::Http(
+                HttpEndpointSkillHubAdapter::new(hub, &row.endpoint)?,
+                tracked.hub_ref.clone(),
+            )),
+            SkillHubKind::LocalDir => Err(invalid("a local folder hub has no ref to fetch")),
+        }
     }
 
     /// Marks a revision a fetch resolved (seen) or an install accepted

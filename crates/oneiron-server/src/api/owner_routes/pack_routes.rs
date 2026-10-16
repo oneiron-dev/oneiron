@@ -1,23 +1,30 @@
 //! `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1).
 //! The owner installs a pack from a folder on this host or from its files,
-//! lists what is installed, and binds or dials its hooks.
+//! lists what is installed, and binds or dials its hooks. Hub refs sync at
+//! their stored policy, and hub skills import, sync, restore and read their
+//! receipts here (OF-213).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::skill_hub::HubFile;
+use oneiron::EntityId;
+use oneiron::consent::ConsentReceipt;
 use oneiron::skill_hub::pack_catalog::{
-    PackHookBinding, PackInstallDisposition, PackInstallReceipt,
+    PackHookBinding, PackInstallDisposition, PackInstallReceipt, hub_pin,
+};
+use oneiron::skill_hub::{
+    HubAdmissionReceipt, HubAskSurface, HubFile, HubImportReceipt, HubPin, HubRef,
+    HubSyncDisposition, HubSyncPolicy, TrackedHubRef,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
@@ -34,6 +41,25 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
+        .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
+        .route("/packs/sync", post(sync_pack))
+        .route("/packs/skills/import", post(import_skill))
+        .route("/packs/skills/restore", post(restore_skill))
+        .route("/packs/skills/restore-defaults", post(restore_default_skills))
+        .route("/packs/skills/{entity}/sync", post(sync_skill))
+        .route(
+            "/packs/skills/{entity}/permissions/approve",
+            post(approve_skill_permissions),
+        )
+        .route("/packs/skills/{entity}/receipts", get(skill_receipts))
+        .route(
+            "/packs/skills/{entity}/activation/prepare",
+            post(prepare_skill_activation),
+        )
+        .route(
+            "/packs/skills/{entity}/activation/approve",
+            post(approve_skill_activation),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,7 +157,7 @@ async fn install_from_hub(
     let put = blocking(move || {
         let hub = oneiron::EntityId::from_hex(&request.hub)
             .map_err(|_| OwnerError::Invalid("hub is not an entity id".to_owned()))?;
-        let pin = oneiron::skill_hub::pack_catalog::hub_pin(&request.pin_type, &request.pin_value)?;
+        let pin = hub_pin(&request.pin_type, &request.pin_value)?;
         let disposition = server.vault().install_pack_from_hub(
             &owner,
             hub,
@@ -301,4 +327,489 @@ async fn set_hook_enabled(
     })
     .await?;
     Ok(Json(()))
+}
+
+fn entity_id(hex: &str, what: &str) -> Result<EntityId, OwnerError> {
+    EntityId::from_hex(hex).map_err(|_| OwnerError::Invalid(format!("{what} is not an entity id")))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefKey {
+    /// A configured hub, as 32 hex.
+    hub: String,
+    /// The folder the ref names in that hub.
+    r#ref: String,
+}
+
+/// One hub ref's policy, pin and the revisions seen and trusted.
+#[derive(Serialize)]
+struct RefSyncView {
+    hub: String,
+    r#ref: String,
+    sync_policy: &'static str,
+    pin_type: &'static str,
+    pin_value: Option<String>,
+    latest_seen: Option<String>,
+    latest_trusted: Option<String>,
+}
+
+impl From<TrackedHubRef> for RefSyncView {
+    fn from(tracked: TrackedHubRef) -> Self {
+        let pin_type = tracked.hub_ref.pin.pin_type();
+        let pin_value = match tracked.hub_ref.pin {
+            HubPin::Semver(value)
+            | HubPin::Tag(value)
+            | HubPin::Commit(value)
+            | HubPin::ContentHash(value) => Some(value),
+            HubPin::None => None,
+        };
+        Self {
+            hub: tracked.hub_ref.hub_id.to_hex(),
+            r#ref: tracked.hub_ref.ref_string,
+            sync_policy: tracked.sync_policy.as_str(),
+            pin_type,
+            pin_value,
+            latest_seen: tracked.latest_seen,
+            latest_trusted: tracked.latest_trusted,
+        }
+    }
+}
+
+/// `GET /v1/owner/packs/ref-sync?hub=&ref=`: the ref's stored policy, or
+/// null when it follows its installed pin.
+async fn ref_sync(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<RefKey>, QueryRejection>,
+) -> OwnerReply<Option<RefSyncView>> {
+    owner(&auth, &server)?;
+    let key = query_params(query)?;
+    let view = blocking(move || {
+        let hub = entity_id(&key.hub, "hub")?;
+        Ok(server
+            .vault()
+            .hub_ref_sync(&hub, &key.r#ref)?
+            .map(RefSyncView::from))
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetRefSync {
+    hub: String,
+    r#ref: String,
+    /// `pinned-commit`, `pinned-ref` or `content-hash-frozen`.
+    sync_policy: String,
+    /// `commit`, `tag`, `semver` or `content_hash`, fitting the policy.
+    pin_type: String,
+    pin_value: String,
+}
+
+/// `PUT /v1/owner/packs/ref-sync`: set one ref's policy and pin. Nothing is
+/// fetched until the next sync.
+async fn set_ref_sync(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SetRefSync>, JsonRejection>,
+) -> OwnerReply<RefSyncView> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let view = blocking(move || {
+        let hub = entity_id(&request.hub, "hub")?;
+        let policy = HubSyncPolicy::parse(&request.sync_policy)
+            .ok_or_else(|| OwnerError::Invalid("unknown sync_policy".to_owned()))?;
+        let pin = hub_pin(&request.pin_type, &request.pin_value)?;
+        let reference = HubRef::new(hub, request.r#ref, pin)?;
+        Ok(RefSyncView::from(
+            server.vault().set_hub_ref_sync(&owner, reference, policy)?,
+        ))
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SyncPack {
+    /// The installed pack's name.
+    name: String,
+}
+
+/// `POST /v1/owner/packs/sync`: refetch an installed hub pack at its ref's
+/// policy and install it. A source with advisories lands Candidate.
+async fn sync_pack(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SyncPack>, JsonRejection>,
+) -> OwnerReply<PackPut> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let put = blocking(move || {
+        Ok(PackPut::from(
+            server.vault().sync_pack_from_hub(&owner, &request.name)?,
+        ))
+    })
+    .await?;
+    Ok(Json(put))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportSkill {
+    /// A shipped library subtree, imported at the released commit.
+    #[serde(default)]
+    subtree: Option<String>,
+    /// Else a configured hub, as 32 hex, with the fields below.
+    #[serde(default)]
+    hub: Option<String>,
+    #[serde(default)]
+    folder: Option<String>,
+    #[serde(default)]
+    pin_type: Option<String>,
+    #[serde(default)]
+    pin_value: Option<String>,
+    #[serde(default)]
+    publisher: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SkillRow {
+    /// The skill, as 32 hex.
+    entity: String,
+}
+
+fn skill_row(entity: EntityId) -> SkillRow {
+    SkillRow {
+        entity: entity.to_hex(),
+    }
+}
+
+/// `POST /v1/owner/packs/skills/import`: import a shipped library skill, or
+/// a hub skill at a pin. A hub skill lands Candidate behind one permission
+/// ask; its dependency advisories land with it.
+async fn import_skill(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ImportSkill>, JsonRejection>,
+) -> OwnerReply<SkillRow> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let row = blocking(move || {
+        let vault = server.vault();
+        let at = vault.now_recorded_at();
+        let occurred = oneiron::TimeRange { start: at, end: at };
+        let entity = match request {
+            ImportSkill {
+                subtree: Some(subtree),
+                hub: None,
+                folder: None,
+                pin_type: None,
+                pin_value: None,
+                publisher: None,
+            } => vault.import_default_hub_skill(&subtree, occurred, at)?,
+            ImportSkill {
+                subtree: None,
+                hub: Some(hub),
+                folder: Some(folder),
+                pin_type: Some(pin_type),
+                pin_value: Some(pin_value),
+                publisher: Some(publisher),
+            } => vault.import_skill_from_hub_ref(
+                &owner,
+                entity_id(&hub, "hub")?,
+                &folder,
+                hub_pin(&pin_type, &pin_value)?,
+                &publisher,
+            )?,
+            _ => {
+                return Err(OwnerError::Invalid(
+                    "send a subtree, or hub, folder, pin_type, pin_value and publisher"
+                        .to_owned(),
+                ));
+            }
+        };
+        Ok(skill_row(entity))
+    })
+    .await?;
+    Ok(Json(row))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreSkill {
+    subtree: String,
+}
+
+/// `POST /v1/owner/packs/skills/restore`: re-import a deleted or retired
+/// library skill as a fresh Candidate; an unchanged one is left alone.
+async fn restore_skill(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RestoreSkill>, JsonRejection>,
+) -> OwnerReply<SkillRow> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let row = blocking(move || {
+        let at = server.vault().now_recorded_at();
+        let occurred = oneiron::TimeRange { start: at, end: at };
+        Ok(skill_row(server.vault().restore_default_hub_skill(
+            &owner,
+            &request.subtree,
+            occurred,
+            at,
+        )?))
+    })
+    .await?;
+    Ok(Json(row))
+}
+
+/// `POST /v1/owner/packs/skills/restore-defaults`: restore every missing or
+/// retired embedded default as a fresh Candidate.
+async fn restore_default_skills(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<SkillRow>> {
+    let owner = owner(&auth, &server)?;
+    let rows = blocking(move || {
+        let at = server.vault().now_recorded_at();
+        let occurred = oneiron::TimeRange { start: at, end: at };
+        Ok(server
+            .vault()
+            .restore_default_skills(&owner, occurred, at)?
+            .into_iter()
+            .map(skill_row)
+            .collect())
+    })
+    .await?;
+    Ok(Json(rows))
+}
+
+/// What one skill sync did.
+#[derive(Serialize)]
+struct SkillSync {
+    /// `applied`, `proposed` or `refused_by_policy`.
+    outcome: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval: Option<&'static str>,
+}
+
+/// `POST /v1/owner/packs/skills/{entity}/sync`: refetch a hub skill at its
+/// ref's stored policy. Same or narrower bytes apply; widening proposes.
+async fn sync_skill(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath(entity): UrlPath<String>,
+) -> OwnerReply<SkillSync> {
+    let owner = owner(&auth, &server)?;
+    let sync = blocking(move || {
+        let entity = entity_id(&entity, "entity")?;
+        Ok(
+            match server.vault().sync_skill_from_hub_ref(&owner, &entity)? {
+                HubSyncDisposition::Applied => SkillSync {
+                    outcome: "applied",
+                    proposal: None,
+                    approval: None,
+                },
+                HubSyncDisposition::Proposed {
+                    proposal_id,
+                    approval,
+                } => SkillSync {
+                    outcome: "proposed",
+                    proposal: Some(proposal_id.to_hex()),
+                    approval: Some(approval.as_str()),
+                },
+                HubSyncDisposition::RefusedByPolicy => SkillSync {
+                    outcome: "refused_by_policy",
+                    proposal: None,
+                    approval: None,
+                },
+            },
+        )
+    })
+    .await?;
+    Ok(Json(sync))
+}
+
+/// The owner's consent as it landed.
+#[derive(Serialize)]
+struct ConsentRow {
+    outcome: &'static str,
+    /// The gate decision, as 32 hex.
+    decision: String,
+}
+
+impl From<ConsentReceipt> for ConsentRow {
+    fn from(receipt: ConsentReceipt) -> Self {
+        Self {
+            outcome: receipt.gate_outcome(),
+            decision: receipt
+                .decision_id()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        }
+    }
+}
+
+/// The skill's first hub source: the ref its import or sync named.
+fn skill_source(vault: &oneiron::Vault, entity: &EntityId) -> Result<HubRef, OwnerError> {
+    vault
+        .skill_hub_sources(entity)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| OwnerError::Invalid("the skill has no hub source".to_owned()))
+}
+
+/// `POST /v1/owner/packs/skills/{entity}/permissions/approve`: the owner's
+/// answer to a hub skill's permission ask; it activates the Candidate.
+async fn approve_skill_permissions(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath(entity): UrlPath<String>,
+) -> OwnerReply<ConsentRow> {
+    let owner = owner(&auth, &server)?;
+    let row = blocking(move || {
+        let vault = server.vault();
+        let entity = entity_id(&entity, "entity")?;
+        let source = skill_source(vault, &entity)?;
+        let at = vault.now_recorded_at();
+        let occurred = oneiron::TimeRange { start: at, end: at };
+        Ok(ConsentRow::from(vault.approve_marketplace_permission_ask(
+            &owner, &entity, &source, occurred, at,
+        )?))
+    })
+    .await?;
+    Ok(Json(row))
+}
+
+/// A hub skill's receipts: one import receipt per hub source, and the
+/// held-out activation ruling once one landed.
+#[derive(Serialize)]
+struct SkillReceipts {
+    imports: Vec<HubImportReceipt>,
+    admission: Option<HubAdmissionReceipt>,
+}
+
+/// `GET /v1/owner/packs/skills/{entity}/receipts`
+async fn skill_receipts(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath(entity): UrlPath<String>,
+) -> OwnerReply<SkillReceipts> {
+    owner(&auth, &server)?;
+    let receipts = blocking(move || {
+        let vault = server.vault();
+        let entity = entity_id(&entity, "entity")?;
+        let mut imports = Vec::new();
+        for source in vault.skill_hub_sources(&entity)? {
+            if let Some(receipt) = vault.hub_import_receipt(&entity, &source)? {
+                imports.push(receipt);
+            }
+        }
+        Ok(SkillReceipts {
+            imports,
+            admission: vault.hub_admission_receipt(&entity)?,
+        })
+    })
+    .await?;
+    Ok(Json(receipts))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActivationRequest {
+    /// The publisher admitted for the skill's hub.
+    publisher: String,
+    /// An active local skill whose attributed outcomes are the baseline.
+    evidence_skill: String,
+    /// On approve: the digest the owner was shown.
+    #[serde(default)]
+    effect_digest: Option<String>,
+}
+
+/// The activation ask as the owner reads it.
+#[derive(Serialize)]
+struct ActivationAskView {
+    candidate: String,
+    content_hash: String,
+    effect_digest: String,
+    /// `one_tap`, `summarized_review` or `full_review`.
+    surface: &'static str,
+}
+
+fn prepare_activation(
+    server: &SyncServer,
+    owner: &oneiron::consent::AuthenticatedOwner,
+    entity: &str,
+    request: &ActivationRequest,
+) -> Result<oneiron::skill_hub::HubActivationAsk, OwnerError> {
+    let vault = server.vault();
+    let candidate = entity_id(entity, "entity")?;
+    let evidence = entity_id(&request.evidence_skill, "evidence_skill")?;
+    let source = skill_source(vault, &candidate)?;
+    let publisher = vault.admit_skill_publisher(owner, &request.publisher, source.hub_id)?;
+    Ok(vault.prepare_marketplace_activation(candidate, &source, &publisher, evidence)?)
+}
+
+/// `POST /v1/owner/packs/skills/{entity}/activation/prepare`: the immutable
+/// held-out activation ask for a hub Candidate.
+async fn prepare_skill_activation(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath(entity): UrlPath<String>,
+    payload: Result<Json<ActivationRequest>, JsonRejection>,
+) -> OwnerReply<ActivationAskView> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let view = blocking(move || {
+        let ask = prepare_activation(&server, &owner, &entity, &request)?;
+        Ok(ActivationAskView {
+            candidate: ask.candidate().to_hex(),
+            content_hash: ask.content_hash().to_hex(),
+            effect_digest: ask.effect_digest().to_hex(),
+            surface: match ask.surface() {
+                HubAskSurface::OneTap => "one_tap",
+                HubAskSurface::SummarizedReview => "summarized_review",
+                HubAskSurface::FullReview => "full_review",
+            },
+        })
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+/// `POST /v1/owner/packs/skills/{entity}/activation/approve`: the owner's
+/// consent to the ask they were shown. The ask is rebuilt and must carry
+/// the same digest. Admission itself needs the host's held-out scorer.
+async fn approve_skill_activation(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath(entity): UrlPath<String>,
+    payload: Result<Json<ActivationRequest>, JsonRejection>,
+) -> OwnerReply<ConsentRow> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let row = blocking(move || {
+        let shown = request
+            .effect_digest
+            .clone()
+            .ok_or_else(|| OwnerError::Invalid("send the effect_digest shown".to_owned()))?;
+        let ask = prepare_activation(&server, &owner, &entity, &request)?;
+        if ask.effect_digest().to_hex() != shown {
+            return Err(OwnerError::Invalid(
+                "the activation ask moved; prepare it again".to_owned(),
+            ));
+        }
+        Ok(ConsentRow::from(
+            server.vault().approve_marketplace_activation(&ask, &owner)?,
+        ))
+    })
+    .await?;
+    Ok(Json(row))
 }

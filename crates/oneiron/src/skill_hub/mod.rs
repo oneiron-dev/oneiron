@@ -12,6 +12,7 @@ mod folder;
 mod git_fetch;
 mod git_process;
 mod http_fetch;
+mod hub_owner;
 mod import_receipt;
 mod install_transition;
 pub use import_receipt::{

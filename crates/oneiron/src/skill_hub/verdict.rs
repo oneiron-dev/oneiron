@@ -235,7 +235,7 @@ impl Vault {
         Ok(claim)
     }
 
-    fn ingest_scan_verdict_for_hash_in_txn(
+    pub(super) fn ingest_scan_verdict_for_hash_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         content_hash: SkillContentHash,

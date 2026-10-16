@@ -55,6 +55,7 @@ pub enum InstallHoldReason {
     Stale,
     Quarantined,
     Superseded,
+    Advisories,
 }
 impl InstallHoldReason {
     pub const fn as_str(self) -> &'static str {
@@ -68,6 +69,7 @@ impl InstallHoldReason {
             Self::Stale => "stale",
             Self::Quarantined => "quarantined",
             Self::Superseded => "superseded",
+            Self::Advisories => "advisories",
         }
     }
 }
@@ -203,25 +205,28 @@ impl InstallPlan {
         Self::new(binding, action)
     }
 
+    /// `hold` is the pack's Candidate reason; None installs with the pack.
     pub(super) fn pack(
         record: &SkillRecord,
         binding: InstallBinding,
-        active: bool,
-        blocked: bool,
-        code_allowed: bool,
+        hold: Option<InstallHoldReason>,
     ) -> Self {
-        let fit = if active {
+        let fit = if hold.is_none() {
             MarketplaceFit::Ready
         } else {
             MarketplaceFit::Ask
         };
-        let mut plan = Self::marketplace(record, binding, fit, blocked, code_allowed);
-        if !active && matches!(plan.action, InstallAction::PendingPermission) {
-            plan.action = InstallAction::Preserve(if blocked {
-                InstallHoldReason::RulesHit
-            } else {
-                InstallHoldReason::CodeAutoInstallOff
-            });
+        let mut plan = Self::marketplace(
+            record,
+            binding,
+            fit,
+            hold == Some(InstallHoldReason::RulesHit),
+            hold != Some(InstallHoldReason::CodeAutoInstallOff),
+        );
+        if let Some(reason) = hold
+            && matches!(plan.action, InstallAction::PendingPermission)
+        {
+            plan.action = InstallAction::Preserve(reason);
         }
         if matches!(
             plan.action,
