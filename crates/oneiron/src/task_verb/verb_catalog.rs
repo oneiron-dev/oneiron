@@ -123,6 +123,7 @@ pub enum AgentVerb {
     SelfBrowserObserve,
     SelfBrowserFind,
     SelfBrowserClick,
+    SelfBrowserClickAt,
     SelfBrowserType,
     SelfBrowserSelect,
     SelfBrowserWaitFor,
@@ -281,6 +282,7 @@ impl AgentVerb {
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
         Self::SelfBrowserClick,
+        Self::SelfBrowserClickAt,
         Self::SelfBrowserType,
         Self::SelfBrowserSelect,
         Self::SelfBrowserWaitFor,
@@ -444,6 +446,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
             Self::SelfBrowserClick => "self.browser.click",
+            Self::SelfBrowserClickAt => "self.browser.click_at",
             Self::SelfBrowserType => "self.browser.type",
             Self::SelfBrowserSelect => "self.browser.select",
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
@@ -630,6 +633,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -968,6 +972,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -1063,6 +1068,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
@@ -1219,6 +1225,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],
@@ -1378,6 +1385,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],
