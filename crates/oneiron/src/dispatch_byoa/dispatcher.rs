@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, CompleteAttempt,
-    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
+    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, AttemptState,
+    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
     FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
@@ -38,8 +38,8 @@ use super::error::{
 use super::exhaust::{
     ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaExhaustEnvelope, ByoaTerminalDisposition,
     ByoaTerminalReceipt, CaptureByoaExhaust, byoa_exhaust_artifact_id, byoa_exhaust_artifact_name,
-    byoa_result_ref, decode_byoa_record, disposition_matches_state, encode_exhaust_envelope,
-    ensure_byoa_runtime_actor, normalize_capture_reason, union_taint_refs,
+    byoa_result_ref, decode_byoa_exhaust, decode_byoa_record, disposition_matches_state,
+    encode_exhaust_envelope, ensure_byoa_runtime_actor, normalize_capture_reason, union_taint_refs,
     validate_canonical_capture,
 };
 use super::provider::ProviderAdapterRegistry;
@@ -149,6 +149,48 @@ where
             endpoint_factory,
             egress,
         }
+    }
+
+    pub(crate) fn vault(&self) -> &Vault {
+        self.vault
+    }
+
+    /// Read the canonical successful capture, not a worker-supplied receipt.
+    pub(crate) fn completed_cli_exhaust(
+        &self,
+        attempt_id: AttemptId,
+    ) -> ByoaResult<(AttemptRecord, CliSandboxSpec, ByoaExhaust)> {
+        let record = AttemptQueue::new(self.vault)
+            .get(attempt_id)?
+            .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
+        let payload = decode_byoa_record(&record)?;
+        self.check_login_placement(payload.user_login, &payload.connector)?;
+        let ByoaConnectorSpec::CliSandbox(spec) = payload.connector else {
+            return Err(invalid(ERR_EXECUTION_SHAPE));
+        };
+        let artifact_id = byoa_exhaust_artifact_id(attempt_id)?;
+        let expected_ref = byoa_result_ref(&artifact_id, 1)?;
+        if record.state != AttemptState::Completed
+            || record.result_ref.as_ref() != Some(&expected_ref)
+        {
+            return Err(invalid(ERR_CAPTURE_CONFLICT));
+        }
+        if self
+            .vault
+            .blob_artifact_version_metadata(&artifact_id, 1)?
+            .is_none()
+        {
+            return Err(invalid(ERR_CAPTURE_CONFLICT));
+        }
+        let bytes = self
+            .vault
+            .read_blob_artifact_version(&artifact_id, 1)?
+            .ok_or_else(|| invalid(ERR_CAPTURE_CONFLICT))?;
+        let (captured_id, disposition, exhaust) = decode_byoa_exhaust(&bytes)?;
+        if captured_id != attempt_id || disposition != ByoaTerminalDisposition::Completed {
+            return Err(invalid(ERR_CAPTURE_CONFLICT));
+        }
+        Ok((record, spec, exhaust))
     }
 
     /// Validates a foreign connector and lands it on a durable attempt row.
