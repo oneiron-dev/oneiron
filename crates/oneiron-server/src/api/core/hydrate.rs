@@ -477,27 +477,27 @@ pub(crate) fn project_hydrated_short_id(
     };
     // One of a batch decodes its body, to project it or to observe it, only
     // while the batch's budget holds it.
-    let (decoded, bodies) = match bodies {
+    let (decoded, mut bodies) = match bodies {
         Some(bodies) => (bodies.admits(body.len()), Some(bodies)),
         None => (true, None),
     };
     // A live generated image is served the form a reader that declared no
-    // image input reads (OF-329): its ASSET_TEXT, read through this lane.
-    let mut served = None;
-    if decoded
+    // image input reads (OF-329): its ASSET_TEXT, read through this lane, its
+    // stored body charged to the same budget.
+    let served = if decoded
         && matches!(mode, oneiron::memory::ReadMode::Live)
         && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
     {
-        let asset = oneiron::memory::hydrated_asset(scoped_read, id)
+        let mut admits = |len: usize| bodies.as_mut().is_none_or(|bodies| bodies.admits(len));
+        let asset = oneiron::memory::hydrated_asset(scoped_read, id, &mut admits)
             .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
         narrowing.restrict_with(&asset.receipt);
         response.restrict_with(&asset.receipt);
-        match asset.value {
-            oneiron::memory::HydratedAsset::Stored => {}
-            oneiron::memory::HydratedAsset::Text { body, .. } => served = Some(body),
-            oneiron::memory::HydratedAsset::NoForm => return Ok(None),
-        }
-    }
+        asset.value
+    } else {
+        oneiron::memory::HydratedAsset::Stored
+    };
+    let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted);
     if decoded
         && let Some(observations) = observations
         && let Some(successor) = observations
@@ -519,7 +519,10 @@ pub(crate) fn project_hydrated_short_id(
             &id,
             entity_type,
             learned_at,
-            served.as_deref().unwrap_or(&body),
+            match &served {
+                oneiron::memory::HydratedAsset::Text { body: text, .. } => text,
+                _ => &body,
+            },
             view,
         ),
     };

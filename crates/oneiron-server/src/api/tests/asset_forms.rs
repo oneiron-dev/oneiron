@@ -1,7 +1,8 @@
 //! OF-329's hydrate doors: a text-only agent that hydrates a
 //! generated image, on `/v1` core hydrate and on MCP's `memory.hydrate`, is
 //! served the image's ASSET_TEXT and never its bytes, with no routing of its
-//! own. An image with no text it reads is absent at every door.
+//! own. An image with no text it reads keeps the body it had: its fields, its
+//! bytes nulled.
 
 use super::*;
 
@@ -14,12 +15,16 @@ struct Assets {
     _dir: tempfile::TempDir,
     server: Arc<SyncServer>,
     image: oneiron::memory::LandedImage,
+    caption: String,
     bare: oneiron::EntityId,
 }
 
 impl Assets {
     fn new() -> Self {
-        let (_dir, server) = auth_test_server();
+        Self::on(auth_test_server(), CAPTION)
+    }
+
+    fn on((_dir, server): (tempfile::TempDir, Arc<SyncServer>), caption: &str) -> Self {
         let owner = server.vault.ensure_embedded_owner_actor().expect("owner");
         let image = server
             .vault
@@ -33,7 +38,7 @@ impl Assets {
                     model: oneiron::ModelId::new("fake/image-1@1").expect("model id"),
                     metadata: std::collections::BTreeMap::new(),
                 },
-                CAPTION,
+                caption,
                 10,
             )
             .expect("land the generated image");
@@ -68,8 +73,29 @@ impl Assets {
             _dir,
             server,
             image,
+            caption: caption.to_owned(),
             bare,
         }
+    }
+
+    /// A credential for an agent other than the owner that declared no image
+    /// input.
+    fn agent_bearer(&self) -> String {
+        let agent = seeded_test_entity_id(0x2331_0002);
+        self.server
+            .vault
+            .put_entity(
+                &agent,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"agent",
+            )
+            .expect("seed agent");
+        test_bearer(&format!(
+            "scope=core:read;principal_ref={};actor_class=agent",
+            agent.to_hex()
+        ))
     }
 
     fn short_ref(&self, id: &oneiron::EntityId) -> String {
@@ -84,7 +110,7 @@ impl Assets {
         json!({
             "form": "asset_text",
             "asset_text_ref": self.image.asset_text_ref,
-            "text": CAPTION,
+            "text": self.caption,
         })
     }
 }
@@ -99,6 +125,13 @@ fn assert_text_form(item: &Value, assets: &Assets) {
     }
 }
 
+/// Asserts `fields` are the bare image's stored fields, its bytes nulled.
+fn assert_stored_image(fields: &Value) {
+    assert_eq!(fields["mime_type"], "image/png", "{fields}");
+    assert_eq!(fields["bytes"], Value::Null, "{fields}");
+    assert!(fields.get("form").is_none(), "{fields}");
+}
+
 /// OF-329 on `/v1`: an agent that declared no image input
 /// hydrates the generated image's short ref, alone and in a batch, and is
 /// served its ASSET_TEXT. On main the item was the image body with its bytes
@@ -106,22 +139,7 @@ fn assert_text_form(item: &Value, assets: &Assets) {
 #[tokio::test]
 async fn a_text_only_agent_hydrates_a_generated_image_as_its_asset_text_on_v1() {
     let assets = Assets::new();
-    let agent = seeded_test_entity_id(0x2331_0002);
-    assets
-        .server
-        .vault
-        .put_entity(
-            &agent,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"agent",
-        )
-        .expect("seed agent");
-    let bearer = test_bearer(&format!(
-        "scope=core:read;principal_ref={};actor_class=agent",
-        agent.to_hex()
-    ));
+    let bearer = assets.agent_bearer();
     let asset = oneiron::EntityId::from_hex(&assets.image.asset_ref).expect("asset id");
     let (image, bare) = (assets.short_ref(&asset), assets.short_ref(&assets.bare));
     let call = |uri: &str, body: Value| {
@@ -150,18 +168,19 @@ async fn a_text_only_agent_hydrates_a_generated_image_as_its_asset_text_on_v1() 
     assert_eq!(status, StatusCode::OK, "{batch}");
     assert_eq!(batch["results"][0]["outcome"], "live", "{batch}");
     assert_text_form(&batch["results"][0]["result"]["item"], &assets);
-    // An image with no text this reader reads has no form: it is absent.
-    assert_eq!(batch["results"][1]["outcome"], "not_found", "{batch}");
+    // An image with no text this reader reads keeps its stored body.
+    assert_eq!(batch["results"][1]["outcome"], "live", "{batch}");
+    assert_stored_image(&batch["results"][1]["result"]["item"]);
 
-    let (status, refused) = call("/v1/core/hydrate", json!({ "ref": bare })).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
-    assert!(!refused.to_string().contains("image/png"), "{refused}");
+    let (status, stored) = call("/v1/core/hydrate", json!({ "ref": bare })).await;
+    assert_eq!(status, StatusCode::OK, "{stored}");
+    assert_stored_image(&stored["item"]);
 }
 
-/// OF-329 on MCP: a connector agent that declared no image
-/// input calls `memory.hydrate` and `memory.hydrate_many` on the generated
-/// image and is served its ASSET_TEXT, which the call lists among the rows it
-/// served. On main the item's body was the image body with its bytes nulled.
+/// OF-329 on MCP: a connector agent that declared no image input calls
+/// `memory.hydrate` and `memory.hydrate_many` on the generated image and is
+/// served its ASSET_TEXT. On main the item's body was the image body with its
+/// bytes nulled.
 #[tokio::test]
 async fn a_text_only_mcp_agent_hydrates_a_generated_image_as_its_asset_text() {
     let assets = Assets::new();
@@ -209,13 +228,53 @@ async fn a_text_only_mcp_agent_hydrates_a_generated_image_as_its_asset_text() {
         assets.text_form(),
         "{batch}"
     );
-    // An image with no text this reader reads has no form: it is absent.
-    assert_eq!(results[1]["outcome"], "not_found", "{batch}");
+    // An image with no text this reader reads keeps its stored body.
+    assert_eq!(results[1]["outcome"], "live", "{batch}");
+    assert_stored_image(&results[1]["result"]["item"]["body"]);
 
-    let (_, refused) = call("memory.hydrate", json!({ "ref": bare })).await;
-    assert_mcp_structured_error(&refused, "entity_not_found");
-    assert_eq!(
-        refused["error"]["data"]["vault_read"]["engine_code"],
-        "NOT_FOUND"
+    let (_, stored) = call("memory.hydrate", json!({ "ref": bare })).await;
+    assert!(stored.get("error").is_none(), "{stored}");
+    let response = &stored["result"]["structuredContent"]["output"]["response"];
+    assert_stored_image(&response["item"]["body"]);
+}
+
+/// Sol on #1517: a batch's body budget bounds the text it serves too. An
+/// image whose text is past what the batch may still decode keeps its id,
+/// kind and time with the `bodyOmitted` marker, and the marker's ref hydrates
+/// the text whole.
+#[tokio::test]
+async fn a_batch_omits_an_image_whose_text_is_past_its_body_budget() {
+    let caption = ["a paper boat drifting down a long rain gutter"; 64].join(", ");
+    let assets = Assets::on(
+        test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            limits: crate::config::LimitsConfig {
+                projection_body_bytes: 1024,
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        &caption,
     );
+    let bearer = assets.agent_bearer();
+    let asset = oneiron::EntityId::from_hex(&assets.image.asset_ref).expect("asset id");
+    let image = assets.short_ref(&asset);
+    let call = |uri: &str, body: Value| {
+        route_json(
+            assets.server.clone(),
+            core_request_with_authz("POST", uri, bearer.clone(), Some(&body)),
+        )
+    };
+
+    let (status, batch) = call("/v1/core/batch/shortId/hydrate", json!({ "refs": [image] })).await;
+    assert_eq!(status, StatusCode::OK, "{batch}");
+    assert_eq!(batch["results"][0]["outcome"], "live", "{batch}");
+    let item = &batch["results"][0]["result"]["item"];
+    assert_eq!(item["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED", "{item}");
+    assert!(item.get("text").is_none(), "{item}");
+
+    let marker = &item["bodyOmitted"]["ref"];
+    let (status, whole) = call("/v1/core/hydrate", json!({ "ref": marker })).await;
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    assert_text_form(&whole["item"], &assets);
 }

@@ -5,7 +5,6 @@ use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
 };
-use crate::memory::HydratedAsset;
 use crate::pipeline::ScoredEntity;
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
@@ -307,21 +306,14 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         // image input reads (OF-329): its ASSET_TEXT, read through this lane.
         let mut served = None;
         if entity_type == ENTITY_TYPE_ASSET {
-            let asset = crate::memory::hydrated_asset(&self.scoped_read, id)
+            let asset = crate::memory::hydrated_asset(&self.scoped_read, id, &mut |_| true)
                 .map_err(|error| engine_failure(method, &error))?;
             narrowing.restrict_with(&asset.receipt);
-            match asset.value {
-                HydratedAsset::Stored => {}
-                HydratedAsset::Text { body, asset_text } => {
-                    if let Some(producers) = self.producers {
-                        producers.list([asset_text]);
-                    }
-                    served = Some(body);
+            if let crate::memory::HydratedAsset::Text { body, asset_text } = asset.value {
+                if let Some(producers) = self.producers {
+                    producers.list([asset_text]);
                 }
-                HydratedAsset::NoForm => {
-                    let absent = engine_absent(method, "short_id");
-                    return Err(absent.with_read_receipt(narrowing.clone()));
-                }
+                served = Some(body);
             }
         }
         let body = served.as_deref().unwrap_or(&body);
