@@ -439,23 +439,32 @@ fn claim_args(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<Value> {
+    let (value, confidence) = candidate_fields(call)?;
     Ok(json!({
         "id": id.to_hex(),
         "predicate": candidate.predicate(),
         "subject": subject_json(candidate.subject()),
-        "value": rmpv_json(candidate.value()),
-        "confidence": candidate_confidence(call)?,
+        "value": rmpv_json(&value),
+        "confidence": confidence,
         "occurred": span(occurred),
         "learnedAt": learned_at,
     }))
 }
 
-/// A claim candidate's confidence, as the call's replay request records it.
-fn candidate_confidence(call: &SelfCall) -> Result<Option<f64>> {
+/// A claim candidate's value and confidence, as the call's replay request
+/// records them: the candidate keeps both to itself.
+fn candidate_fields(call: &SelfCall) -> Result<(rmpv::Value, Option<f64>)> {
     let request = self_call_request_value(call)?;
-    Ok(entry(&request, "candidate")
-        .and_then(|candidate| entry(candidate, "confidence"))
-        .and_then(rmpv::Value::as_f64))
+    let candidate = entry(&request, "candidate");
+    Ok((
+        candidate
+            .and_then(|candidate| entry(candidate, "value"))
+            .cloned()
+            .unwrap_or(rmpv::Value::Nil),
+        candidate
+            .and_then(|candidate| entry(candidate, "confidence"))
+            .and_then(rmpv::Value::as_f64),
+    ))
 }
 
 fn subject_json(subject: ClaimSubject) -> Value {
@@ -777,14 +786,12 @@ fn claim_rewrite(
     original: &ClaimCandidate,
     args: &Value,
 ) -> Rewritten<(EntityId, ClaimCandidate, TimeRange, u64)> {
-    let confidence = candidate_confidence(call)
-        .map_err(|error| error.to_string())?
-        .unwrap_or(1.0) as f32;
+    let (value, confidence) = candidate_fields(call).map_err(|error| error.to_string())?;
     let plain = ClaimCandidate::new(
         original.predicate(),
         original.subject(),
-        original.value().clone(),
-        confidence,
+        value,
+        confidence.unwrap_or(1.0) as f32,
     );
     if plain != *original {
         return Err("this claim carries fields a rewrite cannot keep".to_owned());
