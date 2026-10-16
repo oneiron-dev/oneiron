@@ -20,7 +20,7 @@ pub const SKILL_ATTRIBUTION_SCHEMA_VERSION: u64 = 1;
 /// taxonomy because the wrong-on-its-own-terms case routes through the very
 /// same skill/actor ladder — [`crate::edit_distance::attribution`] pre-filters
 /// the amendment causes and delegates the rest to
-/// [`AttributionJudge`](crate::skill_attribution::AttributionJudge). Every label
+/// [`AttributionDecisions`](crate::skill_attribution::AttributionDecisions). Every label
 /// is valid in both lanes except [`Self::PreferenceShift`]
 /// ([`Self::valid_in`]).
 ///

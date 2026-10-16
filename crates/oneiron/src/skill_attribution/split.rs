@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value};
 
-use super::judge::AttributionJudge;
+use super::judge::{AttributionDecisions, AttributionRules, Attributed};
 use super::types::{
     AttributionLane, AttributionShare, AttributionSplit, AttributionVerdict, HunkVerdict,
     JudgeRequest, UnclearNote, UnclearReason,
@@ -30,29 +30,52 @@ pub(crate) fn unclear_floor(vault: &Vault) -> Result<f32> {
     Ok(setting_value(vault, &ATTRIBUTION_UNCLEAR_FLOOR)? as f32)
 }
 
-/// Asks `judge` about `request` and turns its answers into a split, or `None`
-/// when the judge abstains.
+/// Asks about `request` and turns the answers into a split, beside the exact
+/// revision that gave them, or `None` when the outcome abstains. With no host
+/// decisions the rule tier answers; a host's decisions replace it.
 ///
 /// `masses` is each hunk's edit mass, aligned with `request.hunks`; an outcome
 /// with no edit passes none and is one region.
 ///
 /// # Errors
 ///
-/// Whatever the judge returns, and [`Error::InvalidClaimBody`] when it answers
-/// a different number of hunks than it was shown, or leaves a hunk `unclear`
-/// without a note.
+/// Whatever the decision path returns, and [`Error::InvalidClaimBody`] when
+/// the answers cover a different number of hunks than were shown, or leave a
+/// hunk `unclear` without a note.
 pub(crate) fn classify_split(
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
     request: &JudgeRequest<'_>,
     masses: &[f64],
-) -> Result<Option<AttributionSplit>> {
+) -> Result<Option<(AttributionSplit, Option<String>)>> {
     if masses.len() != request.hunks.len() {
         return Err(Error::InvariantViolation("one edit mass per changed hunk"));
     }
-    let Some(answers) = judge.judge_hunks(request)? else {
+    let answered = match decisions {
+        Some(decisions) => decisions.answer(request)?,
+        None => AttributionRules::answer(request),
+    };
+    let Some(Attributed { answers, revision }) = answered else {
         return Ok(None);
     };
-    split_from_answers(request.lane, masses, answers, request.floor).map(Some)
+    split_from_answers(request.lane, masses, answers, request.floor)
+        .map(|split| Some((split, revision)))
+}
+
+/// A settled cause's split: its one label, certain, on every region.
+///
+/// # Errors
+///
+/// [`Error::InvariantViolation`] when `masses` does not align with the hunks.
+pub(crate) fn settled_split(
+    verdict: AttributionVerdict,
+    request: &JudgeRequest<'_>,
+    masses: &[f64],
+) -> Result<AttributionSplit> {
+    if masses.len() != request.hunks.len() {
+        return Err(Error::InvariantViolation("one edit mass per changed hunk"));
+    }
+    let answers = vec![HunkVerdict::certain(verdict); request.regions()];
+    split_from_answers(request.lane, masses, answers, request.floor)
 }
 
 /// Folds per-hunk answers into one label + share vector.

@@ -1,70 +1,301 @@
-//! Classification seam: the judge trait, the deterministic rule tier, and verdict routing.
+//! Classification: the deterministic rule tier, the host's decisions for the model tier
+//! through the shared decision path, the note seam beside them, and verdict routing.
+
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::llm::CallPurpose;
+use crate::llm::decision::catalogue::ATTRIBUTION_HUNK;
+use crate::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
+    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, MAX_DECISION_STATE_BYTES,
+    ProviderDecision, ProviderPin, Reversibility, TypedDecision,
+};
+use crate::retrieval_depth::RetrievalDeadline;
 
 use super::types::{
     AttemptOutcome, AttributionVerdict, DeviationCause, FollowedState, HunkVerdict, JudgeRequest,
     OutcomeEvidence,
 };
 
-/// [`CallPurpose::Other`] name for the LLM classification tier. Ambiguous
-/// evidence rides the EXISTING engine LLM call surface under this purpose —
-/// this module mints no client stack of its own (see [`AttributionJudge`]).
+/// [`CallPurpose::Other`] name for the model tier. Ambiguous evidence rides the
+/// EXISTING engine LLM call surface under this purpose, inside the host's
+/// [`AttributionDecisions`] providers — this module mints no client stack of
+/// its own.
 pub const ATTRIBUTION_CALL_PURPOSE_NAME: &str = "skill_attribution";
+
+/// The rule tier's identity: its verdicts stamp `rule-attribution@1`.
+const RULE_MODEL: &str = "rule-attribution";
+const RULE_VERSION: &str = "1";
 
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
 
-/// Classifies one piece of evidence, or ABSTAINS (`Ok(None)`) when it cannot.
-///
-/// Abstention is a first-class answer: a judge that guesses on unsettled facts
-/// is exactly the false-pass bias [`run_attribution_audit`](crate::skill_attribution::run_attribution_audit) exists to expose.
-///
-/// The production LLM tier is a host-supplied implementation calling the
-/// engine's existing LLM surface under [`attribution_call_purpose`]; this
-/// module never constructs a client.
-pub trait AttributionJudge {
-    /// Returns the verdict for `evidence`, or `None` to abstain.
-    fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>>;
-
-    /// Labels each changed hunk of `request` (ARCH-0056 §5 #attribution-split),
-    /// or ABSTAINS with `None`.
-    ///
-    /// Owes exactly [`JudgeRequest::regions`] answers, in hunk order: one per
-    /// hunk, or one for an outcome with no edit. Each answer carries the
-    /// judge's confidence. An answer that is `unclear`, or held below
-    /// [`JudgeRequest::floor`], MUST carry a short note saying why — the
-    /// engine refuses one without. That is why doubt is answered here and
-    /// never from [`Self::judge`], which has no note to give. The engine still
-    /// applies the floor and the lane's labels itself, so no judge can charge
-    /// past them.
-    ///
-    /// The default is [`Self::judge`]'s one verdict on every hunk, fully
-    /// confident: a judge that cannot split gives the 100% case of the same
-    /// split, never a second path.
-    fn judge_hunks(&self, request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
-        Ok(self
-            .judge(request.evidence)?
-            .map(|verdict| vec![HunkVerdict::certain(verdict); request.regions()]))
-    }
-
-    /// Exact judge skill revision, if known. Used to mark its old verdicts
-    /// when a replacement is admitted; unstamped verdicts remain unknown.
-    fn judge_revision(&self) -> Option<&str> {
-        None
-    }
+/// One outcome's answers, one per region in hunk order, and the exact
+/// revision that gave them when one provider gave them all.
+pub(crate) struct Attributed {
+    pub(crate) answers: Vec<HunkVerdict>,
+    pub(crate) revision: Option<String>,
 }
 
-/// The [`CallPurpose`] an LLM-tier judge must stamp, so attribution calls are
-/// budgeted and audited as their own class rather than hiding inside another
-/// purpose's totals.
+/// Generation beside a decided attribution: a short note for each answer that
+/// is `unclear` or held below [`JudgeRequest::floor`], from the host's own
+/// model transport. The labels and confidences are already decided; a note
+/// cannot change them. The engine refuses a doubtful answer without one: the
+/// note is what the Dreamer clusters.
+pub trait AttributionNotes {
+    /// One entry per answer, in hunk order; `None` where no note is needed.
+    fn notes(
+        &self,
+        request: &JudgeRequest<'_>,
+        answers: &[HunkVerdict],
+    ) -> Result<Vec<Option<String>>>;
+}
+
+/// The [`CallPurpose`] a model-tier provider must stamp, so attribution calls
+/// are budgeted and audited as their own class rather than hiding inside
+/// another purpose's totals.
 #[must_use]
 pub fn attribution_call_purpose() -> CallPurpose {
     CallPurpose::Other {
         name: ATTRIBUTION_CALL_PURPOSE_NAME.to_owned(),
+    }
+}
+
+/// The dial a host's attribution runs under unless it picks another. It ends
+/// below Human: a doubtful hunk already holds in the unclear ledger, so the
+/// ladder queues no person ask.
+pub const ATTRIBUTION_DIAL: DecisionDial = DecisionDial {
+    first: DecisionRung::Local,
+    ceiling: DecisionRung::Big,
+    band: DecisionBand {
+        low: 0.35,
+        high: 0.65,
+    },
+};
+
+/// The shared decision path the model tier goes through: the host's ladder,
+/// the principal the answers are for, the dial and learned bands, the host's
+/// wording of the per-hunk question, each outcome's anytime budget, and the
+/// optional note seam. A host's decisions replace the rule tier; a host that
+/// wants the rules first slots [`AttributionRules`] as its ladder's Rule rung.
+///
+/// A provider sees the actor and the skill as evidence ids, and the outcome's
+/// routing facts and its hunks, each beside the id of the question that asks
+/// about it, as the call's bounded state.
+pub struct AttributionDecisions<'a> {
+    pub ladder: DecisionLadder<'a>,
+    pub principal: EntityId,
+    pub dial: DecisionDial,
+    pub bands: DecisionBandPolicy,
+    pub wording: String,
+    /// Each outcome's one clock, from when its pack is asked.
+    pub budget: Duration,
+    pub notes: Option<&'a dyn AttributionNotes>,
+}
+
+impl AttributionDecisions<'_> {
+    /// Labels each region of `request` as one pack: one Choice per region over
+    /// the labels its lane admits, keyed by lane and position, with the
+    /// decision's probability as its confidence. A region that abstains
+    /// abstains the outcome, as a judge did. Doubtful answers then take their
+    /// notes from [`AttributionNotes`].
+    pub(crate) fn answer(&self, request: &JudgeRequest<'_>) -> Result<Option<Attributed>> {
+        let options: Vec<String> = AttributionVerdict::ALL
+            .iter()
+            .filter(|verdict| verdict.valid_in(request.lane))
+            .map(|verdict| verdict.as_str().to_owned())
+            .collect();
+        let questions = (0..request.regions())
+            .map(|index| {
+                let position = index.to_string();
+                ATTRIBUTION_HUNK.question(
+                    &[request.lane.as_str().as_bytes(), position.as_bytes()],
+                    self.wording.clone(),
+                    AnswerContract::Choice {
+                        options: options.clone(),
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let evidence: Vec<EntityId> = std::iter::once(request.evidence.actor)
+            .chain(request.evidence.skill)
+            .collect();
+        let decisions = self.ladder.run_pack(
+            &questions.iter().collect::<Vec<_>>(),
+            self.principal,
+            &evidence,
+            &bounded_state(request, &questions),
+            self.dial,
+            &self.bands,
+            Reversibility::ReversibleRead,
+            &RetrievalDeadline::hard(Instant::now(), self.budget),
+        )?;
+        let mut answers = Vec::with_capacity(decisions.len());
+        for decision in &decisions {
+            let (DecisionAnswer::Choice(label), Some(probability)) =
+                (&decision.answer, decision.probability)
+            else {
+                return Ok(None);
+            };
+            let Some(verdict) = AttributionVerdict::parse(label) else {
+                return Ok(None);
+            };
+            answers.push(HunkVerdict::with_confidence(verdict, narrow(probability)));
+        }
+        if let Some(notes) = self.notes
+            && answers.iter().any(|answer| doubtful(answer, request.floor))
+        {
+            let notes = notes.notes(request, &answers)?;
+            if notes.len() != answers.len() {
+                return Err(Error::InvalidClaimBody(
+                    "attribution notes must cover every hunk",
+                ));
+            }
+            for (answer, note) in answers.iter_mut().zip(notes) {
+                answer.note = note;
+            }
+        }
+        Ok(Some(Attributed {
+            answers,
+            revision: revision(&decisions),
+        }))
+    }
+}
+
+/// An answer the engine files as `unclear`, so it needs a note.
+fn doubtful(answer: &HunkVerdict, floor: f32) -> bool {
+    answer.verdict == AttributionVerdict::Unclear
+        || !answer.confidence.is_finite()
+        || answer.confidence < floor
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a unit-interval probability narrowed to the judge's f32 confidence"
+)]
+fn narrow(probability: f64) -> f32 {
+    probability as f32
+}
+
+/// The one provider every answer came from, as `model@version`; `None` when
+/// they differ, so the verdicts stay unstamped.
+fn revision(decisions: &[TypedDecision]) -> Option<String> {
+    let mut pins = decisions
+        .iter()
+        .map(|decision| decision.receipt.providers.last());
+    let first = pins.next()??;
+    pins.all(|pin| pin == Some(first))
+        .then(|| format!("{}@{}", first.model, first.version))
+        .filter(|revision| revision.len() <= 256)
+}
+
+/// The call's bounded state. Each side of each hunk is cut shorter, halving,
+/// until the whole fits [`MAX_DECISION_STATE_BYTES`]; `cut_at_bytes` says
+/// where, so a provider knows it reads a cut text.
+fn bounded_state(request: &JudgeRequest<'_>, questions: &[DecisionQuestion]) -> Value {
+    let longest = request
+        .hunks
+        .iter()
+        .map(|hunk| hunk.before.len().max(hunk.after.len()))
+        .max()
+        .unwrap_or(0);
+    let mut cut = None;
+    loop {
+        let state = request_state(request, questions, cut);
+        let fits = serde_json::to_vec(&state)
+            .is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
+        cut = match cut {
+            _ if fits => return state,
+            None if longest > 0 => Some(longest / 2),
+            Some(bytes) if bytes > 0 => Some(bytes / 2),
+            // Nothing left to cut: the ladder refuses the state.
+            _ => return state,
+        };
+    }
+}
+
+fn request_state(
+    request: &JudgeRequest<'_>,
+    questions: &[DecisionQuestion],
+    cut: Option<usize>,
+) -> Value {
+    let hunks: Vec<Value> = request
+        .hunks
+        .iter()
+        .zip(questions)
+        .map(|(hunk, question)| {
+            json!({
+                "question": question.id.to_hex(),
+                "before": cut_text(hunk.before, cut),
+                "after": cut_text(hunk.after, cut),
+            })
+        })
+        .collect();
+    json!({
+        "lane": request.lane.as_str(),
+        "floor": request.floor,
+        "receipt_ref": request.evidence.receipt_ref,
+        "facts": RoutingFacts::of(request.evidence),
+        "hunks": hunks,
+        "cut_at_bytes": cut,
+    })
+}
+
+fn cut_text(text: &str, cut: Option<usize>) -> &str {
+    let Some(cut) = cut else {
+        return text;
+    };
+    let mut end = text.len().min(cut);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// The routing facts the rule table reads, as the call's state carries them.
+#[derive(Debug, Serialize, Deserialize)]
+struct RoutingFacts {
+    outcome: String,
+    has_skill: bool,
+    followed_skill: Option<bool>,
+    followed_state: Option<String>,
+    deviation_reason: Option<String>,
+    deviation_cause: Option<String>,
+    skill_covered_step: Option<bool>,
+}
+
+impl RoutingFacts {
+    fn of(evidence: &OutcomeEvidence) -> Self {
+        let (followed_state, deviation_reason, deviation_cause) = match &evidence.followed_state {
+            None => (None, None, None),
+            Some(FollowedState::Followed) => (Some("followed"), None, None),
+            Some(FollowedState::Partly) => (Some("partly"), None, None),
+            Some(FollowedState::Ignored) => (Some("ignored"), None, None),
+            Some(FollowedState::DeviatedWithReason { reason, cause }) => (
+                Some("deviated_with_reason"),
+                Some(reason.clone()),
+                cause.map(|cause| match cause {
+                    DeviationCause::IncorrectInstruction => "incorrect_instruction",
+                    DeviationCause::MissingInstruction => "missing_instruction",
+                    DeviationCause::ExecutorError => "executor_error",
+                }),
+            ),
+        };
+        Self {
+            outcome: evidence.outcome.as_str().to_owned(),
+            has_skill: evidence.skill.is_some(),
+            followed_skill: evidence.followed_skill,
+            followed_state: followed_state.map(str::to_owned),
+            deviation_reason,
+            deviation_cause: deviation_cause.map(str::to_owned),
+            skill_covered_step: evidence.skill_covered_step,
+        }
     }
 }
 
@@ -78,65 +309,101 @@ pub fn attribution_call_purpose() -> CallPurpose {
 /// | failed | deviated with reason | — | resolved cause routes defect, discovery or lapse; otherwise abstain |
 /// | failed | yes | no | `Discovery` — the content was missing |
 /// | succeeded | — | — | abstain — a win attributes nothing here |
-/// | any fact unsettled | | | abstain — the LLM tier's case |
+/// | any fact unsettled | | | abstain — the model tier's case |
 ///
 /// A SUCCEEDED attempt abstains on purpose: this projector routes BLAME.
 /// Crediting a win is the reliability posterior's job (ONE-1738), which reads
 /// the same receipts.
+///
+/// It answers whenever a host brings no decisions, every region with its one
+/// verdict, certain. As a host ladder's Rule rung it reads the routing facts
+/// from the call's state and answers the label, certain, when the question
+/// offers it; otherwise it abstains.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct RuleAttributionJudge;
+pub struct AttributionRules;
 
-impl AttributionJudge for RuleAttributionJudge {
-    fn judge_revision(&self) -> Option<&str> {
-        Some("rule-attribution@1")
+impl AttributionRules {
+    /// The rule's verdict on every region of `request`, or `None` to abstain.
+    pub(crate) fn answer(request: &JudgeRequest<'_>) -> Option<Attributed> {
+        rule_verdict(&RoutingFacts::of(request.evidence)).map(|verdict| Attributed {
+            answers: vec![HunkVerdict::certain(verdict); request.regions()],
+            revision: Some(format!("{RULE_MODEL}@{RULE_VERSION}")),
+        })
     }
-    fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
-        if evidence.outcome != AttemptOutcome::Failed {
-            return Ok(None);
+}
+
+impl DecisionProvider for AttributionRules {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Rule,
+            model: RULE_MODEL.to_owned(),
+            version: RULE_VERSION.to_owned(),
         }
-        if let Some(state) = &evidence.followed_state {
-            match state {
-                FollowedState::Ignored => return Ok(Some(AttributionVerdict::ExecutionLapse)),
-                FollowedState::Partly => return Ok(None),
-                FollowedState::DeviatedWithReason { cause, .. } => {
-                    return Ok(match cause {
-                        Some(DeviationCause::ExecutorError) => {
-                            Some(AttributionVerdict::ExecutionLapse)
-                        }
-                        Some(DeviationCause::IncorrectInstruction) if evidence.skill.is_some() => {
-                            Some(AttributionVerdict::SkillDefect)
-                        }
-                        Some(DeviationCause::MissingInstruction) if evidence.skill.is_some() => {
-                            Some(AttributionVerdict::Discovery)
-                        }
-                        _ => None,
-                    });
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let verdict = call
+            .state
+            .get("facts")
+            .and_then(|facts| RoutingFacts::deserialize(facts).ok())
+            .and_then(|facts| rule_verdict(&facts))
+            .filter(|verdict| {
+                matches!(
+                    &call.question.contract,
+                    AnswerContract::Choice { options }
+                        if options.iter().any(|option| option == verdict.as_str())
+                )
+            });
+        Ok(ProviderDecision {
+            answer: verdict.map_or(DecisionAnswer::Abstain, |verdict| {
+                DecisionAnswer::Choice(verdict.as_str().to_owned())
+            }),
+            probability: verdict.map(|_| 1.0),
+            paired: None,
+            person: None,
+        })
+    }
+}
+
+/// The table above over `facts`; `None` abstains.
+fn rule_verdict(facts: &RoutingFacts) -> Option<AttributionVerdict> {
+    if facts.outcome != AttemptOutcome::Failed.as_str() {
+        return None;
+    }
+    match facts.followed_state.as_deref() {
+        Some("ignored") => return Some(AttributionVerdict::ExecutionLapse),
+        Some("deviated_with_reason") => {
+            return match facts.deviation_cause.as_deref() {
+                Some("executor_error") => Some(AttributionVerdict::ExecutionLapse),
+                Some("incorrect_instruction") if facts.has_skill => {
+                    Some(AttributionVerdict::SkillDefect)
                 }
-                FollowedState::Followed => {}
-            }
-        } else {
-            let Some(followed_skill) = evidence.followed_skill else {
-                return Ok(None);
+                Some("missing_instruction") if facts.has_skill => {
+                    Some(AttributionVerdict::Discovery)
+                }
+                _ => None,
             };
-            if !followed_skill {
-                return Ok(Some(AttributionVerdict::ExecutionLapse));
+        }
+        Some("followed") => {}
+        Some(_) => return None,
+        None => {
+            if !facts.followed_skill? {
+                return Some(AttributionVerdict::ExecutionLapse);
             }
         }
-        // The remaining branches attribute to the SKILL, so an evidence row
-        // with no skill in the manifest cannot be routed: fail to the actor's
-        // lane would be a fabrication, so abstain.
-        let Some(skill_covered_step) = evidence.skill_covered_step else {
-            return Ok(None);
-        };
-        if evidence.skill.is_none() {
-            return Ok(None);
-        }
-        Ok(Some(if skill_covered_step {
-            AttributionVerdict::SkillDefect
-        } else {
-            AttributionVerdict::Discovery
-        }))
     }
+    // The remaining branches attribute to the SKILL, so an evidence row
+    // with no skill in the manifest cannot be routed: fail to the actor's
+    // lane would be a fabrication, so abstain.
+    let skill_covered_step = facts.skill_covered_step?;
+    if !facts.has_skill {
+        return None;
+    }
+    Some(if skill_covered_step {
+        AttributionVerdict::SkillDefect
+    } else {
+        AttributionVerdict::Discovery
+    })
 }
 
 /// The entity a verdict routes to, or `None` when it charges nobody.

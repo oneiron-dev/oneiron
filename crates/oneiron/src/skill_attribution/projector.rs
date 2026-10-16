@@ -7,7 +7,7 @@ use super::codec::{
     CURSOR, EDIT_PROPOSAL, EVIDENCE, EvidenceRow, JUDGMENT, evidence_after,
     next_evidence_sequence_in_txn, validate_evidence,
 };
-use super::judge::{AttributionJudge, RuleAttributionJudge, verdict_subject};
+use super::judge::{AttributionDecisions, verdict_subject};
 use super::split::{classify_split, unclear_floor};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
@@ -56,7 +56,7 @@ pub fn read_attribution_cursor(vault: &Vault) -> Result<u64> {
 }
 
 /// Runs one ordered, idempotent attribution pass over evidence recorded after
-/// `since_cursor`, using the deterministic tier.
+/// `since_cursor`, using the deterministic rule tier.
 ///
 /// Returns the judgments minted by THIS pass. Re-running with the same cursor
 /// re-routes the same evidence to the same verdicts; running with the persisted
@@ -65,11 +65,12 @@ pub fn run_attribution_projector(
     vault: &Vault,
     since_cursor: u64,
 ) -> Result<Vec<AttributionJudgment>> {
-    run_attribution_projector_with_judge(vault, since_cursor, &RuleAttributionJudge)
+    run_attribution_projector_with_decisions(vault, since_cursor, None)
 }
 
-/// [`run_attribution_projector`] with an explicit judge — the seam the LLM
-/// tier and the audit harness both use.
+/// [`run_attribution_projector`] through the host's decisions — the seam the
+/// model tier uses; `None` is the rule tier. Each judgment is stamped with the
+/// exact revision that answered it, when one provider answered all of it.
 ///
 /// Abstained evidence is left unjudged but still ADVANCES the cursor: an
 /// abstention is a completed routing decision ("this evidence attributes to
@@ -81,14 +82,15 @@ pub fn run_attribution_projector(
 /// `attribution_unclear_floor` setting, or `preference_shift`, which this lane
 /// does not admit — leaves no judgment and files the evidence in the unclear
 /// ledger instead.
-pub fn run_attribution_projector_with_judge(
+pub fn run_attribution_projector_with_decisions(
     vault: &Vault,
     since_cursor: u64,
-    judge: &dyn AttributionJudge,
+    decisions: Option<&AttributionDecisions<'_>>,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
     let floor = unclear_floor(vault)?;
     let mut judgments = Vec::new();
+    let mut revisions = Vec::new();
     let mut unclear = Vec::new();
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
@@ -99,7 +101,7 @@ pub fn run_attribution_projector_with_judge(
             hunks: &[],
             floor,
         };
-        let Some(split) = classify_split(judge, &request, &[])? else {
+        let Some((split, revision)) = classify_split(decisions, &request, &[])? else {
             continue;
         };
         // One region, so one label holds the whole outcome.
@@ -129,6 +131,7 @@ pub fn run_attribution_projector_with_judge(
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
         });
+        revisions.push(revision);
     }
 
     vault.with_write_txn(|wtxn| {
@@ -139,8 +142,8 @@ pub fn run_attribution_projector_with_judge(
                 put_unclear_in_txn(vault, wtxn, row)?;
             }
         }
-        for judgment in &judgments {
-            if let Some(revision) = judge.judge_revision() {
+        for (judgment, revision) in judgments.iter().zip(&revisions) {
+            if let Some(revision) = revision {
                 super::judge_supersession::ensure_current_attribution_judge_in_txn(
                     vault, &*wtxn, revision,
                 )?;
@@ -155,7 +158,7 @@ pub fn run_attribution_projector_with_judge(
                 // judge must never claim the old verdict as its own.
                 continue;
             }
-            if let Some(revision) = judge.judge_revision() {
+            if let Some(revision) = revision {
                 super::judge_supersession::stamp_judge_revision(
                     vault,
                     wtxn,
