@@ -24,6 +24,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 pub(super) mod host_doors;
+mod shared_act_doors;
 #[cfg(test)]
 pub(super) mod tests;
 

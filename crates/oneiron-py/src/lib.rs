@@ -411,6 +411,118 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_propose_delete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.propose_delete")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.propose_delete", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_propose_transfer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.propose_transfer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.propose_transfer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_propose_remove_owner(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.propose_remove_owner")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.propose_remove_owner", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_execute(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.execute")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.execute", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_receipt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.receipt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.receipt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_outcomes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.outcomes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.outcomes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_deletion(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.deletion")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.deletion", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_add(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.add")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.add", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_change(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.change")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.change", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_remove(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.remove")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.remove", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_leave(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.leave")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.leave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_authority_handoff_alarms(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.authority.handoff_alarms")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.authority.handoff_alarms", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_authority_handoff_alarms_acknowledge(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.authority.handoff_alarms.acknowledge")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.authority.handoff_alarms.acknowledge", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_lenses_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.lenses.propose")?;
         let output = py

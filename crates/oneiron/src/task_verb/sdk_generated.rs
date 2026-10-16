@@ -120,6 +120,80 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.shared.propose_delete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.shared.propose_transfer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedTransferRequest,
+                >(),
+            ),
+            (
+                "vault.shared.propose_remove_owner",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedRemoveOwnerRequest,
+                >(),
+            ),
+            (
+                "vault.shared.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActRequest,
+                >(),
+            ),
+            (
+                "vault.shared.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedReceiptRequest,
+                >(),
+            ),
+            (
+                "vault.shared.outcomes",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.shared.deletion",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.members.add",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedMemberAddRequest,
+                >(),
+            ),
+            (
+                "vault.members.change",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedMemberRoleRequest,
+                >(),
+            ),
+            (
+                "vault.members.remove",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedMemberRequest,
+                >(),
+            ),
+            (
+                "vault.members.leave",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.authority.handoff_alarms",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.authority.handoff_alarms.acknowledge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::HandoffAlarmRequest,
+                >(),
+            ),
+            (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
@@ -797,6 +871,85 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.propose_delete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.propose_transfer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.propose_remove_owner" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.outcomes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.deletion" => &[],
+        "vault.members.add" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.change" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.leave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.authority.handoff_alarms" => &[],
+        "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1498,6 +1651,45 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.shared.propose_delete" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.shared.propose_transfer" => {
+            let _input: crate::task_verb::sdk::SharedTransferRequest = decode(value.clone())?;
+        }
+        "vault.shared.propose_remove_owner" => {
+            let _input: crate::task_verb::sdk::SharedRemoveOwnerRequest = decode(value.clone())?;
+        }
+        "vault.shared.execute" => {
+            let _input: crate::task_verb::sdk::SharedActRequest = decode(value.clone())?;
+        }
+        "vault.shared.receipt" => {
+            let _input: crate::task_verb::sdk::SharedReceiptRequest = decode(value.clone())?;
+        }
+        "vault.shared.outcomes" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.shared.deletion" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.members.add" => {
+            let _input: crate::task_verb::sdk::SharedMemberAddRequest = decode(value.clone())?;
+        }
+        "vault.members.change" => {
+            let _input: crate::task_verb::sdk::SharedMemberRoleRequest = decode(value.clone())?;
+        }
+        "vault.members.remove" => {
+            let _input: crate::task_verb::sdk::SharedMemberRequest = decode(value.clone())?;
+        }
+        "vault.members.leave" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.authority.handoff_alarms" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.authority.handoff_alarms.acknowledge" => {
+            let _input: crate::task_verb::sdk::HandoffAlarmRequest = decode(value.clone())?;
+        }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
@@ -1843,6 +2035,29 @@ pub fn invoke(
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.shared.propose_delete" => {
+            encode(vault_shared_propose_delete(memory, decode(value)?)?)
+        }
+        "vault.shared.propose_transfer" => {
+            encode(vault_shared_propose_transfer(memory, decode(value)?)?)
+        }
+        "vault.shared.propose_remove_owner" => {
+            encode(vault_shared_propose_remove_owner(memory, decode(value)?)?)
+        }
+        "vault.shared.execute" => encode(vault_shared_execute(memory, decode(value)?)?),
+        "vault.shared.receipt" => encode(vault_shared_receipt(memory, decode(value)?)?),
+        "vault.shared.outcomes" => encode(vault_shared_outcomes(memory, decode(value)?)?),
+        "vault.shared.deletion" => encode(vault_shared_deletion(memory, decode(value)?)?),
+        "vault.members.add" => encode(vault_members_add(memory, decode(value)?)?),
+        "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
+        "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
+        "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
+        "vault.authority.handoff_alarms" => {
+            encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
+        }
+        "vault.authority.handoff_alarms.acknowledge" => encode(
+            vault_authority_handoff_alarms_acknowledge(memory, decode(value)?)?,
+        ),
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
@@ -2255,6 +2470,135 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_shared_propose_delete(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<crate::federation::PendingAuthorityAct> {
+    crate::task_verb::sdk::propose_shared_delete(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.propose_delete")?,
+        input,
+    )
+}
+pub fn vault_shared_propose_transfer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedTransferRequest,
+) -> MemoryResult<crate::federation::PendingAuthorityAct> {
+    crate::task_verb::sdk::propose_shared_transfer(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.propose_transfer")?,
+        input,
+    )
+}
+pub fn vault_shared_propose_remove_owner(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedRemoveOwnerRequest,
+) -> MemoryResult<crate::federation::PendingAuthorityAct> {
+    crate::task_verb::sdk::propose_shared_remove_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.propose_remove_owner")?,
+        input,
+    )
+}
+pub fn vault_shared_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedActExecuted> {
+    crate::task_verb::sdk::execute_shared_act(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.execute")?,
+        None,
+        input,
+    )
+}
+pub fn vault_shared_receipt(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedReceiptRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::read_shared_receipt(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.receipt")?,
+        input,
+    )
+}
+pub fn vault_shared_outcomes(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::SharedActOutcome>> {
+    crate::task_verb::sdk::read_shared_outcomes(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.outcomes")?,
+        input,
+    )
+}
+pub fn vault_shared_deletion(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::federation::SharedVaultDeletion>> {
+    crate::task_verb::sdk::read_shared_deletion(memory.vault())
+}
+pub fn vault_members_add(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedMemberAddRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::add_shared_member_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.add")?,
+        input,
+    )
+}
+pub fn vault_members_change(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedMemberRoleRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::change_shared_member_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.change")?,
+        None,
+        input,
+    )
+}
+pub fn vault_members_remove(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedMemberRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::remove_shared_member_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.remove")?,
+        None,
+        input,
+    )
+}
+pub fn vault_members_leave(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::leave_shared_vault_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.leave")?,
+        None,
+        input,
+    )
+}
+pub fn vault_authority_handoff_alarms(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::authority::AuthorityHandoffAlarm>> {
+    crate::task_verb::sdk::read_handoff_alarms(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.handoff_alarms")?,
+    )
+}
+pub fn vault_authority_handoff_alarms_acknowledge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::HandoffAlarmRequest,
+) -> MemoryResult<crate::authority::AuthorityHandoffAlarm> {
+    crate::task_verb::sdk::acknowledge_handoff_alarm(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.handoff_alarms.acknowledge")?,
+        input,
+    )
 }
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,

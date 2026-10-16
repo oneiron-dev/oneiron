@@ -31,6 +31,9 @@ use oneiron::receipt::LensActivationReceipt;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+// The shared-vault doors live beside these; the generated callers name them here.
+pub(crate) use super::shared_act_doors::*;
+
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
 /// request. The put is the consent for the pack's hooks.
@@ -332,7 +335,7 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
     ))
 }
 
-fn internal(verb: &str) -> MemoryError {
+pub(super) fn internal(verb: &str) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_INTERNAL,
         format!("{verb} did not finish on this server"),

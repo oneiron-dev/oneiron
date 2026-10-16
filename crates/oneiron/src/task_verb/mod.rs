@@ -214,6 +214,7 @@ pub mod sdk;
 mod sdk_connector;
 mod sdk_host;
 mod sdk_self;
+mod sdk_shared;
 
 #[cfg(test)]
 mod ask_outcome_tests;
