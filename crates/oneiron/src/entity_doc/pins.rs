@@ -206,13 +206,29 @@ impl Vault {
     /// Owner-only history destruction. No policy/standing grant can call this
     /// door. The registry lock excludes concurrent local edits; all durable
     /// state is loaded, clamped, replaced and receipted in ONE write transaction.
-    /// Cache entries are invalidated only after that transaction commits.
+    /// Cache entries are invalidated only after that transaction commits. A
+    /// legal hold on the entity refuses it (OF-470). With two or more live
+    /// Owners it runs only through the vault's `erase` veto window
+    /// ([`Self::start_text_history_erase`], Docs Q05).
     pub fn purge_entity_text_history(
         &self,
         entity: &EntityId,
         requested: &[u8],
         authorization: &DocAuthorization<'_>,
         at: u64,
+    ) -> Result<PurgeReceipt> {
+        self.purge_entity_text_history_for(entity, requested, authorization, at, None)
+    }
+
+    /// [`Self::purge_entity_text_history`], claiming the completed `erase`
+    /// act `act` in its writer when one admits it.
+    pub(crate) fn purge_entity_text_history_for(
+        &self,
+        entity: &EntityId,
+        requested: &[u8],
+        authorization: &DocAuthorization<'_>,
+        at: u64,
+        act: Option<&str>,
     ) -> Result<PurgeReceipt> {
         let DocAuthorization::Owner(owner) = authorization else {
             return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
@@ -225,6 +241,18 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         let receipt = self.with_write_txn_grouped(|txn| {
             let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
+            // A held record keeps its history (OF-470).
+            self.store
+                .reject_legal_hold_in_txn(txn, entity.as_bytes())?;
+            let receipt_id = EntityId::now();
+            super::admit_history_erase_in_txn(
+                self,
+                txn,
+                entity,
+                Some(requested),
+                act,
+                &receipt_id,
+            )?;
             let mut h = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
@@ -255,7 +283,6 @@ impl Vault {
                 DocumentSlot::from_hex(&h.document)?,
                 &shallow.doc.shallow_since_vv().encode(),
             )?;
-            let receipt_id = EntityId::now();
             let receipt = PurgeReceipt {
                 receipt: receipt_id.to_hex(),
                 entity: entity.to_hex(),
@@ -319,7 +346,9 @@ impl Vault {
     /// `owner`; no Grant reaches it. A NOTE goes through
     /// [`crate::memory::Memory::purge_note_history_as`]. Any other entity's
     /// text goes through [`Self::purge_entity_text_history`], which clamps
-    /// `through` (the head when absent) to the pin floor.
+    /// `through` (the head when absent) to the pin floor. A shared vault with
+    /// two or more live Owners refuses it: its erase waits on the `erase`
+    /// veto window through [`Self::start_text_history_erase`] (Docs Q05).
     pub fn erase_text_history_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -415,7 +444,7 @@ impl Vault {
     }
 }
 
-fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
+pub(super) fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {
     let txn = vault.store.env.read_txn()?;
     Ok(
         crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, entity)?
