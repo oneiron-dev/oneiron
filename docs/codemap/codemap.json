@@ -20041,7 +20041,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 1
      }
@@ -33086,7 +33086,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RowBirth"
@@ -33095,7 +33095,7 @@
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 4,
       "struct": 1
      }
@@ -33224,7 +33224,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 4,
-      "fn": 3,
+      "fn": 5,
       "struct": 3
      }
     },
