@@ -41,6 +41,9 @@
 mod chunks;
 mod policy;
 mod read;
+mod recipes;
+pub use recipes::SieveAudit;
+pub(crate) use recipes::*;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -222,6 +225,9 @@ pub struct SieveSpan {
     pub start: u32,
     pub end: u32,
     pub kind: SpanKind,
+    /// A model-confirmed existing entity; unresolved spans remain topics.
+    pub entity: Option<EntityId>,
+    pub novel: Option<bool>,
     pub origin: SpanOrigin,
     /// BLAKE3 of the source text the offsets index.
     pub source_digest: [u8; 32],
@@ -356,6 +362,7 @@ pub(crate) fn erase_turn_in_txn(
     turn: &EntityId,
 ) -> Result<()> {
     retire_in_txn(store, txn, turn)?;
+    recipes::forget_in_txn(store, txn, turn)?;
     OWED.delete(store, txn, turn)?;
     Ok(())
 }
@@ -446,6 +453,7 @@ fn retire_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> R
 /// Removes a turn's reading, every span it queued and the read it goes on
 /// with; returns how many spans went.
 fn retire_spans_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<usize> {
+    recipes::retire_history_in_txn(store, txn, turn)?;
     let spans = SPANS.scan_keys(store, txn, turn.as_bytes())?;
     for (_, key) in &spans {
         QUEUE.delete(store, txn, key)?;
