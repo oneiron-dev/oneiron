@@ -60,6 +60,15 @@ pub const DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND: &str = "dreamer.skill_optimize";
 /// the TIMER wake (Macro scope) alone — see
 /// [`crate::dreamer_runner::EnqueueDreamerVaultCleanupAttempt`].
 pub const DREAMER_VAULT_CLEANUP_ATTEMPT_KIND: &str = "dreamer.vault_cleanup";
+/// ARCH-0032 stage 2 NOTE review queue kind (OF-073): the Dreamer reads the
+/// NOTEs whose kind allows extraction and promotes the beliefs each one
+/// grounds. A Nightly child, admitted on the Timer wake (Macro scope) like the
+/// cleanup pass; private per-device rows, since every write goes through the
+/// promotion gate.
+///
+/// Doubles as the payload `job_type`, so the kind gate and the payload
+/// discriminator cannot drift apart.
+pub const DREAMER_NOTE_REVIEW_ATTEMPT_KIND: &str = "dreamer.note_review";
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
 /// dispatch: the wake driver never admits it; a host Coach leases it with
