@@ -28158,7 +28158,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -58556,13 +58556,13 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts/host.rs",
-     "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`",
+     "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`, and one app on an origin of…",
      "surface": {
       "crate-vis": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts/route.rs",
@@ -62620,7 +62620,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManagedArgs",
@@ -62806,7 +62806,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -62847,7 +62847,7 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -64103,8 +64103,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 15,
-      "fn": 14,
+      "crate-vis": 16,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -65218,7 +65218,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 21,
+   "over_bar": 22,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 449,
    "test_files": 182
@@ -65427,6 +65427,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArtifactHost",
+      "ArtifactHostRead"
+     ],
+     "path": "src/lib/artifact_origin.rs",
+     "purpose": "The artifact origin's naming and forwarding contract (OF-356, ARCH-0078)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "QuotaWindow",
       "Schedule"
      ],
@@ -65599,7 +65615,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 6,
+      "mod": 7,
       "re-export": 7
      }
     },
@@ -65679,7 +65695,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 7,
+      "const": 8,
       "enum": 2,
       "fn": 4
      }
@@ -65704,7 +65720,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65713,7 +65729,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
