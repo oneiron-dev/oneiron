@@ -974,6 +974,7 @@ Request body:
 - `policy` optional: hydration, edge/vector inclusion, view profile, and ranking boosts.
 - `time` optional: `since`, occurred range, or learned range filters.
 - `budget` optional: `max_item_tokens`, `max_field_chars`, and retrieval item budgets.
+- `reader` optional: `definition` (hex agent-definition id the caller can read) and `task_family`. The definition's memory profile picks this reader's optional memory for the family (absent: its default). It only narrows: the smaller token budget and the narrower view win. A reader set to no optional memory gets an empty pack with `state.kind` `skipped` and `state.reason` `skipped_by_profile`; pinned rows and the standing prefix stay.
 
 Current response:
 
@@ -987,7 +988,7 @@ Current response:
 }
 ```
 
-Agent note: Treat `state.kind` and `state.reason` as the typed missing-data or low-confidence signal when no usable context is returned.
+Agent note: Treat `state.kind` and `state.reason` as the typed missing-data, low-confidence or skipped signal when no usable context is returned.
 
 ### Context Board
 

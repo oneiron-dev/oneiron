@@ -53,6 +53,7 @@ mod mcp_tool_endpoints;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod rate_law;
 mod reactive;
+mod reader_optional_memory;
 mod recall_rerank;
 mod relay_widen;
 mod retrieval_depth_quality;

@@ -223,6 +223,20 @@ pub(crate) struct CoreInterlocutorStamp {
     claims_not_instructions: bool,
 }
 
+/// The reader this pack is for: its agent definition's memory profile picks
+/// the optional recall for the task family (ARCH-0004 #reader-budget). It only
+/// narrows the request; it never widens a budget, a view or a read.
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ContextPackReaderControls {
+    /// Hex id of the reader's agent definition; the caller must read it.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    pub(super) definition: String,
+    /// Task family the profile keys on; absent uses the profile's default.
+    #[serde(default)]
+    #[schema(example = "knowledge_update")]
+    pub(super) task_family: Option<String>,
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -313,6 +327,9 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional interlocutor presence controls (OF-365 ILD-1).
     #[serde(default)]
     pub(super) interlocutors: Option<CoreInterlocutorControls>,
+    /// Optional reader whose profile narrows this pack's optional recall.
+    #[serde(default)]
+    pub(super) reader: Option<ContextPackReaderControls>,
 }
 
 impl CoreContextPackRequest {

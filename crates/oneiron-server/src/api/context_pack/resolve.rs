@@ -12,7 +12,10 @@ use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
 };
-use super::{RoomAudience, resolve_core_disclosure, resolve_core_interlocutor_set};
+use super::{
+    RoomAudience, narrow_to_reader, reader_optional_memory, resolve_core_disclosure,
+    resolve_core_interlocutor_set,
+};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -61,7 +64,7 @@ pub(crate) async fn core_context_pack(
 pub(crate) async fn run_context_pack(
     server: &SyncServer,
     auth: &CoreAuth,
-    req: CoreContextPackRequest,
+    mut req: CoreContextPackRequest,
     memories: Option<MemoriesRequest>,
 ) -> Result<
     (
@@ -75,6 +78,7 @@ pub(crate) async fn run_context_pack(
     // room or contact it cannot read is one that does not exist. A room's
     // members read its roster by membership, as their room turns do.
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
+    let optional_memory = reader_optional_memory(server, &scoped_read, req.reader.as_ref())?;
     let principal = auth
         .principal_ref()
         .and_then(|id| oneiron::EntityId::from_hex(id).ok());
@@ -120,12 +124,14 @@ pub(crate) async fn run_context_pack(
         .as_ref()
         .and_then(|policy| policy.include_vectors)
         .unwrap_or(req.include_vectors);
-    let view = req
+    let mut view = req
         .policy
         .as_ref()
         .and_then(|policy| policy.view)
         .or(req.view)
         .unwrap_or(View::Standard);
+    let skip_optional_recall =
+        optional_memory.is_some_and(|choice| narrow_to_reader(&mut req.budget, &mut view, choice));
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
         // Every row a room reads lies in its members' met world set, as a
@@ -225,6 +231,9 @@ pub(crate) async fn run_context_pack(
     )?;
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
+    }
+    if skip_optional_recall {
+        builder = builder.skip_optional_recall();
     }
     // Reaction signals ride the same clamp as the pack they come with.
     let signal_disclosure = disclosure.clone();
@@ -577,6 +586,15 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
     if pack.results.is_empty() && pack.neighbors.is_empty() && pack.l2_base.is_none() {
+        // A reader profile's skip is decided before any row is read, so
+        // naming it tells nothing about rows.
+        if pack
+            .empty
+            .as_ref()
+            .is_some_and(|empty| empty.reason == oneiron::EmptyReason::SkippedByProfile)
+        {
+            return;
+        }
         pack.empty = Some(oneiron::EmptyContext {
             retrieval_quality: pack.retrieval_quality.clone(),
             reason: oneiron::EmptyReason::FilterMatchedNone,
