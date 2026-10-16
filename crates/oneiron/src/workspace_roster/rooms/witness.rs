@@ -99,6 +99,9 @@ pub(crate) fn admit_witness(
             .iter()
             .any(|m| m.author == WitnessAuthor::Companion);
     if is_response {
+        // Only a member who speaks as a persona answers; the claim door
+        // checks the same, and upkeep never holds one.
+        super::hosting::admit_room_speech_in(vault, txn, room, actor)?;
         let parent = reply_to.ok_or_else(invalid)?;
         let claim = CLAIMS
             .get(&vault.store, txn, &parent)?
