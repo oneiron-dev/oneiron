@@ -91,6 +91,7 @@ pub use dormant_magistrate::{
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
 pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
+pub(crate) use room_thread::open_thread_tasks_in as room_open_thread_tasks_in;
 pub(crate) use room_thread::thread_tasks as room_thread_tasks;
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,

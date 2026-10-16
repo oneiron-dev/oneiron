@@ -72,15 +72,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/companion/mod.rs` | src | s | 6 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
+| `src/api/context_board/board.rs` | src | m | 11 crate-vis | — | The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, AGENTS, SKILLS and ROOM… |
 | `src/api/context_board/cursor.rs` | src | s | 13 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
 | `src/api/context_board/history.rs` | src | m | 8 crate-vis | — | Board history on the board's own surface (ARCH-0067 §3) |
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
-| `src/api/context_board/mod.rs` | src | m | 13 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
+| `src/api/context_board/mod.rs` | src | m | 14 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
 | `src/api/context_board/session.rs` | src | s | 2 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/standing.rs` | src | s | 3 crate-vis | — | Standing blocks are pinned before Context Board retrieval can fill the session |
 | `src/api/context_pack/companion_assembly.rs` | src | s | 1 crate-vis | — | Companion scope-resolution authorization for context-pack assembly |
-| `src/api/context_pack/controls.rs` | src | m | 22 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
+| `src/api/context_pack/controls.rs` | src | m | 23 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
 | `src/api/context_pack/interlocutor.rs` | src | m | 6 crate-vis | — | Interlocutor-set resolution and third-party party inputs for context-pack requests |
 | `src/api/context_pack/mod.rs` | src | s | 6 crate-vis | — | Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through… |
 | `src/api/context_pack/reader.rs` | src | s | 2 crate-vis | — | The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent… |
@@ -168,7 +169,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/conflict_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
 | `src/api/owner_routes/cooperative_deletion_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
 | `src/api/owner_routes/history_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner… |
-| `src/api/owner_routes/pack_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
+| `src/api/owner_routes/pack_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
@@ -417,7 +418,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/ledger.rs` | src | m | 1 struct · 7 fn · 1 const · 2 crate-vis | WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
 | `src/managed/listener.rs` | src | m | 1 struct · 2 enum · 10 fn · 1 const · 2 crate-vis | BoundServeListener, ManagedCtl, ServeListener | Managed sockets: listener resolution and binding, the ctl plane, and readiness |
 | `src/managed/listener/tests.rs` | test | s | — | — | — |
-| `src/managed/mod.rs` | src | s | 6 re-export · 3 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/mod.rs` | src | s | 1 mod · 6 re-export · 3 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/org_routing.rs` | src | s | 2 struct · 1 enum · 11 fn | OrgRoutingError, OrgVaultRoute, OrgVaultRouter | Read-only organization-to-vault routing over a host's registry projection |
 | `src/managed/peer.rs` | src | s | 3 crate-vis | — | Kernel-verified local transport peer, not a public caller IP |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
 | `src/managed/state_serve.rs` | src | L | 3 struct · 20 fn · 1 type · 1 const · 1 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
