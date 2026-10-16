@@ -60,6 +60,12 @@ fn failure(error: LlmError) -> Response {
             (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
         }
         LlmError::Retryable(RetryableLlmError::Timeout) => (StatusCode::GATEWAY_TIMEOUT, "timeout"),
+        // A spent usage window or spent prepaid credit (OF-305): `llm`
+        // carries the window's reset or the credit park, and `quota` points
+        // at the owner's durable question.
+        LlmError::Retryable(RetryableLlmError::QuotaSpent { .. }) => {
+            (StatusCode::TOO_MANY_REQUESTS, "quota_spent")
+        }
         // A privacy hold, not a rate refusal: no offer the call may use on
         // this device answered.
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
@@ -67,11 +73,14 @@ fn failure(error: LlmError) -> Response {
         }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
-    (
-        status,
-        Json(serde_json::json!({"error":{"code":code,"llm":error}})),
-    )
-        .into_response()
+    let mut body = serde_json::json!({"error":{"code":code,"llm":error}});
+    if code == "quota_spent" {
+        body["error"]["quota"] = serde_json::json!({
+            "questions": "GET /v1/ai/status",
+            "answer": "POST /v1/ai/quota/{question}",
+        });
+    }
+    (status, Json(body)).into_response()
 }
 async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Response {
     if !auth.is_owner_grade() {

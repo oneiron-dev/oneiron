@@ -50,6 +50,7 @@ mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
+mod owner_door;
 mod read_lane;
 mod reads;
 mod recall;
