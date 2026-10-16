@@ -142,9 +142,10 @@ pub(crate) fn serialize_vault_snapshot(mut snapshot: ExportSnapshot) -> Result<W
         .map_err(|_| Error::InvariantViolation("whole-vault document serialization failed"))?;
     // This second pass covers descriptors and manifest strings too. Body keys
     // and binary values were already inspected before the typed-tree encoding.
-    let (bytes, manifest) = super::vault_archive::write_vault_archive(null_document_credentials(
-        &value,
-    ))?;
+    let (bytes, manifest) = super::vault_archive::write_vault_archive(
+        null_document_credentials(&value),
+        &snapshot.secrets,
+    )?;
     Ok(WholeVaultExport {
         bytes,
         manifest,

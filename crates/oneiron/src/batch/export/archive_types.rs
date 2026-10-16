@@ -43,6 +43,10 @@ pub enum ArchiveRecordKind {
     /// One result body's digest and length, or why the export withheld it.
     /// A body not withheld is the file `files/<blake3>`.
     ResultBody,
+    /// One secret-custody record, only in the owner's own archive (owner
+    /// ruling 2026-10-17: an export carries its keys, so a re-import keeps
+    /// them). Exports to contacts and shares never carry one.
+    SecretCustody,
 }
 
 impl ArchiveRecordKind {
@@ -58,6 +62,7 @@ impl ArchiveRecordKind {
             Self::DerivationEnvelope => "records/derivation_envelope.jsonl",
             Self::Run => "records/run.jsonl",
             Self::ResultBody => "records/result_body.jsonl",
+            Self::SecretCustody => "records/secret_custody.jsonl",
         })
     }
 
@@ -74,6 +79,28 @@ impl ArchiveRecordKind {
             }
             _ => format!("records/entity/type_{entity_type:03}.jsonl"),
         }
+    }
+}
+
+/// One custody record: its id, its name, and its body in the custody codec
+/// (the record's one serialization), standard base64. The body holds the
+/// secret value; it never passes through the document's nulling, because
+/// carrying it is the point.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ArchiveSecretCustody {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) body: String,
+}
+
+impl std::fmt::Debug for ArchiveSecretCustody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArchiveSecretCustody")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("body", &format_args!("<redacted {} chars>", self.body.len()))
+            .finish()
     }
 }
 

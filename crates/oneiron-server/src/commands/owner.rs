@@ -606,6 +606,8 @@ struct ImportedArchive {
     archived_receipt_sources: usize,
     imported_results: usize,
     withheld_results: usize,
+    restored_secrets: usize,
+    unchanged_secrets: usize,
 }
 
 /// Re-imports a whole-vault archive through the vault's import doors.
@@ -624,6 +626,8 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         archived_receipt_sources: receipt.archived_receipt_sources,
         imported_results: receipt.imported_results,
         withheld_results: receipt.withheld_results,
+        restored_secrets: receipt.restored_secrets,
+        unchanged_secrets: receipt.unchanged_secrets,
     })
 }
 

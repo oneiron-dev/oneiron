@@ -246,6 +246,10 @@ pub struct WholeVaultImportReceipt {
     /// withheld (their manifests stay in the archive only).
     pub imported_results: usize,
     pub withheld_results: usize,
+    /// Custody records the owner's own archive carried, restored under their
+    /// own ids, and those already here unchanged.
+    pub restored_secrets: usize,
+    pub unchanged_secrets: usize,
 }
 
 impl WholeVaultDocument {

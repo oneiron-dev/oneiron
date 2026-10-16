@@ -7,14 +7,17 @@ use std::io::Write as _;
 use serde_json::Value;
 
 use crate::batch::export::{
-    ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, VAULT_ARCHIVE_MANIFEST_PATH,
+    ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ArchiveSecretCustody,
+    VAULT_ARCHIVE_MANIFEST_PATH,
     WholeVaultDocumentManifest, archive_file_path, blake3_hex,
 };
 use crate::error::{Error, Result};
 
-/// The archive bytes and the manifest they carry.
+/// The archive bytes and the manifest they carry. `secrets` are the owner's
+/// custody records; they are written as they are, never through nulling.
 pub(super) fn write_vault_archive(
     mut document: Value,
+    secrets: &[ArchiveSecretCustody],
 ) -> Result<(Vec<u8>, WholeVaultDocumentManifest)> {
     let mut files = BTreeMap::new();
     detach_result_bodies(&mut document, &mut files);
@@ -54,6 +57,12 @@ pub(super) fn write_vault_archive(
         let fixed = kind.fixed_path().map(str::to_owned).ok_or_else(encode_failed)?;
         for row in take_array(&mut document, path) {
             push(fixed.clone(), kind, &row)?;
+        }
+    }
+    if let Some(path) = ArchiveRecordKind::SecretCustody.fixed_path() {
+        for secret in secrets {
+            let row = serde_json::to_value(secret).map_err(|_| encode_failed())?;
+            push(path.to_owned(), ArchiveRecordKind::SecretCustody, &row)?;
         }
     }
     let manifest = document

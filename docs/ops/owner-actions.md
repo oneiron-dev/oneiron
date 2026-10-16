@@ -283,9 +283,14 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 `files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
-(`Vault::import_whole_vault_archive`). Credentials are nulled by the serializer; tainted,
-secret-marked, credential-bearing and binary result bodies are withheld and named in
-`result_body.jsonl`.
+(`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
+Credentials inside records are nulled by the serializer; tainted, secret-marked,
+credential-bearing and binary result bodies are withheld and named in `result_body.jsonl`.
+
+Your own archive also carries your keys: each active secret-custody record, in
+`records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. A caller
+off this device gets only portable ones; an export-first removal's archive, like any export to a
+contact or share, carries none. Keep the archive as safe as the keys in it.
 
 A diary is exported as a read of it (OF-490): only diaries the owner's grant covers, logged on the
 receipt with the reason `export`. An agent that reviews each read of its diary first

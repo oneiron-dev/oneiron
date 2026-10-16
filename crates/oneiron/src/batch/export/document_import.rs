@@ -26,9 +26,9 @@ impl Vault {
     /// assemble into, without writing anything. The returned data remains
     /// untrusted. A manifest is not an approval grant.
     pub fn read_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
-        let document = super::read_vault_archive(bytes)?;
-        document.validate(self)?;
-        Ok(document)
+        let archive = super::read_vault_archive(bytes)?;
+        archive.document.validate(self)?;
+        Ok(archive.document)
     }
 
     /// Reimports a whole-vault archive atomically, into a fresh vault or
@@ -67,7 +67,11 @@ impl Vault {
         bytes: &[u8],
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
-        let mut document = self.read_whole_vault_archive(bytes)?;
+        let super::VaultArchive {
+            mut document,
+            secrets,
+        } = super::read_vault_archive(bytes)?;
+        document.validate(self)?;
         if actor.is_none()
             && document
                 .entities()
@@ -337,6 +341,8 @@ impl Vault {
         }
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
+        let (restored_secrets, unchanged_secrets) =
+            restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
         wtxn.commit()?;
         Ok(WholeVaultImportReceipt {
             authority,
@@ -351,6 +357,8 @@ impl Vault {
                 .collect(),
             imported_results,
             withheld_results,
+            restored_secrets,
+            unchanged_secrets,
         })
     }
 }
@@ -393,6 +401,50 @@ fn stage_run_results(
 /// Writes each run's results whose bodies came back as that run's
 /// occurrences; a result the export withheld stays a manifest in the
 /// archive. Returns the counts of both.
+/// The owner's own archive's custody records, each restored under its own id
+/// through the custody registration door, in the import's transaction. A
+/// record already here byte for byte is unchanged; any other collision is
+/// refused, never overwritten.
+fn restore_secrets_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    secrets: &[super::ArchiveSecretCustody],
+    document: &WholeVaultDocument,
+) -> Result<(usize, usize)> {
+    use base64::Engine as _;
+    let rows: BTreeSet<&str> = document.entities().map(|row| row.id.as_str()).collect();
+    let mut seen = BTreeSet::new();
+    let (mut restored, mut unchanged) = (0, 0);
+    for secret in secrets {
+        let id = parse_id(&secret.id)?;
+        if !seen.insert(id) || rows.contains(secret.id.as_str()) {
+            return Err(invalid("archive custody record id appears twice"));
+        }
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(&secret.body)
+            .map_err(|_| invalid("invalid archive custody record body"))?;
+        let mut record = crate::secret_custody::decode_secret_custody_body(&body)?;
+        if record.name != secret.name {
+            return Err(invalid("archive custody record name disagrees with its body"));
+        }
+        if let Some(existing) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
+        {
+            if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
+                && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                })
+            {
+                unchanged += 1;
+                continue;
+            }
+            return Err(invalid("import ID collides with a different custody record"));
+        }
+        crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)?;
+        restored += 1;
+    }
+    Ok((restored, unchanged))
+}
+
 fn put_run_results_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

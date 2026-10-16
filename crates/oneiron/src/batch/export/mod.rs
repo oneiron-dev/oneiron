@@ -7,7 +7,7 @@ pub use credential_filter::{
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
 mod archive_read;
 mod archive_types;
-pub(crate) use archive_read::read_vault_archive;
+pub(crate) use archive_read::{VaultArchive, read_vault_archive};
 pub use archive_types::*;
 mod export_authority;
 mod export_diary;

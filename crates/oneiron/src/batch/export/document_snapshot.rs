@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    ExportAdapterDescriptor, ExportDiaryHold, ExportDiaryLedger, ExportDiaryRead, ExportEdge,
+    ArchiveSecretCustody, ExportAdapterDescriptor, ExportDiaryHold, ExportDiaryLedger, ExportDiaryRead, ExportEdge,
     ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
     whole_vault_export_excludes_entity,
 };
@@ -31,6 +31,7 @@ pub(crate) struct ExportSnapshot {
     pub(crate) result_bodies: BTreeMap<[u8; 32], ExportSnapshotBody>,
     pub(crate) diary_reads: Vec<ExportDiaryRead>,
     pub(crate) diary_holds: Vec<ExportDiaryHold>,
+    pub(crate) secrets: Vec<ArchiveSecretCustody>,
 }
 
 /// One run's result manifests, as its replay record names them.
@@ -115,6 +116,7 @@ impl Vault {
         let mut task_receipts = BTreeMap::new();
         let mut archived_receipts = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::default();
+        let mut secrets = Vec::new();
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
@@ -137,15 +139,25 @@ impl Vault {
             }
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("whole-vault entity header"))?;
-            // Check the type BEFORE reading or transforming the custody body.
-            if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
-                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
-                    &self.store,
-                    &rtxn,
-                    &id,
-                    header.entity_type,
-                )?
-                || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+            // Owner ruling 2026-10-17: the owner's own archive carries the
+            // custody records, so a re-import keeps every key. A scoped
+            // export (a removed owner's, a contact's, a share's) never does.
+            if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
+                if only.is_none()
+                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+                    && let Some(secret) =
+                        archive_custody_secret(&id, &raw[ENTITY_METADATA_HEADER_LEN..], locality)?
+                {
+                    secrets.push(secret);
+                }
+                continue;
+            }
+            if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                &self.store,
+                &rtxn,
+                &id,
+                header.entity_type,
+            )? || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
             {
                 continue;
             }
@@ -307,6 +319,7 @@ impl Vault {
             result_bodies,
             diary_reads,
             diary_holds,
+            secrets,
         })
         .map_err(E::from)
     }
@@ -360,4 +373,28 @@ fn note_diary_author(
     #[cfg(not(feature = "sync"))]
     let _ = (vault, rtxn, id);
     Ok(super::diary_author(&body))
+}
+
+/// A custody record as an archive row, when this export carries it: an
+/// active record, and for a caller off this device only a portable one (a
+/// device-bound value never leaves this device, DEC-0005).
+fn archive_custody_secret(
+    id: &EntityId,
+    body: &[u8],
+    locality: CallerLocality,
+) -> Result<Option<ArchiveSecretCustody>> {
+    use base64::Engine as _;
+    use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
+    let record = crate::secret_custody::decode_secret_custody_body(body)?;
+    if record.status != SecretCustodyStatus::Active
+        || (locality != CallerLocality::OnDevice
+            && (record.device_only || record.class != CustodyClass::CustodyPortable))
+    {
+        return Ok(None);
+    }
+    Ok(Some(ArchiveSecretCustody {
+        id: id.to_hex(),
+        name: record.name.clone(),
+        body: base64::engine::general_purpose::STANDARD.encode(body),
+    }))
 }

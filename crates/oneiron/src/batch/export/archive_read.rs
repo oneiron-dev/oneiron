@@ -9,7 +9,7 @@ use std::io::Read as _;
 use serde_json::Value;
 
 use super::{
-    ArchiveRecordKind, VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH,
+    ArchiveRecordKind, ArchiveSecretCustody, VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH,
     VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument, WholeVaultDocumentManifest, blake3_hex,
 };
 use crate::error::{Error, Result};
@@ -18,7 +18,14 @@ use crate::error::{Error, Result};
 /// archive a vault can export over the wire is one it can read back.
 const MAX_ARCHIVE_UNPACKED_BYTES: u64 = crate::memory::caps::MAX_REMOTE_EXPORT_BYTES as u64;
 
-pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<WholeVaultDocument> {
+/// An archive's document, and the custody records the owner's own archive
+/// carries beside it (never part of the document, and never nulled).
+pub(crate) struct VaultArchive {
+    pub(crate) document: WholeVaultDocument,
+    pub(crate) secrets: Vec<ArchiveSecretCustody>,
+}
+
+pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
     let mut members = unpack(bytes)?;
     let manifest_bytes = members
         .remove(VAULT_ARCHIVE_MANIFEST_PATH)
@@ -92,6 +99,14 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<WholeVaultDocument> {
         )));
     }
 
+    let secrets = sections
+        .remove(&ArchiveRecordKind::SecretCustody)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| {
+            serde_json::from_value(row).map_err(|_| invalid("invalid archive custody record"))
+        })
+        .collect::<Result<Vec<ArchiveSecretCustody>>>()?;
     let mut entities = sections.remove(&ArchiveRecordKind::Entity).unwrap_or_default();
     let mut take = |kind| Value::Array(sections.remove(&kind).unwrap_or_default());
     // Store order: entity ids ascend, as the snapshot enumerated them.
@@ -122,7 +137,9 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<WholeVaultDocument> {
     if cited.len() != files.len() {
         return Err(invalid("archive file no record names"));
     }
-    serde_json::from_value(document).map_err(|_| invalid("invalid whole-vault archive rows"))
+    let document = serde_json::from_value(document)
+        .map_err(|_| invalid("invalid whole-vault archive rows"))?;
+    Ok(VaultArchive { document, secrets })
 }
 
 /// Every member, by name, read whole under the unpacked ceiling.
