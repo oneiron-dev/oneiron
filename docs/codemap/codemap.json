@@ -3460,13 +3460,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -3489,6 +3489,10 @@
       "ExportLedger",
       "ExportPack",
       "ExportPackSource",
+      "ExportResultBody",
+      "ExportRun",
+      "ExportRunOutput",
+      "ExportRunResults",
       "ExportSourceVault",
       "WholeVaultDocument",
       "WholeVaultDocumentManifest",
@@ -3496,13 +3500,13 @@
       "WholeVaultImportReceipt"
      ],
      "path": "src/batch/export/document_types.rs",
-     "purpose": "Versioned six-part whole-vault interchange document",
+     "purpose": "Versioned seven-part whole-vault interchange document",
      "surface": {
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
       "fn": 4,
-      "struct": 11
+      "struct": 15
      }
     },
     {
@@ -3541,6 +3545,7 @@
      "path": "src/batch/export/export_egress.rs",
      "purpose": "Whole-vault manifest egress doors and the Vault export surface",
      "surface": {
+      "crate-vis": 1,
       "fn": 13
      }
     },
@@ -3949,7 +3954,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 29,
       "enum": 1
      }
     },
@@ -9759,7 +9764,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 18,
       "struct": 10
@@ -9815,14 +9820,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "CodeRunModelHealCount"
+      "CodeRunModelHealCount",
+      "CodeRunSecretLiftProposal"
      ],
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 17,
-      "fn": 9,
-      "struct": 1
+      "crate-vis": 25,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
