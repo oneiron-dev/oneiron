@@ -3,7 +3,9 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 mod refs;
-use super::{FeedbackCategory, decode_feedback_bundle, feedback_bundle_digest};
+use super::{
+    FeedbackCategory, FeedbackEncoding, decode_feedback_bundle_as, feedback_bundle_digest_as,
+};
 
 /// One review item, keyed by its own id.
 const QUEUE_ITEMS: SideTable<EntityId, FeedbackReviewItem, Named> =
@@ -18,6 +20,10 @@ pub struct FeedbackReviewItem {
     #[serde(with = "refs::one")]
     pub id: EntityId,
     pub category: FeedbackCategory,
+    /// The encoding every bundle of this item arrived under. A proposal (v2)
+    /// groups only with proposals, so a suggested fix is never folded into a
+    /// same-category problem report.
+    pub encoding: FeedbackEncoding,
     #[serde(with = "refs::many")]
     pub bundles: Vec<EntityId>,
     pub received_at: u64,
@@ -64,6 +70,7 @@ fn live_bundle_matches(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     category: FeedbackCategory,
+    encoding: FeedbackEncoding,
 ) -> Result<bool> {
     let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
         vault,
@@ -81,18 +88,16 @@ fn live_bundle_matches(
         return Ok(false);
     }
     let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-    let Ok(bundle) = decode_feedback_bundle(bytes) else {
+    let Ok(bundle) = decode_feedback_bundle_as(encoding, bytes) else {
         return Ok(false);
     };
-    let digest = feedback_bundle_digest(bytes);
+    let digest = feedback_bundle_digest_as(encoding, bytes);
     Ok(bundle.category == category
         && blake3::hash(digest.as_bytes()).as_bytes()[..16] == id.as_bytes()[..])
 }
 
 impl Vault {
-    /// The embedding is supplied by the receiving host. No model runs in this
-    /// transaction. Identical bundles are idempotent; T2 keeps one review item
-    /// while preserving every distinct source bundle as an ASSET entity.
+    /// Ingests v1 bundle bytes; see [`Vault::ingest_feedback_as`].
     pub fn ingest_feedback(
         &self,
         bytes: &[u8],
@@ -100,13 +105,38 @@ impl Vault {
         dedup: FeedbackDedup,
         now: u64,
     ) -> Result<FeedbackReviewItem> {
-        let bundle = decode_feedback_bundle(bytes)
+        self.ingest_feedback_as(
+            super::FEEDBACK_BUNDLE_ENCODING,
+            bytes,
+            embedding,
+            dedup,
+            now,
+        )
+    }
+
+    /// Ingests bundle bytes received under the encoding token `encoding`.
+    ///
+    /// The embedding is supplied by the receiving host. No model runs in this
+    /// transaction. Identical bundles are idempotent; T2 keeps one review item
+    /// per category and encoding while preserving every distinct source bundle
+    /// as an ASSET entity. An unknown token is refused before any decode.
+    pub fn ingest_feedback_as(
+        &self,
+        encoding: &str,
+        bytes: &[u8],
+        embedding: &[f32],
+        dedup: FeedbackDedup,
+        now: u64,
+    ) -> Result<FeedbackReviewItem> {
+        let encoding = FeedbackEncoding::from_token(encoding)
+            .map_err(|_| Error::InvalidConfig("unknown feedback bundle encoding".into()))?;
+        let bundle = decode_feedback_bundle_as(encoding, bytes)
             .map_err(|_| Error::InvalidConfig("invalid feedback bundle".into()))?;
         let vector = normalized(embedding)?;
         if vector.len() != self.config.dimensions {
             return Err(Error::InvalidConfig("feedback embedding dimensions".into()));
         }
-        let digest = feedback_bundle_digest(bytes);
+        let digest = feedback_bundle_digest_as(encoding, bytes);
         let id = EntityId::from_bytes(
             blake3::hash(digest.as_bytes()).as_bytes()[..16]
                 .try_into()
@@ -138,6 +168,7 @@ impl Vault {
                 let item = validate_item_identity(&key, item)?;
                 if !item.open
                     || item.category != bundle.category
+                    || item.encoding != encoding
                     || item.centroid.len() != vector.len()
                 {
                     continue;
@@ -154,6 +185,7 @@ impl Vault {
                 || FeedbackReviewItem {
                     id,
                     category: bundle.category,
+                    encoding,
                     bundles: vec![],
                     received_at: now,
                     open: true,
@@ -199,7 +231,7 @@ impl Vault {
             }
             let mut actionable = true;
             for bundle in &item.bundles {
-                if !live_bundle_matches(self, &txn, bundle, item.category)? {
+                if !live_bundle_matches(self, &txn, bundle, item.category, item.encoding)? {
                     actionable = false;
                     break;
                 }

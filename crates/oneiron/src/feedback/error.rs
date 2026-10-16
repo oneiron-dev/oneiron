@@ -20,6 +20,17 @@ pub enum FeedbackError {
     /// Named MessagePack decoding failed.
     #[error("decoding the feedback bundle failed: {0}")]
     Decode(#[source] rmp_serde::decode::Error),
+    /// The encoding token is not one this engine reads.
+    #[error("unknown feedback bundle encoding {0:?}")]
+    UnknownEncoding(String),
+    /// The bytes decoded to a shape another encoding token names.
+    #[error("feedback bundle labelled {expected} decodes as {found}")]
+    EncodingMismatch {
+        /// Token the bytes were labelled with.
+        expected: &'static str,
+        /// Token the decoded shape belongs to.
+        found: &'static str,
+    },
     /// Bytes remained after a complete bundle was decoded.
     #[error("feedback bundle carries trailing bytes: consumed {consumed} of {total}")]
     TrailingBytes {

@@ -23,7 +23,9 @@ use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Form, Json, Router};
-use oneiron::feedback::{FeedbackCategory, FeedbackInboxVia, decode_feedback_bundle};
+use oneiron::feedback::{
+    FeedbackCategory, FeedbackEncoding, FeedbackInboxVia, decode_feedback_bundle_as,
+};
 use serde::Deserialize;
 
 use crate::auth::ClientAddress;
@@ -54,7 +56,7 @@ enum Note {
         text: String,
         category: Option<FeedbackCategory>,
     },
-    Bundle(Bytes),
+    Bundle(FeedbackEncoding, Bytes),
 }
 
 /// A request that lands nothing before the flood cap is asked.
@@ -136,11 +138,24 @@ async fn take_post(
         .and_then(|value| value.split(';').next())
         .map(|value| value.trim().to_ascii_lowercase())
         .unwrap_or_default();
+    // The sender names the bundle's encoding beside the bytes; an unlabelled
+    // bundle is v1, and a token this engine cannot read lands nothing.
+    let encoding = match request.headers().get("x-oneiron-bundle-encoding") {
+        None => Ok(FeedbackEncoding::V1),
+        Some(value) => value
+            .to_str()
+            .ok()
+            .and_then(|token| FeedbackEncoding::from_token(token.trim()).ok())
+            .ok_or(Unlanded::NotABundle),
+    };
     let note = match content_type.as_str() {
-        "application/msgpack" => Bytes::from_request(request, &server)
-            .await
-            .map(Note::Bundle)
-            .map_err(|rejection| Unlanded::rejected(rejection.status())),
+        "application/msgpack" => match encoding {
+            Ok(encoding) => Bytes::from_request(request, &server)
+                .await
+                .map(|bytes| Note::Bundle(encoding, bytes))
+                .map_err(|rejection| Unlanded::rejected(rejection.status())),
+            Err(unlanded) => Err(unlanded),
+        },
         "application/json" => Json::<NoteFields>::from_request(request, &server)
             .await
             .map_err(|rejection| Unlanded::rejected(rejection.status()))
@@ -203,8 +218,8 @@ async fn land(server: Arc<SyncServer>, note: Result<Note, Unlanded>) -> Response
     };
     let size = match &note {
         Note::Text { text, .. } => text.len(),
-        Note::Bundle(bytes) => {
-            if decode_feedback_bundle(bytes).is_err() {
+        Note::Bundle(encoding, bytes) => {
+            if decode_feedback_bundle_as(*encoding, bytes).is_err() {
                 return Unlanded::NotABundle.response();
             }
             bytes.len()
@@ -235,7 +250,9 @@ async fn land(server: Arc<SyncServer>, note: Result<Note, Unlanded>) -> Response
                 text,
                 category,
             } => server.vault().take_feedback_note(via, text, category),
-            Note::Bundle(bytes) => server.vault().take_feedback_bundle(&bytes),
+            Note::Bundle(encoding, bytes) => {
+                server.vault().take_feedback_bundle_as(encoding, &bytes)
+            }
         }
     })
     .await;

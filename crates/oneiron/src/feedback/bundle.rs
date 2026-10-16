@@ -13,6 +13,10 @@ use super::error::{FeedbackError, bounded, checked_embedding_model, checked_note
 /// Stable encoding token for the v1 feedback bundle wire contract.
 pub const FEEDBACK_BUNDLE_ENCODING: &str = "oneiron.feedback.bundle.v1";
 
+/// Stable encoding token for a bundle that carries a proposal: the six v1
+/// keys in v1 order, then `proposal`.
+pub const FEEDBACK_BUNDLE_ENCODING_V2: &str = "oneiron.feedback.bundle.v2";
+
 /// The single protocol verb of the feedback family.
 pub const FEEDBACK_SEND_VERB: &str = "feedback.send";
 
@@ -31,6 +35,9 @@ pub const FEEDBACK_EMBEDDING_MODEL_MAX_BYTES: usize = 128;
 /// Maximum accepted free-text note length in bytes.
 pub const FEEDBACK_USER_NOTE_MAX_BYTES: usize = 4096;
 
+/// Maximum accepted length of a proposal's problem or fix text in bytes.
+pub const FEEDBACK_PROPOSAL_MAX_BYTES: usize = 4096;
+
 /// Maximum accepted length of any single reference token in bytes.
 pub const FEEDBACK_REF_MAX_BYTES: usize = 256;
 
@@ -42,6 +49,52 @@ pub const FEEDBACK_MAX_SUBJECT_REFS: usize = 64;
 
 /// Domain separator for the bundle digest preimage.
 const FEEDBACK_DIGEST_DOMAIN: &[u8] = b"oneiron.feedback.bundle.v1\0";
+
+/// Domain separator for the v2 bundle digest preimage.
+const FEEDBACK_DIGEST_DOMAIN_V2: &[u8] = b"oneiron.feedback.bundle.v2\0";
+
+/// The wire encoding a bundle's bytes were produced under.
+///
+/// A bundle with no proposal is v1, byte for byte what it always was; a bundle
+/// with a proposal is v2. The token travels beside the bytes, never inside
+/// them, so every reader names the encoding it expects and an unknown token is
+/// refused before a byte is decoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FeedbackEncoding {
+    /// [`FEEDBACK_BUNDLE_ENCODING`]: the six frozen keys.
+    #[serde(rename = "oneiron.feedback.bundle.v1")]
+    V1,
+    /// [`FEEDBACK_BUNDLE_ENCODING_V2`]: the six frozen keys, then `proposal`.
+    #[serde(rename = "oneiron.feedback.bundle.v2")]
+    V2,
+}
+
+impl FeedbackEncoding {
+    /// Stable encoding token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::V1 => FEEDBACK_BUNDLE_ENCODING,
+            Self::V2 => FEEDBACK_BUNDLE_ENCODING_V2,
+        }
+    }
+
+    /// Resolves an encoding token, refusing any token this engine cannot read.
+    pub fn from_token(token: &str) -> Result<Self, FeedbackError> {
+        match token {
+            FEEDBACK_BUNDLE_ENCODING => Ok(Self::V1),
+            FEEDBACK_BUNDLE_ENCODING_V2 => Ok(Self::V2),
+            other => Err(FeedbackError::UnknownEncoding(other.to_owned())),
+        }
+    }
+
+    const fn digest_domain(self) -> &'static [u8] {
+        match self {
+            Self::V1 => FEEDBACK_DIGEST_DOMAIN,
+            Self::V2 => FEEDBACK_DIGEST_DOMAIN_V2,
+        }
+    }
+}
 
 /// The typed feedback verb family. One member by design.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,11 +347,47 @@ impl FeedbackHealerDiagnosis {
     }
 }
 
+/// A suggested fix beside the problem it answers (ARCH-0056 #proposals).
+///
+/// A proposal is a kind of feedback, not a category: a bug, a papercut, a
+/// confusion or a wish can each carry one. Both strings are shown to the owner
+/// byte for byte on the approval card and leave only as approved, so a
+/// proposal that quotes vault text has already asked the owner first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackProposal {
+    /// What went wrong.
+    pub problem: String,
+    /// The suggested fix.
+    pub fix: String,
+}
+
+impl FeedbackProposal {
+    /// Builds a proposal.
+    #[must_use]
+    pub fn new(problem: impl Into<String>, fix: impl Into<String>) -> Self {
+        Self {
+            problem: problem.into(),
+            fix: fix.into(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), FeedbackError> {
+        checked_note(
+            "proposal problem",
+            &self.problem,
+            FEEDBACK_PROPOSAL_MAX_BYTES,
+        )?;
+        checked_note("proposal fix", &self.fix, FEEDBACK_PROPOSAL_MAX_BYTES)
+    }
+}
+
 /// The feedback wire contract.
 ///
-/// Six top-level keys, always present, always in this order. Optional values
-/// serialize as nil rather than disappearing, so the shape a reader sees never
-/// depends on what the sender happened to have.
+/// Under v1, six top-level keys, always present, always in this order. Optional
+/// values serialize as nil rather than disappearing, so the shape a reader sees
+/// never depends on what the sender happened to have. A bundle that carries a
+/// proposal is v2: the same six keys, then `proposal`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackBundle {
@@ -314,6 +403,10 @@ pub struct FeedbackBundle {
     pub healer_diagnosis: Option<FeedbackHealerDiagnosis>,
     /// What the owner wrote, as they wrote it. The engine never fills this.
     pub user_note: Option<String>,
+    /// The suggested fix, when this bundle is a proposal. Present only under
+    /// v2, so a v1 bundle keeps its six keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<FeedbackProposal>,
 }
 
 /// The six top-level bundle keys, in serialization order.
@@ -342,6 +435,7 @@ impl FeedbackBundle {
             config: None,
             healer_diagnosis: None,
             user_note: None,
+            proposal: None,
         }
     }
 
@@ -366,6 +460,23 @@ impl FeedbackBundle {
         self
     }
 
+    /// Attaches a proposal, which makes this a v2 bundle.
+    #[must_use]
+    pub fn with_proposal(mut self, proposal: FeedbackProposal) -> Self {
+        self.proposal = Some(proposal);
+        self
+    }
+
+    /// The encoding this bundle's bytes are produced under.
+    #[must_use]
+    pub const fn encoding(&self) -> FeedbackEncoding {
+        if self.proposal.is_some() {
+            FeedbackEncoding::V2
+        } else {
+            FeedbackEncoding::V1
+        }
+    }
+
     /// Checks every field constraint the wire contract promises.
     pub fn validate(&self) -> Result<(), FeedbackError> {
         checked_token(
@@ -383,11 +494,15 @@ impl FeedbackBundle {
         if let Some(note) = self.user_note.as_deref() {
             checked_note("user_note", note, FEEDBACK_USER_NOTE_MAX_BYTES)?;
         }
+        if let Some(proposal) = &self.proposal {
+            proposal.validate()?;
+        }
         Ok(())
     }
 }
 
-/// Encodes a validated bundle as named MessagePack.
+/// Encodes a validated bundle as named MessagePack, under the encoding
+/// [`FeedbackBundle::encoding`] names.
 ///
 /// The named encoder is the contract: a compact positional encoding would make
 /// the key order load-bearing for readers, and it is not.
@@ -396,13 +511,23 @@ pub fn encode_feedback_bundle(bundle: &FeedbackBundle) -> Result<Vec<u8>, Feedba
     rmp_serde::to_vec_named(bundle).map_err(FeedbackError::Encode)
 }
 
-/// Decodes bundle bytes, rejecting unknown fields, duplicate fields, and any
-/// trailing byte after the bundle map.
+/// Decodes v1 bundle bytes, rejecting unknown fields, duplicate fields, a
+/// proposal, and any trailing byte after the bundle map.
+pub fn decode_feedback_bundle(bytes: &[u8]) -> Result<FeedbackBundle, FeedbackError> {
+    decode_feedback_bundle_as(FeedbackEncoding::V1, bytes)
+}
+
+/// Decodes bundle bytes produced under `encoding`.
 ///
 /// Trailing bytes are rejected by reading through a positioned deserializer
 /// and comparing the consumed length against the input length, because a
-/// whole-slice decode would silently accept a suffix.
-pub fn decode_feedback_bundle(bytes: &[u8]) -> Result<FeedbackBundle, FeedbackError> {
+/// whole-slice decode would silently accept a suffix. A v1 reader never
+/// accepts a proposal and a v2 reader never accepts a bundle without one, so
+/// the token and the shape cannot disagree.
+pub fn decode_feedback_bundle_as(
+    encoding: FeedbackEncoding,
+    bytes: &[u8],
+) -> Result<FeedbackBundle, FeedbackError> {
     let mut deserializer = rmp_serde::Deserializer::new(Cursor::new(bytes));
     let bundle = FeedbackBundle::deserialize(&mut deserializer).map_err(FeedbackError::Decode)?;
     let consumed = deserializer.position();
@@ -411,10 +536,17 @@ pub fn decode_feedback_bundle(bytes: &[u8]) -> Result<FeedbackBundle, FeedbackEr
         return Err(FeedbackError::TrailingBytes { consumed, total });
     }
     bundle.validate()?;
+    if bundle.encoding() != encoding {
+        return Err(FeedbackError::EncodingMismatch {
+            expected: encoding.as_str(),
+            found: bundle.encoding().as_str(),
+        });
+    }
     Ok(bundle)
 }
 
-/// Lowercase hex digest binding the exact bundle bytes a destination receives.
+/// Lowercase hex digest binding the exact v1 bundle bytes a destination
+/// receives.
 ///
 /// The preimage is the encoding token, a NUL, the big-endian byte length, and
 /// the bytes. Length-prefixing keeps two different bundles from colliding
@@ -422,8 +554,15 @@ pub fn decode_feedback_bundle(bytes: &[u8]) -> Result<FeedbackBundle, FeedbackEr
 /// with any other digest in the engine.
 #[must_use]
 pub fn feedback_bundle_digest(bytes: &[u8]) -> String {
+    feedback_bundle_digest_as(FeedbackEncoding::V1, bytes)
+}
+
+/// [`feedback_bundle_digest`] under the domain of `encoding`, so the same bytes
+/// labelled with two tokens never share a digest.
+#[must_use]
+pub fn feedback_bundle_digest_as(encoding: FeedbackEncoding, bytes: &[u8]) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(FEEDBACK_DIGEST_DOMAIN);
+    hasher.update(encoding.digest_domain());
     hasher.update(&(bytes.len() as u64).to_be_bytes());
     hasher.update(bytes);
     hasher.finalize().to_hex().to_string()

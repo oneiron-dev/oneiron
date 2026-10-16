@@ -10,7 +10,7 @@ use crate::outbound::{
     OutboundIntentTrigger, outbound_verb_contract,
 };
 
-use super::bundle::{FEEDBACK_BUNDLE_ENCODING, FEEDBACK_SEND_VERB};
+use super::bundle::FEEDBACK_SEND_VERB;
 use super::consent::{
     FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackSendRoute,
     feedback_logical_send_ref, validate_feedback_approval,
@@ -119,6 +119,7 @@ struct FeedbackOutboundAdapter<'a, T> {
     transport: &'a mut T,
     bundle_bytes: &'a [u8],
     bundle_digest: &'a str,
+    bundle_encoding: &'static str,
     approval_receipt_ref: &'a str,
     calls: usize,
 }
@@ -130,12 +131,13 @@ impl<T: FeedbackTransport> OutboundExecutionSink for FeedbackOutboundAdapter<'_,
             execution: request,
             bundle_bytes: self.bundle_bytes,
             bundle_digest: self.bundle_digest,
-            bundle_encoding: FEEDBACK_BUNDLE_ENCODING,
+            bundle_encoding: self.bundle_encoding,
             approval_receipt_ref: self.approval_receipt_ref,
         };
         let mut outcome = self.transport.send_feedback_bundle(&feedback_request);
         append_feedback_receipt_fields(
             &mut outcome.receipt_fields,
+            self.bundle_encoding,
             self.bundle_digest,
             self.approval_receipt_ref,
         );
@@ -150,15 +152,13 @@ impl<T: FeedbackTransport> OutboundExecutionSink for FeedbackOutboundAdapter<'_,
 /// dispatcher already stamped.
 fn append_feedback_receipt_fields(
     fields: &mut BTreeMap<String, String>,
+    encoding: &str,
     digest: &str,
     approval_receipt_ref: &str,
 ) {
     let entries = [
         (FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_SEND_VERB),
-        (
-            FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING,
-            FEEDBACK_BUNDLE_ENCODING,
-        ),
+        (FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, encoding),
         (FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST, digest),
         (
             FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF,
@@ -302,6 +302,7 @@ where
         transport,
         bundle_bytes: &preview.bytes,
         bundle_digest: &preview.digest,
+        bundle_encoding: preview.encoding.as_str(),
         approval_receipt_ref: &approval_receipt_ref,
         calls: 0,
     };
@@ -354,7 +355,7 @@ where
         .map_err(FeedbackError::ExportWrite)?;
     Ok(FeedbackExportOutcome {
         bundle_digest: preview.digest.clone(),
-        bundle_encoding: FEEDBACK_BUNDLE_ENCODING,
+        bundle_encoding: preview.encoding.as_str(),
         approval_receipt_ref: approval.approval_receipt_ref().to_owned(),
         bytes_written: preview.bytes.len(),
     })

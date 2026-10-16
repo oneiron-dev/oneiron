@@ -12,7 +12,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::{FeedbackBundle, FeedbackCategory, decode_feedback_bundle};
+use super::{FeedbackBundle, FeedbackCategory, FeedbackEncoding, decode_feedback_bundle_as};
 use crate::side_table::{self, Named, SideTable};
 use crate::{Error, Result, Vault};
 
@@ -67,7 +67,13 @@ impl Vault {
     /// Lands one v1 feedback bundle a vault sent and returns its arrival
     /// number. Bytes that are not a bundle are refused and nothing lands.
     pub fn take_feedback_bundle(&self, bytes: &[u8]) -> Result<u64> {
-        let bundle = decode_feedback_bundle(bytes)
+        self.take_feedback_bundle_as(FeedbackEncoding::V1, bytes)
+    }
+
+    /// Lands one feedback bundle sent under `encoding`; a v2 bundle keeps its
+    /// proposal on the stored row.
+    pub fn take_feedback_bundle_as(&self, encoding: FeedbackEncoding, bytes: &[u8]) -> Result<u64> {
+        let bundle = decode_feedback_bundle_as(encoding, bytes)
             .map_err(|_| Error::InvalidConfig("invalid feedback bundle".into()))?;
         let text = bundle.user_note.clone().unwrap_or_default();
         let category = Some(bundle.category);

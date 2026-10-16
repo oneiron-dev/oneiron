@@ -6,8 +6,8 @@ use crate::genui::{
 };
 
 use super::bundle::{
-    FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_REF_MAX_BYTES,
-    FEEDBACK_SEND_VERB, FeedbackBundle, encode_feedback_bundle, feedback_bundle_digest,
+    FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_REF_MAX_BYTES, FEEDBACK_SEND_VERB, FeedbackBundle,
+    FeedbackEncoding, encode_feedback_bundle, feedback_bundle_digest_as,
 };
 use super::error::{
     FeedbackError, approval_field, checked_token, expect_field, push_framed_identity,
@@ -229,6 +229,7 @@ impl FeedbackRedactor for UnredactedFeedback {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedbackPreview {
     bundle: FeedbackBundle,
+    pub(super) encoding: FeedbackEncoding,
     pub(super) bytes: Vec<u8>,
     pub(super) digest: String,
 }
@@ -238,6 +239,12 @@ impl FeedbackPreview {
     #[must_use]
     pub const fn bundle(&self) -> &FeedbackBundle {
         &self.bundle
+    }
+
+    /// The encoding the bytes were produced under.
+    #[must_use]
+    pub const fn encoding(&self) -> FeedbackEncoding {
+        self.encoding
     }
 
     /// The exact bytes a destination receives.
@@ -294,10 +301,12 @@ where
 {
     bundle.validate()?;
     let redacted = redactor.redact(bundle).map_err(FeedbackError::Redaction)?;
+    let encoding = redacted.encoding();
     let bytes = encode_feedback_bundle(&redacted)?;
-    let digest = feedback_bundle_digest(&bytes);
+    let digest = feedback_bundle_digest_as(encoding, &bytes);
     Ok(FeedbackPreview {
         bundle: redacted,
+        encoding,
         bytes,
         digest,
     })
@@ -315,7 +324,7 @@ pub fn feedback_approval_disclosure(
 ) -> String {
     let mut lines = vec![
         format!("category: {}", preview.bundle.category.as_str()),
-        format!("bundle_encoding: {FEEDBACK_BUNDLE_ENCODING}"),
+        format!("bundle_encoding: {}", preview.encoding.as_str()),
         format!("bundle_digest: {}", preview.digest),
         format!("bundle_bytes: {}", preview.bytes.len()),
         format!("destination: {}", scope.destination_label()),

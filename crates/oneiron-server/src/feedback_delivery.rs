@@ -111,7 +111,10 @@ impl HttpFeedbackTransport {
             .post(&self.config.endpoint)
             .header("User-Agent", "oneiron-feedback")
             .header("Idempotency-Key", request.execution.intent_ref)
-            .header("X-Oneiron-Bundle-Digest", request.bundle_digest);
+            .header("X-Oneiron-Bundle-Digest", request.bundle_digest)
+            // The token travels beside the bytes, so a receiver never guesses
+            // which shape it was handed.
+            .header("X-Oneiron-Bundle-Encoding", request.bundle_encoding);
         if let Some(token) = &self.bearer {
             post = post.bearer_auth(token.as_str());
         }
