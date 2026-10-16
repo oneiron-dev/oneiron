@@ -3,6 +3,7 @@ mod coordination;
 mod emission;
 mod envelope;
 mod human_speech;
+mod leader;
 mod memory_verbs;
 mod wake_policy;
 

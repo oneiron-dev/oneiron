@@ -35,7 +35,7 @@ impl Vault {
 /// Marker (engine version string) that the built-in bootstrap skill set has
 /// been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
-const FILES: [(&str, &str); 4] = [
+const FILES: [(&str, &str); 5] = [
     (
         "skill-optimize",
         include_str!("../../../../skills/skill-optimize/SKILL.md"),
@@ -46,6 +46,7 @@ const FILES: [(&str, &str); 4] = [
         include_str!("../../../../skills/goal-intake/SKILL.md"),
     ),
     ("wake", include_str!("../../../../skills/wake/SKILL.md")),
+    ("team-lead", include_str!("../../../../skills/team-lead/SKILL.md")),
 ];
 
 fn stable_id(name: &str) -> Result<EntityId> {
@@ -93,7 +94,15 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
             (Value::from("skillMarkdown"), Value::from(markdown)),
         ]),
     )
-    .with_governance_tier(SkillGovernanceTier::Standard);
+    .with_governance_tier(SkillGovernanceTier::Standard)
+    .with_role(
+        if name == "team-lead" {
+            crate::skill::SkillRole::Workflow
+        } else {
+            crate::skill::SkillRole::Knowledge
+        },
+        None,
+    );
     // Native format: the shipped markdown carries no versioned folder
     // frontmatter (version rides the record), so the folder parser must not be
     // asked to re-derive the record from it on export/import round trips.
