@@ -237,7 +237,7 @@ impl Masker {
                         changed |= self.mask_value(member)?;
                         continue;
                     }
-                    let secret = match member {
+                    let secret = match &*member {
                         Value::String(text) => text.as_bytes().to_vec(),
                         Value::Binary(bytes) => bytes.clone(),
                         other => {
