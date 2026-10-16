@@ -198,6 +198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_state.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | FoldedSlip, SlipAuthorityState | Log-derived capability mint ancestry and monotone subtree tombstones |
 | `src/authority/slip_tests.rs` | test | XL | — | — | Caller-observable slip, pairing and residue regressions |
 | `src/authority/slip_vault.rs` | src | m | 1 struct · 24 fn · 19 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |
+| `src/authority/slip_vault/courtesy.rs` | src | s | 2 fn | — | The host's signature on a courtesy deletion ask and on its answer (OF-273) |
 | `src/authority/stale_roster.rs` | src | s | 3 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
 | `src/authority/tests/actor_binding.rs` | test | L | — | — | Actor bind, rebind and revoke fold, qualification and DAG merge |
 | `src/authority/tests/anchor_independence.rs` | test | m | — | — | World privacy P6b: an owner anchor's rows rest on no roster key, through every pass of the fold and at every… |
@@ -1143,7 +1144,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/critic/review/questions.rs` | src | m | 4 struct · 1 trait · 1 const · 2 crate-vis | ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording | A review's typed questions: each lens asks its verdict, severity, scope and (when the lens has one) hard… |
 | `src/critic/review/tests.rs` | test | s | 5 crate-vis | — | — |
 | `src/critic/validation.rs` | src | s | 8 crate-vis | — | Bounds and shape checks for critic lenses, artifacts and learned reliability |
-| `src/deletion/coop_request.rs` | src | s | 2 struct · 4 fn · 4 const | CooperativeDeletionRequest, SignedCooperativeDeletionRequest | One-way authenticated courtesy deletion requests |
+| `src/deletion/coop_delivery.rs` | src | L | 5 struct · 4 enum · 13 fn · 4 const | CooperativeDeletionAnswer, CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition, CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice, CooperativeDeletionTry +1 | Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle) |
+| `src/deletion/coop_reply.rs` | src | s | 2 struct · 1 enum · 5 fn · 3 const | CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply | The recipient's one-line answer to a courtesy deletion ask (OF-273): its owner acted on the ask, or declined… |
+| `src/deletion/coop_request.rs` | src | m | 2 struct · 6 fn · 4 const · 8 crate-vis | CooperativeDeletionRequest, SignedCooperativeDeletionRequest | One-way authenticated courtesy deletion requests |
 | `src/deletion/delete/facade.rs` | src | L | 4 fn · 2 crate-vis | — | Public and gated delete entry points plus the headerful orchestration state machine |
 | `src/deletion/delete/headerless.rs` | src | s | 1 crate-vis | — | Headerless-residue delete leg: scope probe, tombstone publish, purge, and conditional receipt |
 | `src/deletion/delete/impact.rs` | src | s | 2 struct · 8 fn · 1 crate-vis | HeldBytes, LfsChunkImpact | Shared-bytes impact for the delete preview: whether the record is the last holder of its bytes or one of… |
@@ -1160,7 +1163,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/erase/replay.rs` | src | m | 5 crate-vis | — | — |
 | `src/deletion/gate.rs` | src | s | 16 crate-vis | — | — |
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
-| `src/deletion/mod.rs` | src | s | 6 re-export · 19 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 8 re-export · 19 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/publish.rs` | src | L | 3 crate-vis | — | — |
 | `src/deletion/receipt.rs` | src | m | 15 crate-vis | — | — |
 | `src/deletion/rendezvous.rs` | src | s | 15 crate-vis | — | — |
@@ -1826,7 +1829,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/types.rs` | src | s | 4 struct · 1 enum · 1 type | IngestError, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote, NormalizedIngestRecord | Normalized ingest types: batch, record, claim, and note plus the ingest result and error |
 | `src/interlocutor.rs` | src | m | 4 struct · 3 enum · 26 fn | Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp, PresenceEvidence | Interlocutor resolution substrate (OF-365 ILD-1) |
 | `src/interlocutor/tests.rs` | test | m | — | — | — |
-| `src/learning_setting.rs` | src | s | 2 struct · 1 enum · 5 fn · 4 const · 1 crate-vis | SettingMode, SettingRow, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
+| `src/learning/cell.rs` | src | m | 2 struct · 1 enum · 20 fn · 2 const | LearningCell, LearningPredicate, TypeRef | One cell of measured state (ARCH-0003 #learning-qualifiers): the subject, the predicate and the applicable… |
+| `src/learning/coordination.rs` | src | m | 3 struct · 1 enum · 5 fn · 3 const | CoordinationCost, DuplicateWork, ReuseDelay, TeamEvent | Coordination cost of a team (ARCH-0079 #coordination-cost, DLM-005): where its time went |
+| `src/learning/estimate.rs` | src | m | 5 struct · 3 enum · 17 fn · 1 const · 4 crate-vis | BetaView, Estimate, EstimateForm, EstimateLabels, EstimateValue, Prior, PriorOrigin, Window | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
+| `src/learning/evidence.rs` | src | m | 3 struct · 3 enum · 6 fn · 7 crate-vis | Anchor, CellRow, EvidenceRow, EvidenceSource, LearningEvidence, Observation | The anchored-evidence ledger: the only input the projector reads |
+| `src/learning/judge.rs` | src | s | 2 struct · 1 enum · 5 fn · 1 crate-vis | DivergenceCase, JudgeConversion, TakeoverVerdict | Judge swaps as projections (ARCH-0079 #model-swaps, ARCH-0003 #learning) |
+| `src/learning/mod.rs` | src | s | 1 fn · 6 const · 9 mod · 9 re-export · 2 crate-vis | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
+| `src/learning/prior.rs` | src | s | 1 fn · 1 crate-vis | — | Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003… |
+| `src/learning/project.rs` | src | m | 1 struct · 1 fn · 10 crate-vis | SettingFit | The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out |
+| `src/learning/read.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LearningRead | Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers) |
+| `src/learning/retest.rs` | src | s | 1 struct · 1 enum · 1 fn | Retest, RetestScore | `learning.retest_noise`: how often a judge or scorer disagrees with itself when it scores the same case twice |
+| `src/learning_setting.rs` | src | m | 3 struct · 1 enum · 6 fn · 9 const · 2 crate-vis | SettingCheck, SettingMode, SettingRow, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
 | `src/lens/atom/atom_enum.rs` | src | m | 1 enum · 5 fn · 2 crate-vis | LensAtom | LensAtom closed enum with wire codec and primitive/validate/budget dispatch |
 | `src/lens/atom/atom_leaves.rs` | src | m | 27 struct · 6 enum · 2 fn · 16 crate-vis | AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom, GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll +25 | Leaf payload structs with per-atom validate, fallback, and budget impls |
 | `src/lens/atom/atom_node.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LensNode | LensNode depth-bounded tree type with allocation-guarded Deserialize seeds |
@@ -1869,7 +1882,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 15 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | m | 181 mod · 72 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 182 mod · 72 re-export · 19 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -1915,7 +1928,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/standing_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/store.rs` | src | s | 4 fn · 13 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one… |
 | `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
-| `src/llm/decision/read.rs` | src | s | 1 struct · 1 fn | DecisionReadProvider | The escalation rung's decision read: the house model scores the question's labels and the paired "does this… |
+| `src/llm/decision/read.rs` | src | s | 1 struct · 1 fn | DecisionReadProvider | The escalation rung's decision read: the house model reads the paired "does this need more thinking?"… |
 | `src/llm/decision/seat.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 1 type | DecisionSeat, SeatAnswer, SeatPhase, SeatRequest | Opt-in, non-light typed-decision seat and its receipt boundary |
 | `src/llm/decision/seat/tests.rs` | test | s | — | — | — |
 | `src/llm/decision/slides_policy.rs` | src | m | 3 struct · 1 enum · 8 fn | SlideReviewLimits, SlideReviewPolicy, SlideReviewPrecedence, SlideReviewRoute | Manifest-backed operating limits for the artifact judgment adapter |
@@ -2363,7 +2376,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/trace/replay_inputs.rs` | src | s | 1 crate-vis | — | Opt-in replay input capture from the resolved query, never from a fork hash |
 | `src/pipeline/trace/trace_fork_hash.rs` | src | m | 2 crate-vis | — | Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives |
 | `src/pipeline/trace/trace_records.rs` | src | s | 10 crate-vis | — | Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly |
-| `src/pipeline/types.rs` | src | L | 9 struct · 5 enum · 12 fn · 5 const · 1 re-export · 38 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +6 | — |
+| `src/pipeline/types.rs` | src | L | 9 struct · 5 enum · 14 fn · 5 const · 1 re-export · 37 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +6 | — |
 | `src/pipeline/world_authority.rs` | src | m | 6 crate-vis | — | Per-turn world authority, bound to the host's executing principal |
 | `src/pipeline/world_authority_tests.rs` | test | m | — | — | ONE-1420 principal binding, durable default authorship, and authority reuse |
 | `src/policy_model/binding.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | PolicyContentBinding | Hashes that tie a verdict to the exact content and policy state it was decided against, so a stale verdict… |

@@ -18,11 +18,21 @@ use std::sync::Arc;
 pub(super) struct ModeWrite {
     mode: SessionMode,
     /// The facet the session's writes land in, for a credential narrowed to
-    /// facets that holds it (owner ruling FACET-READ).
-    #[serde(default)]
-    facet_ref: Option<EntityId>,
+    /// facets that holds it (owner ruling FACET-READ). Omitted keeps the
+    /// stored placement; `null` clears it.
+    #[serde(default, deserialize_with = "present")]
+    facet_ref: Option<Option<EntityId>>,
     #[serde(default)]
     actor: Option<EntityId>,
+}
+/// A field that is present, even as `null`; `#[serde(default)]` leaves an
+/// omitted one `None`.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 #[derive(Deserialize)]
 pub(super) struct PresenceWrite {
@@ -46,23 +56,29 @@ pub(super) async fn mode(
     let facets = auth
         .verified_slip()
         .map_or(ScopeAxis::All, |proof| proof.scope().facets.clone());
-    if let Some(facet) = req.facet_ref
+    if let Some(Some(facet)) = req.facet_ref
         && !facets.contains(&ScopeId(facet))
     {
         return Err(ApiError::forbidden_scope("record-scope").into());
     }
+    // An omitted placement stays as stored. The write below still refuses a
+    // narrowed writer a session placed outside its facets, as missing.
+    let facet_ref = match req.facet_ref {
+        Some(facet) => facet,
+        None => server.vault.session_facet(id).ok().flatten(),
+    };
     server
         .vault
         .set_session_mode_within(
             id,
             req.mode,
-            req.facet_ref,
+            facet_ref,
             actor(&auth, req.actor)?,
             &facets,
         )
         .map_err(|e| core_engine_error("session mode failed", e))?;
     Ok(Json(
-        json!({"mode":req.mode,"facet_ref":req.facet_ref.map(|facet| facet.to_hex())}),
+        json!({"mode":req.mode,"facet_ref":facet_ref.map(|facet| facet.to_hex())}),
     ))
 }
 pub(super) async fn presence(
