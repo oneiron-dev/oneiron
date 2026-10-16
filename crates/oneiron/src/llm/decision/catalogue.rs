@@ -78,6 +78,29 @@ pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which eligible model a new seat pins, then which of that model's efforts it runs at.
+/// Keyed by `model`, or by `effort` and the chosen model.
+pub const SEAT_PICK: QuestionFamily = QuestionFamily {
+    name: "llm.seat_pick",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How well one model's description fits a routed task: a `[0, 1]` score, zero unfit.
+/// Keyed by model.
+pub const DESCRIPTION_FIT: QuestionFamily = QuestionFamily {
+    name: "llm.description_fit",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does a claim-write candidate pass its auto check (allow or hold)?
+pub const AUTO_CHECK: QuestionFamily = QuestionFamily {
+    name: "llm.auto_check",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -85,4 +108,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     FANOUT_ASK,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
+    SEAT_PICK,
+    DESCRIPTION_FIT,
+    AUTO_CHECK,
 ];

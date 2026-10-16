@@ -1,0 +1,37 @@
+#!/bin/sh
+# PID 1 of a vault VM's engine image (VAULT-VM = B; built, not yet adopted).
+# Install it as /sbin/oneiron-vault-init in the read-only rootfs. The VM
+# profile's boot_args name the vault: oneiron.vault=<name> oneiron.owner=<hex>.
+# The vault's own disk is the second drive, /dev/vdb, formatted ext4.
+set -eu
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+mount -t tmpfs -o mode=0755 run /run
+mkdir -p /run/oneiron /vault
+mount -t ext4 -o noatime /dev/vdb /vault
+
+vault=""
+owner=""
+for word in $(cat /proc/cmdline); do
+  case "$word" in
+    oneiron.vault=*) vault="${word#oneiron.vault=}" ;;
+    oneiron.owner=*) owner="${word#oneiron.owner=}" ;;
+  esac
+done
+
+# The credential frame and the ready byte ride the vsock boot port; the host
+# reaches HTTP and ctl through vsock ports the engine bridges onto these paths.
+/usr/bin/oneiron-server serve --managed-by-hypnos --vsock-guest \
+  --contract-version 2 \
+  --vault-name "$vault" \
+  --derivation-owner "$owner" \
+  --data-dir /vault/data \
+  --http-socket /run/oneiron/http.sock \
+  --ctl-socket /run/oneiron/ctl.sock \
+  --hypnos-socket /run/oneiron/hypnos.sock || true
+
+# The engine has drained and flushed. Ending PID 1 ends the VM.
+sync
+umount /vault || true
+reboot -f

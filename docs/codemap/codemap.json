@@ -705,6 +705,26 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LaunchNode",
+      "LaunchPlan",
+      "LaunchRole",
+      "LaunchStatement",
+      "SpawnSpend",
+      "SpendCapView"
+     ],
+     "path": "src/agent_dispatch/launch.rs",
+     "purpose": "The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 1,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -712,7 +732,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 9
      }
     },
     {
@@ -738,6 +758,57 @@
      "path": "src/agent_dispatch/resident_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentSpendCalibration",
+      "ExpectedSpend",
+      "SpendBasis"
+     ],
+     "path": "src/agent_dispatch/spend_calibration.rs",
+     "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/spend_lease.rs",
+     "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChildSpend",
+      "SpendRead",
+      "SpendRefused",
+      "SpendScope",
+      "SpendScopeId",
+      "SpendSettlement",
+      "SpendSignal",
+      "SpendState"
+     ],
+     "path": "src/agent_dispatch/spend_record.rs",
+     "purpose": "Durable spend scopes and their typed reads (OF-532)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 4,
+      "struct": 4
+     }
     },
     {
      "bucket": "XL",
@@ -777,9 +848,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 6,
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 5,
-      "fn": 7,
+      "fn": 10,
       "struct": 8
      }
     },
@@ -838,7 +909,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorkflowDispatchStatus",
@@ -9096,7 +9167,7 @@
      "path": "src/code_document/blame.rs",
      "purpose": "Per-operation blame over tested file states: which operation wrote each surviving character, and which…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "type": 1
      }
     },
@@ -9170,6 +9241,7 @@
      "path": "src/code_document/types.rs",
      "purpose": "File edit verbs, cursor spans, operation receipts and tested frontiers",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 8
@@ -9365,17 +9437,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CodeRevisionFileOps",
       "CodeSessionRun"
      ],
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
       "crate-vis": 1,
-      "fn": 4,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -9714,7 +9787,7 @@
      "path": "src/code_run/storage/compaction.rs",
      "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -10437,7 +10510,7 @@
      "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
      "surface": {
       "const": 4,
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 2
      }
     },
@@ -10473,7 +10546,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 8
      }
     },
@@ -10633,12 +10706,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeInstructionHandle"
+     ],
+     "path": "src/codebase/instructions.rs",
+     "purpose": "Index-only handles to the instruction files on a returned code unit's ancestor path in its mounted snapshot",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -11173,7 +11260,7 @@
      "path": "src/compaction/driver/integration.rs",
      "purpose": "Transactional epoch integration, typed executor coverage, and swap plans",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -11189,7 +11276,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CompactionBackend",
@@ -11209,7 +11296,7 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 23,
       "struct": 8,
@@ -11217,7 +11304,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EpochSummaryBody"
@@ -11226,7 +11313,7 @@
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
       "const": 5,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 2,
       "struct": 1
      }
@@ -18061,7 +18148,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
       "struct": 2,
@@ -18069,7 +18156,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/compaction_host.rs",
@@ -26905,7 +26992,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -26942,7 +27029,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OffRecordSession",
@@ -26951,7 +27038,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 10,
       "struct": 2
      }
@@ -27009,7 +27096,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 4,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -32294,7 +32381,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 6,
       "type": 1
      }
@@ -37298,9 +37385,10 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "OpenedItem",
       "ResidenceHit",
       "ResidenceSearch",
       "SearchSource",
@@ -37310,19 +37398,23 @@
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 4,
+      "enum": 2,
+      "fn": 6,
+      "re-export": 1,
       "struct": 3
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ResidenceIndexWindow"
+     ],
      "path": "src/sync/client/residence/index.rs",
      "purpose": "Paged, revision-bound current-window metadata enrolment",
      "surface": {
-      "fn": 1
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -37350,6 +37442,7 @@
      "notable": [
       "EphemeralChangeOrigin",
       "NoteSyncSession",
+      "ResidenceHomeRoute",
       "SyncClientConfig",
       "SyncEvent",
       "SyncResidenceMode",
@@ -37361,8 +37454,8 @@
      "surface": {
       "crate-vis": 6,
       "enum": 4,
-      "fn": 2,
-      "struct": 3
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -37387,18 +37480,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectionConfig",
+      "ResidenceModeChange",
       "SyncConnection"
      ],
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 7,
+      "fn": 13,
       "re-export": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -38000,9 +38094,9 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
-      "fn": 8,
-      "re-export": 1,
+      "crate-vis": 5,
+      "fn": 9,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -38014,6 +38108,30 @@
      "purpose": "Discover locally held world/month partitions without loading their Docs",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeviceSyncPreference"
+     ],
+     "path": "src/sync/residence/policy.rs",
+     "purpose": "This machine's residence choice: sync every window it may read, or sync what it opened",
+     "surface": {
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/prune.rs",
+     "purpose": "Last-touch accounting and pruning for opened-item read caches",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -42008,7 +42126,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 3,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 2
      }
     },
@@ -42155,6 +42273,23 @@
      "surface": {
       "crate-vis": 4,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultKeyStatus",
+      "VaultKeyWrapInfo",
+      "VaultKeyWrapKind"
+     ],
+     "path": "src/world_keys/vault_key.rs",
+     "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 13,
+      "struct": 1
      }
     },
     {
@@ -43060,7 +43195,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 21,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43305,7 +43440,7 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43356,7 +43491,7 @@
     "compaction": {
      "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
@@ -43888,7 +44023,7 @@
     "off_record": {
      "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
@@ -44306,7 +44441,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 133,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44446,7 +44581,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44460,9 +44595,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 58,
+   "over_bar": 62,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2667,
+   "source_files": 2675,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56088,6 +56223,7 @@
       "HostCommand",
       "HostInitArgs",
       "HostReRootArgs",
+      "HostVmArgs",
       "InitArgs",
       "McpArgs",
       "McpSurface",
@@ -56109,7 +56245,7 @@
       "enum": 8,
       "fn": 3,
       "re-export": 2,
-      "struct": 18
+      "struct": 19
      }
     },
     {
@@ -57741,6 +57877,7 @@
      "path": "src/managed/args.rs",
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -57761,7 +57898,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -57801,7 +57938,7 @@
      "purpose": "Managed sockets: listener resolution and binding, the ctl plane, and readiness",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 10,
       "struct": 1
@@ -57823,7 +57960,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
       "crate-vis": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -57874,6 +58011,33 @@
       "const": 3,
       "crate-vis": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_guest.rs",
+     "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SleepOutcome",
+      "VaultVm",
+      "VaultVmConfig",
+      "VaultVmRun"
+     ],
+     "path": "src/managed/vm_host.rs",
+     "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
+     "surface": {
+      "enum": 1,
+      "fn": 13,
+      "struct": 3
      }
     },
     {
@@ -59836,7 +60000,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 12,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59943,7 +60107,7 @@
    },
    "over_bar": 15,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 387,
+   "source_files": 389,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -60201,25 +60365,75 @@
      "path": "src/lib/host_adapters.rs",
      "purpose": "Host adapters",
      "surface": {
-      "re-export": 2,
+      "re-export": 4,
       "struct": 2,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActivatedListener",
+      "AwakeGuard",
+      "AwakePolicy",
+      "DesktopHost",
+      "KeepAwake",
+      "LaunchdHost",
+      "SecretSource",
+      "SystemdHost"
+     ],
+     "path": "src/lib/host_adapters/desktop.rs",
+     "purpose": "The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started…",
+     "surface": {
+      "enum": 4,
+      "fn": 13,
+      "struct": 4
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "InProcessHost",
-      "LaunchdHost",
-      "SystemdHost"
+      "AppHost",
+      "EmbeddedHost"
+     ],
+     "path": "src/lib/host_adapters/embedded.rs",
+     "purpose": "The in-process adapter for an engine embedded in a mobile app (NAPI or FFI)",
+     "surface": {
+      "fn": 4,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InProcessHost"
      ],
      "path": "src/lib/host_adapters/native.rs",
      "purpose": "Native socket ownership, secret lookup, and cooperative idle wakeup",
      "surface": {
-      "fn": 8,
-      "re-export": 1,
-      "struct": 3
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FirecrackerGuest",
+      "GuestLink",
+      "VsockListener",
+      "VsockStream"
+     ],
+     "path": "src/lib/host_adapters/vsock.rs",
+     "purpose": "The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs…",
+     "surface": {
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -60266,7 +60480,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 3,
+      "mod": 4,
       "re-export": 7
      }
     },
@@ -60307,6 +60521,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VmGuestFrame",
+      "VmHostFrame"
+     ],
+     "path": "src/lib/vm.rs",
+     "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
+     "surface": {
+      "const": 7,
+      "enum": 2,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Schedule",
       "WakeEntry"
      ],
@@ -60323,16 +60552,16 @@
    ],
    "modules": {
     "lib": {
-     "files": 13,
+     "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits"
     }
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 12,
+   "source_files": 16,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
