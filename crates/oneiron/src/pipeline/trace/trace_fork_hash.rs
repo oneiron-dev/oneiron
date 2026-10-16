@@ -90,6 +90,8 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
     fork_hash_authority_filter(&mut hasher, builder.authority_filter.as_ref());
     fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
+    fork_hash_bool(&mut hasher, builder.context_pack_world_share.is_some());
+    fork_hash_f32(&mut hasher, builder.context_pack_world_share.unwrap_or(0.0));
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
     fork_hash_recency_weight_table(&mut hasher);

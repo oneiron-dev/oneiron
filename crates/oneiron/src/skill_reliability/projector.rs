@@ -10,6 +10,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
@@ -228,7 +229,19 @@ pub(super) fn project_in_txn(
     prior: SkillReliabilityPosterior,
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
-    let heads = active_reliability_heads_in_txn(vault, wtxn, skill, executor)?;
+    // A head awaiting its owner's answer is neither folded, compared nor
+    // superseded: it stays as it is until the answer lets it in.
+    let mut heads = Vec::new();
+    for head in active_reliability_heads_in_txn(vault, wtxn, skill, executor)? {
+        if claim_consolidation_eligible_in_txn(
+            &vault.store,
+            wtxn,
+            &head.0,
+            ConsolidationReader::SkillReliabilityProjection,
+        )? {
+            heads.push(head);
+        }
+    }
     let base = projection_base_in_txn(vault, wtxn, skill, executor, prior, &heads)?;
     let tally = tally_outcomes(vault, wtxn, skill, executor)?;
     let posterior = tally.posterior(base);

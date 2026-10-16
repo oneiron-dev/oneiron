@@ -56,6 +56,7 @@ pub(crate) fn admitted_passports_for_event_in_txn(
             && body.predicate == PREDICATE_CALENDAR_PASSPORT
             && body.subject == ClaimSubject::Entity(*event)
             && claim_surfaceable(&body)
+            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
         {
             values.push((id, decode_passport_value(&body.value)?));
         }

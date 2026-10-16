@@ -62,6 +62,7 @@ pub(in crate::batch) fn apply_put(
                 refinement_admission,
                 transition,
                 posture,
+                owner_authored,
             },
     } = request;
     let Replication {
@@ -230,7 +231,8 @@ pub(in crate::batch) fn apply_put(
                     wtxn,
                     &id,
                     crate::gate::ClaimGateWrite::plain(&body, write_envelope)
-                        .with_transition(transition),
+                        .with_transition(transition)
+                        .with_owner_authored(owner_authored),
                     policy,
                     options.gate_write_mode(),
                     options.decision.preflight,
@@ -653,6 +655,15 @@ pub(in crate::batch) fn apply_put(
         if !replicated {
             validate_local_skill_create(store, &*wtxn, &id, created)?;
         }
+    }
+
+    if body_changed && let Some(body) = decoded_claim_body.as_ref() {
+        if replicated {
+            crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &id, body)?;
+        }
+        // A claim whose owner has not answered stays held through any new
+        // revision, and its owner is shown an item for this one.
+        crate::gate::show_owner_answer_item_in_txn(store, wtxn, &id, Some(body))?;
     }
 
     // Past every check that can reject this row remotely: a replicated row

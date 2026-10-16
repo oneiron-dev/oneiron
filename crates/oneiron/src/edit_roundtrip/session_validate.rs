@@ -4,7 +4,7 @@ use super::opc::{self, OpcPackage, PartClass};
 use super::{EditOp, EditWarning, OfficeFormat};
 use crate::blob_artifact::CalcEngineStamp;
 use crate::error::Result;
-use oneiron_xlsx_formula::RecalcClock;
+use oneiron_xlsx_formula::{DocumentLocation, RecalcClock};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -121,6 +121,17 @@ pub trait EditSession {
     /// local offset and a fresh seed when the recalc runs, as the host's own
     /// recalc reads them.
     fn recalc_clock(&self) -> Option<RecalcClock> {
+        None
+    }
+
+    /// The folder and file name the session opened the workbook from, as
+    /// Excel for Windows names them (`C:\Reports\` and `Budget.xlsx`):
+    /// CELL("filename") in the in-process recalc prints
+    /// `C:\Reports\[Budget.xlsx]Sheet1`, and CELL("address") of another
+    /// sheet's cell names that file. `None` (the default) reads the location
+    /// Excel last saved in the workbook's own CELL("filename") caches; a
+    /// workbook with neither goes to the host's recalc.
+    fn recalc_location(&self) -> Option<DocumentLocation> {
         None
     }
 }

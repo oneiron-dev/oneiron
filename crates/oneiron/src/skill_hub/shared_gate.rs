@@ -664,7 +664,12 @@ pub(super) fn checked_useful_decision(
             .providers
             .iter()
             .any(|p| p.model.trim().is_empty() || p.version.trim().is_empty())
-        || !PairedReading::rows_valid(&receipt.paired, question.id, &receipt.providers)
+        || !PairedReading::readings_valid(
+            &receipt.paired,
+            &receipt.person,
+            question.id,
+            &receipt.providers,
+        )
         || receipt.band.validate().is_err()
         || decision
             .probability

@@ -346,7 +346,13 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 // our own storage defect behind a continue, and the `x:` row
                 // it writes is PERMANENT false evidence accusing the peer of
                 // a forgery it never sent.
-                match crate::batch::validate_facet_of_edge(&vault.store, &*wtxn, src, kind, tgt) {
+                match crate::batch::validate_replayed_facet_of_edge(
+                    &vault.store,
+                    &*wtxn,
+                    src,
+                    kind,
+                    tgt,
+                ) {
                     Ok(()) => {}
                     Err(off_table) if quarantine::remote_rejection_reason(&off_table).is_some() => {
                         quarantine::quarantine_rejected_op_in_txn(

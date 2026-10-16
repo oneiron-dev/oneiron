@@ -45,7 +45,7 @@ const SEAM_SUFFIXES: &[&str] = &[
     "Critic",
     "Grader",
 ];
-const SEAM_TRAITS: &[&str] = &["ReviewHost", "SlideReviewProvider"];
+const SEAM_TRAITS: &[&str] = &["ReviewNotes", "SlideReviewProvider"];
 const SEAM_STRUCTS: &[&str] = &["CampaignTasteJudgment"];
 
 /// The one path every typed decision takes.
@@ -54,7 +54,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 22;
+const BYPASS_CEILING: usize = 20;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -135,12 +135,6 @@ const BYPASSES: &[Pin] = &[
         "routed verdict: a caller's schema verdict sent through the step seam after a description-judge route",
     ),
     pin(
-        "crates/oneiron/src/critic/review.rs",
-        "trait ReviewHost",
-        "pub trait ReviewHost {",
-        "critic: accept, revise or discard with a severity, from the host's model",
-    ),
-    pin(
         "crates/oneiron/src/llm/seat.rs",
         "trait SeatJudge",
         "pub trait SeatJudge: Send + Sync {",
@@ -163,12 +157,6 @@ const BYPASSES: &[Pin] = &[
         "trait FanoutAskClassifier",
         "pub trait FanoutAskClassifier {",
         "fan-out ask: allow, deny or escalate to a person",
-    ),
-    pin(
-        "crates/oneiron/src/self_heal/tiered.rs",
-        "trait TelemetryJudge",
-        "pub trait TelemetryJudge {",
-        "self-heal: whether a telemetry streak raises a proposed diagnostic",
     ),
     pin(
         "crates/oneiron/src/skill_attribution/judge.rs",
@@ -444,6 +432,12 @@ const OUTSIDE: &[Pin] = &[
         "Some(super::call_as_step(ctx, backend, guard, request).await?)",
         "tagger render (extraction)",
     ),
+    pin(
+        "crates/oneiron/src/critic/review/questions.rs",
+        "trait ReviewNotes",
+        "pub trait ReviewNotes {",
+        "critic notes: evidence refs and a suggested edit beside a decided review (generation)",
+    ),
 ];
 
 fn repo_root() -> PathBuf {
@@ -718,10 +712,10 @@ fn decide_path_new_judge_call_and_dropped_bypass_both_fail() {
     assert!(drift(&actual_edges(with_inside)).is_empty());
 
     // A bypass that moves into decide() without leaving the list fails until it is removed.
-    let critic = "crates/oneiron/src/critic/review.rs";
+    let seat = "crates/oneiron/src/llm/seat.rs";
     let without = pairs.iter().map(|(rel, source)| {
-        let source = if rel == critic {
-            source.replace("pub trait ReviewHost {", "pub trait CriticTransport {")
+        let source = if rel == seat {
+            source.replace("pub trait SeatJudge: Send + Sync {", "pub trait SeatPick: Send + Sync {")
         } else {
             source.clone()
         };
@@ -730,7 +724,7 @@ fn decide_path_new_judge_call_and_dropped_bypass_both_fail() {
     let drift_gone = drift(&actual_edges(without));
     assert_eq!(drift_gone.len(), 1, "{drift_gone:?}");
     assert!(
-        drift_gone[0].starts_with("GONE crates/oneiron/src/critic/review.rs"),
+        drift_gone[0].starts_with("GONE crates/oneiron/src/llm/seat.rs"),
         "{drift_gone:?}"
     );
 }

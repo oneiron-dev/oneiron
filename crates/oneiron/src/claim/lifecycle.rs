@@ -681,13 +681,16 @@ impl Vault {
                 end: now,
             });
         }
-        let consent_receipt = self.store.close_pending_gate_consent_in_txn(
+        // The retraction closes the claim, so its owner is shown no item for
+        // the open revision; an open obligation stays open.
+        let consent_receipt = self.store.close_pending_gate_consent_as_in_txn(
             wtxn,
             id,
             now,
             "retracted",
             vec!["gate.pending.claim_retracted".to_owned()],
             None,
+            crate::store::TrayRemoval::Silent,
         )?;
         body.lifecycle = ClaimLifecycleStatus::Retracted;
         body.valid_to = Some(now);
@@ -735,6 +738,7 @@ impl Vault {
                     auto_checker: None,
                     defer_metrics_until_commit: false,
                     transition: Some(&transition),
+                    owner_authored: None,
                 },
                 &policy,
                 crate::gate::GateWriteMode {

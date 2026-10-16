@@ -226,7 +226,7 @@ fn execute_component(
     let (output,) = run
         .call(&mut store, (script.to_owned(),))
         .map_err(|_| failure("component execution trapped"))?;
-    let output = output.map_err(|_| failure("guest reported step failure"))?;
+    let output = output.map_err(|message| guest_failure(&message))?;
     // This runtime is the first-party lane. Proposal-only execution belongs to
     // the microVM guest; never silently turn a returned proposal into a write.
     if !output.proposals.is_empty() {
@@ -292,6 +292,26 @@ enum HostEvent {
         reply: mpsc::SyncSender<Result<String>>,
     },
     Finished(Result<JsCodeModeStepOutcome>),
+}
+
+/// Characters of a guest's error text a failed step keeps. A program can
+/// throw text of any size; its head says why.
+const GUEST_ERROR_CHARS: usize = 2048;
+
+/// The guest's own error text for a failed step, so the model learns why its
+/// program stopped. A refusal the bootstrap raises names its bound.
+fn guest_failure(message: &str) -> Error {
+    let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
+    if text.len() < message.len() {
+        text.push_str(&format!(" … ({} bytes in all)", message.len()));
+    }
+    if message.starts_with("RangeError: output budget") {
+        text.push_str(
+            " (one step may emit at most 262,144 characters through console.log, finish \
+             and writeOutput together; emit less per step)",
+        );
+    }
+    Error::InvalidConfig(format!("guest reported step failure: {text}"))
 }
 
 fn failure(detail: &'static str) -> Error {

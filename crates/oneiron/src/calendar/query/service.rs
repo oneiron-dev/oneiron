@@ -103,7 +103,8 @@ fn search_events_in(
         .iter()
         .filter_map(|row| row.facts.exception().cloned())
         .collect();
-    let withheld = read.withheld_exception_series()?;
+    let withheld: std::collections::BTreeSet<_> =
+        read.withheld_exception_series()?.into_keys().collect();
     let mut matched = Vec::new();
     for row in rows {
         if !matches_selectors(row.facts.systems(), &req.calendars) {

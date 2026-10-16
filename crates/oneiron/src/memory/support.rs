@@ -415,6 +415,9 @@ pub struct Memory<'v> {
     pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
+    /// The vault owner's authentication, when a host bound the owner's own
+    /// direct request (`with_owner_authorship`).
+    pub(super) owner_authorship: Option<crate::consent::AuthenticatedOwner>,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -464,6 +467,7 @@ impl Vault {
             locality: crate::claim::CallerLocality::OnDevice,
             producers: None,
             birth_position: Default::default(),
+            owner_authorship: None,
         }
     }
 
@@ -494,6 +498,7 @@ impl Vault {
             locality: crate::claim::CallerLocality::OnDevice,
             producers: None,
             birth_position: Default::default(),
+            owner_authorship: None,
         }
     }
 }
@@ -530,6 +535,9 @@ impl<'v> Memory<'v> {
                 locality: self.locality,
                 producers: self.producers,
                 birth_position: self.birth_position,
+                // A room turn writes into the room's talk, not as the owner
+                // in person.
+                owner_authorship: None,
             },
         })
     }
@@ -549,6 +557,48 @@ impl Memory<'_> {
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
         self
+    }
+
+    /// Marks this surface's claim writes as made in person by the vault's
+    /// authenticated owner: owner-authored writes carry their own
+    /// confirmation, so a critical claim they land attaches no confirm.
+    ///
+    /// A host binds it only for a request the owner made directly, through a
+    /// door that authenticated the owner (an unattenuated owner credential or
+    /// the native owner door). An agent's, a room turn's or an import's write
+    /// never carries it. Each claim write revalidates the proof as the vault's
+    /// owner in its own transaction and refuses when it no longer holds; the
+    /// proof's actor must be this surface's actor, as a human.
+    #[must_use]
+    pub fn with_owner_authorship(mut self, owner: &crate::consent::AuthenticatedOwner) -> Self {
+        self.owner_authorship = Some(owner.clone());
+        self
+    }
+
+    /// The owner authorship of a claim write in `txn`, revalidated there.
+    ///
+    /// A surface bound to a host origin or a machine signer writes for
+    /// someone else, so it authors nothing as the owner.
+    pub(super) fn owner_authored_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<Option<crate::consent::OwnerAuthoredWrite>> {
+        let Some(owner) = &self.owner_authorship else {
+            return Ok(None);
+        };
+        if self.host_origin.is_some() || self.machine_signer.is_some() {
+            return Ok(None);
+        }
+        if owner.revalidate_in_txn(self.vault, txn)? != self.actor
+            || self.actor_class != EdgeActorClass::Human
+        {
+            return Err(crate::Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "owner proof does not name this surface's actor",
+                ),
+            ));
+        }
+        owner.owner_authored_write_in_txn(self.vault, txn).map(Some)
     }
 
     /// Binds this surface's claim writes to a host-owned origin: every claim

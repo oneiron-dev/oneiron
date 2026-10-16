@@ -35,15 +35,28 @@ import { HttpBaseClient } from "@oneiron/client";
 
 const client = new HttpBaseClient({
   baseUrl: "http://127.0.0.1:9090",
-  secret: process.env.ONEIRON_SECRET, // placeholder credential from the environment
+  secret: process.env.ONEIRON_TOKEN, // a logged `v2.slip.*` capability slip
 });
 
-const response = await client.discover();
+// `holderProof` is a placeholder for your own signer; this package makes no proofs.
+const response = await client.discover({
+  headers: { "x-oneiron-binding": await holderProof("GET", "/api/core/discover") },
+});
 if (!response.ok) {
   // The server's own error envelope, verbatim: status, headers, and body.
   console.error(response.status, await response.text());
 }
 ```
+
+`secret` is sent as `Authorization: Bearer` on every request. It must be a
+logged `v2.slip.*` capability slip; the server's issuer secret is not a
+credential. Each protected request also needs a fresh `x-oneiron-binding`
+holder proof, signed with the slip's holder key, and a proof cannot be replayed.
+Pass it in that call's `init.headers`, as above. `/api/core/discover` needs an
+owner-grade slip. See the
+[authentication reference](../../oneiron.skills.md#authentication). Against a
+loopback server started with `--insecure-allow-unauthenticated` and no auth
+secret, omit both.
 
 `request`, `discover`, `searchText`, `getEntity`, and `callVerb` all return
 `Promise<Response>`. Any route the convenience methods do not cover is one

@@ -10,7 +10,7 @@ use super::*;
 use crate::codebase::RepoRef;
 use crate::git_wire::{GitOid, GitRefName, GitWire};
 use crate::origin::lfs::lfs_repo_id;
-use crate::origin::publication::{OriginPublicationRequest, origin_publication_intent_claim};
+use crate::origin::publication::OriginPublicationRequest;
 use crate::origin::secret_manifest::SECRET_MANIFEST_PATH;
 use crate::origin::smart_http::origin_serving_root;
 use crate::secret_custody::doors::read_secret_custody_in_txn;
@@ -173,14 +173,8 @@ fn publish_ref(vault: &Vault, dir: &Path, ref_name: &str, commit: &str) {
         occurred: TimeRange { start: 1, end: 1 },
         learned_at: 1,
     };
-    let intent = origin_publication_intent_claim(&request).expect("intent");
     vault
-        .put_claim(
-            &request.provenance_claim_id,
-            &intent,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_origin_publication_intent(&request)
         .expect("provenance");
     vault.publish_origin_ref(&wire, request).expect("published");
 }

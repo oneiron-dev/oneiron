@@ -4,15 +4,19 @@
 //! and that destination; it rides the ordinary outbound pipeline, so the
 //! vault's policy still decides whether it leaves now or is held.
 //!
-//! A bundle here carries no vault text: a category, the engine version and
-//! the platform. A written note waits for in-vault redaction, which the
-//! engine does not ship yet, so a request with one is refused.
+//! A bundle here carries a category, the engine version and the platform, and
+//! may carry a proposal: a problem and a suggested fix (ARCH-0056
+//! #proposals), sent under its own encoding token. Proposal text is shown in
+//! the preview byte for byte and leaves only on this owner's send of exactly
+//! that preview, so a proposal that quotes vault text has asked the owner
+//! first. A written note waits for in-vault redaction, which the engine does
+//! not ship yet, so a request with one is refused.
 
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, UnredactedFeedback,
+    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal, UnredactedFeedback,
     feedback_approval_card, prepare_feedback_preview,
 };
 use oneiron::genui::{
@@ -36,6 +40,9 @@ pub(crate) struct FeedbackRequest {
     /// Refused until the engine redacts notes in the vault.
     #[serde(default)]
     pub(crate) note: Option<String>,
+    /// A suggested fix beside the problem; makes this a proposal.
+    #[serde(default)]
+    pub(crate) proposal: Option<FeedbackProposal>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +51,9 @@ pub(crate) struct SendRequest {
     pub(crate) category: FeedbackCategory,
     #[serde(default)]
     pub(crate) note: Option<String>,
+    /// The proposal exactly as previewed.
+    #[serde(default)]
+    pub(crate) proposal: Option<FeedbackProposal>,
     /// The digest the preview returned for exactly this bundle.
     pub(crate) digest: String,
     /// The approval the preview returned: this bundle to that destination.
@@ -57,6 +67,8 @@ pub(crate) struct SendRequest {
 pub(crate) struct Preview {
     /// Send this back to send exactly these bytes.
     pub(crate) digest: String,
+    /// The encoding token the bytes leave under: v1, or v2 for a proposal.
+    pub(crate) encoding: &'static str,
     pub(crate) bundle: serde_json::Value,
     pub(crate) destination: String,
     /// Names this bundle going to this destination on this owner's approval;
@@ -89,6 +101,7 @@ pub(crate) fn preview(
     let preview = bundle_preview(request)?;
     Ok(Preview {
         digest: preview.digest().to_owned(),
+        encoding: preview.encoding().as_str(),
         approval: preview.approval_component_id(
             &FeedbackApprovalScope::Send(host.config.route()),
             owner.principal_ref_for_read(vault)?,
@@ -110,6 +123,7 @@ pub(crate) fn send(
     let preview = bundle_preview(&FeedbackRequest {
         category: request.category,
         note: request.note.clone(),
+        proposal: request.proposal.clone(),
     })?;
     if preview.digest() != request.digest {
         return Err(OwnerError::Changed(
@@ -182,11 +196,14 @@ fn bundle_preview(request: &FeedbackRequest) -> OwnerResult<FeedbackPreview> {
                 .to_owned(),
         ));
     }
-    let bundle = FeedbackBundle::new(
+    let mut bundle = FeedbackBundle::new(
         request.category,
         env!("CARGO_PKG_VERSION"),
         FeedbackPlatform::current(),
     );
+    if let Some(proposal) = &request.proposal {
+        bundle = bundle.with_proposal(proposal.clone());
+    }
     prepare_feedback_preview(bundle, &UnredactedFeedback).map_err(feedback_error)
 }
 

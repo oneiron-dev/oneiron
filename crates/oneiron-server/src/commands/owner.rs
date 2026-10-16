@@ -72,13 +72,17 @@ pub(super) fn open_stopped_vault_with(
         "vault {} does not exist; `oneiron init` creates one",
         path.display()
     );
-    oneiron::Vault::open_owned(path, vault_config).map_err(|error| match error {
+    let vault = oneiron::Vault::open_owned(path, vault_config).map_err(|error| match error {
         oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
             "vault {} is open in a running `oneiron serve`; stop it first, {instead}",
             path.display()
         ),
         error => anyhow::anyhow!("open vault {}: {error}", path.display()),
-    })
+    })?;
+    // A command that signs (a delete's receipt, a settings edit) needs this
+    // install's keys from the keystore.
+    config.keystore.install_on(&vault, path);
+    Ok(vault)
 }
 
 pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {

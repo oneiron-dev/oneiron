@@ -135,20 +135,12 @@ impl ImageTextRecognizer for DefaultRecognizer {
     }
 
     fn recognize(&self, image_bytes: &[u8]) -> IngestResult<RecognizedText> {
+        let (detection_path, recognition_path) = ocr_model_paths()?;
         let decoded =
             image::load_from_memory(image_bytes).map_err(|error| IngestError::InvalidDocument {
                 source_id: IMAGE_SOURCE_ID,
                 message: format!("corrupt image: {error}"),
             })?;
-        let detection_path = std::env::var("ONEIRON_OCR_DETECTION_MODEL").ok();
-        let recognition_path = std::env::var("ONEIRON_OCR_RECOGNITION_MODEL").ok();
-        let (Some(detection_path), Some(recognition_path)) = (detection_path, recognition_path)
-        else {
-            return Err(IngestError::OcrUnavailable {
-                source_id: IMAGE_SOURCE_ID,
-                message: "set ONEIRON_OCR_DETECTION_MODEL and ONEIRON_OCR_RECOGNITION_MODEL to local .rten model files".to_owned(),
-            });
-        };
         let detection_model = rten::Model::load_file(detection_path).map_err(|error| {
             IngestError::OcrUnavailable {
                 source_id: IMAGE_SOURCE_ID,
@@ -194,6 +186,20 @@ impl ImageTextRecognizer for DefaultRecognizer {
     }
 }
 
+/// The built-in OCR's two local model files, or why it cannot run.
+#[cfg(feature = "image-station-ocr")]
+fn ocr_model_paths() -> IngestResult<(String, String)> {
+    let detection_path = std::env::var("ONEIRON_OCR_DETECTION_MODEL").ok();
+    let recognition_path = std::env::var("ONEIRON_OCR_RECOGNITION_MODEL").ok();
+    let (Some(detection_path), Some(recognition_path)) = (detection_path, recognition_path) else {
+        return Err(IngestError::OcrUnavailable {
+            source_id: IMAGE_SOURCE_ID,
+            message: "set ONEIRON_OCR_DETECTION_MODEL and ONEIRON_OCR_RECOGNITION_MODEL to local .rten model files".to_owned(),
+        });
+    };
+    Ok((detection_path, recognition_path))
+}
+
 static DEFAULT_RECOGNIZER: DefaultRecognizer = DefaultRecognizer;
 
 impl IngestSource for ImageIngestSource {
@@ -202,7 +208,15 @@ impl IngestSource for ImageIngestSource {
     }
 
     fn normalize_binary(&self, bytes: &[u8]) -> IngestResult<NormalizedIngestBatch> {
-        let recognizer = RECOGNIZER.get().copied().unwrap_or(&DEFAULT_RECOGNIZER);
+        let recognizer = if let Some(recognizer) = RECOGNIZER.get().copied() {
+            recognizer
+        } else {
+            // The built-in OCR cannot run without its models: say so before
+            // any decode, not after decoding the image to find out.
+            #[cfg(feature = "image-station-ocr")]
+            ocr_model_paths()?;
+            &DEFAULT_RECOGNIZER
+        };
         normalize_image(bytes, recognizer, CAPTION_RECOGNIZER.get().copied())
     }
 }

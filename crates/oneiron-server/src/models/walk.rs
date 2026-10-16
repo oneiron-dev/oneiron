@@ -184,6 +184,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
         LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
+        LlmError::Fatal(FatalLlmError::LabelRead(_)) => "label_read",
         LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",

@@ -161,7 +161,7 @@ pub(super) fn park_forward_care(
         crate::ClaimLifecycleStatus::Active,
     )
     .unwrap();
-    body.evidence = Some(precommit_evidence(vec![subject]));
+    body.evidence = Some(said_evidence(vault)?);
     let (candidate, envelope) =
         dreamer_claim_candidate_write_parts(vault, &body, test_id(0x40), run)?;
     vault

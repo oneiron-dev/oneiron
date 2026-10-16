@@ -83,6 +83,7 @@ pub(super) fn persist_review(
             verdict_claim: id,
             triage: triage.clone(),
             artifacts: artifacts.to_vec(),
+            receipts: Vec::new(),
         };
         let stored = StoredReview {
             verdict: id.to_hex(),
@@ -162,7 +163,14 @@ pub(super) fn read_reliabilities(
             continue;
         }
         for lens in &catalog.lenses {
-            if body.predicate == critic_reliability_predicate(&lens.domain, &lens.id)? {
+            if body.predicate == critic_reliability_predicate(&lens.domain, &lens.id)?
+                && crate::gate::claim_consolidation_eligible_in_txn(
+                    &vault.store,
+                    &rtxn,
+                    &id,
+                    crate::gate::ConsolidationReader::CriticReliability,
+                )?
+            {
                 rows.insert(
                     (lens.domain.clone(), lens.id.clone()),
                     reliability_from_body(&body, &lens.id, &lens.domain)?,
@@ -243,6 +251,7 @@ pub(super) fn cached_review(
         verdict_claim: id,
         triage: stored.triage,
         artifacts: stored.artifacts,
+        receipts: Vec::new(),
     }))
 }
 /// Calibration is node-local derived state, like the private critic artifacts it folds.

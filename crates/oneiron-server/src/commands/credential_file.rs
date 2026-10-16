@@ -74,6 +74,20 @@ pub(crate) fn admit(path: &Path, file: &File) -> Result<(), CredentialFileError>
     Ok(())
 }
 
+/// Whether an ACL entry may grant other users what the mode does not show;
+/// an ACL that cannot be read counts as one.
+#[cfg(target_os = "macos")]
+pub(super) fn has_extended_acl(file: &File) -> bool {
+    macos::has_acl_entry(file).unwrap_or(true)
+}
+
+/// Whether an ACL entry may grant other users what the mode does not show:
+/// never here, where the group bits mask a POSIX ACL.
+#[cfg(not(target_os = "macos"))]
+pub(super) fn has_extended_acl(_: &File) -> bool {
+    false
+}
+
 #[cfg(not(target_os = "macos"))]
 fn create_new(path: &Path) -> std::io::Result<File> {
     let mut options = std::fs::OpenOptions::new();
