@@ -6,20 +6,20 @@ use super::host::{
     RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
 };
 use super::record::{
-    LoadedReplayRecord, PromptBinding, completed_step_count, load_terminal_status,
-    previous_state_hash, record_config_marker, record_terminal_output, step_state_hash,
-    validate_executor_config_marker,
+    LoadedReplayRecord, PromptBinding, StepResultDigests, completed_step_count,
+    load_terminal_status, previous_state_hash, record_config_marker, record_terminal_output,
+    step_state_hash, validate_executor_config_marker,
 };
 use super::store::{
-    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
-    implicit_speak_output_path, load_utf8_output, observation_output_path, observation_ref,
-    record_output, record_text_output, recoverable_chunk_path, script_output_path,
+    COMPACTION_OBSERVATION_WINDOW_BYTES, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES,
+    checkpoint_label, fallback_speech_marker, implicit_speak_output_path, load_observation_window,
+    load_utf8_output, observation_output_path, observation_ref, publish_output,
+    record_reply_evidence, record_text_output, recoverable_chunk_path, script_output_path,
     validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
     EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStep,
-    JsCodeModeStepOutcome,
 };
 use super::wire::{HealedExecutorReply, heal_executor_reply};
 use crate::code_run::{
@@ -137,6 +137,14 @@ impl EngineNativeExecutor<'_> {
             }
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;
+            // The reply as the provider gave it, kept apart from the program
+            // healed out of it: evidence, never executed.
+            record_reply_evidence(
+                &self.storage,
+                &mut record,
+                completed_steps,
+                &response.message,
+            )?;
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
             // staged, hashed, or replayed; the reply's own console bytes are
             // already gone, and `trailing_speak` belongs to ONE-1686.
@@ -188,6 +196,7 @@ impl EngineNativeExecutor<'_> {
                 Err(err) => {
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
+                    let captured = host.captured;
                     if !bridge_calls.is_empty()
                         && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
@@ -197,6 +206,7 @@ impl EngineNativeExecutor<'_> {
                             &script,
                             bridge_start,
                             bridge_calls,
+                            captured,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
                             repairs.healed(),
@@ -217,6 +227,7 @@ impl EngineNativeExecutor<'_> {
                 // the original error after persisting the bridge rows.
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
+                let captured = host.captured;
                 if let Some(status) = self.persist_failed_step_after_bridge_calls(
                     &mut record,
                     expected_generation,
@@ -225,6 +236,7 @@ impl EngineNativeExecutor<'_> {
                     &script,
                     bridge_start,
                     bridge_calls,
+                    captured,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
                     repairs.healed(),
@@ -237,55 +249,74 @@ impl EngineNativeExecutor<'_> {
                 }
                 return Err(failure.into());
             }
-            let runtime_output_paths =
-                match validate_runtime_outputs(&record, completed_steps, &step_outcome) {
-                    Ok(paths) => paths,
-                    Err(err) => {
-                        let durable_wait = host.durable_wait;
-                        let bridge_calls = host.bridge_calls;
-                        if !bridge_calls.is_empty()
-                            && let Some(status) = self.persist_failed_step_after_bridge_calls(
-                                &mut record,
-                                expected_generation,
-                                completed_steps,
-                                &request_hash,
-                                &script,
-                                bridge_start,
-                                bridge_calls,
-                                durable_wait,
-                                format!(
-                                    "Runtime output recording failed after host bridge calls: {err}"
-                                ),
-                                repairs.healed(),
-                                config,
-                            )?
-                        {
-                            if let Some(shadow) = &mut shadow {
-                                shadow.ended(Some(&status));
-                            }
-                            return Ok(self.outcome(status, steps_run + 1, record));
+            // The step's bodies, streamed by the guest or returned whole by a
+            // runtime that does not stream, each in a sink of the run's body
+            // store; none is held whole here.
+            let step_bodies = host
+                .take_streamed()
+                .into_step_bodies(&self.storage, &step_outcome)
+                .map_err(Into::into)
+                .and_then(|bodies| {
+                    validate_runtime_outputs(&record, completed_steps, &bodies.files)
+                        .map(|paths| (bodies, paths))
+                });
+            let (bodies, runtime_output_paths) = match step_bodies {
+                Ok(found) => found,
+                Err(err) => {
+                    let durable_wait = host.durable_wait;
+                    let bridge_calls = host.bridge_calls;
+                    let captured = host.captured;
+                    if !bridge_calls.is_empty()
+                        && let Some(status) = self.persist_failed_step_after_bridge_calls(
+                            &mut record,
+                            expected_generation,
+                            completed_steps,
+                            &request_hash,
+                            &script,
+                            bridge_start,
+                            bridge_calls,
+                            captured,
+                            durable_wait,
+                            format!(
+                                "Runtime output recording failed after host bridge calls: {err}"
+                            ),
+                            repairs.healed(),
+                            config,
+                        )?
+                    {
+                        if let Some(shadow) = &mut shadow {
+                            shadow.ended(Some(&status));
                         }
-                        return Err(err);
+                        return Ok(self.outcome(status, steps_run + 1, record));
                     }
-                };
+                    return Err(err);
+                }
+            };
             self.gated_write.refuse_a_step_that_dropped_a_write(
                 config.run_id,
                 bridge_start as u64,
                 &host.bridge_calls,
             )?;
             record.bridge_calls.extend(host.bridge_calls);
-            record_text_output(
+            // Bridge results too large for one reply, stored as bodies; the
+            // calls' rows carry their handles.
+            record.outputs.extend(host.captured);
+            let observation = publish_output(
                 &self.storage,
                 &mut record,
                 observation_output_path(completed_steps),
-                &step_outcome.observation,
+                bodies.observation,
             )?;
-            for (path, output) in runtime_output_paths
-                .into_iter()
-                .zip(step_outcome.outputs.iter())
-            {
-                record_output(&self.storage, &mut record, path, &output.bytes)?;
+            let mut outputs = Vec::with_capacity(bodies.files.len());
+            for ((path, sink), stored_path) in bodies.files.into_iter().zip(runtime_output_paths) {
+                let output = publish_output(&self.storage, &mut record, stored_path, sink)?;
+                outputs.push((path, output.raw_blake3));
             }
+            let step_result = StepResultDigests {
+                observation: observation.raw_blake3,
+                done: step_outcome.done,
+                outputs,
+            };
             let terminal_status = host
                 .durable_wait
                 .clone()
@@ -301,10 +332,11 @@ impl EngineNativeExecutor<'_> {
                 .then(|| {
                     self.prepare_trailing_speak_fallback(
                         &record,
-                        &step_outcome,
+                        &observation,
                         trailing_speak.as_deref(),
                     )
                 })
+                .transpose()?
                 .flatten();
             if let Some(text) = implicit_speak.as_deref() {
                 // The exact side-effect payload is part of the replay append,
@@ -329,7 +361,7 @@ impl EngineNativeExecutor<'_> {
                     completed_steps,
                     &request_hash,
                     &script,
-                    &step_outcome,
+                    &step_result,
                     implicit_speak.as_deref(),
                     &record.bridge_calls[bridge_start..],
                 )?,
@@ -406,15 +438,35 @@ impl EngineNativeExecutor<'_> {
     /// at all. Both storage arms answer here, because ONE-1686 gave a
     /// canonical run a derived shell and turn of its own; the arm choice lives
     /// at the witness door, not in this policy.
+    ///
+    /// # How much is said
+    ///
+    /// An answer has no size limit, and a bubble is no place for a large one:
+    /// it says the answer whole up to a compaction window, read by range
+    /// from its stored body, and past that its head and the stored reference
+    /// to the rest.
     fn prepare_trailing_speak_fallback(
         &self,
         record: &CodeRunReplayRecord,
-        step_outcome: &JsCodeModeStepOutcome,
+        observation: &CodeRunRawOutput,
         trailing_speak: Option<&str>,
-    ) -> Option<String> {
-        let text = trailing_speak.unwrap_or(&step_outcome.observation).trim();
+    ) -> EngineExecutorResult<Option<String>> {
+        let answer;
+        let text = match trailing_speak {
+            Some(text) => text,
+            None => {
+                answer = load_observation_window(
+                    &self.storage,
+                    record,
+                    &observation.path,
+                    COMPACTION_OBSERVATION_WINDOW_BYTES,
+                )?;
+                &answer
+            }
+        }
+        .trim();
         if text.is_empty() {
-            return None;
+            return Ok(None);
         }
         if record
             .bridge_calls
@@ -422,9 +474,9 @@ impl EngineNativeExecutor<'_> {
             .filter_map(CodeRunBridgeCall::emitted_visible_speech_text)
             .any(|spoken| spoken.trim() == text)
         {
-            return None;
+            return Ok(None);
         }
-        Some(text.to_owned())
+        Ok(Some(text.to_owned()))
     }
 
     /// Recovers a terminal checkpoint's implicit speech intent (ONE-1929).
@@ -541,6 +593,7 @@ impl EngineNativeExecutor<'_> {
         script: &str,
         bridge_start: usize,
         bridge_calls: Vec<CodeRunBridgeCall>,
+        captured: Vec<CodeRunRawOutput>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
         healed: bool,
@@ -552,12 +605,12 @@ impl EngineNativeExecutor<'_> {
             &bridge_calls,
         )?;
         record.bridge_calls.extend(bridge_calls);
-        let failed_outcome = JsCodeModeStepOutcome::pending(observation);
+        record.outputs.extend(captured);
         record_text_output(
             &self.storage,
             record,
             observation_output_path(completed_steps),
-            &failed_outcome.observation,
+            &observation,
         )?;
         let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
         if let Some(status) = &terminal_status {
@@ -571,7 +624,7 @@ impl EngineNativeExecutor<'_> {
                 completed_steps,
                 request_hash,
                 script,
-                &failed_outcome,
+                &StepResultDigests::of(&observation, false),
                 None,
                 &record.bridge_calls[bridge_start..],
             )?,

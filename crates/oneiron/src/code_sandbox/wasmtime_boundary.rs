@@ -169,6 +169,19 @@ fn link<H: bindings::GuestImports + 'static>(
                 },
             )?,
             "oneiron.random.bytes" => unary!(root, wit, random_bytes, u32),
+            "oneiron.output.text" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>,
+                 (target, start, frame): (String, bool, String)| {
+                    Ok((cx.data_mut().host.output_text(target, start, frame),))
+                },
+            )?,
+            "oneiron.output.bytes" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (path, frame): (String, Vec<u8>)| {
+                    Ok((cx.data_mut().host.output_bytes(path, frame),))
+                },
+            )?,
             "vault.agents.put" => unary!(root, wit, agents_put, AgentPutInput),
             "self.json.validate" => root.func_wrap(
                 wit,

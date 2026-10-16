@@ -4,9 +4,7 @@ use super::store::{
     CONFIG_OUTPUT_PATH, is_terminal_output_path, load_utf8_output, record_text_output,
     terminal_output_path,
 };
-use super::types::{
-    EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus, JsCodeModeStepOutcome,
-};
+use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, encode_code_run_replay_value,
@@ -354,12 +352,32 @@ pub(super) fn durable_wait_reason_from_str(
     }
 }
 
+/// What a step's checkpoint hashes of its result: each body's BLAKE3
+/// digest, which its stored manifest already carries, never the body.
+pub(super) struct StepResultDigests {
+    pub(super) observation: [u8; 32],
+    pub(super) done: bool,
+    /// Each file the step wrote, by the guest path it named.
+    pub(super) outputs: Vec<(String, [u8; 32])>,
+}
+
+impl StepResultDigests {
+    /// The digests of a result held whole in memory.
+    pub(super) fn of(observation: &str, done: bool) -> Self {
+        Self {
+            observation: *blake3::hash(observation.as_bytes()).as_bytes(),
+            done,
+            outputs: Vec::new(),
+        }
+    }
+}
+
 pub(super) fn step_state_hash(
     previous: [u8; 32],
     seq: u64,
     request_hash: &[u8; 32],
     script: &str,
-    outcome: &JsCodeModeStepOutcome,
+    result: &StepResultDigests,
     implicit_speak: Option<&str>,
     bridge_calls: &[CodeRunBridgeCall],
 ) -> EngineExecutorResult<[u8; 32]> {
@@ -369,19 +387,16 @@ pub(super) fn step_state_hash(
     hash_u64(&mut hasher, seq);
     hash_bytes(&mut hasher, request_hash);
     hash_bytes(&mut hasher, blake3::hash(script.as_bytes()).as_bytes());
-    hash_bytes(
-        &mut hasher,
-        blake3::hash(outcome.observation.as_bytes()).as_bytes(),
-    );
-    hash_bytes(&mut hasher, &[u8::from(outcome.done)]);
+    hash_bytes(&mut hasher, &result.observation);
+    hash_bytes(&mut hasher, &[u8::from(result.done)]);
     hash_bytes(&mut hasher, &[u8::from(implicit_speak.is_some())]);
     if let Some(text) = implicit_speak {
         hash_bytes(&mut hasher, blake3::hash(text.as_bytes()).as_bytes());
     }
-    hash_u64(&mut hasher, outcome.outputs.len() as u64);
-    for output in &outcome.outputs {
-        hash_str(&mut hasher, &output.path);
-        hash_bytes(&mut hasher, blake3::hash(&output.bytes).as_bytes());
+    hash_u64(&mut hasher, result.outputs.len() as u64);
+    for (path, digest) in &result.outputs {
+        hash_str(&mut hasher, path);
+        hash_bytes(&mut hasher, digest);
     }
     hash_u64(&mut hasher, bridge_calls.len() as u64);
     for call in bridge_calls {
