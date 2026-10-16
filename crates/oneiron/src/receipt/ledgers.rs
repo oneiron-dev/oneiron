@@ -3,7 +3,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::field_set::append_pack_manifest_fields;
+use super::field_set::{append_pack_attribution_fields, append_pack_manifest_fields};
 #[cfg(test)]
 use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
@@ -71,7 +71,7 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
 /// Stamps the terminal pack or resident receipt in the transition's OWN
 /// write transaction. Complete, fail, retry-source finalization, queued/paused
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.
-/// An attempt with neither a manifest nor an actor binding mints no row.
+/// An attempt with no manifest, actor binding or attribution context mints no row.
 ///
 /// Atomic with the state seal: a terminal attempt with a manifest or actor
 /// binding and no receipt (or the reverse) is not a reachable state. The row
@@ -83,10 +83,11 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     actor: &str,
 ) -> Result<()> {
     let receipt_id = attempt_pack_receipt_id(&record.id);
-    // A resident's terminal attempt has an attributable outcome even when it
-    // loaded no skill. Unbound legacy attempts keep their manifest-only rule.
+    // A typed or resident attempt has an attributable outcome even when it
+    // loaded no skill. Generic jobs with no attribution context mint no row.
     if record.manifest().is_empty()
         && crate::skill::resident::receipt_resident_in_txn(store, wtxn, &receipt_id)?.is_none()
+        && !super::has_attempt_pack_attribution_in_txn(store, wtxn, record.id)?
     {
         return Ok(());
     }
@@ -112,10 +113,12 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
             "skill-bearing attempt requires executor model",
         ));
     }
-    append_pack_manifest_fields(&mut receipt, record.manifest())?;
-    if let Some(model) = &record.executor_model {
-        receipt.fields.insert("model".to_owned(), model.clone());
+    let attribution = super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
+    if record.executor_model.as_deref() != Some(attribution.executor.as_str()) {
+        return Err(Error::InvalidClaimBody("attempt executor disagrees with attribution stamp"));
     }
+    append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    append_pack_attribution_fields(&mut receipt, &attribution)?;
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }

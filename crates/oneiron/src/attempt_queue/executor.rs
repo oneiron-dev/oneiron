@@ -6,6 +6,27 @@ use super::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, decode_record}
 use crate::error::{Error, Result};
 
 impl AttemptQueue<'_> {
+    /// Binds the placed task type and team context, and appends actual-use
+    /// witnesses under the same live-lease fence as a skill load. The terminal
+    /// transaction freezes this context beside the accumulated pack manifest.
+    pub fn set_pack_attribution(
+        &self,
+        id: AttemptId,
+        lease_owner: &str,
+        attempt_count: u32,
+        fields: &crate::receipt::PackAttributionFields,
+    ) -> Result<AttemptRecord> {
+        fields.validate()?;
+        let mut txn = self.store.env.write_txn()?;
+        self.require_skill_load_lease_in_txn(&txn, id, lease_owner, attempt_count)?;
+        let record = self.set_executor_model_in_txn(
+            &mut txn, id, lease_owner, attempt_count, &fields.executor,
+        )?;
+        crate::receipt::put_attempt_pack_attribution_in_txn(self.store, &mut txn, id, fields)?;
+        txn.commit()?;
+        Ok(record)
+    }
+
     /// Stamps the model id and revision that execute this attempt before it closes.
     /// Repeating the same identity is safe; swapping it on an active or closed
     /// attempt is not. An absent stamp is unknown, never the current model.

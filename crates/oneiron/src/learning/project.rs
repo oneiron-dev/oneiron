@@ -221,8 +221,15 @@ pub(crate) fn fold_cell_in_txn(
         if let Some(label) = &ev.outcome_label {
             *outcome_counts.entry(label.clone()).or_insert(0.0) += w;
         }
-        if cited.len() < MAX_CITED_RECEIPTS {
-            cited.push(receipt.clone());
+        let mut references = vec![receipt.as_str()];
+        if let Some(pack) = &ev.pack_attribution {
+            references.push(&pack.attempt_receipt);
+            references.push(&pack.outcome_receipt);
+        }
+        for reference in references {
+            if cited.len() < MAX_CITED_RECEIPTS && !cited.iter().any(|r| r == reference) {
+                cited.push(reference.to_owned());
+            }
         }
     }
     if !outcome_counts.is_empty() {

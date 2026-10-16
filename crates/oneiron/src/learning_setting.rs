@@ -324,7 +324,7 @@ pub(crate) fn setting_value_in_txn(
     Ok(spec.seed)
 }
 
-fn owner_row_value(
+pub(crate) fn owner_row_value(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,

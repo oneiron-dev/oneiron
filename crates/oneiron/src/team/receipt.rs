@@ -250,6 +250,7 @@ fn feed_pattern_payoff_in_txn(
         judge: None,
         on_judge_model: false,
         outcome_label: None,
+        pack_attribution: None,
     };
     crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, outcome.at)?;
     Ok(())
