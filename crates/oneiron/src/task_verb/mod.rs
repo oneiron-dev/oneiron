@@ -76,8 +76,7 @@ mod tests;
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
     ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
-    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope,
-    FanoutMeterRow,
+    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,
@@ -217,6 +216,7 @@ mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_self;
 mod sdk_shared;
+pub mod verb_hook_boundary;
 
 #[cfg(test)]
 mod ask_outcome_tests;

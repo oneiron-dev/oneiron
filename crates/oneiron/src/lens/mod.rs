@@ -22,12 +22,17 @@ mod atom;
 mod default_vault;
 pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};
 mod guest;
+mod inspection;
 mod instrument;
 mod intent;
 pub use crate::claim::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
 pub use guest::LensExecutionRuntime;
+pub use inspection::{
+    INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionHandle, InspectionResolveRequest,
+    InspectionResolved, InspectionState, decode_inspection_handle, encode_inspection_handle,
+};
 pub use instrument::{InstrumentAtoms, InstrumentView, render_instrument};
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
 mod generated_ui;
@@ -46,7 +51,8 @@ mod sdk;
 pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
 mod record_ref;
 pub use record_ref::{
-    RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordRef,
+    LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_REF_LABEL_MAX_CHARS,
+    RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordLinks, RecordLinksRequest, RecordRef,
     RecordRefPreview, ResolveRecordRefRequest,
 };
 mod self_ui;

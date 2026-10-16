@@ -9,7 +9,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::workspace_roster::{JoinReceiptRef, JoinSubject, RoomWork};
+use crate::workspace_roster::{JoinReceiptRef, RoomWork};
 
 use super::types::{KEY_JOIN, KEY_ROOM};
 use super::{AgentDispatchInput, AgentDispatcher, SpendScopeId};
@@ -18,7 +18,9 @@ impl AgentDispatcher<'_> {
     /// `agent`'s join in `room`, re-proved in the launch's transaction. A
     /// room-bound launch is paid work: it spends under `scope`, the scope it
     /// reserves under, whose root carries its payer's consent. A launch with
-    /// no such scope is refused, never run on anyone else's funds.
+    /// no such scope is refused, never run on anyone else's funds. The join
+    /// is its subject's (OF-529): a PERSON-anchored pen's person, else the
+    /// agent itself.
     pub(super) fn require_room_join_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -31,12 +33,18 @@ impl AgentDispatcher<'_> {
         };
         let scope =
             scope.ok_or_else(|| invalid("a room-bound launch spends under its payer's scope"))?;
+        let subject = crate::workspace_roster::join_subject_for_actor_in_txn(
+            self.vault,
+            txn,
+            agent,
+            self.vault.store.clock.now_recorded_at(),
+        )?;
         crate::workspace_roster::require_join_for_branch_in_txn(
             self.vault,
             txn,
             work.room,
             work.branch,
-            &JoinSubject::Agent(agent),
+            &subject,
             Some(scope),
         )
         .map(Some)

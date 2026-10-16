@@ -406,6 +406,10 @@ pub(crate) fn live_frontier_in_txn(
 }
 
 mod document_store;
+mod folder_source;
+pub use folder_source::{
+    FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile,
+};
 mod import;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,

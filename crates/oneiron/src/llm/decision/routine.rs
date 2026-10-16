@@ -14,8 +14,8 @@
 use super::policy::{DecisionBandPolicy, Reversibility};
 use super::types::invalid;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder,
-    DecisionQuestion, HumanAskReason, ImageBox, TypedDecision,
+    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionLadder, DecisionQuestion,
+    HumanAskReason, ImageBox, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};

@@ -13,8 +13,7 @@ mod session;
 mod standing;
 
 pub(crate) use board::{
-    ContextBoardProjectControls, ContextBoardRenderBudget,
-    ContextBoardRoomControls,
+    ContextBoardProjectControls, ContextBoardRenderBudget, ContextBoardRoomControls,
 };
 pub(crate) use cursor::*;
 pub(crate) use explain::*;
@@ -319,9 +318,21 @@ pub(crate) async fn context_board_hydrate(
         .as_ref()
         .map(CoreContextPackRequest::named_refs)
         .unwrap_or_default();
+    // The hook blocks that reach this board's session: timed pins on its
+    // MEMORIES and TASKS rows (ARCH-0080 §11, OI-1 = A).
+    let hook_pins = server
+        .vault
+        .board_hook_pins(
+            req.session
+                .as_ref()
+                .and_then(|s| s.session_id.as_deref())
+                .unwrap_or_default(),
+            None,
+        )
+        .map_err(|error| super::core_engine_error("board hook blocks failed", error))?;
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
-            let memories = resolve_memories_request(
+            let mut memories = resolve_memories_request(
                 &server.vault,
                 req.memories.as_ref(),
                 req.session.as_ref(),
@@ -329,6 +340,7 @@ pub(crate) async fn context_board_hydrate(
                 retrieval.retrieval_budget_shape(),
                 &auth,
             )?;
+            memories.hook_pins = hook_pins.clone();
             let (pack, memories, cursor) =
                 run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
             (Some(pack), memories, cursor)
@@ -416,6 +428,7 @@ pub(crate) async fn context_board_hydrate(
         hits,
         &observed_reads,
         &oneiron::context_board::PeopleView::new(&people, &resident),
+        &hook_pins,
     )?;
     // An agent run's own live pad joins the frame as its SCRATCHPAD section.
     let scratchpad = served_scratchpad(
@@ -481,12 +494,7 @@ pub(crate) async fn context_board_hydrate(
             } else if req.describe_self {
                 Some(
                     run.render
-                        .describe_self(
-                            &server.vault,
-                            &run.state,
-                            &observed_reads,
-                            Some(&people),
-                        )
+                        .describe_self(&server.vault, &run.state, &observed_reads, Some(&people))
                         .map_err(|error| super::core_engine_error("self brief failed", error))?,
                 )
             } else {
@@ -534,6 +542,15 @@ pub(crate) async fn context_board_hydrate(
         }
         None => within_standing_budget(&response)?,
     }
+    // The response is final: each hook block it carried spends a delivery. A
+    // failed record leaves the block to show again, never to vanish unseen.
+    let mut hook_blocks = parts.hook_blocks.clone();
+    if let Some(memories) = &response.memories {
+        hook_blocks.extend(memories.hook_blocks_delivered(&hook_pins));
+    }
+    if let Err(error) = server.vault.record_board_hook_deliveries(&hook_blocks) {
+        tracing::warn!(kind = ?error.kind(), "board hook delivery record failed");
+    }
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
         let run = runs
@@ -557,14 +574,14 @@ pub(crate) async fn context_board_hydrate(
         reads
             .observe_rows(&read, &delivered)
             .map_err(|error| super::core_engine_error("board read set failed", error))?;
-        // The tier each MEMORIES row rode, for an explain read.
+        // The tier each MEMORIES row rode, and its hook, for an explain read.
         for row in response.memories.iter().flat_map(|memories| &memories.rows) {
             let tier = match row.tier {
                 oneiron::context_board::MemoryTier::Pinned => "pinned",
                 oneiron::context_board::MemoryTier::Snippet => "snippet",
                 oneiron::context_board::MemoryTier::IndexOnly => "index_only",
             };
-            reads.served_on_board(&row.id, tier, None);
+            reads.served_on_board(&row.id, tier, row.hook.as_deref());
         }
         reads.observe_pack_inventory(&installed_packs);
         // The response is final: the rider it carries is delivered, and a

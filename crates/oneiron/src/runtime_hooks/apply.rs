@@ -102,6 +102,8 @@ fn apply_intent(
     }
     let outcome: HookOutcome = serde_json::from_str(&intent.outcome_json)
         .map_err(|_| Error::CorruptedIndex("hook intent outcome"))?;
+    // The doors below run at hook depth 1: no verb hook fires inside them.
+    let _depth = super::verb::HookDepth::enter();
     let memory = vault
         .memory(intent.author, EdgeActorClass::Human)
         .with_host_origin(HostWriteOrigin::new(hook_envelope(

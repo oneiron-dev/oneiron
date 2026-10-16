@@ -139,4 +139,22 @@ impl Vault {
         }
         Ok(checks)
     }
+
+    /// Every kept check past `after`, in key order, each with the cursor
+    /// that names it (its key in hex): what the host's OF-520 worker reads.
+    pub fn esign_rate_checks_after(
+        &self,
+        after: Option<&str>,
+    ) -> Result<Vec<(String, EsignRateCheck)>> {
+        let txn = self.store.env.read_txn()?;
+        let mut checks = Vec::new();
+        for row in CHECK.iter_from(&self.store, &txn, &[])? {
+            let (key, check) = row.map_err(|_| Error::CorruptedIndex("esign rate check"))?;
+            let cursor = crate::entity_id::bytes_to_hex_lower(&key);
+            if after.is_none_or(|after| cursor.as_str() > after) {
+                checks.push((cursor, check));
+            }
+        }
+        Ok(checks)
+    }
 }

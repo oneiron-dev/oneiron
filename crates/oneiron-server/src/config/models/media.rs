@@ -132,7 +132,7 @@ impl MediaSeatFile {
                     provider.kind,
                     ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
                 ) || (provider.kind.speech_only() && operation == AiOperation::Speech),
-                "models.media.{key}: {model} is not on an OpenAI-compatible provider; media calls speak its /v1 media paths, and a cartesia or elevenlabs provider serves the speech seat only"
+                "models.media.{key}: {model} is not on an OpenAI-compatible provider; media calls speak its /v1 media paths, and a cartesia, elevenlabs or voxcpm2 provider serves the speech seat only"
             );
             // The credential broker sends chat calls only. A media call sent
             // without it would carry no key, while its offer says the broker

@@ -286,6 +286,70 @@ pub enum ImportCommand {
     /// A whole-vault archive `oneiron export` wrote (OF-222): checks every
     /// member against its manifest, then re-imports it in one transaction.
     Archive(Box<ImportArchiveArgs>),
+    /// A folder of markdown notes that stays attached (OF-554): its new
+    /// files land, changed files supersede what they landed and removed
+    /// files retract theirs (archived, never erased). Nothing is written to
+    /// the folder.
+    #[command(subcommand)]
+    Folder(ImportFolderCommand),
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ImportFolderCommand {
+    /// Attach a folder and land its notes; `oneiron serve` rescans it every
+    /// few minutes from then on.
+    Attach(Box<ImportFolderAttachArgs>),
+    /// Rescan one attached folder now, or every attached folder.
+    Rescan(Box<ImportFolderRescanArgs>),
+    /// Detach a folder: no rescan reads it again. Its notes stay.
+    Detach(Box<ImportFolderPathArgs>),
+    /// Every attached folder, with its ledger's counts.
+    List(Box<ImportFolderListArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportFolderAttachArgs {
+    /// The folder. Only this path is read: symbolic links and hidden entries
+    /// under it are skipped.
+    pub path: PathBuf,
+
+    /// Only notes whose path under the folder matches (`*` within a name,
+    /// `**` across folders, `?` one character). Repeatable; none is every
+    /// markdown file.
+    #[arg(long)]
+    pub include: Vec<String>,
+
+    /// The note kind of a note whose frontmatter `type` names no kind the
+    /// vault knows.
+    #[arg(long, default_value = "observation")]
+    pub kind: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportFolderRescanArgs {
+    /// The attached folder; none rescans every attached folder.
+    pub path: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportFolderPathArgs {
+    /// The attached folder.
+    pub path: PathBuf,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportFolderListArgs {
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]

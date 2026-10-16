@@ -1,5 +1,8 @@
-//! Reference-refusal receipts (OF-063): a write was refused because a record
-//! ref it named does not resolve for its writer.
+//! Reference-refusal receipts (OF-063): a record ref a write named does not
+//! resolve for its writer. In a typed ref slot the write was refused
+//! (`refused`); in AI-written prose (OF-063 prose links: Engine ruling 10-17)
+//! the text landed as written and the link shows as its plain label
+//! (`unlinked`).
 //!
 //! The refusal is receipted where it happens, on its own write, before the
 //! caller hears it; the refused write never ran. The receipt names the actor,
@@ -16,6 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 const OUTCOME_REFUSED: &str = "refused";
+const OUTCOME_UNLINKED: &str = "unlinked";
 /// The one reason every reference refusal carries: the typed facade code.
 const REASON: &str = crate::memory::MEMORY_CODE_INVENTED_REFERENCE;
 const FIELD_ACTOR_CLASS: &str = "actor_class";
@@ -25,6 +29,24 @@ const FIELD_FIELD: &str = "field";
 const REFUSAL_FIELDS: [&str; 3] = [FIELD_ACTOR_CLASS, FIELD_ROW, FIELD_FIELD];
 const MAX_ROW_BYTES: usize = 128;
 const MAX_FIELD_BYTES: usize = 256;
+
+/// What became of the write that named an unresolved ref.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReferenceOutcome {
+    /// A typed ref slot: the write was refused and never ran.
+    Refused,
+    /// A prose link: the text was kept as written, the link unlinked.
+    Unlinked,
+}
+
+impl ReferenceOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Refused => OUTCOME_REFUSED,
+            Self::Unlinked => OUTCOME_UNLINKED,
+        }
+    }
+}
 
 /// What one reference refusal records.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +59,8 @@ pub(crate) struct ReferenceRefusalFacts {
     pub(crate) row: &'static str,
     /// The JSON pointer of the slot whose ref did not resolve.
     pub(crate) field: String,
+    /// What became of the write.
+    pub(crate) outcome: ReferenceOutcome,
 }
 
 /// The receipt id of the reference-refusal record stored at `id`.
@@ -72,7 +96,7 @@ pub(super) fn reference_refusal_receipt(
         occurred_at: at,
         actor: Some(facts.actor.to_hex()),
         on_behalf_of: None,
-        outcome: OUTCOME_REFUSED.to_owned(),
+        outcome: facts.outcome.as_str().to_owned(),
         job_ref: None,
         trigger_ref: None,
         policy_trace: vec![REASON.to_owned()],
@@ -88,7 +112,7 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
     let field = |name: &str| receipt.fields.get(name).map(String::as_str);
     receipt.receipt_kind == ReceiptKind::ReferenceRefusal
         && receipt.receipt_id == receipt_id(id)
-        && receipt.outcome == OUTCOME_REFUSED
+        && matches!(receipt.outcome.as_str(), OUTCOME_REFUSED | OUTCOME_UNLINKED)
         && receipt.actor.as_deref().is_some_and(|actor| {
             EntityId::from_hex(actor).is_ok_and(|parsed| parsed.to_hex() == actor)
         })
@@ -123,10 +147,28 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
 /// refused write staged nothing, so nothing else rides this write, and the
 /// caller hears the refusal only once it commits.
 pub(crate) fn record_reference_refusal(vault: &Vault, facts: &ReferenceRefusalFacts) -> Result<()> {
+    record_reference_refusals(vault, std::slice::from_ref(facts))
+}
+
+/// Receipts each of `refusals` as its own reference-refusal record, all on
+/// one grouped write of their own.
+pub(crate) fn record_reference_refusals(
+    vault: &Vault,
+    refusals: &[ReferenceRefusalFacts],
+) -> Result<()> {
+    if refusals.is_empty() {
+        return Ok(());
+    }
     vault.store.write_in_group(|txn| {
-        // The id first: the floor `recorded_at_in_txn` persists covers it.
-        let id = vault.store.clock.entity_id()?;
+        // The ids first: the floor `recorded_at_in_txn` persists covers them.
+        let ids = refusals
+            .iter()
+            .map(|_| vault.store.clock.entity_id())
+            .collect::<Result<Vec<_>>>()?;
         let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-        super::record::put_reference_refusal_in_txn(vault, txn, id, facts, at)
+        for (id, facts) in ids.into_iter().zip(refusals) {
+            super::record::put_reference_refusal_in_txn(vault, txn, id, facts, at)?;
+        }
+        Ok(())
     })
 }

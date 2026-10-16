@@ -96,6 +96,8 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::stop_requested;
 mod dreamer;
 pub use self::dreamer::dreamer_grant;
+mod oneironer;
+pub use self::oneironer::{OneironerCommand, oneironer};
 mod embedder_serve;
 pub use self::embedder_serve::embedder_serve;
 mod maintain;

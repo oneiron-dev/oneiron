@@ -34,6 +34,7 @@
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::Vault;
 use crate::actor_claims::register_session_end_distill_in_txn;
@@ -45,7 +46,9 @@ use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
+use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain};
 use crate::side_table::{self, Named, Raw, SideTable};
+use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -61,6 +64,11 @@ const SESSION_TURNS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
     SideTable::new(&side_table::SESSION_TURNS);
 
 const SESSION_LIFECYCLE_RECORD_VERSION: u8 = 1;
+
+/// The host verb a sitting's open runs under (ARCH-0080 §5).
+const HOST_SESSION_OPEN: &str = "host.session.open";
+/// The host verb a sitting's close runs under (ARCH-0080 §5).
+const HOST_SESSION_CLOSE: &str = "host.session.close";
 
 /// One sitting's identity. Hosts bind it from their actor and machine context;
 /// it confers no write authority and cannot shape a Dreamer pass.
@@ -140,6 +148,10 @@ pub struct SessionLifecycleRecord {
     /// The explicit-end point, when this sitting ended explicitly.
     #[serde(default)]
     pub explicit_end_hint: Option<SessionHintTimestamp>,
+    /// Why a `host.session.close` hook would have kept the sitting open,
+    /// when one tried: no hook keeps a sitting open, so it closed anyway.
+    #[serde(default)]
+    pub close_hook_stop: Option<String>,
 }
 
 /// The currently open session, if any.
@@ -387,8 +399,20 @@ impl Vault {
         key: SessionKey,
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
-        let now = timestamp.effective_ms / 1_000;
         let id = self.store.clock.entity_id()?;
+        self.mint_session_with_id_in_txn(wtxn, key, timestamp, id)
+    }
+
+    /// [`Self::mint_session_from_hint_in_txn`] with the sitting's id minted
+    /// beforehand, so its open hooks can name it.
+    fn mint_session_with_id_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        key: SessionKey,
+        timestamp: SessionHintTimestamp,
+        id: EntityId,
+    ) -> Result<SessionMintOutcome> {
+        let now = timestamp.effective_ms / 1_000;
         if let Some(existing) = OPEN_POINTER.get(&self.store, wtxn, &key.pointer())? {
             return Ok(SessionMintOutcome::AlreadyOpen(existing));
         }
@@ -404,6 +428,7 @@ impl Vault {
             app_open_hints: vec![timestamp],
             activity_periods: Vec::new(),
             explicit_end_hint: None,
+            close_hook_stop: None,
         };
         let mut body = Vec::new();
         rmpv::encode::write_value(
@@ -437,12 +462,46 @@ impl Vault {
         Ok(SessionMintOutcome::Minted(id))
     }
 
+    /// The open runs `host.session.open`'s hooks (ARCH-0080 §5) around its
+    /// commit. A re-signal on an open sitting opens nothing, so runs none.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::VerbHook`] when a pre-hook skipped the open or asked first:
+    /// nothing opens. Storage errors as they occur.
     pub fn mint_session_from_hint(
         &self,
         key: SessionKey,
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
-        self.with_write_txn_grouped(|wtxn| self.mint_session_from_hint_in_txn(wtxn, key, timestamp))
+        let open = {
+            let rtxn = self.store.env.read_txn()?;
+            OPEN_POINTER.get(&self.store, &rtxn, &key.pointer())?
+        };
+        if let Some(existing) = open {
+            return Ok(SessionMintOutcome::AlreadyOpen(existing));
+        }
+        let id = self.store.clock.entity_id()?;
+        let args = session_hook_args(id, "app_open");
+        let check = |rewritten: &Value| host_args_kept(&args, rewritten);
+        let call = session_hook_call(HOST_SESSION_OPEN, id, key.actor, 0);
+        let pre = self
+            .pre_verb_hooks(call, args.clone(), &check)?
+            .map_err(Error::from)?;
+        let outcome = self.with_write_txn_grouped(|wtxn| {
+            self.mint_session_with_id_in_txn(wtxn, key, timestamp, id)
+        })?;
+        if let SessionMintOutcome::Minted(session) = outcome {
+            // The sitting is open whatever a post-hook says.
+            let result = json!({
+                "session": session.to_hex(),
+                "started_at": timestamp.effective_ms / 1_000,
+            });
+            if let Err(error) = self.post_verb_hooks(pre, result) {
+                tracing::warn!(?error, "host.session.open post-hooks failed on an opened sitting");
+            }
+        }
+        Ok(outcome)
     }
 
     /// Bumps the open session's `last_activity` to `now` (unix seconds,
@@ -614,9 +673,7 @@ impl Vault {
         now: u64,
         wake: &SessionEndWake,
     ) -> Result<Option<EndedSession>> {
-        self.with_write_txn_grouped(|wtxn| {
-            self.end_session_with_wake_and_hint_in_txn(wtxn, expected, predicate, now, wake, None)
-        })
+        self.end_session_with_wake_and_hint(expected, predicate, now, wake, None)
     }
 
     /// Timestamp-preserving form of [`Self::end_session_with_wake`]. Driver
@@ -631,6 +688,25 @@ impl Vault {
         now: u64,
         wake: &SessionEndWake,
         end_hint: Option<SessionHintTimestamp>,
+    ) -> Result<Option<EndedSession>> {
+        self.end_session_in_txn(wtxn, expected, predicate, now, wake, end_hint, None)
+    }
+
+    /// The close, keeping on the record why a close hook would have kept
+    /// the sitting open, when one tried.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the close protocol's inputs plus the hook's stop"
+    )]
+    fn end_session_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        expected: &EntityId,
+        predicate: SessionClosePredicate,
+        now: u64,
+        wake: &SessionEndWake,
+        end_hint: Option<SessionHintTimestamp>,
+        close_hook_stop: Option<String>,
     ) -> Result<Option<EndedSession>> {
         if wake.session != *expected {
             return Err(Error::InvalidKey);
@@ -652,6 +728,7 @@ impl Vault {
         let ended_at = now.max(record.last_activity).max(record.started_at);
         record.ended_at = Some(ended_at);
         record.end_reason = Some(reason);
+        record.close_hook_stop = close_hook_stop;
         if let Some(timestamp) = end_hint {
             record.last_effective_ms = record.last_effective_ms.max(timestamp.effective_ms);
             record.explicit_end_hint = Some(timestamp);
@@ -700,19 +777,10 @@ impl Vault {
         }))
     }
 
-    /// Closes the expected session and applies the standard wake in one
-    /// caller-owned transaction, without an explicit timestamp hint.
-    pub(crate) fn end_session_with_wake_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        expected: &EntityId,
-        predicate: SessionClosePredicate,
-        now: u64,
-        wake: &SessionEndWake,
-    ) -> Result<Option<EndedSession>> {
-        self.end_session_with_wake_and_hint_in_txn(wtxn, expected, predicate, now, wake, None)
-    }
-
+    /// The close runs `host.session.close`'s hooks (ARCH-0080 §5) around its
+    /// commit, when the close is due. No hook keeps a sitting open: a pre-hook
+    /// that skips or asks has its stop kept on the record, and the sitting
+    /// closes anyway.
     pub fn end_session_with_wake_and_hint(
         &self,
         expected: &EntityId,
@@ -721,17 +789,94 @@ impl Vault {
         wake: &SessionEndWake,
         end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
-        self.with_write_txn_grouped(|wtxn| match end_hint {
-            Some(hint) => self.end_session_with_wake_and_hint_in_txn(
-                wtxn,
-                expected,
-                predicate,
-                now,
-                wake,
-                Some(hint),
-            ),
-            None => self.end_session_with_wake_in_txn(wtxn, expected, predicate, now, wake),
-        })
+        let (pre, stop) = match self.session_close_due(expected, predicate, now)? {
+            Some((actor, reason)) => {
+                let args = session_hook_args(*expected, end_reason_word(reason));
+                let check = |rewritten: &Value| host_args_kept(&args, rewritten);
+                let call = session_hook_call(HOST_SESSION_CLOSE, *expected, actor, 1);
+                match self.pre_verb_hooks(call, args.clone(), &check)? {
+                    Ok(pre) => (Some(pre), None),
+                    Err(stop) => (None, Some(stop.to_string())),
+                }
+            }
+            None => (None, None),
+        };
+        let ended = self.with_write_txn_grouped(|wtxn| {
+            self.end_session_in_txn(wtxn, expected, predicate, now, wake, end_hint, stop)
+        })?;
+        if let (Some(pre), Some(ended)) = (pre, &ended) {
+            let result = json!({
+                "session": ended.session.to_hex(),
+                "ended_at": ended.ended_at,
+                "reason": end_reason_word(ended.reason),
+            });
+            if let Err(error) = self.post_verb_hooks(pre, result) {
+                tracing::warn!(?error, "host.session.close post-hooks failed on a closed sitting");
+            }
+        }
+        Ok(ended)
+    }
+
+    /// The actor of sitting `expected` and why it would close at `now`, when
+    /// it is open and its close is due; checked again when it closes.
+    fn session_close_due(
+        &self,
+        expected: &EntityId,
+        predicate: SessionClosePredicate,
+        now: u64,
+    ) -> Result<Option<(EntityId, SessionEndReason)>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(record) = RECORDS.get(&self.store, &rtxn, expected)? else {
+            return Ok(None);
+        };
+        let key = validated_record(record)?.key;
+        let Some((id, record)) = open_session_in_txn(&self.store, &rtxn, key)? else {
+            return Ok(None);
+        };
+        if id != *expected {
+            return Ok(None);
+        }
+        Ok(predicate
+            .close_reason(&record, now)
+            .map(|reason| (key.actor, reason)))
+    }
+}
+
+/// A sitting's host-verb call. Its actor is the sitting's, in the System
+/// class a write a host verb causes stamps; `step` tells the open (0) from
+/// the close (1), so a retry of either keeps its invocation.
+fn session_hook_call(verb: &str, session: EntityId, actor: EntityId, step: u64) -> VerbCall {
+    VerbCall {
+        verb: verb.to_owned(),
+        invocation: InvocationId::of_run_step(session.as_bytes(), step),
+        actor,
+        class: HookActorClass::System,
+        scope: None,
+        board_epoch: None,
+        domain: VerbDomain::Write,
+    }
+}
+
+/// A sitting's host-verb args. A sitting belongs to no room.
+fn session_hook_args(session: EntityId, reason: &str) -> Value {
+    json!({"session": session.to_hex(), "room": Value::Null, "reason": reason})
+}
+
+/// A host verb's args are the host's: a hook's rewrite of them is refused.
+fn host_args_kept(args: &Value, rewritten: &Value) -> std::result::Result<(), String> {
+    if rewritten == args {
+        Ok(())
+    } else {
+        Err("a host verb's args are the host's".to_owned())
+    }
+}
+
+/// An end reason as its record spells it.
+const fn end_reason_word(reason: SessionEndReason) -> &'static str {
+    match reason {
+        SessionEndReason::Explicit => "explicit",
+        SessionEndReason::IdleFloor => "idle_floor",
+        SessionEndReason::LifetimeCeiling => "lifetime_ceiling",
     }
 }
 
