@@ -45,6 +45,7 @@ fn input(unit: EntityId) -> StandingAnswer {
         probability: Some(0.9),
         evidence: vec![unit],
         providers: vec![],
+        paired: Vec::new(),
         source_frontier: [0; 32],
     }
 }

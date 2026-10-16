@@ -213,7 +213,11 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
     };
     let big = Scripted {
         pin: pin(DecisionRung::Big, "b1"),
-        result: yes(0.9),
+        result: ProviderDecision {
+            answer: DecisionAnswer::Choice("keep".into()),
+            probability: Some(0.95),
+            paired: None,
+        },
         calls: AtomicUsize::new(0),
     };
     let reader = Reader::new(vec![0.1, 0.2, 0.7], 0.8);
@@ -285,14 +289,54 @@ fn enforced_band_escalates_to_the_house_read_and_records_its_paired_reading() {
     assert!(budget.used_units > 0);
     assert_eq!(budget.reserved_units, 0);
 
-    // A ladder without the escalation slot fails; it never skips to the big model.
+    // A ladder without the escalation slot skips it, up to the dial's ceiling
+    // (ARCH-0076 #posture): the big model answers.
     let without = DecisionLadder {
         escalation: None,
         ..ladder
     };
-    assert!(run(&without).is_err());
-    assert_eq!(big.calls.load(Ordering::SeqCst), 0);
+    let decision = run(&without).unwrap();
+    assert_eq!(decision.answer, DecisionAnswer::Choice("keep".into()));
+    assert_eq!(
+        decision.receipt.providers,
+        vec![
+            pin(DecisionRung::SystemOne, "s1"),
+            pin(DecisionRung::Big, "b1")
+        ]
+    );
+    assert_eq!(big.calls.load(Ordering::SeqCst), 1);
     assert!(queue.0.lock().unwrap().is_empty());
+    // With no big model either, a Big ceiling leaves no rung: a typed abstention.
+    let neither = DecisionLadder {
+        big: None,
+        ..without
+    };
+    let decision = run(&neither).unwrap();
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(
+        decision.human_ask,
+        Some(HumanAskReason::ProviderUnavailable)
+    );
+    assert!(queue.0.lock().unwrap().is_empty());
+    // A dial that reaches the person queues the step there, with the in-band prior.
+    let decision = neither
+        .run(
+            &q,
+            EntityId::now(),
+            &evidence,
+            dial(DecisionRung::SystemOne, DecisionRung::Human),
+            &policy,
+            Reversibility::ReversibleRead,
+        )
+        .unwrap();
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(decision.human_ask, Some(HumanAskReason::Uncertain));
+    let queued = queue.0.lock().unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(
+        queued[0].prior.as_ref().map(|prior| prior.answer.clone()),
+        Some(DecisionAnswer::Choice("merge".into()))
+    );
 }
 
 #[test]

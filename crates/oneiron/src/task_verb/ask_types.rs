@@ -349,11 +349,12 @@ impl TaskAskSpec {
                     ladder.rung,
                     crate::llm::decision::DecisionRung::Rule
                         | crate::llm::decision::DecisionRung::SystemOne
+                        | crate::llm::decision::DecisionRung::Escalation
                 )
                 || ladder
                     .probability
                     .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
-                || (ladder.rung == crate::llm::decision::DecisionRung::SystemOne
+                || (ladder.rung != crate::llm::decision::DecisionRung::Rule
                     && ladder.probability.is_none()))
         {
             return Err(MemoryError::bad_request("invalid ask ladder prediction"));

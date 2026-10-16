@@ -67,6 +67,7 @@ fn propose(_: &QuestionRecord, _: EntityId, _: &[u8]) -> AnswerProposal {
             model: "fixture".into(),
             version: "one".into(),
         }],
+        paired: Vec::new(),
     }
 }
 

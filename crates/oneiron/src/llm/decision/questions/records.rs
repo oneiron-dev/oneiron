@@ -1,7 +1,9 @@
 //! Immutable definitions and typed outcome bindings.
 
 use super::super::types::invalid;
-use super::super::{DecisionAnswer, DecisionDial, DecisionQuestion, ProviderPin, TypedDecision};
+use super::super::{
+    DecisionAnswer, DecisionDial, DecisionQuestion, PairedReading, ProviderPin, TypedDecision,
+};
 use crate::{EntityId, Result};
 use serde::{Deserialize, Serialize};
 
@@ -139,6 +141,8 @@ pub struct AnswerProposal {
     pub answer: DecisionAnswer,
     pub probability: Option<f64>,
     pub providers: Vec<ProviderPin>,
+    /// Paired readings the providers measured with this answer; none means none was taken.
+    pub paired: Vec<PairedReading>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

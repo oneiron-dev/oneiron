@@ -142,7 +142,10 @@ impl JevTradeoffVerdict {
                 .question_digest
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
-            || self.pin.rung != DecisionRung::SystemOne
+            || !matches!(
+                self.pin.rung,
+                DecisionRung::SystemOne | DecisionRung::Escalation
+            )
             || self.pin.model.trim().is_empty()
             || self.pin.version.trim().is_empty()
             || !self.probability.is_finite()
