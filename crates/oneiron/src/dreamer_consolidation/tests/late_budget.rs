@@ -535,13 +535,17 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
     Ok(())
 }
 
+/// Rule 5 (F13 H425): a source budget truncates a selection retry, never
+/// refuses it. The original runs, the newer source waits, the plan says more
+/// sources exist, and the peer walk past its row raises one check.
 #[test]
-fn manifest_retry_source_budget_limits_pinned_attempt_and_holder_cannot_widen() -> Result<()> {
+fn manifest_retry_source_budget_truncates_and_holder_cannot_widen() -> Result<()> {
     let (_dir, vault) = open_vault();
+    vault.set_scan_threshold(crate::scan_check::EngineScan::DreamerRetryPeers, 1)?;
     let store = DreamerRunnerStore::new(&vault);
     let node = crate::identity::load_or_mint_client_id(&vault)?;
     let parent = seed_session(&vault, 0x7e, 1);
-    seed_turn(&vault, &parent, "user", "first", 10);
+    let first = seed_turn(&vault, &parent, "user", "first", 10);
     let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
     let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
     enqueue_partition_attempts(
@@ -618,9 +622,22 @@ fn manifest_retry_source_budget_limits_pinned_attempt_and_holder_cannot_widen() 
     };
     crate::test_util::put_policy_manifest_bytes(&vault, default_id, &encode(&fields))?;
     let pinned = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
-    assert!(
-        pinned.retry_failure(retry.id).is_some(),
-        "vault's one-source row must hold a two-source retry"
+    let Some(AttemptPreparation::Ready(plan)) = pinned.preparation(retry.id) else {
+        panic!("a two-source retry under a one-source row runs, truncated");
+    };
+    assert_eq!(
+        plan.turn_ids(),
+        &[first],
+        "the original runs; the newer waits"
+    );
+    assert!(plan.sources_truncated(), "the plan says more sources exist");
+    let checks = vault.scan_checks()?;
+    assert_eq!(
+        checks
+            .iter()
+            .filter(|check| check.scan == "dreamer_retry_peers")
+            .count(),
+        1
     );
     // The holder's larger work preference cannot widen the vault ceiling.
     let txn = vault.store.env.read_txn()?;

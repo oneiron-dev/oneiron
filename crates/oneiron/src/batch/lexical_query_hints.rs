@@ -14,6 +14,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
@@ -503,17 +504,21 @@ pub(super) fn lexical_query_hint_claim_ids_for_target(
     Ok(hint_ids)
 }
 
-pub(super) fn legacy_lexical_query_hint_claim_ids_for_target(
+/// Every hint-prefix row is read: past the scan's threshold row it raises
+/// one check and reads on, so no hint of `target` is left behind.
+pub(crate) fn legacy_lexical_query_hint_claim_ids_for_target(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     target: &EntityId,
 ) -> Result<Vec<EntityId>> {
+    let mut rows = ScanCount::start(store, wtxn, EngineScan::LexicalHintRows, &[])?;
     let mut candidates = Vec::new();
     let mut prefix = Vec::with_capacity(1 + crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX.len());
     prefix.push(crate::registry::ENTITY_TYPE_CLAIM);
     prefix.extend_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
     for entry in store.type_index.prefix_iter(wtxn, &prefix)? {
         let (key, _) = entry?;
+        rows.row();
         if key.len() != 1 + ENTITY_ID_LEN {
             return Err(Error::CorruptedIndex("type index key"));
         }
@@ -525,6 +530,7 @@ pub(super) fn legacy_lexical_query_hint_claim_ids_for_target(
         .map_err(|_| Error::CorruptedIndex("type index key"))?;
         candidates.push(candidate);
     }
+    rows.defer(store);
 
     let mut hint_ids = Vec::new();
     for candidate in candidates {

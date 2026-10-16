@@ -168,7 +168,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from("retry_source_policy"),
             Value::Array(vec![Value::Map(vec![
                 (Value::from("selector"), Value::from("vault")),
-                (Value::from("max_sources"), Value::from(1_024_u64)),
+                // No cap a vault meets: a holder's own row narrows it, and
+                // a retry past its scan row raises the OF-520 question.
+                (Value::from("max_sources"), Value::from(u64::from(u32::MAX))),
                 (Value::from("precedence"), Value::from("nested_narrowing")),
             ])]),
         ),

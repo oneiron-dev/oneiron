@@ -6,6 +6,7 @@ use heed::RoTxn;
 use oneiron_contracts::retrieval_telemetry::validate_retrieval_blend_weights;
 
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{Store, active_write_txn_depth};
 
@@ -77,16 +78,21 @@ impl Store {
         let mut data_window = RetrievalBlendWeightDataWindow::default();
 
         let mut accepted_runs = 0_usize;
+        // Provisional runs are read and passed over until the sample is full:
+        // past the ledger's threshold row the walk raises one check and reads
+        // on, so no finalized run is lost to the provisional ones before it.
+        let mut scanned = ScanCount::start(self, &rtxn, EngineScan::BlendTuningRuns, &[])?;
         for row in RETRIEVAL_RUN.iter_rev_from(self, &rtxn, &[])? {
+            if accepted_runs == config.max_runs {
+                break;
+            }
             let (run_id, record) = row?;
+            scanned.row();
             if super::run_store::RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)? {
                 continue;
             }
             if record.run_id != run_id {
                 return Err(Error::CorruptedIndex("retrieval run telemetry"));
-            }
-            if accepted_runs == config.max_runs {
-                break;
             }
             accepted_runs += 1;
 
@@ -148,6 +154,7 @@ impl Store {
             }
         }
         drop(rtxn);
+        scanned.defer(self);
 
         if reward_count < config.min_reward_count {
             return Err(Error::InvalidConfig(format!(

@@ -1275,6 +1275,54 @@ fn child_of_delete_only_delta_falls_to_the_live_candidate() {
     );
 }
 
+/// Rule 5 (F13 H214): an unseated child is arbitrated over every live
+/// candidate in the synced edge map however large it is. Past the walk's
+/// threshold row it raises one check and still falls to the live maximum.
+#[test]
+fn child_of_arbitration_walks_the_whole_map_past_its_threshold_row() {
+    use oneiron::scan_check::EngineScan;
+
+    let mut node = TestNode::new("node-j", 1);
+    node.open_window(WINDOW);
+    node.vault
+        .set_scan_threshold(EngineScan::ChildOfMapEntries, 1)
+        .expect("lower the row");
+
+    let child = fixed_id(0x34);
+    let winner = fixed_id(0x42);
+    let live_loser = fixed_id(0x53);
+    let deeper_loser = fixed_id(0x64);
+    plain_node(&node, &child, b"child");
+    for (parent, tag) in [
+        (&winner, &b"a"[..]),
+        (&live_loser, &b"b"[..]),
+        (&deeper_loser, &b"c"[..]),
+    ] {
+        plain_node(&node, parent, tag);
+    }
+    deliver_child_of_candidates(
+        &node,
+        &child,
+        &[
+            (winner, T0 + 100),
+            (live_loser, T0 + 90),
+            (deeper_loser, T0 + 80),
+        ],
+    );
+
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &winner);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![live_loser]);
+    delete_edge_in_window(&node, &child, EdgeKind::ChildOf, &live_loser);
+    assert_eq!(child_of_parents(&node.vault, &child), vec![deeper_loser]);
+
+    let checks = node.vault.scan_checks().expect("checks");
+    let raised = checks
+        .iter()
+        .filter(|check| check.scan == EngineScan::ChildOfMapEntries.code())
+        .count();
+    assert_eq!(raised, 1, "the walk past its row raised its check once");
+}
+
 /// HOLE-1871-F2, DISPLACEMENT face — the stored winner keeps its key and loses
 /// its clock. Nothing leaves the map, so a removal-only repair sleeps through
 /// it while the projection goes stale: `A@100` is re-stamped `A@80` in place,

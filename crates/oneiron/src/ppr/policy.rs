@@ -8,6 +8,7 @@ use crate::config::PPR_VAD_ALPHA_DEFAULT;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::ManifestDbs;
 
 use super::walk::PprNodeVisibility;
@@ -164,15 +165,24 @@ pub(super) fn seed_weights(
 /// `(0, 1/ln(2)]` and seed counts are capped at [`MAX_PPR_SEEDS`], so the
 /// normalizer is finite and strictly positive — the division below cannot
 /// produce NaN or infinity.
-pub(super) fn specificity_seed_weights(
+pub(crate) fn specificity_seed_weights(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<Vec<f32>> {
+    // A seed named twice keeps its mass twice; its mentions are read once.
+    let mut counted = std::collections::BTreeMap::new();
     let mut raw = Vec::with_capacity(seeds.len());
     for seed in seeds {
-        let passage_count = inbound_mentions_count(store, txn, seed, visibility)?;
+        let passage_count = match counted.get(seed) {
+            Some(count) => *count,
+            None => {
+                let count = inbound_mentions_count(store, txn, seed, visibility)?;
+                counted.insert(*seed, count);
+                count
+            }
+        };
         raw.push(1.0_f64 / (1.0 + passage_count.max(1) as f64).ln());
     }
 
@@ -188,12 +198,15 @@ pub(super) fn specificity_seed_weights(
 /// (pinned decision — the count is a literal row count over the index; no
 /// persisted counter exists in the DB manifest). Scoped reads count only
 /// actor-visible sources. Corrupt rows and visibility errors fail closed.
+/// Every mention is read, hidden ones too: past the seed's threshold row the
+/// scan raises one owner-local check and reads on.
 fn inbound_mentions_count(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seed: &EntityId,
     visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<u64> {
+    let mut rows = ScanCount::start(store, txn, EngineScan::MentionRows, seed.as_bytes())?;
     let mut count = 0_u64;
     for entry in crate::ports::EdgeStoreRead::port_edges(
         store,
@@ -204,6 +217,7 @@ fn inbound_mentions_count(
         None,
     )? {
         let source = entry?.target;
+        rows.row();
         if let Some(visibility) = visibility
             && !visibility.ppr_node_visible(txn, &source)?
         {
@@ -213,5 +227,6 @@ fn inbound_mentions_count(
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("ppr passage count"))?;
     }
+    rows.defer(store);
     Ok(count)
 }
