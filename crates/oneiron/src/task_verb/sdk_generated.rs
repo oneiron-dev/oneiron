@@ -26,6 +26,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
             ),
             (
+                "self.memory.diary.reads",
+                crate::code_run::vault_read::request_schema::<crate::memory::DiaryReadsRequest>(),
+            ),
+            (
+                "self.memory.diary.review",
+                crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
+            ),
+            (
                 "cancel",
                 crate::code_run::vault_read::request_schema::<TaskRequest>(),
             ),
@@ -391,6 +399,20 @@ pub fn mcp_arguments_schema_from_input(
             &["scopes"]
         }
         "self.memory.diary" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.memory.diary.reads" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.memory.diary.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -852,6 +874,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary" => {
             let _input: DiaryEntryRequest = decode(value.clone())?;
         }
+        "self.memory.diary.reads" => {
+            let _input: crate::memory::DiaryReadsRequest = decode(value.clone())?;
+        }
+        "self.memory.diary.review" => {
+            let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
+        }
         "cancel" => {
             let _input: TaskRequest = decode(value.clone())?;
         }
@@ -1082,6 +1110,8 @@ pub fn invoke(
 ) -> MemoryResult<serde_json::Value> {
     match verb {
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
+        "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
+        "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
@@ -1248,6 +1278,18 @@ pub fn self_memory_diary(
     input: DiaryEntryRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
     crate::task_verb::sdk::self_memory_diary_write(memory, input)
+}
+pub fn self_memory_diary_reads(
+    memory: &Memory<'_>,
+    input: crate::memory::DiaryReadsRequest,
+) -> MemoryResult<crate::memory::DiaryReadsView> {
+    memory.diary_reads(&input)
+}
+pub fn self_memory_diary_review(
+    memory: &Memory<'_>,
+    input: crate::memory::DiaryReviewAnswer,
+) -> MemoryResult<crate::memory::DiaryReadRequest> {
+    memory.answer_diary_read(&input)
 }
 pub fn cancel(
     memory: &Memory<'_>,

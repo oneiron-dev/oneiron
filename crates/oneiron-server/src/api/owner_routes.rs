@@ -39,6 +39,7 @@ use crate::owner::{
 use crate::server::SyncServer;
 mod conflict_routes;
 mod cooperative_deletion_routes;
+mod diary_routes;
 mod history_routes;
 mod pack_routes;
 mod peer_confidence_routes;
@@ -78,6 +79,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(conflict_routes::routes())
+        .merge(diary_routes::routes())
         .merge(history_routes::routes())
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())

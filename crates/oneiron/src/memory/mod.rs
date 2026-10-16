@@ -30,6 +30,7 @@ mod birth_position;
 mod booking;
 mod claim_conflict;
 mod conflict_settle;
+mod diary_read;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -88,6 +89,11 @@ pub use claim_conflict::{
 pub use claims::{
     ClaimInput, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, SafeDeleteReason,
+};
+pub use diary_read::{
+    DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
+    DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
+    DiaryReadsView, DiaryReviewAnswer, DiaryReviewState, EXPORT_DIARY_READ_REASON,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};

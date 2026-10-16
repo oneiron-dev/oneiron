@@ -241,8 +241,18 @@ class Oneiron:
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def diary(self, spec):
+        @property
+        def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs":
+            return Oneiron._SelfMemoryDiaryVerbs(self._client)
+    class _SelfMemoryDiaryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
+        def reads(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary_reads(json.dumps(spec))))
+        def review(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
