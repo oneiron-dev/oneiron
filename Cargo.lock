@@ -8492,6 +8492,7 @@ dependencies = [
  "oneiron-container",
  "oneiron-driver",
  "oneiron-keystore",
+ "oneiron-linear",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
  "oneiron-mesh-transport",

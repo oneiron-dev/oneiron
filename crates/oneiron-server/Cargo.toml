@@ -56,6 +56,7 @@ oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
 oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
+oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
 # Protocol mappers for the `[models]` provider kinds. Both own wire mapping
 # only; this crate supplies the HTTP transport (models/openai.rs and
 # models/anthropic.rs).

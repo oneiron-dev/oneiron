@@ -9,15 +9,14 @@ use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_tail_for,
-    home_search_candidates,
-    index_selection_revision, promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet,
-    selected_item_blob_with, shelve_sealed_window, window_index_page,
+    home_search_candidates, index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
+    sealed_shelf_packet, selected_item_blob_with, shelve_sealed_window, window_index_page,
     window_index_projection_with,
 };
-use oneiron::world_keys::SealedContentId;
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
+use oneiron::world_keys::SealedContentId;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -716,7 +715,11 @@ fn sealed_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<A
 
 /// The signed authority entries the proved machine lacks, parents first
 /// (OF-469). Only a machine of the owner's is served; any other looks missing.
-fn authority_tail(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+fn authority_tail(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
     let input: AuthorityTailRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let raw = base64::engine::general_purpose::STANDARD

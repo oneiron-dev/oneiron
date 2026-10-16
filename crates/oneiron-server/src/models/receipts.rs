@@ -101,6 +101,9 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             allocation_units,
             error,
             allocation_error,
+            dispatched,
+            usage,
+            service_quantity,
         } => json!({
             "event": "settled",
             "revision": revision,
@@ -108,6 +111,9 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "units": units,
             "unit": unit_name(unit),
             "allocation_units": allocation_units,
+            "dispatched": dispatched,
+            "usage": usage,
+            "service_quantity": service_quantity,
             "refused": error.is_some(),
             "allocation_refused": allocation_error.is_some(),
         }),
@@ -187,9 +193,18 @@ fn id(value: &str) -> &str {
 #[derive(Default)]
 pub(crate) struct ServerReceipts {
     chosen: RwLock<Option<Arc<dyn RunReceiptSink>>>,
+    usage: RwLock<Option<Arc<crate::runtime::VaultUsage>>>,
 }
 
 impl ServerReceipts {
+    pub(crate) fn meter(&self, usage: Arc<crate::runtime::VaultUsage>) {
+        *self.usage.write().expect("usage sink lock poisoned") = Some(usage);
+    }
+
+    pub(crate) fn usage(&self) -> Option<Arc<crate::runtime::VaultUsage>> {
+        self.usage.read().expect("usage sink lock poisoned").clone()
+    }
+
     pub(crate) fn choose(&self, sink: Arc<dyn RunReceiptSink>) {
         *self.chosen.write().expect("receipt sink lock poisoned") = Some(sink);
     }
@@ -197,6 +212,9 @@ impl ServerReceipts {
 
 impl RunReceiptSink for ServerReceipts {
     fn record(&self, receipt: RunReceipt) {
+        if let Some(usage) = self.usage() {
+            usage.record(&receipt);
+        }
         let chosen = self
             .chosen
             .read()

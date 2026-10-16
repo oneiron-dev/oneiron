@@ -59,6 +59,7 @@ use crate::runtime::RuntimeRole;
 use axum::http::HeaderMap;
 
 pub(crate) mod ai;
+mod anonymous_chat;
 mod artifacts;
 // OF-511: the artifact family's contract routes (versions, made_by, born-from,
 // export, proposals, Keep/Discard/Undo).
@@ -130,6 +131,7 @@ pub(crate) mod call_receipt;
 mod context_board;
 #[allow(dead_code)]
 mod reactive;
+mod report;
 mod run_tree;
 mod saved_query;
 mod scoped_auth;
@@ -410,6 +412,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
+        .merge(self::report::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
@@ -439,6 +442,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
         // owner's own off-record routes sit out here for the same reason.
+        // Anonymous turns also keep no wire or idempotency receipt, and say so.
+        .merge(
+            self::anonymous_chat::routes()
+                .layer(middleware::map_response(call_receipt::no_record_reply)),
+        )
         // OF-538's one exception: these replies carry no call receipt, and
         // say so (`x-oneiron-receipt-ref: none; no-record`).
         .nest(
