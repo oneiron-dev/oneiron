@@ -10,7 +10,7 @@ use super::*;
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimReadStatus, PointRead, ScopedReadResult};
-fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
+fn served_value_json(value: &rmpv::Value) -> serde_json::Value {
     crate::batch::export::served_messagepack_json(value.clone())
 }
 use crate::edge::EdgeKind;
@@ -538,7 +538,7 @@ impl Memory<'_> {
             if secret {
                 serde_json::Value::String("[redacted]".to_owned())
             } else {
-                companion_value_to_json(value)
+                served_value_json(value)
             }
         };
         Ok(ClaimView {

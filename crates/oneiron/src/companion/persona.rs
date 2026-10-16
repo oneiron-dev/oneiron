@@ -3,7 +3,8 @@
 //! Payloads are caller-owned JSON, not engine prompts. Only explicit scenario
 //! variants live on FACET. Compilation is a projection, never a second store.
 
-use super::codec::{companion_value_from_json, companion_value_to_json, invalid_companion};
+use super::codec::invalid_companion;
+use crate::serialize::{msgpack_value_from_json, msgpack_value_to_json};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PointRead, ReadRow, ScopedRead,
@@ -137,7 +138,7 @@ impl PersonaChange {
 fn to_value(value: &impl Serialize) -> Result<Value> {
     let json =
         serde_json::to_value(value).map_err(|_| invalid_companion("persona value is not JSON"))?;
-    let value = companion_value_from_json(&json)?;
+    let value = msgpack_value_from_json(&json)?;
     validate_json(&value, 0)?;
     Ok(value)
 }
@@ -185,7 +186,7 @@ fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
     // The public companion projector redacts binary values. Compilation must
     // instead reject them: redacting to null would turn data into a deletion.
     validate_json(value, 0)?;
-    serde_json::from_value(companion_value_to_json(value))
+    serde_json::from_value(msgpack_value_to_json(value))
         .map_err(|_| invalid_companion("invalid persona value"))
 }
 

@@ -138,7 +138,7 @@ impl Memory<'_> {
             let value_json = if secret {
                 serde_json::Value::String("[redacted]".to_owned())
             } else {
-                companion_value_to_json(&body.value)
+                super::served_value_json(&body.value)
             };
             Ok(Some(MemoryItem {
                 short_id,

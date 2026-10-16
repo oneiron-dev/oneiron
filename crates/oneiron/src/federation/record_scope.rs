@@ -232,11 +232,7 @@ pub(crate) fn stamp_put(
         }
         return Ok(());
     }
-    if replicated
-        && kind != crate::registry::ENTITY_TYPE_CLAIM
-        && !(kind == crate::registry::ENTITY_TYPE_FACET
-            && crate::companion::is_identity_facet_body(data))
-    {
+    if replicated && kind != crate::registry::ENTITY_TYPE_CLAIM {
         // A peer cannot mint a birth position for an opaque row merely by
         // picking its ID and bytes. Only an existing stamped row inherits.
         return Ok(());

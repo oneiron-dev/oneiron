@@ -14,7 +14,7 @@ use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::companion::companion_value_to_json;
+use crate::serialize::msgpack_value_to_json;
 use crate::deletion::{DeleteReason, DeletionGateContext};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;

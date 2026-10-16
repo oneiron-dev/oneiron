@@ -619,8 +619,6 @@ cleanup_proposal
 cleanup_proposals
 clear_provider_confidence_indexes
 commitment_wake_proposal_claim_id
-companion_value_from_json
-companion_value_to_json
 compare_campaign
 count_context_pack_tokens
 decode_commitment_wake_event
@@ -653,6 +651,8 @@ linear_operation_id
 link_brief_fulfillment
 merge_campaign_arm_report
 mint_send_override
+msgpack_value_from_json
+msgpack_value_to_json
 outbound_capability_manifest
 outbound_capability_manifests
 outbound_verb_contract

@@ -363,12 +363,12 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let prior_scope = body.scope.as_ref().map(companion_value_to_json);
+            let prior_scope = body.scope.as_ref().map(msgpack_value_to_json);
             if prior_scope != new_scope || body.world != world || body.rel != relationship {
                 continue;
             }
             if let Some(new_qid) = &multi_key {
-                let prior_value = companion_value_to_json(&body.value);
+                let prior_value = msgpack_value_to_json(&body.value);
                 let prior_qid = prior_value.get(MULTI_CARDINALITY_VALUE_KEY).cloned();
                 if prior_qid != *new_qid {
                     continue;

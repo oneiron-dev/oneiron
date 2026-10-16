@@ -130,7 +130,7 @@ impl CrossEncoder {
             .map(|candidate| {
                 if let Some(claim) = candidate.claim {
                     // The admitted claim body, not an unscoped second database read.
-                    let value = crate::companion::companion_value_to_json(&claim.value);
+                    let value = crate::serialize::msgpack_value_to_json(&claim.value);
                     Ok(format!("{}: {}", claim.predicate, value))
                 } else {
                     self.documents

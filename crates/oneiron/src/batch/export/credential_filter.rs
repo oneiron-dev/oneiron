@@ -81,9 +81,9 @@ fn released_messagepack_json(
         None => Encoding::Own,
     };
     let mut removed = sanitize_messagepack_credentials_in(&mut value, encoding, null);
-    let mut projected = crate::companion::companion_value_projection(&value);
+    let mut projected = crate::serialize::msgpack_value_projection(&value);
     removed |= sanitize_messagepack_credentials_in(&mut projected, encoding, null);
-    let mut json = crate::companion::companion_value_to_json(&projected);
+    let mut json = crate::serialize::msgpack_value_to_json(&projected);
     removed |= sanitize_read_credentials(&mut json, null);
     (json, removed)
 }
@@ -519,7 +519,7 @@ mod tests {
                 "{value}"
             );
             // A reader that projects it to JSON redacts the projection.
-            let mut projected = crate::companion::companion_value_to_json(value);
+            let mut projected = crate::serialize::msgpack_value_to_json(value);
             redact_credentials(&mut projected);
             assert!(
                 !carries_sausage(projected.to_string().as_bytes()),

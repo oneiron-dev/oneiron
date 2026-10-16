@@ -1,105 +1,10 @@
-//! Scope/subject task payload codecs and JSON value conversion for persona input.
+//! Scope/subject task payload codecs.
 
 use super::keys::{RELATIONSHIP_REF_KEYS, SCOPE_KEYS, SUBJECT_KEYS};
 use super::model::{CompanionScope, CompanionSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use rmpv::Value;
-use serde_json::Value as JsonValue;
-use std::io::Cursor;
-
-/// Converts JSON accepted by public APIs into the opaque MessagePack value
-/// carried by a companion record.
-pub fn companion_value_from_json(value: &JsonValue) -> Result<Value> {
-    let encoded = rmp_serde::to_vec_named(value)
-        .map_err(|_| invalid_companion("companion record value must be msgpack-encodable JSON"))?;
-    let mut cursor = Cursor::new(encoded.as_slice());
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid_companion("companion record value is not valid MessagePack"))?;
-    if cursor.position() != encoded.len() as u64 {
-        return Err(invalid_companion(
-            "trailing bytes after companion record value",
-        ));
-    }
-    Ok(value)
-}
-
-/// Converts the opaque companion MessagePack value back to JSON for typed API
-/// envelopes. MessagePack binary/ext values are redacted because they are not
-/// JSON-shaped public API values.
-#[must_use]
-pub fn companion_value_to_json(value: &Value) -> JsonValue {
-    projected_json(companion_value_projection(value))
-}
-
-/// What [`companion_value_to_json`] keeps of a value, still as MessagePack:
-/// binary, extension and non-finite floats as nil, a string that is no UTF-8
-/// as the `invalid_utf8_string` marker, and a map's text keys once each (the
-/// last value at the first key's place), as a JSON object keeps them. Each
-/// number keeps the width that JSON drops, so a reader can read this value
-/// exactly as the JSON it becomes.
-pub(crate) fn companion_value_projection(value: &Value) -> Value {
-    match value {
-        Value::F32(number) if !number.is_finite() => Value::Nil,
-        Value::F64(number) if !number.is_finite() => Value::Nil,
-        Value::String(text) if text.as_str().is_none() => Value::Map(vec![(
-            Value::from("redacted"),
-            Value::from("invalid_utf8_string"),
-        )]),
-        Value::Binary(_) | Value::Ext(_, _) => Value::Nil,
-        Value::Array(values) => {
-            Value::Array(values.iter().map(companion_value_projection).collect())
-        }
-        Value::Map(entries) => {
-            let mut kept: Vec<(Value, Value)> = Vec::with_capacity(entries.len());
-            let mut at: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::with_capacity(entries.len());
-            for (key, value) in entries {
-                let Some(key) = key.as_str() else {
-                    continue;
-                };
-                let value = companion_value_projection(value);
-                match at.entry(key) {
-                    std::collections::hash_map::Entry::Occupied(slot) => {
-                        kept[*slot.get()].1 = value;
-                    }
-                    std::collections::hash_map::Entry::Vacant(slot) => {
-                        slot.insert(kept.len());
-                        kept.push((Value::from(key), value));
-                    }
-                }
-            }
-            Value::Map(kept)
-        }
-        other => other.clone(),
-    }
-}
-
-/// A [`companion_value_projection`] as JSON, which loses only number widths.
-fn projected_json(value: Value) -> JsonValue {
-    match value {
-        Value::Boolean(value) => JsonValue::Bool(value),
-        Value::Integer(value) => match (value.as_i64(), value.as_u64()) {
-            (Some(signed), _) => JsonValue::from(signed),
-            (None, Some(unsigned)) => JsonValue::from(unsigned),
-            (None, None) => JsonValue::Null,
-        },
-        Value::F32(value) => serde_json::json!(value),
-        Value::F64(value) => serde_json::json!(value),
-        Value::String(value) => value.into_str().map_or(JsonValue::Null, JsonValue::String),
-        Value::Array(values) => JsonValue::Array(values.into_iter().map(projected_json).collect()),
-        Value::Map(entries) => JsonValue::Object(
-            entries
-                .into_iter()
-                .filter_map(|(key, value)| match key {
-                    Value::String(key) => Some((key.into_str()?, projected_json(value))),
-                    _ => None,
-                })
-                .collect(),
-        ),
-        Value::Nil | Value::Binary(_) | Value::Ext(_, _) => JsonValue::Null,
-    }
-}
 
 pub(super) fn encode_scope(scope: &CompanionScope) -> Value {
     let mut entries = vec![(Value::from(SCOPE_KEYS[0]), Value::from(scope.as_str()))];

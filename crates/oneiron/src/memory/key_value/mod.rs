@@ -14,7 +14,7 @@ use super::support::{json_to_rmpv, verify_actor_binding_in_txn};
 use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::companion::companion_value_to_json;
+use crate::serialize::msgpack_value_to_json;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::write_envelope::{
@@ -109,7 +109,7 @@ impl Memory<'_> {
         // Malformed rows are not heads. Never repair them, fall back through
         // their history, or let one bad payload deny every key of this actor.
         let value =
-            serde_json::from_value::<StoredValue>(companion_value_to_json(&body.value)).ok()?;
+            serde_json::from_value::<StoredValue>(msgpack_value_to_json(&body.value)).ok()?;
         let address = KeyValueAddress {
             namespace: value.namespace.clone(),
             key: value.key.clone(),
