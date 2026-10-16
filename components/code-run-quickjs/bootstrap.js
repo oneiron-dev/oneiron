@@ -31,10 +31,10 @@
       if (typeof text !== "string") throw new TypeError("invalid_verb_input");
       return text;
     };
-    const verb = name => (input = {}) => {
-      const text = verbInput(input);
-      return Promise.resolve(send(name, text)).then(decode);
-    };
+    // `self.fold` takes `(span, {note?})`, sent as `[from, through]` or `[[from, through], {note}]`.
+    const verb = name => name === "self.fold"
+      ? (span, options) => Promise.resolve(send(name, verbInput(options === undefined ? span : [span, options]))).then(decode)
+      : (input = {}) => { const text = verbInput(input); return Promise.resolve(send(name, text)).then(decode); };
     // A call under a root the SDK does not have (`tools.`, `self.mcp.`,
     // `memory.`) or of a verb a root does not hold is sent as written: the
     // host answers the typed WRONG_ROOT correction before any effect, and the
