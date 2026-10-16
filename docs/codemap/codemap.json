@@ -8765,7 +8765,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 6,
+      "fn": 7,
       "struct": 4,
       "type": 1
      }
@@ -30261,7 +30261,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 4,
-      "fn": 27,
+      "fn": 29,
       "struct": 6,
       "trait": 1
      }
