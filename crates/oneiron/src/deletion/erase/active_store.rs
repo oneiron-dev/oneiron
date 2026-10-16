@@ -205,6 +205,7 @@ impl Vault {
             id,
             header.entity_type,
         )?;
+        crate::deletion::tear_derived_rows_in_txn(&self.store, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the

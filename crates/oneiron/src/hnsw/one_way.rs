@@ -74,6 +74,39 @@ pub(super) fn record_one_way_exception(
     Ok(())
 }
 
+/// Drops a node being deleted from the exception record of each target it
+/// kept a one-way link to. Its forward list names those targets, so no scan;
+/// an emptied record goes with it (H14).
+pub(super) fn forget_one_way_holder(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    holder: &EntityId,
+    targets: &[EntityId],
+    ops: &mut u64,
+) -> Result<()> {
+    for target in targets {
+        *ops += 1;
+        let mut holders = read_one_way_exception_holders(store, &*wtxn, target)?;
+        let before = holders.len();
+        holders.retain(|held| held != holder);
+        if holders.len() == before {
+            continue;
+        }
+        let key = one_way_exception_key(target);
+        if holders.is_empty() {
+            store.hnsw_meta().delete(wtxn, &key)?;
+        } else {
+            let mut bytes = Vec::with_capacity(holders.len() * ENTITY_ID_LEN);
+            for held in &holders {
+                bytes.extend_from_slice(held.as_bytes());
+            }
+            store.hnsw_meta().put(wtxn, &key, &bytes)?;
+        }
+        *ops += 1;
+    }
+    Ok(())
+}
+
 /// Scrubs a node being deleted out of every holder that kept a one-way link to
 /// it (orphan protection), then drops the exception record. This is the half
 /// of a symmetric delete that the deleted node's own forward list cannot reach

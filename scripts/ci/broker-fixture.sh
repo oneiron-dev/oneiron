@@ -6,5 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export ONEIRON_BROKER_FIXTURE=require
-exec cargo nextest run --locked -p oneiron-server --test it --all-features \
-  --no-fail-fast -E 'test(/broker_paid_leg/)' "$@"
+# The workspace's feature set, as in the full test leg, so the gate reuses that leg's `it`
+# binary instead of building a second oneiron for `-p oneiron-server` alone.
+exec cargo nextest run --locked --workspace --all-features --no-fail-fast \
+  -E 'package(oneiron-server) & binary(=it) & test(/broker_paid_leg/)' "$@"
