@@ -44,7 +44,7 @@ where
         formatter.write_str("bounded lens collection")
     }
 
-    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+    fn visit_seq<A>(self, seq: A) -> std::result::Result<Self::Value, A::Error>
     where
         A: de::SeqAccess<'de>,
     {
