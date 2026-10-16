@@ -85,14 +85,7 @@ fn deep_fixture() -> Result<(
 )> {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let doc = document();
@@ -200,14 +193,7 @@ fn docs_registry_thin_star_ids_do_not_depend_on_export_path() {
 fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -372,14 +358,7 @@ fn searchable_docs(
 ) -> Result<(tempfile::TempDir, crate::Vault, DocsImportReceipt, EntityId)> {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -581,14 +560,7 @@ fn fused_receipt_adds_disjoint_lexical_and_vector_exclusions() -> Result<()> {
 fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         person,
         &person.to_hex(),
@@ -690,14 +662,7 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let document = document();
@@ -908,14 +873,7 @@ fn docs_import_refuses_missing_or_non_corpus_project() -> Result<()> {
 fn deep_docs_respect_revision_ceiling_and_quote_validation() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let ceiling = DocsImportCeiling {
@@ -1223,14 +1181,7 @@ fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
 fn heading_reimport_keeps_rewritten_summaries_readable() -> Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
     let ceiling = DocsImportCeiling {

@@ -102,6 +102,9 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
     ordered.sort_by_key(|event| (event.seq, event.event_id));
 
     let mut fold = IdentityTopologyFold::default();
+    // The owner id is a fixed derivation; history that retires the owner
+    // folds as a rejection, so replay never locks the owner out.
+    let owner = crate::vault::embedded_owner_actor_id().ok();
     let mut applied: BTreeMap<EntityId, &IdentityTopologyOp> = BTreeMap::new();
     let mut undo_events: BTreeSet<EntityId> = BTreeSet::new();
 
@@ -114,7 +117,11 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
         }
         match &event.action {
             IdentityTopologyAction::Disposition => {}
-            IdentityTopologyAction::Apply(op) => match evaluate_transition(&fold.states, op) {
+            IdentityTopologyAction::Apply(op) => match owner
+                .as_ref()
+                .and_then(|owner| super::transition_table::owner_retirement(op, owner))
+                .map_or_else(|| evaluate_transition(&fold.states, op), Err)
+            {
                 Ok(transitions) => {
                     for (entity, state) in transitions {
                         fold.states.insert(entity, state);

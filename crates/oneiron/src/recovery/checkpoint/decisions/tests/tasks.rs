@@ -268,8 +268,10 @@ pub(super) fn dispatchable_agents() -> Result<Case> {
 /// would bring the goal back, and the wake with it.
 pub(super) fn resident_wakes() -> Result<Case> {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
-    let (owner, inbox) = (EntityId::now(), EntityId::now());
-    put_person(&vault, owner)?;
+    let (owner, inbox) = (
+        vault.ensure_embedded_owner_actor().map_err(memory)?,
+        EntityId::now(),
+    );
     let agent = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "resident");
     vault.create_channel_identity(
         &inbox,
@@ -381,8 +383,10 @@ pub(super) fn agent_id_pins() -> Result<Case> {
 /// grant unchanged, is one a restore would make a holder again.
 pub(super) fn ask_holders() -> Result<Case> {
     let (dir, vault) = open_vault();
-    let (owner, delegate) = (entity(0x71), entity(0x72));
-    put_person(&vault, owner)?;
+    let (owner, delegate) = (
+        vault.ensure_embedded_owner_actor().map_err(memory)?,
+        entity(0x72),
+    );
     put_person(&vault, delegate)?;
     let auth = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     vault.create_standing_grant(

@@ -35,14 +35,7 @@ fn on_record_diagnostic(vault: &crate::Vault, _time: u64) -> Result<EntityId> {
     use crate::consent::{ComposedEffect, EffectFacts};
     use crate::receipt::{ReceiptKind, ReceiptQuery};
     use crate::store::GateDecisionId;
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::temporal::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
     let effect =

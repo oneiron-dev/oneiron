@@ -1,20 +1,12 @@
 use super::*;
-use crate::TimeRange;
-use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+use crate::test_util::{embedding_test_config, open_test_vault_with};
 
 #[test]
 fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     crate::test_util::provision_engine_machines(&vault);
     let (_other_dir, other) = open_test_vault_with(embedding_test_config());
-    let actor = entity(0x71);
-    other.put_entity(
-        &actor,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let actor = other.ensure_embedded_owner_actor().unwrap();
     let proof = other.authenticate_owner(
         actor,
         &actor.to_hex(),

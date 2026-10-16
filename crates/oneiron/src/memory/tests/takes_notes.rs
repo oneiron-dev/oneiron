@@ -1003,7 +1003,7 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
     use crate::note::{NoteScope, NoteWriteEnvelope};
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
-    let owner = put_person(&vault, 0x71);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let other = put_person(&vault, 0x72);
     let actor = crate::WriteActor::new(owner, crate::EdgeActorClass::Human);
     let room = EntityId::now();

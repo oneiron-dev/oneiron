@@ -336,14 +336,7 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
 #[test]
 fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
     let (_dir, vault) = temp_vault();
-    let owner_ref = test_id(0x52);
-    vault.put_entity(
-        &owner_ref,
-        crate::registry::ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"owner",
-    )?;
+    let owner_ref = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_ref,
         &owner_ref.to_hex(),
@@ -401,7 +394,7 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
 fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
-    let owner_ref = test_id(0x52);
+    let owner_ref = vault.ensure_embedded_owner_actor().unwrap();
     let subject = test_id(0x53);
     for id in [owner_ref, subject] {
         vault.put_entity(
@@ -488,14 +481,7 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
 #[test]
 fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
     let (_dir, vault) = temp_vault();
-    let owner_ref = test_id(0x75);
-    vault.put_entity(
-        &owner_ref,
-        crate::registry::ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"owner",
-    )?;
+    let owner_ref = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_ref,
         &owner_ref.to_hex(),

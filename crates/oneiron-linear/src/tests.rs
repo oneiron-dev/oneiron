@@ -276,10 +276,12 @@ fn grant_linear_effects(vault: &oneiron::Vault, actor: EntityId) {
     ];
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &V::Map(entries)).expect("encode policy");
+    // The vault's owner installs the policy; its rows name the acting agent.
+    let owner_id = vault.ensure_embedded_owner_actor().expect("vault owner");
     let owner = vault
         .authenticate_owner(
-            actor,
-            &actor.to_hex(),
+            owner_id,
+            &owner_id.to_hex(),
             true,
             oneiron::store::GateDecisionId::now(),
         )

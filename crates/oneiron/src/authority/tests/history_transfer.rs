@@ -67,16 +67,7 @@ fn account_auth_migrates_managed_root_without_widening() {
         },
     };
     let vault = Vault::open(dir.path(), config).unwrap();
-    let actor = scope_entity(19);
-    vault
-        .put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &[0x80],
-        )
-        .unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     let old = ed_key(140);
     let new = ed_key(141);
     let key = authority_key_from_ed(&old);

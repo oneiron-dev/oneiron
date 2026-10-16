@@ -700,6 +700,36 @@ impl Vault {
         self.put_authority_log_entries(&[(revoke, at, now)])?;
         Ok(())
     }
+
+    /// Moves the host root's one human binding to `person` at `epoch`, as a
+    /// host that hands its key to another human does.
+    #[cfg(all(test, feature = "sync"))]
+    pub(crate) fn rebind_host_owner_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        person: crate::EntityId,
+        epoch: u64,
+    ) -> Result<()> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        let rebind = next_entry(
+            issuer,
+            &fold,
+            AuthorityOp::RebindActor {
+                authority_key: issuer.public_key(),
+                actor_ref: person,
+                actor_class: "human".into(),
+                epoch,
+            },
+            now,
+        )?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(rebind, at, now)])?;
+        Ok(())
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()

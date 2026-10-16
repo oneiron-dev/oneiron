@@ -6,16 +6,7 @@ use crate::task_verb::ConsultPayloadRef;
 fn resident_keeps_goal_data_inbox_and_room_pointer_without_prompt_change() {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::config::VaultConfig::default());
-    let owner = EntityId::now();
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let (lead, definition) = vault
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")
         .unwrap()
@@ -106,16 +97,7 @@ mod foreign_owner_proof {
     fn a_foreign_owner_proof_binds_no_resident() {
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::config::VaultConfig::default());
-        let owner = EntityId::now();
-        vault
-            .put_entity(
-                &owner,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"owner",
-            )
-            .unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
         let (lead, _) = vault
             .get_seeded_agent_definition_by_logical_id("sys.team_lead")
             .unwrap()

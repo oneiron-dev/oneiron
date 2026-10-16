@@ -51,7 +51,7 @@ impl Fixture {
         crate::test_util::provision_engine_machines(&vault);
         vault.dreamer_authority()?;
         let agent = EntityId::now();
-        let owner = EntityId::now();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
         let subject = EntityId::now();
         let evidence = EntityId::now();
         for id in [agent, owner, subject] {

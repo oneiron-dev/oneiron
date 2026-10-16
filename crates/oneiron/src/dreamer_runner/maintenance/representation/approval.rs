@@ -75,7 +75,7 @@ impl Vault {
         id: &EntityId,
     ) -> Result<RepresentationReview> {
         let (record, body) = read_proposal(self, id)?;
-        require_owner(self, owner, &record.packet)?;
+        require_recipient(self, owner, &record.packet)?;
         validate_packet(self, &record.packet)?;
         if body.approval != ClaimApprovalStatus::Proposed {
             return Err(invalid());
@@ -210,6 +210,17 @@ fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> 
     // never reviews or arms here.
     let txn = vault.store.env.read_txn()?;
     if crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, owner)?
+        != packet.request.owner
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+/// [`require_owner`] for reading the review addressed to the packet's
+/// person, which approves and arms nothing: the person tier.
+fn require_recipient(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    if crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &txn, owner)?
         != packet.request.owner
     {
         return Err(invalid());

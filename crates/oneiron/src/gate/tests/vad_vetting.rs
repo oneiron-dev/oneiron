@@ -403,7 +403,7 @@ mod vad_vetting_tests {
             let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
             let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
             let bundle = vault.review_gate_consent_bundle(&reviewer, RUN)?;
-            let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+            let owner = consent_bundle_owner(&vault)?;
             let result =
                 vault.resolve_gate_consent_bundle(&owner, bundle.bundle_id, RUN, action, 20);
             let stored = vault.get_claim(&claim)?.expect("committed member");

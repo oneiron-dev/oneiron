@@ -46,16 +46,7 @@ pub(crate) fn admitted_import(vault: &Vault, id: &EntityId, record: SkillRecord)
 }
 
 pub(crate) fn admit_installed(vault: &Vault, id: &EntityId, source: &HubRef) -> SkillRecord {
-    let owner_id = EntityId::now();
-    vault
-        .put_entity(
-            &owner_id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            at(1),
-            1,
-            b"fixture owner",
-        )
-        .expect("person");
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(
             owner_id,

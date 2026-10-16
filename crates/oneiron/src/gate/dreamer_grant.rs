@@ -137,6 +137,9 @@ impl Vault {
         let key = ScopedReadActorKey::with_actor_class(actor_ref.clone(), DREAMER_ACTOR_CLASS)
             .ok_or_else(|| invalid("dreamer read key"))?;
         let mut txn = self.store.env.write_txn()?;
+        // An owner door: a non-owner's proof learns nothing, not even that
+        // the grant is already in place.
+        owner.revalidate_in_txn(self, &txn)?;
         let (id, body) = grant_target(&self.store, &txn)?;
         let Some(data) = with_dreamer_rows(&body, &actor_ref)? else {
             return Ok(false);

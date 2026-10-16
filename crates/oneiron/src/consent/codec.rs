@@ -450,3 +450,28 @@ pub(super) fn decode_bound_value(value: &Value) -> Result<GrantBound> {
         decode_envelope(required_value(entries, KEY_ENVELOPE)?, domain)?,
     )
 }
+
+#[cfg(test)]
+impl crate::Vault {
+    /// Stores `bound` as an active standing grant under `stamper`'s stamp with
+    /// no door's check: a row the owner-tier mint refuses, such as one a guest
+    /// stamped for themselves.
+    pub(crate) fn put_standing_grant_unchecked_for_test(
+        &self,
+        stamper: &super::AuthenticatedOwner,
+        bound: GrantBound,
+    ) -> Result<String> {
+        self.with_write_txn(|wtxn| {
+            let row = ConsentGrantRow {
+                grant: StandingConsentGrant::from_bound(bound)?,
+                status: ConsentGrantStatus::Active,
+                owner_stamp: stamper.stamp(),
+                created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
+                bypass: None,
+            };
+            let grant_ref = row.grant_ref();
+            GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
+            Ok(grant_ref)
+        })
+    }
+}

@@ -14,10 +14,9 @@ fn fixture() -> Result<(
 )> {
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), VaultConfig::default())?;
-    let actor = EntityId::now();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     let subject = EntityId::now();
     let time = TimeRange { start: 1, end: 1 };
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"owner")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time, 1, b"subject")?;
     let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
     let batch = ImportedClaimBatch {
@@ -133,12 +132,15 @@ fn decisions_for(
         .collect())
 }
 
-/// Another live owner of the same vault, as on a shared vault.
-fn second_owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
-    let actor = EntityId::now();
-    let time = TimeRange { start: 1, end: 1 };
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"second owner")?;
-    vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+/// Another live owner of the same vault: a co-owner of the vault shared
+/// under its embedded owner.
+fn second_owner(vault: &crate::Vault) -> crate::consent::AuthenticatedOwner {
+    let other = crate::test_util::co_owner_proof(vault);
+    assert_ne!(
+        Some(other.actor()),
+        crate::vault::embedded_owner_actor_id().ok()
+    );
+    other
 }
 
 #[test]
@@ -148,7 +150,7 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     // Approved, then declined or approved again by either owner: refused,
     // and the approval stands.
     let (_dir, vault, owner, batch) = fixture()?;
-    let other = second_owner(&vault)?;
+    let other = second_owner(&vault);
     let approved = vault.approve_imported_claim_batch(&owner, &batch)?;
     for decider in [&owner, &other] {
         assert!(spent(
@@ -173,7 +175,7 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     // one call, as approve_once then admit, or unconsented: refused, and
     // nothing is admitted.
     let (_dir, vault, owner, batch) = fixture()?;
-    let other = second_owner(&vault)?;
+    let other = second_owner(&vault);
     let denied = vault.decline_imported_claim_batch(&owner, &batch)?;
     assert_eq!(denied.gate_outcome(), "denied");
     for decider in [&owner, &other] {

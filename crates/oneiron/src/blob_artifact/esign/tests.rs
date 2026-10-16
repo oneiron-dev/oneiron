@@ -112,14 +112,7 @@ fn capability_preview_and_signature_share_injected_time_and_ids() -> Result<()> 
         ..VaultConfig::default()
     };
     let (_dir, vault, document, doc) = setup_with(config, 200)?;
-    let owner = EntityId::from_bytes([0x42; 16])?;
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
     let auth = vault.authenticate_owner(
         owner,
@@ -346,17 +339,7 @@ fn ceremony_setup() -> Result<(
     }
     doc.fields[0].meta = FieldMeta::Date;
     doc.recipients[0].automated = true;
-    let owner = EntityId::now();
-    vault.put_entity(
-        &owner,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange {
-            start: now,
-            end: now,
-        },
-        now,
-        b"owner",
-    )?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     crate::test_util::bind_test_owner(&vault, owner);
     doc.recipients[0].principal_ref = Some(owner.to_hex());
     event(

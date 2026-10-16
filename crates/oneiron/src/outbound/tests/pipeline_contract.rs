@@ -495,14 +495,7 @@ fn suppressed_approve_once_replays_without_spending_the_unused_approval()
             .outcome,
         OutboundDispatchOutcome::DeliveredToChannel
     );
-    let owner_id = entity(0x7e);
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::temporal::TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         &owner_id.to_hex(),

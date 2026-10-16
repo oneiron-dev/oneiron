@@ -506,12 +506,8 @@ fn one_off_owner_approval_publishes_exact_request_without_standing_grant() -> Re
         digest,
         vault.artifact_publish_approval_digest(&different_actor)?
     );
-    let owner = vault.authenticate_owner(
-        actor.entity_ref(),
-        &actor.entity_ref().to_hex(),
-        true,
-        GateDecisionId::now(),
-    )?;
+    // The vault's owner approves the publisher's exact request.
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     vault.approve_once(&owner, digest)?;
     let approved = vault.request_artifact_publish(&request)?;
     assert_eq!(approved.status, ArtifactPublishVerbStatus::Published);
@@ -1148,8 +1144,9 @@ fn receipt_retention_keeps_publish_admission_for_idempotent_replay() -> Result<(
         vault.store.append_gate_decision_in_txn(txn, &unrelated)?;
         Ok(unrelated.decision_id)
     })?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault.authenticate_owner(
-        actor.entity_ref(),
+        owner_id,
         "principal:publish-retention",
         true,
         crate::store::GateDecisionId::now(),

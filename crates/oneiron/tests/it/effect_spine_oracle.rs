@@ -366,8 +366,9 @@ mod seam {
         id(0xE1)
     }
     fn owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
-        let owner = id(0xF0);
-        put_person(vault, owner);
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
         vault
             .authenticate_owner(
                 owner,

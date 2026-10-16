@@ -3,20 +3,12 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::consent::{ComposedEffect, EffectFacts};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
-use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
 use crate::test_util::open_test_vault_with;
 
 fn consent_vault() -> Result<(tempfile::TempDir, Vault, EntityId, ReceiptQuery)> {
     let (dir, vault) = open_test_vault_with(VaultConfig::default());
-    let owner_id = EntityId::from_bytes([0x51; 16])?;
-    vault.put_entity(
-        &owner_id,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())?;
     let effect =

@@ -48,14 +48,7 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
         vault.skill_hub_record(&hub_id)?.sync_policy,
         HubSyncPolicy::PinnedCommit
     );
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:library",

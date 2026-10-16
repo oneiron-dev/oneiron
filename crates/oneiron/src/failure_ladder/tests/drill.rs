@@ -184,10 +184,14 @@ fn bind_owner_with_revocation(
     )))
 }
 
+/// A human bound under the vault's authority root is still no owner of this
+/// personal vault, so they drill nothing, and neither does an unbound human;
+/// the vault's owner does (F18 tier flip: a binding is not ownership).
 #[test]
-fn authority_bound_owner_drills_but_unbound_and_revoked_humans_cannot() -> Result<()> {
+fn a_bound_human_who_owns_nothing_drills_nothing_and_the_owner_does() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let owner = person(&vault, 0xb6)?;
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let bound = person(&vault, 0xb6)?;
     let unbound = person(&vault, 0xb7)?;
     let agent = put_scope_agent(&vault, 0xb8, "custom.authority")?;
     let leased = leased_dispatch(&vault, agent, 10)?;
@@ -197,25 +201,50 @@ fn authority_bound_owner_drills_but_unbound_and_revoked_humans_cannot() -> Resul
     )?;
     let class = FailureSignalClass::TaskFailure;
     vault.record_custom_agent_failure(leased.id, class)?;
-    // No authority root means a non-bootstrap PERSON cannot claim this read.
-    assert!(matches!(
-        vault.drill_custom_agent_failure(&owner, class, leased.id),
-        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
-    ));
-    let revoke = bind_owner_with_revocation(&vault, owner.actor())?;
+    bind_owner_with_revocation(&vault, bound.actor())?;
+    for human in [&bound, &unbound] {
+        assert!(matches!(
+            vault.drill_custom_agent_failure(human, class, leased.id),
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+        ));
+    }
     let drill = vault.drill_custom_agent_failure(&owner, class, leased.id)?;
     assert_eq!(drill.trace.id, leased.id);
     assert_eq!(
         drill.receipt_refs,
         vec![crate::receipt::attempt_pack_receipt_id(&leased.id)]
     );
+    Ok(())
+}
+
+/// A co-owner of a shared vault is no bootstrap owner, so they drill only
+/// while the vault's authority root binds them, and not once that binding is
+/// revoked.
+#[test]
+fn a_co_owner_drills_only_while_the_authority_root_binds_them() -> Result<()> {
+    // Sharing resolves the default policy manifest, which `open_vault`'s
+    // legacy opener clears.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let co_owner = crate::test_util::co_owner_proof(&vault);
+    let agent = put_scope_agent(&vault, 0xba, "custom.co-owner")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    FailureLadder::new(&vault).handle_attempt_failure(
+        failure_input(&leased, indeterminate(), 20),
+        policy_with(agent, 3, FailureEscalationMode::Human),
+    )?;
+    let class = FailureSignalClass::TaskFailure;
+    vault.record_custom_agent_failure(leased.id, class)?;
     assert!(matches!(
-        vault.drill_custom_agent_failure(&unbound, class, leased.id),
+        vault.drill_custom_agent_failure(&co_owner, class, leased.id),
         Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
+    let revoke = bind_owner_with_revocation(&vault, co_owner.actor())?;
+    let drill = vault.drill_custom_agent_failure(&co_owner, class, leased.id)?;
+    assert_eq!(drill.trace.id, leased.id);
     vault.put_authority_log_entries(&[(revoke, TimeRange { start: 3, end: 3 }, 3)])?;
     assert!(matches!(
-        vault.drill_custom_agent_failure(&owner, class, leased.id),
+        vault.drill_custom_agent_failure(&co_owner, class, leased.id),
         Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
     ));
     Ok(())

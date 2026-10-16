@@ -16,6 +16,7 @@ use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 mod bypass;
 mod owner_reason;
+mod owner_tier;
 mod shared_brief;
 mod stale_proofs;
 
@@ -34,10 +35,7 @@ fn at(seconds: u64) -> TimeRange {
 /// authenticated-owner handle every minting door requires.
 fn owner_vault() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let (dir, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x51);
-    vault
-        .put_entity(&owner_id, ENTITY_TYPE_PERSON, at(1), 1, b"owner")
-        .expect("seed owner person");
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner");
@@ -1904,19 +1902,25 @@ fn revoked_holder_credential_cannot_land_a_pending_widen() {
     );
 }
 
+/// A proof for a co-owner merged away lands nothing, and the proposal stays
+/// open for its holder principal, now the survivor's: the vault's owner.
 #[test]
 fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
-    let (_dir, vault, owner) = owner_vault();
+    // Sharing resolves the default policy manifest, which `owner_vault`'s
+    // legacy opener clears.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
+        .unwrap();
     let agent = entity(0x81);
-    let survivor = entity(0x82);
-    for actor in [agent, survivor] {
-        vault
-            .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"person")
-            .unwrap();
-    }
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"person")
+        .unwrap();
     let proposer = widen_agent_credential(&vault, agent);
     let bound = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
     let proposal = vault
@@ -1927,13 +1931,19 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             vault.now_recorded_at() + 300,
         )
         .unwrap();
+    // A co-owner who holds the proposal's principal: an owner until merged.
+    let merged = crate::test_util::co_owner_proof(&vault).actor();
+    let held = vault
+        .authenticate_owner(merged, owner.principal_ref(), true, GateDecisionId::now())
+        .unwrap();
+    assert!(vault.is_live_vault_owner(&held).unwrap());
     let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred)
-        .with_actor(crate::WriteActor::new(survivor, EdgeActorClass::Human));
+        .with_actor(crate::WriteActor::new(owner.actor(), EdgeActorClass::Human));
     vault
         .apply_identity_topology_op(
             &IdentityTopologyOp::Merge(MergeOp {
-                sources: vec![owner.actor()],
-                survivor,
+                sources: vec![merged],
+                survivor: owner.actor(),
                 evidence: IdentityOpEvidence {
                     refs: Vec::new(),
                     rationale: "merged holder".into(),
@@ -1944,8 +1954,9 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             200,
         )
         .unwrap();
+    assert!(vault.is_live_vault_owner(&held).is_err());
     let error = vault
-        .accept_widen(&owner, &proposal.proposal_ref, &proposal.canonical_delta)
+        .accept_widen(&held, &proposal.proposal_ref, &proposal.canonical_delta)
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
     assert!(
@@ -1955,7 +1966,12 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             .is_none()
     );
     let current = vault
-        .authenticate_owner(survivor, owner.principal_ref(), true, GateDecisionId::now())
+        .authenticate_owner(
+            owner.actor(),
+            owner.principal_ref(),
+            true,
+            GateDecisionId::now(),
+        )
         .unwrap();
     assert!(matches!(
         vault

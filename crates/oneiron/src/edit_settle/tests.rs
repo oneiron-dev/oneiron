@@ -34,6 +34,12 @@ fn put_actor(vault: &Vault, at: u64) -> WriteActor {
     WriteActor::new(actor_id, EdgeActorClass::Human)
 }
 
+/// The vault's embedded owner as a writer: who settles under an owner's grant.
+fn owner_actor(vault: &Vault) -> WriteActor {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    WriteActor::new(owner, EdgeActorClass::Human)
+}
+
 fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
     let artifact_id = EntityId::now();
     vault
@@ -482,7 +488,7 @@ fn settle_standing_grant_requires_the_exact_actor_verb_class_and_brief() -> Resu
     use crate::store::GateDecisionId;
 
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let actor = put_actor(&vault, 10);
+    let actor = owner_actor(&vault);
     let other = put_actor(&vault, 10);
     let owner = vault.authenticate_owner(
         actor.entity_ref(),
@@ -749,7 +755,7 @@ fn post_revoke_settle_writes_no_version_ledger_or_receipt() -> Result<()> {
     use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
     use crate::store::GateDecisionId;
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let actor = put_actor(&vault, 20);
+    let actor = owner_actor(&vault);
     let owner = vault.authenticate_owner(
         actor.entity_ref(),
         "principal:o",

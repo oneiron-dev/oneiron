@@ -22,6 +22,12 @@ fn at(now: u64) -> TimeRange {
 fn id(seed: u8) -> EntityId {
     crate::test_util::entity(seed)
 }
+
+/// The vault's embedded owner, whom every packet here is addressed to.
+fn owner_id() -> EntityId {
+    crate::vault::embedded_owner_actor_id().unwrap()
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -34,15 +40,7 @@ impl Fixture {
         // deletes it, no fail-open policy, no modified production gate.
         let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
         crate::test_util::provision_engine_machines(&vault);
-        vault
-            .put_entity(
-                &id(0x51),
-                crate::registry::ENTITY_TYPE_PERSON,
-                at(1),
-                1,
-                b"owner",
-            )
-            .unwrap();
+        vault.ensure_embedded_owner_actor().unwrap();
         vault
             .put_entity(
                 &id(0x52),
@@ -54,7 +52,7 @@ impl Fixture {
             .unwrap();
         let owner = vault
             .authenticate_owner(
-                id(0x51),
+                owner_id(),
                 "principal:representation-owner",
                 true,
                 crate::store::GateDecisionId::now(),
@@ -65,14 +63,14 @@ impl Fixture {
         seed_source(
             &vault,
             id(0x61),
-            id(0x51),
+            owner_id(),
             "The report is ready for review.",
             None,
         );
         seed_source(
             &vault,
             id(0x62),
-            id(0x51),
+            owner_id(),
             "Keep it brief. Thanks, Alex.",
             None,
         );
@@ -403,7 +401,7 @@ fn fabricated_quotes_unlisted_citations_unreadable_world_and_foreign_voice_refus
     seed_source(
         &f.vault,
         id(0x64),
-        id(0x51),
+        owner_id(),
         "The report is ready.",
         Some(id(0x70)),
     );
@@ -435,7 +433,7 @@ fn source_revision_drift_refuses_review_token_schedule_and_queued_dispatch() {
     seed_source(
         &f.vault,
         id(0x61),
-        id(0x51),
+        owner_id(),
         "The report is ready for review. New scope.",
         None,
     );
@@ -571,7 +569,7 @@ fn a_foreign_owner_proof_cannot_review_or_approve_a_representation() {
     let other = Vault::open(other_dir.path(), crate::VaultConfig::device()).unwrap();
     other
         .put_entity(
-            &id(0x51),
+            &owner_id(),
             crate::registry::ENTITY_TYPE_PERSON,
             at(1),
             1,
@@ -580,7 +578,7 @@ fn a_foreign_owner_proof_cannot_review_or_approve_a_representation() {
         .unwrap();
     let foreign = other
         .authenticate_owner(
-            id(0x51),
+            owner_id(),
             "principal:representation-owner",
             true,
             crate::store::GateDecisionId::now(),

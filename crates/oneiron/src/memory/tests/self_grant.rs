@@ -197,7 +197,7 @@ fn runtime_supersede_trap_refuses_foreign_authored_head_before_receipts() {
 #[test]
 fn daemon_needs_exact_owner_delegation_even_for_its_own_skill() {
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x51);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let machine = put_machine(&vault, 0x52);
     root_vault_binding(&vault, 0x53, owner, "human");
     let proof = owner_proof(&vault, owner);
@@ -263,7 +263,10 @@ struct ConflictFixture {
     bundle: ClaimConflictBundle,
 }
 fn conflict(vault: &crate::Vault) -> ConflictFixture {
-    let owner = put_person(vault, 0x61);
+    conflict_bound_to(vault, vault.ensure_embedded_owner_actor().unwrap())
+}
+/// [`conflict`] with `owner`, whoever it is, bound as the root's human.
+fn conflict_bound_to(vault: &crate::Vault, owner: EntityId) -> ConflictFixture {
     let author = put_person(vault, 0x62);
     let subject = put_person(vault, 0x63);
     root_vault_binding(vault, 0x64, owner, "human");
@@ -430,6 +433,26 @@ fn admin_power_is_named_delegation_not_a_person_or_position_claim() {
     assert!(vault.get_claim(&receipt.ruling_claim).unwrap().is_some());
 }
 
+/// F18 tier flip (Sol r1 P1-1): a human binding under the root is no
+/// ownership. A bound person who does not own the vault reads and rules no
+/// conflict without a named review grant.
+#[test]
+fn a_bound_human_who_owns_nothing_rules_no_conflict_without_a_grant() {
+    let (_dir, vault) = open_vault();
+    let bound = put_person(&vault, 0x61);
+    let f = conflict_bound_to(&vault, bound);
+    let reviewer = facade_for(&vault, bound);
+    let proof = owner_proof(&vault, bound);
+    assert!(reviewer.pending_claim_conflicts(&proof).unwrap().is_empty());
+    assert_eq!(
+        reviewer
+            .rule_claim_conflict(&proof, f.bundle.bundle_id, 200)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+}
+
 #[test]
 fn explicit_owner_retraction_is_a_durable_override_not_implicit_self_grant() {
     let (_dir, vault) = open_vault();
@@ -568,7 +591,7 @@ fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
 fn own_skill_edit_survives_a_receipt_retention_sweep() {
     let (_dir, vault) = open_vault();
     let resident = put_person(&vault, 0x25);
-    let owner = put_person(&vault, 0x26);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let memory = vault.memory(resident, EdgeActorClass::Agent);
     let saved = memory.skill_save(id(0x27), &skill(), None, 100).unwrap();
     crate::test_util::backdate_claim_gate_decisions(&vault, 1).unwrap();

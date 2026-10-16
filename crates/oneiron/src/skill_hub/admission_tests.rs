@@ -51,16 +51,7 @@ impl Fixture {
     fn new() -> Self {
         let temp = tempfile::tempdir().expect("vault directory");
         let vault = Vault::open(temp.path(), crate::VaultConfig::default()).expect("vault");
-        let owner_id = EntityId::now();
-        vault
-            .put_entity(
-                &owner_id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                at(1),
-                1,
-                b"owner",
-            )
-            .expect("person");
+        let owner_id = vault.ensure_embedded_owner_actor().unwrap();
         let owner = vault
             .authenticate_owner(
                 owner_id,

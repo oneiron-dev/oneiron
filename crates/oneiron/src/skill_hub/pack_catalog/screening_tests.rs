@@ -40,9 +40,8 @@ fn fixture(
     config.map_size = 32 * 1024 * 1024;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
-    let actor = EntityId::now();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     let at = TimeRange { start: 1, end: 1 };
-    vault.put_entity(&actor, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
     let owner = vault.authenticate_owner(
         actor,
         "principal:screening-owner",

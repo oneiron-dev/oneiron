@@ -171,7 +171,7 @@ impl Vault {
         claim_ref: EntityId,
     ) -> Result<ProactivityPolicyProposal> {
         let txn = self.store.env.read_txn()?;
-        let actor = super::validate_owner_in_txn(self, &txn, owner)?;
+        let actor = super::validate_person_in_txn(self, &txn, owner)?;
         load_policy_proposal(self, &txn, actor, claim_ref)
     }
 

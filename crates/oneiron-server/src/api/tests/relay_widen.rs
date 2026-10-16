@@ -11,7 +11,7 @@ use oneiron::{
 async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
     let (_dir, server) = auth_test_server();
     let vault = server.vault();
-    let owner = oneiron::EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let agent = oneiron::EntityId::now();
     for id in [owner, agent] {
         vault
@@ -204,7 +204,7 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
     server.vault().ensure_host_root_slip(&issuer).unwrap();
     Arc::get_mut(&mut server).unwrap().managed_issuer = Some(issuer);
     let vault = server.vault();
-    let owner = oneiron::EntityId::now();
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     let agent = oneiron::EntityId::now();
     let other = oneiron::EntityId::now();
     for actor in [owner, agent, other] {

@@ -159,6 +159,13 @@ impl Vault {
         if write.approval == ClaimApprovalStatus::Rejected {
             return Ok(IdentityOpOutcome::Noop);
         }
+        // No op retires the vault's embedded owner: the owner survives a
+        // merge instead.
+        if let Some(rejection) =
+            super::transition_table::owner_retirement(op, &crate::vault::embedded_owner_actor_id()?)
+        {
+            return Err(Error::Sync(SyncError::IdentityTopologyRejected(rejection)));
+        }
         // ARCH-0055 §6 re-proposal suppression (ONE-1746). Propose and apply
         // are ONE door, separated only by `write.approval`, so the gate sits
         // here behind `!is_effective()`: a PROPOSED merge over a pair an

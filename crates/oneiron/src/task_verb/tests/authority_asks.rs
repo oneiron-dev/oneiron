@@ -53,12 +53,14 @@ fn ask_resolves_live_holders_delegate_first_and_retries_one_intent() {
     let asker = own_agent(&vault);
     let delegate_a = consult_peer(&vault, 0x91);
     let delegate_b = consult_peer(&vault, 0x92);
-    let owner_a = consult_peer(&vault, 0x93);
-    let owner_b = consult_peer(&vault, 0x94);
-    grant_scope(&vault, owner_a, delegate_a, "review");
-    let revoked = grant_scope(&vault, owner_b, delegate_b, "review");
+    // Only the vault's owner grants: one owner holds both delegations.
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    grant_scope(&vault, owner, delegate_a, "review");
+    let revoked = grant_scope(&vault, owner, delegate_b, "review");
     // Another class is not another holder of this authority.
-    grant_scope(&vault, owner_b, delegate_b, "unrelated");
+    grant_scope(&vault, owner, delegate_b, "unrelated");
     let memory = vault.memory(asker, EdgeActorClass::Agent);
     let input = scope_spec(&vault, "fanout");
     let receipt = memory.tasks_ask(&input).unwrap();
@@ -75,7 +77,7 @@ fn ask_resolves_live_holders_delegate_first_and_retries_one_intent() {
                 .unwrap()
         })
         .collect();
-    assert_eq!(actors, vec![delegate_a, delegate_b, owner_a, owner_b]);
+    assert_eq!(actors, vec![delegate_a, delegate_b, owner]);
     assert_eq!(receipt.hold, Some(TaskAskHoldReason::NoLiveRoute));
     let replay = memory.tasks_ask(&input).unwrap();
     assert_eq!(replay.handle, receipt.handle);
@@ -85,8 +87,8 @@ fn ask_resolves_live_holders_delegate_first_and_retries_one_intent() {
     assert!(memory.tasks_ask(&changed).is_err());
     let auth = vault
         .authenticate_owner(
-            owner_b,
-            &owner_b.to_hex(),
+            owner,
+            &owner.to_hex(),
             true,
             crate::store::GateDecisionId::now(),
         )
@@ -102,7 +104,9 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
     let delegate = consult_peer(&vault, 0x95);
-    let owner = consult_peer(&vault, 0x96);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     grant_scope(&vault, owner, delegate, "review");
     let memory = vault.memory(asker, EdgeActorClass::Agent);
     let input = scope_spec(&vault, "first-answer");
@@ -204,7 +208,9 @@ fn first_landed_answer_wins_over_backdated_later_answer_and_survives_reopen() {
     let (dir, vault) = open_vault();
     let asker = own_agent(&vault);
     let delegate = consult_peer(&vault, 0x97);
-    let owner = consult_peer(&vault, 0x98);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     grant_scope(&vault, owner, delegate, "review");
     let input = scope_spec(&vault, "race");
     let receipt = vault
@@ -277,7 +283,9 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
     let (_dir, source) = open_vault();
     let asker = own_agent(&source);
     let delegate = consult_peer(&source, 0xB1);
-    let owner = consult_peer(&source, 0xB2);
+    let owner = source
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     grant_scope(&source, owner, delegate, "review");
     let input = scope_spec(&source, "replicated");
     let receipt = source
@@ -347,7 +355,9 @@ fn ask_facts_are_named_messagepack_and_reject_unknown_or_duplicate_fields() {
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
     let delegate = consult_peer(&vault, 0xB3);
-    let owner = consult_peer(&vault, 0xB4);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     grant_scope(&vault, owner, delegate, "review");
     let memory = vault.memory(asker, EdgeActorClass::Agent);
     let receipt = memory.tasks_ask(&scope_spec(&vault, "record-map")).unwrap();
@@ -416,7 +426,9 @@ fn nonmember_option_consult_replays_without_changing_ask_evidence() {
     let (_dir, vault) = open_vault();
     let asker = own_agent(&vault);
     let delegate = consult_peer(&vault, 0x95);
-    let owner = consult_peer(&vault, 0x96);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     grant_scope(&vault, owner, delegate, "review");
     let memory = vault.memory(asker, EdgeActorClass::Agent);
     let spec = scope_spec(&vault, "nonmember-option-replay");

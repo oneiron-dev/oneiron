@@ -560,8 +560,8 @@ fn mailbox_consent_owner_cannot_be_inferred_from_admin_write_actor() -> Result<(
     }
     assert!(matches!(
         vault.authenticate_owner(
-            entity(MEMBER_PERSON),
-            &entity(MEMBER_PERSON).to_hex(),
+            member_person(),
+            &member_person().to_hex(),
             false,
             crate::store::GateDecisionId::now()
         ),

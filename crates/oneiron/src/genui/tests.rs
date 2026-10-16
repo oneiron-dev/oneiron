@@ -50,7 +50,10 @@ fn owner_context() -> (
 ) {
     let (dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let owner = authenticated_person(&vault, 0x71, "owner");
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(owner_id, "owner", true, crate::store::GateDecisionId::now())
+        .expect("owner proof");
     (dir, vault, owner)
 }
 
@@ -139,7 +142,8 @@ fn voice_path_cannot_borrow_a_store_authenticated_owner_handle() -> Result<()> {
         card.evaluate_action(&vault, &request, &attacker)
             .expect_err("caller voice claim must not authenticate another principal")
             .kind(),
-        crate::error::ErrorKind::ConsentUnauthenticatedActor
+        // A non-owner's proof stops at the owner tier, before its claim.
+        crate::error::ErrorKind::ConsentOwnerNotAuthenticated
     );
     assert_eq!(
         card.evaluate_action(&vault, &request, &owner)
@@ -172,7 +176,8 @@ fn principal_self_attestation_is_refused_and_store_authenticated_actor_succeeds(
         card.evaluate_action(&vault, &request, &attacker)
             .expect_err("self-attested owner text must not authenticate")
             .kind(),
-        crate::error::ErrorKind::ConsentUnauthenticatedActor
+        // A non-owner's proof stops at the owner tier, before its claim.
+        crate::error::ErrorKind::ConsentOwnerNotAuthenticated
     );
     assert_eq!(
         card.evaluate_action(&vault, &request, &owner)?.decision,

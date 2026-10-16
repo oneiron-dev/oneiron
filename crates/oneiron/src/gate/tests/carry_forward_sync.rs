@@ -30,7 +30,7 @@ fn source_heads() -> Result<SourceHeads> {
         super::carry_forward::park_forward_care(&vault, id, subject, run)?;
     }
     let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
     for (run, action) in [
         ("carry-sync-approve", GateConsentBundleAction::Approve),
         ("carry-sync-decline", GateConsentBundleAction::Decline),

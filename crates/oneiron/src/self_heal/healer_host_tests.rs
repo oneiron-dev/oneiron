@@ -9,15 +9,7 @@ fn fixture() -> (
 ) {
     let d = tempfile::tempdir().unwrap();
     let v = Vault::open_owned(d.path(), crate::VaultConfig::device()).unwrap();
-    let person = EntityId::now();
-    v.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )
-    .unwrap();
+    let person = v.ensure_embedded_owner_actor().unwrap();
     let owner = v
         .authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())
         .unwrap();

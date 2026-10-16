@@ -219,7 +219,8 @@ pub fn set_judge_digest_minutes(
     minutes: u32,
 ) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        let actor = crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
+        let actor =
+            crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &*txn, owner)?;
         MINUTES.put(&vault.store, txn, &actor, &JudgeMinutes(minutes))
     })
 }
@@ -255,7 +256,8 @@ pub fn record_judge_pick(
     at: u64,
 ) -> Result<JudgeLabel> {
     vault.with_write_txn_grouped(|txn| {
-        let actor = crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
+        let actor =
+            crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &*txn, owner)?;
         let ask = ASKS
             .get(&vault.store, &*txn, &ask_id)?
             .ok_or(Error::EntityNotFound)?;
@@ -277,7 +279,7 @@ pub fn record_judge_pick(
             ask,
             chosen,
             picked_at: at,
-            principal_ref: owner.principal_ref_in_txn(vault, &*txn)?.into(),
+            principal_ref: owner.person_principal_ref_in_txn(vault, &*txn)?.into(),
         };
         LABELS.put(&vault.store, txn, &ask_id, &label)?;
         Ok(label)

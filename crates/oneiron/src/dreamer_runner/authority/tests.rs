@@ -174,7 +174,7 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
     crate::test_util::provision_engine_machines(&vault);
     let dreamer = vault.dreamer_authority()?;
     let agent = EntityId::now();
-    let owner = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let subject = EntityId::now();
     let evidence = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };

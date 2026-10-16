@@ -101,8 +101,7 @@ fn v3() -> DreamerWakePolicy {
 fn authenticated_owner_writes_policy_and_foreign_proof_cannot() -> Result<()> {
     let (_dir, vault) = open();
     let (_other_dir, other) = open();
-    let actor = EntityId::now();
-    other.put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
+    let actor = other.ensure_embedded_owner_actor().unwrap();
     let proof = other.authenticate_owner(
         actor,
         &actor.to_hex(),
@@ -130,9 +129,8 @@ fn authenticated_owner_writes_policy_and_foreign_proof_cannot() -> Result<()> {
 fn a_foreign_owner_proof_cannot_write_policy_over_a_shared_person_id() -> Result<()> {
     let (_dir, vault) = open();
     let (_other_dir, other) = open();
-    let actor = EntityId::now();
+    let actor = other.ensure_embedded_owner_actor().unwrap();
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
-    other.put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
     let foreign = other.authenticate_owner(
         actor,
         &actor.to_hex(),

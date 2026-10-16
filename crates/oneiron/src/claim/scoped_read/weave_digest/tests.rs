@@ -47,7 +47,7 @@ fn read_saved(
 #[test]
 fn schedule_refuses_cross_role_recipes_and_cross_reader_render() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x51);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let agent = entity(0x52);
     person(&vault, owner_id)?;
     person(&vault, agent)?;
@@ -121,7 +121,7 @@ fn schedule_refuses_cross_role_recipes_and_cross_reader_render() -> Result<()> {
 #[test]
 fn hard_delete_scrubs_copied_digest_bytes_and_saved_read_refuses_erased_source() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x61);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let person_id = entity(0x62);
     let other_id = entity(0x63);
     for id in [owner_id, person_id, other_id] {
@@ -196,7 +196,7 @@ fn hard_delete_scrubs_copied_digest_bytes_and_saved_read_refuses_erased_source()
 #[test]
 fn deletion_between_projection_and_commit_cannot_republish_erased_body() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x71);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let person_id = entity(0x72);
     person(&vault, owner_id)?;
     person(&vault, person_id)?;
@@ -257,7 +257,7 @@ fn deletion_between_projection_and_commit_cannot_republish_erased_body() -> Resu
 #[test]
 fn owner_inactivation_between_projection_and_commit_preserves_due_row() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0x81);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     person(&vault, owner_id)?;
     let owner = vault.authenticate_owner(
         owner_id,
@@ -318,7 +318,7 @@ fn owner_inactivation_between_projection_and_commit_preserves_due_row() -> Resul
 fn erased_upstream_source_scrubs_derived_claim_digest_even_after_regeneration() -> Result<()> {
     use crate::ports::{DependencyIndex, EntityRecord, SourceSpan};
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0xA8);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let reader_id = entity(0xA9);
     let document = entity(0xAA);
     let replacement = entity(0xAB);
@@ -427,7 +427,7 @@ fn non_claim_rows_and_edge_endpoints_are_rechecked_at_publication() -> Result<()
     use crate::workspace_roster::ProjectRecord;
     for case in 0..4 {
         let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-        let owner_id = entity(0xC1);
+        let owner_id = vault.ensure_embedded_owner_actor().unwrap();
         let person_id = entity(0xC2);
         let peer = entity(0xC3);
         for id in [owner_id, person_id, peer] {
@@ -531,7 +531,7 @@ fn non_claim_rows_and_edge_endpoints_are_rechecked_at_publication() -> Result<()
 #[test]
 fn saved_digest_is_reader_bound_and_revocation_hides_every_saved_byte() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0xD4);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let person_id = entity(0xD5);
     for id in [owner_id, person_id] {
         person(&vault, id)?;
@@ -598,7 +598,7 @@ fn saved_digest_is_reader_bound_and_revocation_hides_every_saved_byte() -> Resul
 fn saved_private_claim_cannot_be_authorized_by_a_new_public_revision() -> Result<()> {
     use crate::ports::EntityRecord;
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
-    let owner_id = entity(0xD8);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let person_id = entity(0xD9);
     let world = entity(0xDA);
     for id in [owner_id, person_id] {

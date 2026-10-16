@@ -103,14 +103,7 @@ fn installed_hub_catalog_parity_and_capability_admission() -> Result<()> {
     assert!(CatalogSeed::from_installed_pack(&vault).is_err());
     vault.stage_pack_source(&source, at, 1)?;
     assert!(CatalogSeed::from_installed_pack(&vault).is_err());
-    let owner_id = crate::EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        at,
-        1,
-        b"owner",
-    )?;
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner_id,
         "principal:catalog-owner",
