@@ -18,6 +18,7 @@ mod ask_soft_confirm_types;
 mod ask_types;
 mod board_task;
 pub(crate) use board_task::board_task_for_id;
+mod brief;
 mod consts;
 mod consult_fanout_admission;
 mod consult_fanout_facade;
@@ -31,10 +32,17 @@ mod consult_result;
 mod create_facade;
 mod create_spec;
 mod create_validation;
+mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
 mod fanout_check;
 mod follow_up;
+mod highway;
+mod highway_accept;
+mod highway_post;
+mod highway_report;
+mod highway_status;
+mod highway_types;
 mod lifecycle_facade;
 mod linear_store;
 mod owner_index;
@@ -46,6 +54,7 @@ mod project_ask;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+mod refusal;
 mod room_thread;
 mod route_receipts;
 mod scheduling;
@@ -54,7 +63,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, task_binding};
+pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding};
 mod wire_encode;
 
 #[cfg(test)]
@@ -81,6 +90,7 @@ pub use dormant_magistrate::{
     record_magistrate_overturn,
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
+pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub(crate) use room_thread::thread_tasks as room_thread_tasks;
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
@@ -92,6 +102,19 @@ pub use terminal_state::{
     TaskTerminalRecord, board_status_for_disposition, merge_task_terminal_register,
 };
 pub use verb_kind::{TaskAssignee, TaskKind, TaskTtl};
+
+pub use brief::{
+    BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion,
+    DoneMeans, EscalationRule, EscalationTrigger, PinnedPack, PinnedRef, QueueTaskBrief, SpawnPins,
+    StoredBrief, TypeRef, brief_digest,
+};
+pub use decision_port::TaskDecisions;
+pub(crate) use highway_post::settle_task_proposal_in_txn;
+pub use highway_types::{
+    AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
+    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
+    TaskStatusQuery, TaskStatusView, TaskVia,
+};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
@@ -160,6 +183,9 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_connector;
+mod sdk_host;
+mod sdk_self;
 
 #[cfg(test)]
 mod ask_outcome_tests;

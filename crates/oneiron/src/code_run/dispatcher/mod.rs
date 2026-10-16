@@ -4,6 +4,7 @@ mod emission;
 mod envelope;
 mod fold_verbs;
 mod human_speech;
+mod leader;
 mod memory_verbs;
 mod wake_policy;
 
@@ -219,6 +220,19 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(admitted)
     }
 
+    /// Asks the bound door whether a result the run retained, produced from
+    /// `rows`, stays on this device for its caller now. A run whose host
+    /// binds no door withholds nothing.
+    pub(crate) fn withholds_retained(
+        &self,
+        rows: Option<&[EntityId]>,
+    ) -> std::result::Result<bool, AgentVerbRefusal> {
+        match &self.agent_verbs {
+            Some(door) => door.withholds_retained(rows),
+            None => Ok(false),
+        }
+    }
+
     /// Binds a host-authenticated owner proof to one agent action dispatch.
     /// The guest payload has no field from which it could construct this.
     pub(crate) fn with_authenticated_owner(
@@ -378,6 +392,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::TasksAsk(call) => self.dispatch_tasks_ask(*call),
             SelfCall::TasksWait(call) => self.dispatch_tasks_wait(call, run_id),
+            SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),

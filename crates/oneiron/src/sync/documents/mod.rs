@@ -672,7 +672,11 @@ pub fn document_frame_withheld_for(
     }
     (|| -> Result<bool> {
         let _accepting = vault.device_only_acceptance();
-        Ok(!super::residence::rows_may_reach(vault, peer, &[document.entity])?)
+        Ok(!super::residence::rows_may_reach(
+            vault,
+            peer,
+            &[document.entity],
+        )?)
     })()
     .unwrap_or(true)
 }

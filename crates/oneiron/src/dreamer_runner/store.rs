@@ -15,8 +15,8 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
     DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
@@ -362,6 +362,31 @@ impl<'a> DreamerRunnerStore<'a> {
             input.dedupe_key,
             input.run_id,
             input.now,
+        )
+    }
+
+    /// Enqueues the NOTE review (OF-073) as a Nightly child in the wake's own
+    /// commit. One review per wake key: the review pages through every NOTE
+    /// itself, so a second one in the same night would read the same pages.
+    pub(crate) fn enqueue_note_review_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        parent_attempt: Option<crate::attempt_queue::AttemptId>,
+        wake_key: Option<&str>,
+        run_id: Option<String>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_NOTE_REVIEW_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::Nil,
+                parent_attempt,
+            },
+            wake_key.map(|key| format!("{DREAMER_NOTE_REVIEW_ATTEMPT_KIND}:{key}")),
+            run_id,
+            now,
         )
     }
 
@@ -761,7 +786,9 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
+        || kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+        || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }

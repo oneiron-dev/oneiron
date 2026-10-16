@@ -92,6 +92,14 @@ pub fn project_consult_task_to_a2a(
                 decision_round: 0,
             })
         }
+        // A blocked task is still in progress on A2A's axis: it waits on
+        // what it named, it has not paused for a verdict.
+        TaskExecutionState::Blocked { since, .. } => {
+            ConsultLadderState::Working(crate::consult_ladder::WorkingState {
+                started_at: *since,
+                decision_round: 0,
+            })
+        }
         // A live row carrying a settled ladder is an escalation waiting on its
         // follow-on: the ladder half is exact, so it lifts back whole.
         TaskExecutionState::Interrupted {
