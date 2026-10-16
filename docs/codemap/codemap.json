@@ -9832,7 +9832,7 @@
      "surface": {
       "const": 3,
       "enum": 5,
-      "fn": 26,
+      "fn": 28,
       "struct": 2
      }
     },
@@ -17594,6 +17594,14 @@
      "notable": [],
      "path": "src/engine_executor/tests/compaction_host.rs",
      "purpose": "The compaction host end to end (agent-runtime-v1 §d7 done-means): a run past its threshold compacts by…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/host_services.rs",
+     "purpose": "F12 (H129): generated executor code reaches the host through `self.*` and its own recorded outputs alone",
      "surface": {}
     },
     {
@@ -41842,7 +41850,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42671,7 +42679,7 @@
    "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2571,
-   "test_files": 863
+   "test_files": 864
   },
   "oneiron-android": {
    "files": [
@@ -48491,7 +48499,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -48985,7 +48993,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
