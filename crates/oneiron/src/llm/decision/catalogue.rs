@@ -55,6 +55,13 @@ pub const CRITIC_REVIEW: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Should this AUTO-mode fan-out start (allow, deny or escalate)? Keyed by the ask's trigger.
+pub const FANOUT_ASK: QuestionFamily = QuestionFamily {
+    name: "fanout.ask",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which label one changed hunk of an attribution takes (one region for an outcome with no
 /// edit). Keyed by lane and hunk position.
 pub const ATTRIBUTION_HUNK: QuestionFamily = QuestionFamily {
@@ -75,6 +82,7 @@ pub const CAMPAIGN_TASTE: QuestionFamily = QuestionFamily {
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
     CRITIC_REVIEW,
+    FANOUT_ASK,
     ATTRIBUTION_HUNK,
     CAMPAIGN_TASTE,
 ];

@@ -18,7 +18,7 @@ use crate::edit_distance::escalation::{EscalationTrigger, standing_policy_for};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fanout_auto::{
-    FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, LearningFanoutAutoDecider,
+    FanoutAskContext, FanoutAskTrigger, FanoutDecisions, LearningFanoutAutoDecider,
 };
 use crate::gate::fanout_policy::{FanoutControls, FanoutScopedRow, valid_rates};
 use crate::gate::{
@@ -67,20 +67,20 @@ impl Memory<'_> {
         self.fan_out_counted_consults_with_classifier(input, preset, None)
     }
 
-    /// Admit a counted preset plan with the host's existing AUTO classifier.
-    /// An absent or failing classifier still pauses rather than allowing work.
+    /// Admit a counted preset plan with the host's AUTO decisions.
+    /// Absent decisions or an abstaining ladder still pause rather than allowing work.
     pub fn fan_out_counted_consults_with_classifier(
         &self,
         input: &ConsultFanOutSpec,
         preset: &str,
-        classifier: Option<&dyn FanoutAskClassifier>,
+        decisions: Option<&FanoutDecisions<'_>>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         if preset.is_empty() || preset.trim() != preset {
             return Err(MemoryError::bad_request("fan-out preset must be canonical"));
         }
         self.fan_out_consults_impl(
             input,
-            classifier,
+            decisions,
             true,
             Some(preset),
             ConsultFanOutScope::default(),
@@ -96,7 +96,7 @@ impl Memory<'_> {
         preset: &str,
         scope: &ConsultFanOutScope,
         owner: &AuthenticatedOwner,
-        classifier: Option<&dyn FanoutAskClassifier>,
+        decisions: Option<&FanoutDecisions<'_>>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         // A non-vault scope can carry a holder override. The caller cannot
         // select such a scope as an unauthenticated widening selector.
@@ -106,11 +106,11 @@ impl Memory<'_> {
                 "fan-out preset or policy scope must be canonical",
             ));
         }
-        self.fan_out_consults_impl(input, classifier, true, Some(preset), scope.clone())
+        self.fan_out_consults_impl(input, decisions, true, Some(preset), scope.clone())
     }
 
     /// Meter a counted plan before admission. This does not write a TASK,
-    /// run a classifier, or persist a pause.
+    /// ask the decision ladder, or persist a pause.
     pub fn estimate_counted_consults(
         &self,
         input: &ConsultFanOutSpec,
@@ -138,15 +138,15 @@ impl Memory<'_> {
         })
     }
 
-    /// Host-injected AUTO classifier. Unavailable or uncertain classifiers surface a pause.
+    /// The host's AUTO decisions. Absent decisions or an uncertain answer surface a pause.
     pub fn fan_out_consults_with_classifier(
         &self,
         input: &ConsultFanOutSpec,
-        classifier: Option<&dyn FanoutAskClassifier>,
+        decisions: Option<&FanoutDecisions<'_>>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
         self.fan_out_consults_impl(
             input,
-            classifier,
+            decisions,
             false,
             None,
             ConsultFanOutScope::default(),
@@ -156,7 +156,7 @@ impl Memory<'_> {
     fn fan_out_consults_impl(
         &self,
         input: &ConsultFanOutSpec,
-        classifier: Option<&dyn FanoutAskClassifier>,
+        decisions: Option<&FanoutDecisions<'_>>,
         allow_repeated_peers: bool,
         preset: Option<&str>,
         policy_scope: ConsultFanOutScope,
@@ -204,7 +204,7 @@ impl Memory<'_> {
             )?
             .is_some()
         };
-        // Classifier IO never holds the writer. A concurrent standing-policy or
+        // Decision IO never holds the writer. A concurrent standing-policy or
         // knob change invalidates the cached answer before minting.
         let standing = standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)?;
         let auto = LearningFanoutAutoDecider::new(
@@ -217,7 +217,7 @@ impl Memory<'_> {
                 },
                 question: input.question_ref.short_ref(),
             },
-            classifier,
+            decisions,
         )?;
         let disposition = if !has_pathology
             && run.estimate.total_count > policy.approval_threshold
@@ -481,7 +481,7 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         self.require_fanout_ceiling(txn)?;
         // Counted and stamped at the engine's clock as it mints, not as the
-        // admission began: a classifier or an approval can hold a request
+        // admission began: a decision or an approval can hold a request
         // across a window boundary (review r2, Astra F1).
         let dispatched_at = self.vault().now_recorded_at();
         // A fan-out request is counted, never refused for rate (OF-520). The

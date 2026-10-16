@@ -53,12 +53,6 @@ pub enum AuthorityOp {
     RevokeDevice {
         revoked_key: AuthorityKey,
     },
-    /// Historic ceiling payload retained for signed-history replay. It confers no authority.
-    RetiredCeiling {
-        authority_key: AuthorityKey,
-        actor_class: String,
-        ceiling: u8,
-    },
     /// Rotates one authority key to another.
     RotateKey {
         old_key: AuthorityKey,
@@ -356,16 +350,6 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         }
         AuthorityOp::EnrollDevice { device } => device.validate(),
         AuthorityOp::RevokeDevice { revoked_key } => revoked_key.validate(),
-        AuthorityOp::RetiredCeiling {
-            authority_key,
-            actor_class,
-            ..
-        } => {
-            if actor_class.is_empty() || actor_class.len() > MAX_ACTOR_CLASS_BYTES {
-                return Err(invalid_authority());
-            }
-            authority_key.validate()
-        }
         AuthorityOp::RotateKey {
             old_key,
             new_device,
@@ -428,7 +412,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             epoch,
             ..
         } => {
-            // EXACT class vocabulary, not RetiredCeiling's free-form string: an
+            // EXACT class vocabulary: an
             // unrecognized class must never fold into a binding that some
             // future reader treats as equivalent to "human".
             if !ACTOR_BINDING_CLASSES.contains(&actor_class.as_str()) || *epoch == 0 {

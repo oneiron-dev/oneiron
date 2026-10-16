@@ -4,7 +4,7 @@
 pub const SETTLEMENT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned on-disk MessagePack key set for a [`SettlementRecord`](crate::edit_settle::SettlementRecord) body.
-pub const SETTLEMENT_RECORD_KEYS: [&str; 17] = [
+pub const SETTLEMENT_RECORD_KEYS: [&str; 18] = [
     "schema_version",
     "proposal_ref",
     "outcome",
@@ -22,6 +22,7 @@ pub const SETTLEMENT_RECORD_KEYS: [&str; 17] = [
     "pptx_review_identities",
     "sheet_answers",
     "pptx_judgments",
+    "deck",
 ];
 
 /// Pinned on-disk MessagePack key set for one [`SettledAnchor`](crate::edit_settle::SettledAnchor) entry.
@@ -110,3 +111,15 @@ pub(super) const FIELD_SHEET_ANSWER_COUNT: &str = "sheet_answer_count";
 pub(super) const FIELD_QUESTION_VERSION: &str = "question_version";
 
 pub(super) const KEY_PPTX_JUDGMENTS: &str = SETTLEMENT_RECORD_KEYS[16];
+
+pub(super) const KEY_DECK: &str = SETTLEMENT_RECORD_KEYS[17];
+
+pub(super) const FIELD_DECK_HANDOFF: &str = "deck_handoff";
+
+pub(super) const FIELD_DECK_PARTS: &str = "deck_parts";
+
+pub(super) const FIELD_DECK_RENDERS: &str = "deck_renders";
+
+pub(super) const FIELD_DECK_MADE_BY: &str = "deck_made_by";
+
+pub(super) const FIELD_DECK_THREAD: &str = "deck_thread";

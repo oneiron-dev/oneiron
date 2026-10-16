@@ -31,14 +31,18 @@ impl CatalogSeed {
             || receipt.hub_ref != MODEL_PACK_SUBTREE
             || receipt.status != PackInstallStatus::Active
         {
-            return Err(invalid("model catalog is not the installed first-party pack"));
+            return Err(invalid(
+                "model catalog is not the installed first-party pack",
+            ));
         }
         // The ref's own policy judges drift: a frozen ref accepts one hash.
         if let Some(tracked) = vault.hub_ref_sync_in_txn(txn, &hub, MODEL_PACK_SUBTREE)?
             && tracked.sync_policy == HubSyncPolicy::ContentHashFrozen
             && tracked.hub_ref.pin != HubPin::ContentHash(receipt.content_hash.clone())
         {
-            return Err(invalid("model catalog drifted from its frozen content hash"));
+            return Err(invalid(
+                "model catalog drifted from its frozen content hash",
+            ));
         }
         let id = EntityId::from_hex(&receipt.source_id)?;
         let source = vault

@@ -325,6 +325,10 @@ pub struct VaultConfig {
     /// Stored-edge VAD salience for PPR. Validated at query time in `0..=0.4`.
     /// Nonzero use requires the pinned BEAM recall and latency gate.
     pub ppr_vad_alpha: f32,
+    /// Affect-weighted retrieval availability (OF-423): arousal-stretched
+    /// aging, the critical/aroused sensitivity floor and emotion congruence.
+    /// Every dial defaults off; validated when a run starts.
+    pub affect_retrieval: crate::pipeline::AffectRetrievalPolicy,
     /// Default-off community prior for Uniform (`expand_ppr`) retrieval only.
     pub ppr_community: PprCommunityConfig,
     /// Capture retrieval-run telemetry for ordinary searches. Disabled by default;
@@ -628,6 +632,7 @@ impl VaultConfig {
             failure_signals: failure_signals::FailureSignalConfig::default(),
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
+            affect_retrieval: crate::pipeline::AffectRetrievalPolicy::default(),
             ppr_community: PprCommunityConfig::default(),
             retrieval_telemetry_capture: false,
             dimensions: 1024,
@@ -658,6 +663,7 @@ impl VaultConfig {
             failure_signals: failure_signals::FailureSignalConfig::default(),
             store_clock: crate::ports::StoreClock::default(),
             ppr_vad_alpha: PPR_VAD_ALPHA_DEFAULT,
+            affect_retrieval: crate::pipeline::AffectRetrievalPolicy::default(),
             ppr_community: PprCommunityConfig::default(),
             retrieval_telemetry_capture: false,
             dimensions: 4096,

@@ -17,7 +17,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
 #[cfg(feature = "test-hooks")]
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM};
+use crate::registry::{
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN,
+};
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
@@ -67,7 +69,15 @@ pub fn admit_federated_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
 ) -> Result<Vec<u8>> {
-    Ok(admit_window_update(vault, key, update, role, None)?.bytes)
+    Ok(admit_window_update(
+        vault,
+        key,
+        update,
+        role,
+        None,
+        super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
+    )?
+    .bytes)
 }
 
 /// [`admit_federated_window_update`] for an update the federation peer
@@ -82,7 +92,9 @@ pub(in crate::sync) fn admit_peer_window_update(
     peer: EntityId,
 ) -> Result<AdmittedUpdate> {
     let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
-    admit_window_update(vault, key, update, role, Some(lane))
+    // The owner's scale for this peer, read once for the whole update.
+    let scale = vault.federation_peer_confidence(&peer)?;
+    admit_window_update(vault, key, update, role, Some(lane), scale)
 }
 
 /// [`admit_federated_window_update`] for a foreign artifact staged under
@@ -97,7 +109,14 @@ pub(crate) fn admit_staged_window_update(
     role: FederationAdmissionRole,
     receipt_id: &[u8; 32],
 ) -> Result<AdmittedUpdate> {
-    admit_window_update(vault, key, update, role, Some(staged_lane(receipt_id)))
+    admit_window_update(
+        vault,
+        key,
+        update,
+        role,
+        Some(staged_lane(receipt_id)),
+        super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
+    )
 }
 
 #[cfg(feature = "sync")]
@@ -251,6 +270,7 @@ fn admit_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
     lane: Option<String>,
+    scale: f32,
 ) -> Result<AdmittedUpdate> {
     let remote = create_window_doc("federation-remote", key);
     remote.import(update).map_err(|source| {
@@ -266,7 +286,7 @@ fn admit_window_update(
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
-    copy_admitted_entities(vault, &policy, &remote, &admitted)?;
+    copy_admitted_entities(vault, &policy, &remote, &admitted, scale)?;
     let early = copy_admitted_edges(
         vault,
         key,
@@ -467,6 +487,7 @@ fn copy_admitted_entities(
     policy: &crate::gate::PolicyManifestResolution,
     source: &LoroDoc,
     target: &LoroDoc,
+    scale: f32,
 ) -> Result<()> {
     let source_entities = source.get_map("entities");
     let target_entities = target.get_map("entities");
@@ -476,7 +497,7 @@ fn copy_admitted_entities(
         if result.is_err() {
             return;
         }
-        result = admit_federated_entity_blob(vault, policy, &rtxn, key, value)
+        result = admit_federated_entity_blob_scaled(vault, policy, &rtxn, key, value, scale)
             .and_then(|blob| map_insert_bytes(&target_entities, key, &blob));
     });
     result
@@ -489,6 +510,27 @@ pub(crate) fn admit_federated_entity_blob(
     txn: &heed::RoTxn<'_>,
     key: &str,
     value: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    admit_federated_entity_blob_scaled(
+        vault,
+        policy,
+        txn,
+        key,
+        value,
+        super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
+    )
+}
+
+/// [`admit_federated_entity_blob`] with the sending peer's confidence
+/// `scale` for a CLAIM.
+#[cfg(feature = "sync")]
+fn admit_federated_entity_blob_scaled(
+    vault: &Vault,
+    policy: &crate::gate::PolicyManifestResolution,
+    txn: &heed::RoTxn<'_>,
+    key: &str,
+    value: Option<&[u8]>,
+    scale: f32,
 ) -> Result<Vec<u8>> {
     let blob = value.ok_or(Error::InvalidKey)?;
     let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
@@ -525,11 +567,17 @@ pub(crate) fn admit_federated_entity_blob(
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
         refuse_peer_agent_definition_widening(&vault.store, txn, &id, blob)?;
+        if matches!(
+            header.entity_type,
+            ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
+        ) {
+            return restamp_federated_transcript(blob);
+        }
         return Ok(blob.to_vec());
     }
 
     let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
-    let body = downweight_federated_claim(restamp_federated_claim_source(body))?;
+    let body = downweight_federated_claim(restamp_federated_claim_source(body), scale)?;
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;
 
@@ -568,15 +616,61 @@ fn refuse_peer_agent_definition_widening(
     Ok(())
 }
 
-/// ARCH-0043 requires a down-weight but does not prescribe a factor.
-/// Both federated roles use one conservative multiplier, pinned by admission tests.
+/// The source a foreign TURN or CONVERSATION is stamped with (OF-149).
+pub(crate) const FEDERATION_IMPORT_SOURCE: &str = "federation";
+
+/// A peer's TURN or CONVERSATION is imported evidence, never the owner's live
+/// words: its body is stamped with the federation import source unless the
+/// peer already named one. The stamp is a birth fact, so a peer row landing
+/// on an unstamped local one is refused by the put door, never relabelled.
+/// An empty body (a deleted shell) carries no words and passes unchanged.
+#[cfg(feature = "sync")]
+fn restamp_federated_transcript(blob: &[u8]) -> Result<Vec<u8>> {
+    let body = &blob[ENTITY_METADATA_HEADER_LEN..];
+    if body.is_empty() {
+        return Ok(blob.to_vec());
+    }
+    let refused = || -> Error {
+        RecordError::InvalidConversationBody("a federated transcript body must be a map").into()
+    };
+    let mut cursor = std::io::Cursor::new(body);
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| refused())?;
+    if cursor.position() != body.len() as u64 {
+        return Err(refused());
+    }
+    let rmpv::Value::Map(mut entries) = value else {
+        return Err(refused());
+    };
+    let key = crate::memory::IMPORTED_SOURCE_KEY;
+    match entries
+        .iter()
+        .filter(|(name, _)| name.as_str() == Some(key))
+        .count()
+    {
+        0 => entries.push((
+            rmpv::Value::from(key),
+            rmpv::Value::from(FEDERATION_IMPORT_SOURCE),
+        )),
+        1 => return Ok(blob.to_vec()),
+        _ => return Err(refused()),
+    }
+    let mut encoded = Vec::with_capacity(blob.len() + 32);
+    encoded.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
+    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries))
+        .map_err(|_| refused())?;
+    Ok(encoded)
+}
+
+/// ARCH-0043 requires a down-weight but does not prescribe a factor. The
+/// sending peer's owner-set scale applies, by default
+/// [`super::DEFAULT_FEDERATED_CONFIDENCE_SCALE`] for every federated role.
 fn downweight_federated_claim(
     mut body: crate::claim::ClaimBody,
+    scale: f32,
 ) -> Result<crate::claim::ClaimBody> {
-    const SCALE: f32 = 0.5;
     const AUDIT_KEY: &str = "federated_original_confidence";
     let original = body.confidence;
-    body.confidence *= SCALE;
+    body.confidence *= scale;
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         // The wrapper and value record carry the same confidence. Keep both
         // graded values equal so admission cannot create an invalid replay row.

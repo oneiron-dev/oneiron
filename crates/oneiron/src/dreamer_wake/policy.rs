@@ -482,11 +482,39 @@ pub(crate) fn wake_policy_input_covers(vault: &Vault, trigger: &WakePolicyTrigge
     else {
         return Ok(false);
     };
-    Ok(pending.recipe == trigger.recipe
+    Ok(covers(&pending, trigger))
+}
+
+fn covers(pending: &WakePolicyTrigger, trigger: &WakePolicyTrigger) -> bool {
+    pending.recipe == trigger.recipe
         && pending.through >= trigger.through
         && pending.after_turn <= trigger.after_turn
         && pending.after_record <= trigger.after_record
-        && pending.after_nightly <= trigger.after_nightly)
+        && pending.after_nightly <= trigger.after_nightly
+}
+
+/// Takes the recipe input a receipt for `trigger` names out of the outbox,
+/// in the caller's write, so the input leaves with the work its body
+/// commits. The row taken is the coalesced one: it covers every receipt for
+/// its recipe still queued. `None` when an earlier receipt already took it,
+/// or a newer wake replaced it after the range was consumed.
+pub(crate) fn take_wake_recipe_input_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    trigger: &WakePolicyTrigger,
+) -> Result<Option<WakePolicyTrigger>> {
+    let key = [trigger.recipe.key()];
+    let Some(pending) = OUTBOX
+        .get(&vault.store, txn, &key)
+        .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
+    else {
+        return Ok(None);
+    };
+    if !covers(&pending, trigger) {
+        return Ok(None);
+    }
+    OUTBOX.delete(&vault.store, txn, &key)?;
+    Ok(Some(pending))
 }
 
 impl Vault {
@@ -634,7 +662,7 @@ impl Vault {
                 latest_nightly_count: counts.nightly,
             };
             let attempt =
-                DreamerRunnerStore::new(self).enqueue_policy_wake_in_txn(txn, &trigger, now)?;
+                DreamerRunnerStore::new(self).enqueue_recipe_wake_in_txn(txn, &trigger, now)?;
             let key = [recipe.key()];
             let mut pending = trigger;
             if let Some(prior) = OUTBOX
