@@ -8,7 +8,7 @@ score question. Calls are allowed only at `PreQuery` or `Background` phases. The
 
 Wire reference: [TypeSafe System One HTTP API](https://docs.typesafe.ai/api.md),
 `POST /v1/systemone` (checked 2026-09-26). The request uses `Authorization: Bearer`,
-`model: "jev-<pinned version>"`, `state: { ... }`, and one named question under
+`model: "<model>-<pinned version>"`, `state: { ... }`, and one named question under
 `questions.decision` with `type`, `instructions`, and where needed `criteria`:
 
 - `noul`: no criteria; response `{ "type": "noul", "noul": <P(yes)> }`.
@@ -18,7 +18,7 @@ Wire reference: [TypeSafe System One HTTP API](https://docs.typesafe.ai/api.md),
   has `type`, `score` (0 to `levels-1`), `legend`, indexed `probabilities`, and
   `confidence`. The adapter maps the score linearly to the caller's `[min,max]`.
 
-The response must contain `model: "jev-<pinned version>"` and exactly one entry in
+The response must contain `model: "<model>-<pinned version>"` and exactly one entry in
 `answers.decision`. Missing, malformed, out-of-range, unoffered, or wrong-version
 answers fail closed. `usage` reports per-measurement input and output tokens. The typed-decision
 orchestrator admits a fresh `BudgetGuard` lease per measurement and settles each

@@ -183,7 +183,7 @@ fn owner_accepts_low_confidence_care_without_rewriting_confidence() -> Result<()
     );
     let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
     let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
     vault.resolve_gate_consent_bundle(
         &owner,
         bundle.bundle_id,
@@ -238,7 +238,7 @@ fn owner_declines_low_confidence_care_bundle_without_touching_other_run() -> Res
     park_forward_care(&vault, sibling, test_id(0x52), "another-run")?;
     let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
     let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
-    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let owner = consent_bundle_owner(&vault)?;
     let receipt = vault.resolve_gate_consent_bundle(
         &owner,
         bundle.bundle_id,
