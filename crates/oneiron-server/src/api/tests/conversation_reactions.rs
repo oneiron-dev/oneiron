@@ -202,10 +202,10 @@ async fn context_packed_message_carries_its_grouped_reactions() {
 #[tokio::test]
 async fn a_recall_comes_with_the_reaction_claims_its_lines_count() {
     let (_dir, server) = test_server();
-    let (_room, alice, bob, message) = room(&server, ConversationBody::default());
+    let (_room, _alice, bob, message) = room(&server, ConversationBody::default());
+    // The vault's owner reads the room (H149: on a vault with no root, Alice,
+    // its creator, is not the owner).
     let owner = server.vault.ensure_embedded_owner_actor().unwrap();
-    let mut read = oneiron::federation::Scope::top();
-    read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
         &server.vault,
         WriteActor::new(owner, EdgeActorClass::Human),
@@ -213,12 +213,7 @@ async fn a_recall_comes_with_the_reaction_claims_its_lines_count() {
         &json!({
             "schema_version": "1.2", "pack_id": "reaction-reader", "pack_version": "1",
             "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
-            "scoped_grants": [{
-                "actor_ref": alice.to_hex(),
-                "effector": "core:read",
-                "scope": serde_json::to_value(read).unwrap(),
-                "receipt_required": false,
-            }],
+            "scoped_grants": [],
         }),
     )
     .unwrap();
@@ -248,7 +243,7 @@ async fn a_recall_comes_with_the_reaction_claims_its_lines_count() {
     for effort in ["light", "medium"] {
         let (pack, listed) = server
             .recall_off_runtime_listing(
-                alice,
+                owner,
                 EdgeActorClass::Human,
                 None,
                 away,
@@ -264,7 +259,7 @@ async fn a_recall_comes_with_the_reaction_claims_its_lines_count() {
         );
         assert!(listed.contains(&reaction), "{effort}: {listed:?}");
         let (pack, listed) =
-            server.recall_at_sync_door(alice, EdgeActorClass::Human, None, away, request(effort));
+            server.recall_at_sync_door(owner, EdgeActorClass::Human, None, away, request(effort));
         assert!(pack.is_ok(), "{effort}");
         assert!(listed.contains(&reaction), "{effort}: {listed:?}");
     }

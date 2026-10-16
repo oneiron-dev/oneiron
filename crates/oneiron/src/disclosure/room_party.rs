@@ -82,7 +82,6 @@ pub(crate) fn room_party_in(
         &member,
         EdgeKind::About,
         Some(ENTITY_TYPE_COUNTERPARTY_CONTACT),
-        "room contacts",
     )?;
     if let [contact] = contacts.as_slice() {
         let mut actors = Vec::new();
@@ -93,7 +92,6 @@ pub(crate) fn room_party_in(
                 contact,
                 EdgeKind::About,
                 Some(kind),
-                "room contacts",
             )?);
         }
         if actors.as_slice() == [member] && active_contact_in(vault, txn, contact)? {

@@ -467,8 +467,9 @@ impl Vault {
     /// identity; the store decides whether it holds). An actor the claim's
     /// write envelope does not name is retracting SOMEONE ELSE'S claim, which
     /// is an owner power: it needs `human` class plus an ACTIVE owner binding
-    /// in the authority log. A vault that has declared no authority root keeps
-    /// the store-truth check only; a multi-root fold fails closed.
+    /// in the authority log. On a vault that has declared no authority root
+    /// only its embedded owner holds that power; a multi-root fold fails
+    /// closed.
     fn verify_expression_preference_retract_actor_in_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
@@ -496,14 +497,14 @@ impl Vault {
                 "authority log folds to conflicting vault roots",
             ));
         }
-        if fold.vault_id.is_some()
-            && !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
-        {
-            return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
-                reason: "retracting another actor's preference needs an active owner binding",
-            }));
-        }
-        Ok(())
+        // The owner check every owner verb takes, rooted or not (H149).
+        crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref()).map_err(
+            |_| {
+                Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                    reason: "retracting another actor's preference needs the vault owner",
+                })
+            },
+        )
     }
 
     /// Retracts a typed expression preference claim and restores its direct predecessor.

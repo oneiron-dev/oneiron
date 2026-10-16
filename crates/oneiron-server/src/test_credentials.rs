@@ -235,6 +235,42 @@ pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::E
     bind_actor(vault, secret, actor, "human");
 }
 
+/// The op that gives `host_key` the live binding `(actor, actor_class)`, or
+/// `None` when it holds it already. The key holds one live binding, and a
+/// self-hosted root binds the vault's embedded owner (H149), so a fixture
+/// that names another actor rebinds the key one epoch on.
+pub(crate) fn binding_op(
+    fold: &oneiron::authority::AuthorityFold,
+    host_key: &oneiron::authority::AuthorityKey,
+    actor: oneiron::EntityId,
+    actor_class: &str,
+) -> Option<oneiron::authority::AuthorityOp> {
+    use oneiron::authority::{ActorBindingStatus, AuthorityOp};
+    let held = fold.actor_bindings.get(host_key);
+    let live = held.filter(|binding| binding.status == ActorBindingStatus::Active);
+    if live.is_some_and(|binding| binding.actor_ref == actor && binding.actor_class == actor_class)
+    {
+        return None;
+    }
+    let epoch = held.map_or(1, |binding| binding.epoch + 1);
+    let (authority_key, actor_ref, actor_class) = (host_key.clone(), actor, actor_class.to_owned());
+    Some(if live.is_some() {
+        AuthorityOp::RebindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        }
+    } else {
+        AuthorityOp::BindActor {
+            authority_key,
+            actor_ref,
+            actor_class,
+            epoch,
+        }
+    })
+}
+
 /// Binds `actor` with `actor_class` under the host key derived from
 /// `secret`, as [`bind_owner`] binds a human owner.
 pub(crate) fn bind_actor(
@@ -262,6 +298,9 @@ pub(crate) fn bind_actor(
     );
     let fold = vault.authority_fold().expect("authority fold");
     let vault_id = fold.vault_id.expect("host root bootstrapped");
+    let Some(op) = binding_op(&fold, &host_key, actor, actor_class) else {
+        return;
+    };
     let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.clone();
     let mut seq = 0u64;
     let rows = vault
@@ -298,12 +337,7 @@ pub(crate) fn bind_actor(
         vault_id: Some(vault_id),
         seq,
         parent_hashes: heads.into_iter().collect(),
-        op: AuthorityOp::BindActor {
-            authority_key: host_key.clone(),
-            actor_ref: actor,
-            actor_class: actor_class.to_owned(),
-            epoch: 1,
-        },
+        op,
         signer: AuthoritySignature {
             suite: host_key.suite(),
             public_key: host_key,

@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
 | `src/beam/model_scaffold/context.rs` | src | s | 4 crate-vis | — | Context each answerer arm hands the shared answer call, apart from packs |
 | `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
-| `src/beam/model_scaffold/paired.rs` | src | s | 5 crate-vis | — | Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A) |
+| `src/beam/model_scaffold/paired.rs` | src | s | 7 crate-vis | — | Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A) |
 | `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |

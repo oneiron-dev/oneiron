@@ -93,7 +93,7 @@
 //!   thread) and keeps `commentsExtended` coherent — deleting a leaf reply
 //!   removes only that reply.
 
-use super::super::{EditError, find_block_index};
+use super::super::{EditError, EditNote, find_block_index};
 use crate::domain::{
     BlockNode, CanonDoc, CommentExtended, CommentStory, InlineNode, NodeId, OpaqueKind,
     ParagraphNode, RevisionInfo, TrackedBlock, TrackedSegment, TrackingStatus,
@@ -165,12 +165,13 @@ pub(crate) fn apply_create(
     doc: &mut CanonDoc,
     block_id: &NodeId,
     expect: &str,
+    occurrence: Option<usize>,
     semantic_hash: Option<&str>,
     body: &str,
     author: Option<String>,
     revision: &RevisionInfo,
     step_index: usize,
-) -> Result<(), EditError> {
+) -> Result<Option<EditNote>, EditError> {
     // No silent fallback: an empty comment body is meaningless, refuse it.
     if body.trim().is_empty() {
         return Err(EditError::CommentEmptyBody { step_index });
@@ -237,12 +238,64 @@ pub(crate) fn apply_create(
         unreachable!("checked paragraph above");
     };
 
-    // Fast path: the anchor lies within a single contiguous run of Text nodes in
-    // one Normal segment. This is the common case and keeps the markers inside
-    // that segment (no new segments), exactly as before tracked-anchor support.
-    match find_span(&para.segments, expect) {
-        Some(plan) => splice_markers(&mut para.segments, plan, &comment_id),
-        None => {
+    // Copies of the quote in the visible text. Without `occurrence` the anchor
+    // goes where it always went; `occurrence` picks the n-th copy instead.
+    let (visible, map) = visible_text(&para.segments);
+    let starts = copy_starts(&visible, expect);
+    let quote_len = expect.chars().count();
+    let fast = find_span(&para.segments, expect);
+    let fast_start = fast
+        .as_ref()
+        .and_then(|plan| span_plan_visible_start(&para.segments, &map, plan));
+    let chosen = match occurrence {
+        Some(n) if !starts.is_empty() => {
+            if n == 0 || n > starts.len() {
+                return Err(EditError::CommentAnchorOccurrenceOutOfRange {
+                    block_id: block_id.clone(),
+                    expected: expect.to_string(),
+                    occurrence: n,
+                    occurrences: starts.len(),
+                    step_index,
+                });
+            }
+            Some((n, starts[n - 1]))
+        }
+        _ => None,
+    };
+    // The copy a default anchor encloses: the fast path's hit, else the first
+    // visible copy. A fast hit that is not a counted start (it overlaps one, in
+    // a self-overlapping quote) has no copy number to report.
+    let anchored = match chosen {
+        Some((n, _)) => Some(n),
+        None if fast.is_none() => Some(1),
+        None => fast_start
+            .and_then(|at| starts.iter().position(|&s| s == at))
+            .map(|i| i + 1),
+    };
+
+    match (fast, chosen) {
+        // Fast path: the anchor lies within a single contiguous run of Text
+        // nodes in one Normal segment. This is the common case and keeps the
+        // markers inside that segment (no new segments), exactly as before
+        // tracked-anchor support.
+        (Some(plan), None) => splice_markers(&mut para.segments, plan, &comment_id),
+        // A chosen copy inside one contiguous Normal text run is spliced the
+        // same way, so its markers hug the text; any other copy is placed on
+        // segment boundaries like a cross-segment anchor.
+        (_, Some((_, start_k))) => {
+            let end_k = start_k + quote_len;
+            match span_plan_at(&para.segments, &map, start_k, end_k) {
+                Some(plan) => splice_markers(&mut para.segments, plan, &comment_id),
+                None => {
+                    let cross = CrossPlan {
+                        start_at_copy: true,
+                        ..cross_plan(&para.segments, &map, start_k, end_k)
+                    };
+                    apply_cross_segment_markers(&mut para.segments, cross, &comment_id);
+                }
+            }
+        }
+        (None, None) => {
             // The anchor crosses a segment boundary and/or touches an Inserted
             // segment. Resolve it against the paragraph's VISIBLE text and place
             // the range markers on segment boundaries (widening over whole
@@ -274,7 +327,13 @@ pub(crate) fn apply_create(
         content_hash,
         tracking_status: None,
     });
-    Ok(())
+    Ok((starts.len() > 1).then(|| EditNote::RepeatedCommentQuote {
+        step_index,
+        block_id: block_id.clone(),
+        expected: expect.to_string(),
+        copies: starts.len(),
+        anchored,
+    }))
 }
 
 pub(crate) fn apply_reply(
@@ -1001,6 +1060,10 @@ enum Placement {
 struct CrossPlan {
     start: Placement,
     end: Placement,
+    /// Open a `Split` start on the text node holding the copy's first char,
+    /// past any non-text inline (a break, a bookmark) before it. A chosen
+    /// `occurrence` sets it; the default keeps its old placement.
+    start_at_copy: bool,
 }
 
 /// True when a segment's text is part of the VISIBLE anchor space (present in
@@ -1019,27 +1082,7 @@ fn resolve_cross_segment_anchor(
     block_id: &NodeId,
     step_index: usize,
 ) -> Result<CrossPlan, EditError> {
-    // Visible text + a per-visible-char map to (segment index, char offset within
-    // that segment's text). Text char offsets only — non-text inlines never
-    // advance the offset, matching `splice_markers_in_segment`.
-    let mut visible = String::new();
-    let mut map: Vec<(usize, usize)> = Vec::new();
-    for (si, seg) in segments.iter().enumerate() {
-        if !segment_is_visible(&seg.status) {
-            continue;
-        }
-        let mut local = 0usize;
-        for inline in &seg.inlines {
-            if let InlineNode::Text(t) = inline {
-                for ch in t.text.chars() {
-                    visible.push(ch);
-                    map.push((si, local));
-                    local += 1;
-                }
-            }
-        }
-    }
-
+    let (visible, map) = visible_text(segments);
     let Some((start_k, end_k)) = char_find(&visible, expect) else {
         // Not in the visible text. If it IS present once deleted text is folded
         // back in, the caller is trying to comment on struck content — say so
@@ -1066,8 +1109,118 @@ fn resolve_cross_segment_anchor(
             step_index,
         });
     };
+    Ok(cross_plan(segments, &map, start_k, end_k))
+}
 
-    // `char_find` yields a non-empty match (expect is non-empty), so end_k >= 1.
+/// The paragraph's visible text + a per-visible-char map to (segment index,
+/// char offset within that segment's text). Text char offsets only — non-text
+/// inlines never advance the offset, matching `splice_markers_in_segment`.
+fn visible_text(segments: &[TrackedSegment]) -> (String, Vec<(usize, usize)>) {
+    let mut visible = String::new();
+    let mut map: Vec<(usize, usize)> = Vec::new();
+    for (si, seg) in segments.iter().enumerate() {
+        if !segment_is_visible(&seg.status) {
+            continue;
+        }
+        let mut local = 0usize;
+        for inline in &seg.inlines {
+            if let InlineNode::Text(t) = inline {
+                for ch in t.text.chars() {
+                    visible.push(ch);
+                    map.push((si, local));
+                    local += 1;
+                }
+            }
+        }
+    }
+    (visible, map)
+}
+
+/// Char offsets where each copy of `expect` starts in `visible`, counted the
+/// way `set_format` counts its targets (non-overlapping `match_indices`). The
+/// first equals `char_find`'s start.
+fn copy_starts(visible: &str, expect: &str) -> Vec<usize> {
+    if expect.is_empty() {
+        return Vec::new();
+    }
+    // Advance one cursor through the gaps so each char is counted once.
+    let (mut chars, mut bytes) = (0, 0);
+    visible
+        .match_indices(expect)
+        .map(|(byte, _)| {
+            chars += visible[bytes..byte].chars().count();
+            bytes = byte;
+            chars
+        })
+        .collect()
+}
+
+/// The visible char offset where a fast-path [`SpanPlan`] starts.
+fn span_plan_visible_start(
+    segments: &[TrackedSegment],
+    map: &[(usize, usize)],
+    plan: &SpanPlan,
+) -> Option<usize> {
+    let before: usize = segments[plan.seg_idx].inlines[..plan.first]
+        .iter()
+        .map(|inline| match inline {
+            InlineNode::Text(t) => t.text.chars().count(),
+            _ => 0,
+        })
+        .sum();
+    map.iter()
+        .position(|&at| at == (plan.seg_idx, before + plan.start))
+}
+
+/// A fast-path [`SpanPlan`] for the visible chars `[start_k, end_k)` when they
+/// lie in one contiguous Text run of a Normal segment.
+fn span_plan_at(
+    segments: &[TrackedSegment],
+    map: &[(usize, usize)],
+    start_k: usize,
+    end_k: usize,
+) -> Option<SpanPlan> {
+    let (seg_idx, local_start) = map[start_k];
+    let (end_seg, local_last) = map[end_k - 1];
+    if end_seg != seg_idx || segments[seg_idx].status != TrackingStatus::Normal {
+        return None;
+    }
+    let inlines = &segments[seg_idx].inlines;
+    let (mut i, mut offset) = (0, 0);
+    while i < inlines.len() {
+        if !matches!(inlines[i], InlineNode::Text(_)) {
+            i += 1;
+            continue;
+        }
+        // Contiguous Text run [i, j) covering text offsets [run_start, offset).
+        let run_start = offset;
+        let mut j = i;
+        while let Some(InlineNode::Text(t)) = inlines.get(j) {
+            offset += t.text.chars().count();
+            j += 1;
+        }
+        if (run_start..offset).contains(&local_start) {
+            return (local_last < offset).then_some(SpanPlan {
+                seg_idx,
+                first: i,
+                last: j - 1,
+                start: local_start - run_start,
+                end: local_last + 1 - run_start,
+            });
+        }
+        i = j;
+    }
+    None
+}
+
+/// Place the range markers for the visible chars `[start_k, end_k)`.
+fn cross_plan(
+    segments: &[TrackedSegment],
+    map: &[(usize, usize)],
+    start_k: usize,
+    end_k: usize,
+) -> CrossPlan {
+    // A copy is a non-empty match (expect is non-empty), so end_k >= 1.
     let (start_seg, start_local) = map[start_k];
     let (end_seg, end_local_last) = map[end_k - 1];
     // The end boundary is AFTER the last matched char.
@@ -1091,7 +1244,11 @@ fn resolve_cross_segment_anchor(
         _ => Placement::AfterSeg { seg_idx: end_seg },
     };
 
-    Ok(CrossPlan { start, end })
+    CrossPlan {
+        start,
+        end,
+        start_at_copy: false,
+    }
 }
 
 /// A zero-width Normal decoration segment carrying just marker inlines.
@@ -1138,7 +1295,7 @@ fn apply_cross_segment_markers(
         let s_off = start_split.and_then(|(si, off)| (si == i).then_some(off));
         let e_off = end_split.and_then(|(si, off)| (si == i).then_some(off));
         if s_off.is_some() || e_off.is_some() {
-            splice_markers_in_segment(&mut seg, s_off, e_off, comment_id);
+            splice_markers_in_segment(&mut seg, s_off, e_off, plan.start_at_copy, comment_id);
         }
         out.push(seg);
         if end_after == Some(i) {
@@ -1159,12 +1316,13 @@ fn apply_cross_segment_markers(
 /// the range with `commentRangeStart`; `end_off` closes it with
 /// `commentRangeEnd` + `commentReference`) and splice the markers in. Offsets
 /// count Text chars only; non-text inlines pass through unchanged. A boundary
-/// exactly at a text-node edge attaches to the adjacent node (position is
-/// identical either way).
+/// exactly at a text-node edge attaches to the earlier node, except that
+/// `start_at_copy` opens a start on the next one, past any non-text between.
 fn splice_markers_in_segment(
     seg: &mut TrackedSegment,
     start_off: Option<usize>,
     end_off: Option<usize>,
+    start_at_copy: bool,
     comment_id: &str,
 ) {
     // Cut list sorted by offset; at an equal offset the start marker precedes the
@@ -1207,7 +1365,10 @@ fn splice_markers_in_segment(
         let mut cursor = 0usize; // local chars emitted from this node
         while ci < cuts.len() {
             let (cut_off, kind) = cuts[ci];
-            if cut_off < node_start || cut_off > node_end {
+            if cut_off < node_start
+                || cut_off > node_end
+                || (start_at_copy && kind == 0 && cut_off == node_end)
+            {
                 break;
             }
             let local = cut_off - node_start;

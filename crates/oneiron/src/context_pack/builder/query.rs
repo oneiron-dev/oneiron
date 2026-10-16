@@ -56,6 +56,8 @@ pub struct ContextPackBuilder<'a> {
     /// Whether the pack is for a caller off this device; see
     /// [`Self::caller_off_device`]. Its edge walk admits no device-local row.
     pub(super) off_device: bool,
+    /// See [`Self::skip_optional_recall`].
+    pub(super) skip_optional_recall: bool,
 }
 
 impl<'a> ContextPackBuilder<'a> {
@@ -130,6 +132,7 @@ impl<'a> ContextPackBuilder<'a> {
             l2_summary_subjects: Vec::new(),
             l2_summary_reader: None,
             off_device: false,
+            skip_optional_recall: false,
         }
     }
 
@@ -565,6 +568,20 @@ impl<'a> ContextPackBuilder<'a> {
                 other: split.other,
             };
         }
+        self
+    }
+
+    /// Takes no optional recall, for a reader whose profile picked
+    /// [`OptionalMemory::None`] for this task (ARCH-0004 #reader-budget): the
+    /// terminal returns an empty pack marked
+    /// [`EmptyReason::SkippedByProfile`] before any retrieval or L2 work.
+    /// Pinned rows and mandatory instructions never ride this pack; the host
+    /// adds them as before.
+    ///
+    /// [`OptionalMemory::None`]: crate::agent_def::OptionalMemory::None
+    /// [`EmptyReason::SkippedByProfile`]: crate::context_pack::EmptyReason::SkippedByProfile
+    pub fn skip_optional_recall(mut self) -> Self {
+        self.skip_optional_recall = true;
         self
     }
 

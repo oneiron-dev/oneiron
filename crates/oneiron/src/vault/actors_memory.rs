@@ -459,7 +459,6 @@ impl Vault {
             &of,
             EdgeKind::Blocks,
             None,
-            "blocks dependencies",
         )
     }
 
