@@ -498,6 +498,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.offer",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::OfferDraft>(
+                ),
+            ),
+            (
+                "vault.rooms.offer.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::OfferAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.offers",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::OffersRequest>(
+                ),
+            ),
+            (
                 "vault.projects.goal.revisions",
                 crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
             ),
@@ -1544,6 +1560,35 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
+        "vault.rooms.offer.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.offers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
         "vault.projects.goal.revisions" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2227,6 +2272,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
+        "vault.rooms.offer" => {
+            let _input: crate::workspace_roster::OfferDraft = decode(value.clone())?;
+        }
+        "vault.rooms.offer.answer" => {
+            let _input: crate::workspace_roster::OfferAnswerRequest = decode(value.clone())?;
+        }
+        "vault.rooms.offers" => {
+            let _input: crate::workspace_roster::OffersRequest = decode(value.clone())?;
+        }
         "vault.projects.goal.revisions" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
         }
@@ -2580,6 +2634,9 @@ pub fn invoke(
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
+        "vault.rooms.offer" => encode(vault_rooms_offer(memory, decode(value)?)?),
+        "vault.rooms.offer.answer" => encode(vault_rooms_offer_answer(memory, decode(value)?)?),
+        "vault.rooms.offers" => encode(vault_rooms_offers(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
             encode(vault_projects_goal_revisions(memory, decode(value)?)?)
         }
@@ -3570,6 +3627,24 @@ pub fn vault_rooms_consent(
     input: crate::workspace_roster::ConsentAnswer,
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_consent(&input)
+}
+pub fn vault_rooms_offer(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OfferDraft,
+) -> MemoryResult<crate::workspace_roster::OfferCard> {
+    memory.rooms_offer(&input)
+}
+pub fn vault_rooms_offer_answer(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OfferAnswerRequest,
+) -> MemoryResult<crate::workspace_roster::OfferSettlement> {
+    memory.rooms_offer_answer(&input)
+}
+pub fn vault_rooms_offers(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::OffersRequest,
+) -> MemoryResult<crate::workspace_roster::OffersPage> {
+    memory.rooms_offers(&input)
 }
 pub fn vault_projects_goal_revisions(
     memory: &Memory<'_>,

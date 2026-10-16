@@ -8,6 +8,7 @@ mod consent_cards;
 mod consent_eval;
 mod failure_card;
 mod failure_card_validation;
+mod offer_card;
 mod project_proposal;
 pub(crate) use failure_card_validation::require_diagnosed_route;
 mod protocol;
@@ -28,6 +29,9 @@ use self::failure_card::parse_card_ref;
 pub use self::failure_card::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
     SurfacedFailureCard, SurfacedFailureCardInput, surfaced_failure_card,
+};
+pub use self::offer_card::{
+    OFFER_JOIN_ACTION_ID, OFFER_NOT_NOW_ACTION_ID, OfferAnswerIntent, OfferCardPayload,
 };
 pub use self::project_proposal::{
     PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard,

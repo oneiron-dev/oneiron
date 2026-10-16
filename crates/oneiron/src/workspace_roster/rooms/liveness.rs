@@ -300,6 +300,37 @@ pub(super) fn project_target(
         .next())
 }
 
+/// Whether thread `handle` of `room` is live (ARCH-0006a:233): the
+/// direct-by-handle fold lists it active or waiting, never quiet. `None` when
+/// the turns hold no such thread root.
+pub(super) fn thread_is_live(
+    turns: &[RoomTurn],
+    tasks: &[RoomThreadTask],
+    room: EntityId,
+    handle: EntityId,
+    now: u64,
+) -> Result<Option<bool>> {
+    let projection = project_inner(
+        turns,
+        tasks,
+        RoomThreadPolicy {
+            now,
+            rows_per_list: usize::MAX,
+            ..Default::default()
+        },
+        Some(handle),
+        &room.to_hex(),
+    )?;
+    let holds = |list: &RoomThreadList| list.rows.iter().any(|row| row.handle == handle);
+    Ok(if holds(&projection.active) || holds(&projection.waiting) {
+        Some(true)
+    } else if holds(&projection.quiet) {
+        Some(false)
+    } else {
+        None
+    })
+}
+
 fn project_inner(
     turns: &[RoomTurn],
     tasks: &[RoomThreadTask],

@@ -806,6 +806,23 @@ fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.offer" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
+        "vault.rooms.offer.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.offers" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.projects.goal.revisions" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.goal.dismiss" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.route_tradeoff" => a.spec.clone().ok_or_else(invalid),
@@ -1239,6 +1256,21 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.offer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.rooms.offer.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.offers" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
         }
         "vault.projects.goal.revisions" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -2626,6 +2658,39 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_rooms_consent(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offer" => {
+            let input: oneiron::workspace_roster::OfferDraft =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offer(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offer.answer" => {
+            let input: oneiron::workspace_roster::OfferAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offer_answer(&memory, input)
+                .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offers" => {
+            let input: oneiron::workspace_roster::OffersRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offers(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("rows");
             mcp_agent_verb_output(output, source)
         }
         "vault.projects.goal.revisions" => {

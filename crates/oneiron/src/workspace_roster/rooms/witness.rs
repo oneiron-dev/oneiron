@@ -133,7 +133,15 @@ pub(crate) fn admit_witness(
             .messages
             .iter()
             .any(|m| m.author == WitnessAuthor::Companion);
-    if is_response {
+    // An accepted offer card lands as the agent's own turn (OF-530): the
+    // settlement that made its join Ready bound exactly this turn to the
+    // offer and its thread in this write, in place of a claim on an
+    // addressed turn. The speaking role and the author ceiling still decide.
+    let accepted_offer = is_response
+        && super::offers::accepts_offer_in_txn(vault, txn, room, branch, actor, turn_id)?;
+    if accepted_offer {
+        admit_speech_in(vault, txn, room, actor, standing.as_ref())?;
+    } else if is_response {
         // Only a speaker who speaks as a persona answers; the claim door
         // checks the same, and upkeep never holds one.
         admit_speech_in(vault, txn, room, actor, standing.as_ref())?;

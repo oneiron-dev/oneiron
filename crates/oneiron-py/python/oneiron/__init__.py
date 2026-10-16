@@ -651,10 +651,22 @@ class Oneiron:
         def consent(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
         @property
+        def offer(self) -> "Oneiron._VaultRoomsOfferVerbs":
+            return Oneiron._VaultRoomsOfferVerbs(self._client)
+        def offers(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_offers(json.dumps(spec))))
+        @property
         def host(self) -> "Oneiron._VaultRoomsHostVerbs":
             return Oneiron._VaultRoomsHostVerbs(self._client)
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultRoomsOfferVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer(json.dumps(spec))))
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer_answer(json.dumps(spec))))
     class _VaultRoomsHostVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
