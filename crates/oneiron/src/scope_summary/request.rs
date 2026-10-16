@@ -12,14 +12,12 @@ use super::doors::{
     LandedHeader, ScopeSources, SummaryContent, header_landed_in_txn, land_in_txn, mint_in_txn,
     scope_sources_in_txn, standing_composition_in_txn, validate_landing_in_txn,
 };
-use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::AttemptId;
 use crate::conversation_dag::{
     ScopePath, ScopeSelector, actor_in_txn, prove_branch_span, selected_thread_in_txn,
 };
 use crate::dreamer_consolidation::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
-use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerConsolidationScope, encode_dreamer_attempt_payload,
-};
+use crate::dreamer_runner::{DreamerAttemptPayload, DreamerConsolidationScope};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -131,6 +129,24 @@ impl Vault {
         &self,
         request: &ScopeSummaryRequest,
     ) -> Result<ScopeSummaryQueued> {
+        let now = self.store.clock.now_recorded_at();
+        let queued = self.with_write_txn(|txn| {
+            self.request_scope_summary_in_txn(txn, request, None, None, now)
+        })?;
+        self.store.notify_attempt_observers();
+        Ok(queued)
+    }
+
+    /// A recipe co-commits its declaration, parent/run binding and outbox
+    /// consumption. No nested writer is opened.
+    pub(crate) fn request_scope_summary_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: &ScopeSummaryRequest,
+        parent_attempt: Option<AttemptId>,
+        run_id: Option<&str>,
+        now: u64,
+    ) -> Result<ScopeSummaryQueued> {
         if let ScopeSummaryTarget::Scope {
             land_on: None,
             as_record: true,
@@ -139,64 +155,54 @@ impl Vault {
         {
             return Err(invalid("as_record requires land_on"));
         }
+        actor_in_txn(&self.store, txn, request.requester)?;
+        match &request.target {
+            ScopeSummaryTarget::Scope { scope, land_on, .. } => {
+                if scope_sources_in_txn(self, txn, scope)?.sources.is_empty() {
+                    return Err(invalid("summary scope covers no records"));
+                }
+                if let Some(turn) = land_on {
+                    validate_landing_in_txn(self, txn, scope, turn)?;
+                }
+            }
+            ScopeSummaryTarget::Thread { trunk } => {
+                selected_thread_in_txn(self, txn, *trunk)?
+                    .ok_or_else(|| invalid("trunk has no thread"))?;
+            }
+        }
         let input = encode_request(request);
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &input)
             .map_err(|_| invalid("summary request encode failed"))?;
         let dedupe_key = format!(
-            "{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE}:{}",
-            blake3::hash(&encoded).to_hex()
+            "{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE}:{}:{}",
+            blake3::hash(&encoded).to_hex(),
+            parent_attempt
+                .map(|id| crate::entity_id::bytes_to_hex_lower(id.as_bytes()))
+                .unwrap_or_default()
         );
-        let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
-            attempt_type: DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE.to_owned(),
-            input,
-            parent_attempt: None,
-        })?;
-        let now = self.store.clock.now_recorded_at();
-        let queued = self.with_write_txn(|txn| {
-            actor_in_txn(&self.store, txn, request.requester)?;
-            match &request.target {
-                ScopeSummaryTarget::Scope { scope, land_on, .. } => {
-                    if scope_sources_in_txn(self, txn, scope)?.sources.is_empty() {
-                        return Err(invalid("summary scope covers no records"));
-                    }
-                    if let Some(turn) = land_on {
-                        validate_landing_in_txn(self, txn, scope, turn)?;
-                    }
-                }
-                ScopeSummaryTarget::Thread { trunk } => {
-                    selected_thread_in_txn(self, txn, *trunk)?
-                        .ok_or_else(|| invalid("trunk has no thread"))?;
-                }
+        let outcome = crate::dreamer_runner::DreamerRunnerStore::new(self).enqueue_kind_in_txn(
+            txn,
+            DreamerConsolidationScope::Micro.attempt_kind(),
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE.to_owned(),
+                input,
+                parent_attempt,
+            },
+            Some(dedupe_key),
+            run_id.map(str::to_owned),
+            now,
+        )?;
+        let (status, coalesced) = match outcome {
+            crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status) => {
+                (status, false)
             }
-            let outcome = crate::ports::JobQueue::port_job_enqueue(
-                self,
-                txn,
-                EnqueueAttempt {
-                    kind: DreamerConsolidationScope::Micro.attempt_kind().to_owned(),
-                    payload: payload.clone(),
-                    dedupe_key: Some(dedupe_key.clone()),
-                    run_id: None,
-                    now,
-                },
-            )?;
-            let (record, coalesced) = match outcome {
-                EnqueueOutcome::Enqueued(record) => (record, false),
-                EnqueueOutcome::Existing(record) => (record, true),
-            };
-            crate::dreamer_runner::authority::stamp_attempt(
-                self,
-                txn,
-                &record,
-                DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE,
-            )?;
-            Ok(ScopeSummaryQueued {
-                attempt: record.id,
-                coalesced,
-            })
-        })?;
-        self.store.notify_attempt_observers();
-        Ok(queued)
+            crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status) => (status, true),
+        };
+        Ok(ScopeSummaryQueued {
+            attempt: status.attempt.id,
+            coalesced,
+        })
     }
 
     /// Resolves a queued declaration against the vault as it is now.

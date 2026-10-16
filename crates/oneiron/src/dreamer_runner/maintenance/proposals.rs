@@ -106,5 +106,6 @@ pub(super) fn emit_in_txn(
             now,
         )
         .apply_recording_gate_decisions(txn)?;
+    vault.record_finding_notification_in_txn(txn, id, subject, now)?;
     Ok(id)
 }

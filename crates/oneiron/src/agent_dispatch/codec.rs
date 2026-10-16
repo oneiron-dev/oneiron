@@ -17,8 +17,8 @@ use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
     KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_LAUNCH,
-    KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET,
-    TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_ORIGIN_CONVERSATION, KEY_PRESET, KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE,
+    KEY_SPAWN_INTENT, KEY_TARGET, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use crate::error::ArtifactError;
 
@@ -330,6 +330,18 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                         "depth_remaining must fit in a u8",
                     ))
                 })?);
+            }
+            // Read by `dispatch_origin_conversation`; checked here so a
+            // malformed stamp fails the codec like any other key.
+            KEY_ORIGIN_CONVERSATION => {
+                if value
+                    .as_str()
+                    .is_none_or(|hex| EntityId::from_hex(hex).is_err())
+                {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "origin_conversation must be an entity id",
+                    )));
+                }
             }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }

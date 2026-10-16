@@ -142,6 +142,8 @@ impl WidenIntent {
                 budget: self.budget,
                 // A widen always has a parent, whose scope the child spends under.
                 spend: None,
+                // A widened spawn is a child: it inherits its parent's origin.
+                origin_conversation: None,
                 room: self.room,
             },
         ))

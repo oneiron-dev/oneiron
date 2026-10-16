@@ -164,7 +164,7 @@ pub(super) fn conversation_of(vault: &Vault, turn_id: &EntityId) -> Result<Optio
 }
 
 /// A TURN's structural conversation: the target of its `ChildOf` edge.
-pub(super) fn conversation_in_txn(
+pub(crate) fn conversation_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,

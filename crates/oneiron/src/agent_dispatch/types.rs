@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 17] = [
     "schema_version",
     "target",
     "agent_def",
@@ -45,6 +45,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
     "healer_case",
     "budget",
     "launch",
+    "origin_conversation",
     "room",
     "join",
 ];
@@ -70,8 +71,10 @@ pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
 pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[12];
 pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[13];
-pub(super) const KEY_ROOM: &str = AGENT_DISPATCH_INPUT_KEYS[14];
-pub(super) const KEY_JOIN: &str = AGENT_DISPATCH_INPUT_KEYS[15];
+/// OF-221: the conversation a root dispatch's host stamped as its origin.
+pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[14];
+pub(super) const KEY_ROOM: &str = AGENT_DISPATCH_INPUT_KEYS[15];
+pub(super) const KEY_JOIN: &str = AGENT_DISPATCH_INPUT_KEYS[16];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -196,6 +199,11 @@ pub struct AgentSpawnContext {
     /// A ROOT launch's spend scope. A child spends under its parent's and
     /// never names one. A root without one runs unmetered by any lease tree.
     pub spend: Option<super::SpawnSpend>,
+    /// OF-221: the conversation whose request starts this work, stamped by
+    /// the host at its admission boundary. Read for a root only; a child
+    /// always inherits its parent's stored origin, so a spawning agent can
+    /// never name one.
+    pub origin_conversation: Option<EntityId>,
     /// The room the agent works in (OF-531). Set, the launch re-proves the
     /// agent's join there before it reserves or enqueues; unset, nothing
     /// changes.
@@ -235,6 +243,12 @@ impl AgentSpawnContext {
     #[must_use]
     pub fn with_spend(mut self, spend: super::SpawnSpend) -> Self {
         self.spend = Some(spend);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_origin_conversation(mut self, conversation: EntityId) -> Self {
+        self.origin_conversation = Some(conversation);
         self
     }
 }

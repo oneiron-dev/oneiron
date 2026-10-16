@@ -123,6 +123,7 @@ impl AttemptQueue<'_> {
                     &record,
                     &input.lease_owner,
                 )?;
+                self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(FailOutcome::Failed(record))
             }
             state => Err(invalid_transition("fail", state.as_str())),

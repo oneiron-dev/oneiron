@@ -692,8 +692,11 @@ pub(super) fn home_room_seats_in_txn(
     txn: &heed::RoTxn<'_>,
     room: EntityId,
 ) -> Result<Option<(EntityId, Vec<String>)>> {
+    // The stored body, not only the auxiliary marker, identifies the
+    // substrate, as the room audience reads it.
     let body = crate::conversation::body_in(vault, txn, room)?;
     if !body.extra.contains_key("project_id")
+        && !body.extra.contains_key("memberIds")
         && !super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)?
     {
         return Ok(None);
