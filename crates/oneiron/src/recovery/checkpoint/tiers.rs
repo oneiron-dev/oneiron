@@ -71,6 +71,11 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"gate_pending:hash_index:v1:",
                 b"gate_pending:sequence_index:v1:",
                 b"gate_pending:critical_confirm_by_id:v1:",
+                // Project revision indexes: a restore rebuilds them from the
+                // revision companions it keeps.
+                b"project.revisions.v1/",
+                b"project.revision_awaiting_mint.v1/",
+                b"project.revision_backfill.v1",
             ]
             .iter()
             .any(|p| key.starts_with(p))
@@ -106,6 +111,8 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"m:last_sync",
                 b"m:maintenance_ingest_quota",
                 b"budget:",
+                // A provider's offer cooldowns belong to this deployment.
+                b"models:offer-cooldown:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

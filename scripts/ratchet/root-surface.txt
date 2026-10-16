@@ -351,6 +351,7 @@ HydratedShortIdDeletion
 HydratedShortIdDeletionReason
 HydratedShortIdDeletionSource
 HydrationBudget
+IdScanPage
 ImageContent
 ImipEmitRequest
 InboundResumeOutcome

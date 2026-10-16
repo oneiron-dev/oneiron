@@ -66,7 +66,9 @@ mod tests;
 mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
-pub use asset_resolve::{AssetConsumer, LandedImage, ResolvedAsset, ServedAssetForm};
+pub use asset_resolve::{
+    AssetConsumer, HydratedAsset, LandedImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
