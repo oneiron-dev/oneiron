@@ -1,6 +1,12 @@
 //! Authenticated exact-digest resume; ruling, policy and TASKs commit together.
+//!
+//! The same door answers a width question row (raised by a full-access run
+//! above the threshold). Its run was minted at admission, so an answer
+//! releases nothing: approve-once acknowledges, approve-and-
+//! remember acknowledges and persists the receipted policy row AUTO reads
+//! next time, and deny is refused because nothing was held.
 
-use super::consult_fanout_store::{TxnSurface, load_run, save_run};
+use super::consult_fanout_store::{StoredFanout, TxnSurface, load_run, save_run};
 use super::create_validation::consult_refusal;
 use super::{ConsultFanOutChoice, ConsultFanOutReceipt};
 use crate::consent::AuthenticatedOwner;
@@ -12,7 +18,8 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryResult, verify_actor_binding,
 };
 use crate::outbound_chokepoint::{
-    FanoutApprovalChoice, FanoutApprovalError, approve_and_resume_fanout, fanout_plan_digest,
+    FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow, FanoutPlan,
+    answer_fanout_width_check, approve_and_resume_fanout, fanout_plan_digest,
 };
 
 impl Memory<'_> {
@@ -97,6 +104,21 @@ impl Memory<'_> {
                     return Err(stale_digest());
                 }
                 if run.dispatched_at.is_some() {
+                    if let Some(row) = run.check_row.clone() {
+                        return self.answer_width_check_in(
+                            txn,
+                            owner,
+                            correlation,
+                            run,
+                            WidthAnswer {
+                                plan,
+                                row,
+                                choice,
+                                remembered_cap,
+                            },
+                            now,
+                        );
+                    }
                     if choice == ConsultFanOutChoice::Deny {
                         return Err(consult_refusal(
                             MEMORY_CODE_INVALID_STATE,
@@ -139,6 +161,7 @@ impl Memory<'_> {
                         vault: self.vault(),
                         txn,
                         run: &mut run,
+                        clearance: None,
                     },
                     now.saturating_mul(1000),
                 )
@@ -189,6 +212,92 @@ impl Memory<'_> {
                 save_run(self.vault(), txn, &run)?;
                 run.receipt()
             })
+    }
+}
+
+/// One answer to a stored width-question row.
+struct WidthAnswer {
+    plan: FanoutPlan,
+    row: FanoutApprovalRow,
+    choice: ConsultFanOutChoice,
+    remembered_cap: Option<u64>,
+}
+
+impl Memory<'_> {
+    /// Acknowledges a width check in the resume transaction. The ruling and
+    /// any remembered policy row commit together; no TASK is touched.
+    fn answer_width_check_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        correlation: EntityId,
+        mut run: StoredFanout,
+        answer: WidthAnswer,
+        now: u64,
+    ) -> MemoryResult<ConsultFanOutReceipt> {
+        let core_choice = match answer.choice {
+            ConsultFanOutChoice::ApproveOnce => FanoutApprovalChoice::Ack,
+            ConsultFanOutChoice::ApproveAndRemember => FanoutApprovalChoice::AckAndRemember,
+            ConsultFanOutChoice::Deny => {
+                return Err(consult_refusal(
+                    MEMORY_CODE_INVALID_STATE,
+                    "a width check held nothing to deny",
+                    "Use the TASK cancellation door to stop its TASKs.",
+                ));
+            }
+        };
+        // One ruling per check: a repeated answer returns the recorded one.
+        if run.choice_receipt_ref.is_some() {
+            return run.receipt();
+        }
+        let count = u64::from(run.estimate.total_count);
+        if answer.remembered_cap.is_some_and(|cap| cap < count) {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "a standing cap cannot exclude the acknowledged plan",
+                "Set a cap at or above the acknowledged estimate.",
+            ));
+        }
+        let action = core_choice.action_id();
+        let principal_ref = owner.principal_ref_in_txn(self.vault(), &*txn)?;
+        answer_fanout_width_check(
+            &answer.plan,
+            &answer.row,
+            core_choice,
+            action,
+            principal_ref,
+            &mut TxnSurface {
+                vault: self.vault(),
+                txn,
+                run: &mut run,
+                clearance: None,
+            },
+            now.saturating_mul(1000),
+        )
+        .map_err(|error| match error {
+            FanoutApprovalError::StalePlanDigest => stale_digest(),
+            FanoutApprovalError::Engine(error) => error.into(),
+        })?;
+        record_explicit_ruling_in_txn(
+            self.vault(),
+            txn,
+            owner,
+            EscalationReceipt {
+                task_ref: correlation,
+                scope: run.scope(),
+                trigger: EscalationTrigger::Budget,
+                question: run.plan.brief_ref.clone(),
+                ruling: EscalationRuling::Approve,
+                rationale: run.choice_receipt_ref.clone().unwrap_or_default(),
+                // The raw consult count, as an approval records it: the band
+                // AUTO's standing read compares the next width against.
+                budget_band: Some(answer.remembered_cap.unwrap_or(count)),
+            },
+            answer.choice == ConsultFanOutChoice::ApproveAndRemember,
+            now,
+        )?;
+        save_run(self.vault(), txn, &run)?;
+        run.receipt()
     }
 }
 

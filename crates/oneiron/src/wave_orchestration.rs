@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use crate::agent_dispatch::FanoutStatement;
 use crate::attempt_queue::AttemptId;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -55,13 +56,6 @@ pub const WAVE_PLAN_ATTEMPT_KIND: &str = "wave.plan";
 /// registry byte owned by [`crate::edge::EdgeKind::BlockedBy`].
 pub const BLOCKED_BY_EDGE_U8: u8 = 23;
 
-/// Upper bound on the tasks one validated plan may carry.
-///
-/// A cut this large is a planner defect, not a legitimate wave: the bound
-/// fails the plan LOUD before any TASK row is written rather than letting a
-/// runaway planner mint an unbounded task fan-out.
-pub const MAX_WAVE_PLAN_TASKS: usize = 256;
-
 const _: () = assert!(
     BLOCKED_BY_EDGE_U8 == EdgeKind::BlockedBy as u8,
     "wave_orchestration must stay pinned to the registry blocked_by discriminant"
@@ -70,7 +64,6 @@ const _: () = assert!(
 const ERR_SCHEMA_VERSION: &str = "wave_orchestration: unsupported wave plan schema version";
 const ERR_EMPTY_PLAN_REF: &str = "wave_orchestration: wave plan carries an empty plan_ref";
 const ERR_EMPTY_PLAN: &str = "wave_orchestration: wave plan carries no tasks";
-const ERR_PLAN_TOO_LARGE: &str = "wave_orchestration: wave plan exceeds the task bound";
 const ERR_EMPTY_LOCAL_KEY: &str = "wave_orchestration: planned task carries an empty local_key";
 const ERR_DUPLICATE_LOCAL_KEY: &str = "wave_orchestration: planned task local_key is duplicated";
 const ERR_UNKNOWN_BLOCKER: &str = "wave_orchestration: planned task blocks on an unknown key";
@@ -248,6 +241,24 @@ pub trait WaveTaskPort {
         now: u64,
     ) -> WaveResult<Vec<WaveTaskWrite>>;
 
+    /// What applying `plan` mints and spends (OF-393): its task, agent and
+    /// consult counts, expected spend, cap or none, and any width check. A
+    /// pure read; once `plan` is applied, the statement frozen at that apply.
+    /// A wave of any width is stated, never refused for it. `None`: the port
+    /// cannot price a plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plan's assignees or spend state cannot be
+    /// read.
+    fn plan_statement(
+        &self,
+        _plan: &ValidatedWavePlan,
+        _now: u64,
+    ) -> WaveResult<Option<FanoutStatement>> {
+        Ok(None)
+    }
+
     /// Whether `task_ref` reached a SUCCESSFUL terminal state
     /// (`crate::task_verb::TaskTerminalDisposition::Completed`); a failed,
     /// rejected, or expired blocker keeps its dependents unready.
@@ -276,6 +287,10 @@ pub struct WavePlanReceipt {
     pub blocked_by_edges: usize,
     /// Wall-clock stamp the apply was performed at.
     pub applied_at: u64,
+    /// The statement frozen before the first apply minted anything; an
+    /// idempotent re-apply returns that same statement. `None` from a port
+    /// that cannot price a plan.
+    pub statement: Option<FanoutStatement>,
 }
 
 /// One typed dependent → blocker `blocked_by` edge that already passed the
@@ -376,11 +391,12 @@ impl<P> WaveOrchestrator<P> {
 impl<P: WaveTaskPort> WaveOrchestrator<P> {
     /// Fully validates a planner's cut BEFORE any TASK row exists.
     ///
-    /// Checks, in order: schema version, non-empty plan ref, non-empty and
-    /// bounded task count, non-empty and unique local keys, known blockers, no
-    /// self-edge, no repeated blocker, and no cycle. The returned plan carries
-    /// a deterministic topological order (blockers first, ties broken by local
-    /// key).
+    /// Checks, in order: schema version, non-empty plan ref, non-empty task
+    /// list, non-empty and unique local keys, known blockers, no self-edge, no
+    /// repeated blocker, and no cycle. Width is never refused: a wave has no
+    /// task-count cap, and its statement says how wide it is. The returned
+    /// plan carries a deterministic topological order (blockers first, ties
+    /// broken by local key).
     ///
     /// # Errors
     ///
@@ -395,9 +411,6 @@ impl<P: WaveTaskPort> WaveOrchestrator<P> {
         }
         if plan.tasks.is_empty() {
             return Err(invariant(ERR_EMPTY_PLAN));
-        }
-        if plan.tasks.len() > MAX_WAVE_PLAN_TASKS {
-            return Err(invariant(ERR_PLAN_TOO_LARGE));
         }
 
         let mut tasks: BTreeMap<String, PlannedTask> = BTreeMap::new();
@@ -420,8 +433,19 @@ impl<P: WaveTaskPort> WaveOrchestrator<P> {
         })
     }
 
+    /// States a validated plan before it is applied: what the apply will mint
+    /// and spend, from the port. Shown before apply; never a gate on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the port's error.
+    pub fn state(&self, plan: &ValidatedWavePlan, now: u64) -> WaveResult<Option<FanoutStatement>> {
+        self.tasks.plan_statement(plan, now)
+    }
+
     /// Applies a validated plan through the port and reconciles what came
-    /// back against the plan.
+    /// back against the plan. The receipt carries the statement the port
+    /// froze before minting.
     ///
     /// The port owns the writes; this function owns the proof that the writes
     /// match the cut — every planned key landed exactly once, and every
@@ -471,11 +495,13 @@ impl<P: WaveTaskPort> WaveOrchestrator<P> {
             }
         }
 
+        let statement = self.tasks.plan_statement(&plan, now)?;
         Ok(WavePlanReceipt {
             plan_ref: plan.plan_ref,
             task_refs,
             blocked_by_edges: edges.len(),
             applied_at: now,
+            statement,
         })
     }
 

@@ -1,6 +1,9 @@
 //! Vault-backed, atomic wave plan application through the ordinary TASK doors.
 use super::create_validation::ValidatedTaskCreate;
 use super::{TaskAssignee, TaskKind};
+use crate::agent_dispatch::{
+    AgentDispatchTarget, AgentDispatcher, DispatchAgent, FanoutCaller, FanoutStatement, FanoutWork,
+};
 use crate::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt};
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
@@ -34,11 +37,12 @@ pub enum WaveDispatchGeneration {
     /// Scheduled retry: do not dispatch before its due time, but arm a wake.
     DueAt(u64),
 }
-/// Wave-plan cut index: the seal row (local `""`) and each per-task row share
-/// this one blake3-hash-keyed prefix. The seal's value is the plan's
-/// fingerprint bytes; a per-task row's value is the minted TASK id — two
-/// value shapes under one family, so this table stays raw bytes and each
-/// call site interprets what it wrote.
+/// Wave-plan cut index: the seal row (local `""`), each per-task row and the
+/// cut's frozen statement share this one blake3-hash-keyed prefix. The seal's
+/// value is the plan's fingerprint bytes, a per-task row's is the minted TASK
+/// id, and the statement row's is its JSON — three value shapes under one
+/// family, so this table stays raw bytes and each call site interprets what
+/// it wrote.
 const WAVE_PLAN_INDEX: SideTable<[u8; 32], Vec<u8>, Raw> =
     SideTable::new(&side_table::TASK_WAVE_PLAN_INDEX);
 
@@ -68,6 +72,70 @@ fn index_key(plan: &str, local: &str) -> [u8; 32] {
     hash.update(local.as_bytes());
     *hash.finalize().as_bytes()
 }
+/// The cut's frozen statement row. A derived-key hash, so it never collides
+/// with a seal or a per-task key.
+fn statement_key(plan: &str) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new_derive_key("oneiron wave plan statement v1");
+    hash.update(plan.as_bytes());
+    *hash.finalize().as_bytes()
+}
+
+/// What applying `plan` mints and spends, stated before any TASK (OF-393): a
+/// task assigned to an AGENT_DEF is a local agent launch, one assigned to a
+/// person a peer TASK, one with no assignee the default realization. Wave
+/// TASKs dispatch as roots, so the statement states no cap. Width is checked,
+/// never refused.
+fn wave_statement_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    plan: &ValidatedWavePlan,
+    now: u64,
+) -> Result<FanoutStatement, MemoryError> {
+    let mut work = Vec::with_capacity(plan.tasks().len());
+    for local in plan.topological_order() {
+        let task = &plan.tasks()[local];
+        work.push(match task.assignee_ref {
+            None => FanoutWork::Task { assignee: None },
+            Some(actor_ref) => match vault.get_entity_type_in_txn(txn, &actor_ref)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => {
+                    FanoutWork::PeerConsult { peer: actor_ref }
+                }
+                Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => FanoutWork::Agent(DispatchAgent {
+                    target: AgentDispatchTarget::Custom(actor_ref),
+                    parent_attempt: None,
+                    dedupe_key: None,
+                    run_id: None,
+                    now,
+                }),
+                _ => {
+                    return Err(MemoryError::bad_request(
+                        "wave assignee must be an actor or agent definition",
+                    ));
+                }
+            },
+        });
+    }
+    let mut statement = AgentDispatcher::new(vault).plan_fanout_in_txn(
+        txn,
+        &FanoutCaller::default(),
+        &work,
+        now,
+    )?;
+    super::fanout_check::raise_unheld_width_check(
+        vault,
+        txn,
+        &mut statement,
+        &format!("wave:{}:{}", actor.to_hex(), plan.epic_task_ref().to_hex()),
+        format!("fanout_check_row:wave:{}", plan.plan_ref()),
+    )?;
+    Ok(statement)
+}
+
+fn decode_statement(raw: &[u8]) -> crate::Result<FanoutStatement> {
+    serde_json::from_slice(raw).map_err(|_| Error::CorruptedIndex("wave plan statement"))
+}
+
 fn fingerprint(plan: &ValidatedWavePlan) -> Vec<u8> {
     let tasks: Vec<_> = plan
         .tasks()
@@ -144,6 +212,18 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     return Err(MemoryError::bad_request(
                         "wave plan_ref reused for a different cut",
                     ));
+                }
+                // Stated before any TASK row; a re-apply of the same cut keeps
+                // the statement its first apply froze.
+                let frozen_key = statement_key(plan.plan_ref());
+                if WAVE_PLAN_INDEX
+                    .get(&self.vault.store, txn, &frozen_key)?
+                    .is_none()
+                {
+                    let statement = wave_statement_in(self.vault, txn, self.actor, plan, now)?;
+                    let encoded = serde_json::to_vec(&statement)
+                        .map_err(|_| Error::InvariantViolation("wave statement encoding"))?;
+                    WAVE_PLAN_INDEX.put(&self.vault.store, txn, &frozen_key, &encoded)?;
                 }
                 let mut ids = BTreeMap::new();
                 for local in plan.topological_order() {
@@ -277,6 +357,26 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     self.vault.store.notify_attempt_observers();
                 }
             })
+    }
+
+    fn plan_statement(
+        &self,
+        plan: &ValidatedWavePlan,
+        now: u64,
+    ) -> WaveResult<Option<FanoutStatement>> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let sealed = WAVE_PLAN_INDEX
+            .get(&self.vault.store, &txn, &index_key(plan.plan_ref(), ""))?
+            .is_some_and(|raw| raw == fingerprint(plan));
+        if sealed
+            && let Some(raw) =
+                WAVE_PLAN_INDEX.get(&self.vault.store, &txn, &statement_key(plan.plan_ref()))?
+        {
+            return Ok(Some(decode_statement(&raw)?));
+        }
+        wave_statement_in(self.vault, &txn, self.actor, plan, now)
+            .map(Some)
+            .map_err(engine_error)
     }
 
     fn task_terminal_success(&self, task: EntityId) -> WaveResult<bool> {

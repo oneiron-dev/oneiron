@@ -2,7 +2,8 @@
 //!
 //! One reusable primitive answers a single question before any peer call or
 //! per-peer TASK exists: may this fan-out start, and if it may not, what does a
-//! human see? It runs entirely ahead of the parent module's decide →
+//! human see? The approval mode decides it at any width; width alone never
+//! does (OF-393). It runs entirely ahead of the parent module's decide →
 //! durable-pending → transport order, so a paused plan has created no effect to
 //! undo and no row to reconcile.
 //!
@@ -14,17 +15,23 @@
 //!    per-peer rate that crosses a supplied spike threshold. Pathology pauses
 //!    for judgment BEFORE any threshold or ladder logic; it never kills a run
 //!    and never drops one silently.
-//! 3. Below the threshold, proceed silently. The threshold is a knob, not a
-//!    cap: there is no depth limit, no total ceiling, no per-peer default
-//!    budget, and no silent cancellation path anywhere in this module.
-//! 4. Above it, ride the existing r5v2 approval ladder rather than a new gate
-//!    family. An absent or failing classifier escalates to a human — never a
-//!    silent allow, never a silent kill.
+//! 3. The r5v2 approval mode gates every plan, whatever its width: `manual`
+//!    pauses for the person; `auto` asks the injected classifier, and an
+//!    absent, failing or uncertain classifier pauses for the escalated role
+//!    (never a silent allow, never a silent kill); `full-access` just goes.
+//! 4. The threshold only marks the exceptional-width check, a check never a
+//!    limit. Above it the check rides the plan's pause row when the mode
+//!    holds the plan, is cleared by the classifier's allow under `auto`, and
+//!    under `full-access` is a non-blocking question row. There is no depth
+//!    limit, no total ceiling, no per-peer default budget, and no silent
+//!    cancellation path anywhere in this module.
 //!
 //! A human approval resumes the exact frozen plan digest and is always
-//! receipted. Rendering and persisting the surfaced row belong to the caller;
-//! this module requires a [`FanoutSurfaceSink`] and counts a pause as
-//! successful only once the sink hands back a durable ref.
+//! receipted; an answer to a width question is receipted the same way and
+//! releases nothing, because nothing was held. Rendering and persisting the
+//! surfaced rows belong to the caller; this module requires a
+//! [`FanoutSurfaceSink`] and counts a pause or a question as surfaced only
+//! once the sink hands back a durable ref.
 //!
 //! All absolute times here are milliseconds (`now_ms`, `created_at_ms`); only
 //! explicit durations such as [`PeerRateSnapshot::window_secs`] are seconds.
@@ -48,6 +55,12 @@ const FANOUT_SURFACE_COMPONENT: &str = "fanout_approve";
 
 /// Prefix of the stable pause-row ref.
 const FANOUT_ROW_PREFIX: &str = "fanout_row";
+
+/// Surface component an exceptional-width question is rendered as.
+const FANOUT_CHECK_COMPONENT: &str = "fanout_check";
+
+/// Prefix of the stable width-question row ref.
+const FANOUT_CHECK_ROW_PREFIX: &str = "fanout_check_row";
 
 /// Verb class a remembered fan-out approval is persisted under. It reuses the
 /// existing standing-grant vocabulary; this module mints no policy-row schema
@@ -172,13 +185,17 @@ pub(crate) trait FanoutAutoDecider {
     -> Result<FanoutAutoDisposition>;
 }
 
-/// The receiptable choices a surfaced fan-out pause offers.
+/// The receiptable choices a surfaced fan-out row offers. A pause row offers
+/// the first three; a width-question row offers only `Ack` and
+/// `AckAndRemember`, because there is nothing to keep paused or release.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FanoutApprovalChoice {
     ApproveOnce,
     ApproveAndRememberBriefVerb,
     KeepPaused,
+    Ack,
+    AckAndRemember,
 }
 
 impl FanoutApprovalChoice {
@@ -188,6 +205,8 @@ impl FanoutApprovalChoice {
             Self::ApproveOnce => "fanout_approve_once",
             Self::ApproveAndRememberBriefVerb => "fanout_approve_and_remember_brief_verb",
             Self::KeepPaused => "fanout_keep_paused",
+            Self::Ack => "fanout_check_ack",
+            Self::AckAndRemember => "fanout_check_ack_and_remember",
         }
     }
 
@@ -197,6 +216,8 @@ impl FanoutApprovalChoice {
             Self::ApproveOnce => "approved_once",
             Self::ApproveAndRememberBriefVerb => "grant_mint_intent",
             Self::KeepPaused => "kept_paused",
+            Self::Ack => "acknowledged",
+            Self::AckAndRemember => "acknowledged_and_remembered",
         }
     }
 }
@@ -224,6 +245,28 @@ pub(crate) struct FanoutApprovalRow {
     pub(crate) pathology: Option<FanoutPathology>,
     pub(crate) actions: Vec<FanoutApprovalAction>,
     pub(crate) created_at_ms: u64,
+    /// The fan-out statement shown with the row. The caller attaches it; this
+    /// module never prices a plan.
+    pub(crate) statement: Option<crate::agent_dispatch::FanoutStatement>,
+}
+
+/// How the exceptional-width check of a plan that proceeds was classified.
+/// No arm holds it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FanoutWidthClass {
+    /// `auto`: the classifier allowed the plan.
+    AutoClear,
+    /// `full-access`: no classifier is asked; the next role is asked on this
+    /// non-blocking question row.
+    Asked { row: Box<FanoutApprovalRow> },
+}
+
+/// The exceptional-width check a proceeding plan above the threshold raises.
+/// A check, never a limit: the plan carrying it proceeds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FanoutWidthCheck {
+    pub(crate) threshold: u32,
+    pub(crate) class: FanoutWidthClass,
 }
 
 /// Durable home for pause rows and choice receipts. This module owns neither:
@@ -244,10 +287,29 @@ pub(crate) trait FanoutSurfaceSink {
     /// Any failure to durably record the choice. Resume propagates it, so an
     /// unreceipted approval never releases a plan.
     fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String>;
+
+    /// Records the exceptional-width check of a plan that proceeds and, when
+    /// it asks, persists its question row and returns that row's durable ref.
+    /// The plan proceeds once this returns: the row asks, it never holds.
+    ///
+    /// The default is for a sink with one row family: it keeps a question row
+    /// beside its pause rows and records nothing else.
+    ///
+    /// # Errors
+    ///
+    /// Any failure to durably record the check. Admission propagates it, so
+    /// a question that cannot be surfaced is never silently dropped.
+    fn persist_width_check(&mut self, check: &FanoutWidthCheck) -> Result<Option<String>> {
+        match &check.class {
+            FanoutWidthClass::Asked { row } => self.persist_pause_row(row).map(Some),
+            FanoutWidthClass::AutoClear => Ok(None),
+        }
+    }
 }
 
 /// The admission answer. Both arms carry the metering, because metering is
-/// free and unconditional.
+/// free and unconditional. A plan above the threshold that proceeds has
+/// handed its width check to the sink first.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FanoutAdmission {
     Proceed {
@@ -311,16 +373,21 @@ pub(crate) fn fanout_estimate(plan: &FanoutPlan) -> Result<FanoutEstimate> {
 /// Decides whether one fan-out plan may begin executing.
 ///
 /// Metering runs first and always. Pathology is detected before any threshold
-/// or ladder logic and pauses on its own. Only then does size enter the
-/// picture: at or below the caller-provided manifest `threshold` the plan
-/// proceeds silently, and above it the r5v2 ladder rules. Every paused branch returns before any callback
-/// that could create a peer TASK or reach transport.
+/// or ladder logic and pauses on its own. Then the approval mode rules at any
+/// width: `manual` pauses, `auto` proceeds only on the classifier's allow and
+/// otherwise pauses for the escalated role, and `full-access` proceeds. Size
+/// never holds a plan: above the caller-provided manifest `threshold` a
+/// proceeding plan hands its exceptional-width check to the sink (cleared by
+/// the allow under `auto`, a non-blocking question row under `full-access`),
+/// and a paused plan's row carries it. Every paused branch returns before any
+/// callback that could create a peer TASK or reach transport.
 ///
 /// # Errors
 ///
 /// Malformed plan data (blank refs, zero counts, overflow), malformed rate
-/// telemetry, or a surface sink that cannot durably record the pause. None of
-/// those are ever treated as an approved or silently skipped fan-out.
+/// telemetry, or a surface sink that cannot durably record a pause or a width
+/// check. None of those are ever treated as an approved or silently skipped
+/// fan-out.
 pub(crate) fn admit_fanout_plan(
     plan: &FanoutPlan,
     threshold: Option<u32>,
@@ -339,23 +406,117 @@ pub(crate) fn admit_fanout_plan(
     let threshold = threshold.ok_or_else(|| {
         Error::InvalidConfig("fan-out approval threshold policy row missing".into())
     })?;
-    if estimate.total_count <= threshold {
-        return Ok(FanoutAdmission::Proceed { estimate });
-    }
-
-    match canonical.mode {
-        FanoutApprovalMode::FullAccess => Ok(FanoutAdmission::Proceed { estimate }),
-        FanoutApprovalMode::Manual => pause(&canonical, estimate, None, surface, now_ms),
+    // The mode gates the plan at any width. `true`: the classifier allowed it.
+    let cleared = match canonical.mode {
+        FanoutApprovalMode::Manual => return pause(&canonical, estimate, None, surface, now_ms),
         // A classifier that is missing, unreachable, or wrong is not authority
         // to start a fan-out, and is not authority to cancel one either: both
         // failure and refusal land on the same human surface.
         FanoutApprovalMode::Auto => match auto.decide(plan, &estimate) {
-            Ok(FanoutAutoDisposition::Allow) => Ok(FanoutAdmission::Proceed { estimate }),
+            Ok(FanoutAutoDisposition::Allow) => true,
             Ok(FanoutAutoDisposition::SurfaceHuman) | Err(_) => {
-                pause(&canonical, estimate, None, surface, now_ms)
+                return pause(&canonical, estimate, None, surface, now_ms);
             }
         },
+        FanoutApprovalMode::FullAccess => false,
+    };
+    if estimate.total_count <= threshold {
+        return Ok(FanoutAdmission::Proceed { estimate });
     }
+    let class = if cleared {
+        FanoutWidthClass::AutoClear
+    } else {
+        FanoutWidthClass::Asked {
+            row: Box::new(surfaced_row(
+                &canonical,
+                &estimate,
+                None,
+                RowFamily::WidthCheck,
+                now_ms,
+            )),
+        }
+    };
+    let check = FanoutWidthCheck { threshold, class };
+    if let Some(surface_ref) = surface.persist_width_check(&check)? {
+        durable_ref(
+            surface_ref,
+            "fan-out width check surface returned a blank durable row ref",
+        )?;
+    }
+    Ok(FanoutAdmission::Proceed { estimate })
+}
+
+/// Records one human answer to a surfaced width-question row.
+///
+/// The same exact-digest binding as a pause: the digest is recomputed from
+/// `current_plan` and compared to the frozen row BEFORE the answer receipt is
+/// written. Only `Ack` and `AckAndRemember` answer a check; a hold or a
+/// release is refused, because nothing was held. Returns the answer receipt's
+/// durable ref; persisting a remembered ruling is the caller's.
+///
+/// # Errors
+///
+/// [`FanoutApprovalError::StalePlanDigest`] when the plan changed under the
+/// row, and [`FanoutApprovalError::Engine`] for malformed input, an answer
+/// that is not an acknowledgement or that the row never offered, or a sink
+/// that cannot record it.
+pub(crate) fn answer_fanout_width_check(
+    current_plan: &FanoutPlan,
+    row: &FanoutApprovalRow,
+    choice: FanoutApprovalChoice,
+    origin_action_id: &str,
+    principal_ref: &str,
+    surface: &mut dyn FanoutSurfaceSink,
+    now_ms: u64,
+) -> FanoutApprovalResult<String> {
+    let principal_ref = canonical_ref("approval principal_ref", principal_ref)?;
+    if !matches!(
+        choice,
+        FanoutApprovalChoice::Ack | FanoutApprovalChoice::AckAndRemember
+    ) {
+        return Err(Error::InvalidConfig(
+            "a fan-out width check is acknowledged, never held or released".to_owned(),
+        )
+        .into());
+    }
+    let canonical = offered_choice(current_plan, row, &choice, origin_action_id)?;
+    let receipt = choice_receipt(
+        &canonical,
+        row,
+        &choice,
+        origin_action_id,
+        &principal_ref,
+        now_ms,
+    );
+    Ok(durable_ref(
+        surface.persist_choice_receipt(&receipt)?,
+        "fan-out choice receipt sink returned a blank ref",
+    )?)
+}
+
+/// The canonical plan, once the digest still matches the frozen row and the
+/// row offered this exact choice.
+fn offered_choice(
+    current_plan: &FanoutPlan,
+    row: &FanoutApprovalRow,
+    choice: &FanoutApprovalChoice,
+    origin_action_id: &str,
+) -> FanoutApprovalResult<CanonicalPlan> {
+    let canonical = canonicalize(current_plan)?;
+    if plan_digest_of(&canonical) != row.plan_digest {
+        return Err(FanoutApprovalError::StalePlanDigest);
+    }
+    if !row
+        .actions
+        .iter()
+        .any(|action| action.choice == *choice && action.action_id == origin_action_id)
+    {
+        return Err(Error::InvalidConfig(
+            "fan-out approval action is not one the surfaced row offered".to_owned(),
+        )
+        .into());
+    }
+    Ok(canonical)
 }
 
 /// Applies one human choice to a surfaced pause.
@@ -381,21 +542,8 @@ pub(crate) fn approve_and_resume_fanout(
     now_ms: u64,
 ) -> FanoutApprovalResult<Option<FanoutResume>> {
     let principal_ref = canonical_ref("approval principal_ref", principal_ref)?;
-    let canonical = canonicalize(current_plan)?;
-    let plan_digest = plan_digest_of(&canonical);
-    if plan_digest != row.plan_digest {
-        return Err(FanoutApprovalError::StalePlanDigest);
-    }
-    if !row
-        .actions
-        .iter()
-        .any(|action| action.choice == choice && action.action_id == origin_action_id)
-    {
-        return Err(Error::InvalidConfig(
-            "fan-out approval action is not one the surfaced row offered".to_owned(),
-        )
-        .into());
-    }
+    let canonical = offered_choice(current_plan, row, &choice, origin_action_id)?;
+    let plan_digest = row.plan_digest;
 
     let receipt = choice_receipt(
         &canonical,
@@ -411,6 +559,11 @@ pub(crate) fn approve_and_resume_fanout(
     )?;
 
     match choice {
+        // A pause row never offers a width-check answer, so the offer check
+        // above already refused it.
+        FanoutApprovalChoice::Ack | FanoutApprovalChoice::AckAndRemember => {
+            Err(Error::InvariantViolation("a pause row offers no width-check answer").into())
+        }
         // The row stays live. The choice is still receipted: "not yet" is a
         // ruling, and an unrecorded ruling is how a pause becomes a drop.
         FanoutApprovalChoice::KeepPaused => Ok(None),
@@ -655,6 +808,63 @@ fn first_rate_spike(
     Ok(None)
 }
 
+/// Which surfaced row a plan gets: a pause, or a width question.
+#[derive(Clone, Copy)]
+enum RowFamily {
+    Pause,
+    WidthCheck,
+}
+
+/// One surfaced row, bound to the plan digest. Both families share identity
+/// and binding; they differ in component, ref prefix and offered actions.
+fn surfaced_row(
+    plan: &CanonicalPlan,
+    estimate: &FanoutEstimate,
+    pathology: Option<FanoutPathology>,
+    family: RowFamily,
+    now_ms: u64,
+) -> FanoutApprovalRow {
+    let digest_hex = bytes_to_hex_lower(&estimate.plan_digest);
+    let (component, prefix, choices): (&str, &str, &[FanoutApprovalChoice]) = match family {
+        RowFamily::Pause => (
+            FANOUT_SURFACE_COMPONENT,
+            FANOUT_ROW_PREFIX,
+            &[
+                FanoutApprovalChoice::ApproveOnce,
+                FanoutApprovalChoice::ApproveAndRememberBriefVerb,
+                FanoutApprovalChoice::KeepPaused,
+            ],
+        ),
+        RowFamily::WidthCheck => (
+            FANOUT_CHECK_COMPONENT,
+            FANOUT_CHECK_ROW_PREFIX,
+            &[
+                FanoutApprovalChoice::Ack,
+                FanoutApprovalChoice::AckAndRemember,
+            ],
+        ),
+    };
+    FanoutApprovalRow {
+        row_ref: format!("{prefix}:{digest_hex}"),
+        component_id: format!("{component}:{digest_hex}"),
+        plan_ref: plan.plan_ref.clone(),
+        plan_digest: estimate.plan_digest,
+        estimate: estimate.clone(),
+        mode: plan.mode,
+        pathology,
+        actions: choices
+            .iter()
+            .cloned()
+            .map(|choice| FanoutApprovalAction {
+                action_id: choice.action_id().to_owned(),
+                choice,
+            })
+            .collect(),
+        created_at_ms: now_ms,
+        statement: None,
+    }
+}
+
 fn pause(
     plan: &CanonicalPlan,
     estimate: FanoutEstimate,
@@ -662,18 +872,7 @@ fn pause(
     surface: &mut dyn FanoutSurfaceSink,
     now_ms: u64,
 ) -> Result<FanoutAdmission> {
-    let digest_hex = bytes_to_hex_lower(&estimate.plan_digest);
-    let row = FanoutApprovalRow {
-        row_ref: format!("{FANOUT_ROW_PREFIX}:{digest_hex}"),
-        component_id: format!("{FANOUT_SURFACE_COMPONENT}:{digest_hex}"),
-        plan_ref: plan.plan_ref.clone(),
-        plan_digest: estimate.plan_digest,
-        estimate: estimate.clone(),
-        mode: plan.mode,
-        pathology,
-        actions: fanout_approval_actions(),
-        created_at_ms: now_ms,
-    };
+    let row = surfaced_row(plan, &estimate, pathology, RowFamily::Pause, now_ms);
     let surface_ref = durable_ref(
         surface.persist_pause_row(&row)?,
         "fan-out pause surface returned a blank durable row ref",
@@ -683,20 +882,6 @@ fn pause(
         row: Box::new(row),
         surface_ref,
     })
-}
-
-fn fanout_approval_actions() -> Vec<FanoutApprovalAction> {
-    [
-        FanoutApprovalChoice::ApproveOnce,
-        FanoutApprovalChoice::ApproveAndRememberBriefVerb,
-        FanoutApprovalChoice::KeepPaused,
-    ]
-    .into_iter()
-    .map(|choice| FanoutApprovalAction {
-        action_id: choice.action_id().to_owned(),
-        choice,
-    })
-    .collect()
 }
 
 fn choice_receipt(
@@ -725,6 +910,12 @@ fn choice_receipt(
     fields.insert("surfaced_at_ms".to_owned(), row.created_at_ms.to_string());
 
     let mut policy_trace = vec![format!("fanout_mode:{}", plan.mode.as_str())];
+    if matches!(
+        choice,
+        FanoutApprovalChoice::Ack | FanoutApprovalChoice::AckAndRemember
+    ) {
+        policy_trace.push("fanout_width_check".to_owned());
+    }
     if let Some(pathology) = row.pathology.as_ref() {
         fields.insert("pathology".to_owned(), pathology.kind().to_owned());
         policy_trace.push(format!("fanout_pathology:{}", pathology.kind()));

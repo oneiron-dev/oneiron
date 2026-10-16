@@ -35,6 +35,7 @@ mod create_validation;
 mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
+mod fanout_check;
 mod follow_up;
 mod highway;
 mod highway_accept;

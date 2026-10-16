@@ -559,6 +559,11 @@ pub struct TaskAskReceipt {
     pub task_refs: Vec<EntityId>,
     pub hold: Option<TaskAskHoldReason>,
     pub idempotent_replay: bool,
+    /// The fan-out statement frozen at admission, before any member TASK:
+    /// counts, expected spend, cap or none, and any width check. A replay
+    /// returns the frozen copy. `None` only on a code-mode replay record,
+    /// which does not carry it yet.
+    pub statement: Option<crate::agent_dispatch::FanoutStatement>,
 }
 
 /// One admitted word's durable identity. This is evidence, never approval.

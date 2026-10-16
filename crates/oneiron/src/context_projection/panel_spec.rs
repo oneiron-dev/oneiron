@@ -11,9 +11,6 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::task_verb::{ConsultPayload, ConsultPayloadRef, TaskAssignee};
 use crate::temporal::TimeRange;
 
-/// Most members one panel spec may carry.
-pub const LEAD_PANEL_MAX_MEMBERS: usize = 16;
-
 /// Pinned schema version of the persisted `LeadPanelSpec` entity body.
 pub const LEAD_PANEL_SPEC_SCHEMA_VERSION: u64 = 1;
 
@@ -61,11 +58,6 @@ pub fn validate_lead_panel_spec(spec: &LeadPanelSpec) -> Result<()> {
     if spec.members.is_empty() {
         return Err(Error::Record(RecordError::InvalidTaskBody(
             "panel spec must name a member",
-        )));
-    }
-    if spec.members.len() > LEAD_PANEL_MAX_MEMBERS {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "panel spec names too many members",
         )));
     }
     for (index, member) in spec.members.iter().enumerate() {

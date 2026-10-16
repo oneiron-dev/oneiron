@@ -442,6 +442,17 @@ fn standing_verdict(row: &StandingPolicy, ask_band: Option<u64>) -> FanoutAskVer
     }
 }
 
+/// The accepted standing approval that clears a budget ask of `magnitude` in
+/// `scope` without asking anyone, if one does: the policy row an AUTO
+/// clearance of a width check cites (OF-393). A read failure, a proposed or
+/// band-less row, or a denial is no clearance.
+pub(crate) fn covering_approval(vault: &Vault, scope: &str, magnitude: u64) -> Option<EntityId> {
+    let Ok(Some(row)) = standing_policy_for(vault, scope, EscalationTrigger::Budget) else {
+        return None;
+    };
+    (standing_verdict(&row, Some(magnitude)) == FanoutAskVerdict::Allow).then_some(row.row_ref)
+}
+
 /// ED-06's folded history, flattened for the decision state.
 fn decision_history(stats: &EscalationStats) -> FanoutDecisionHistory {
     FanoutDecisionHistory {
