@@ -42,8 +42,8 @@
 //!
 //! So this module adds ONE fact ([`AmendmentCause`]) and pre-filters on it.
 //! The `ProposalWrong` arm is then handed VERBATIM to
-//! [`AttributionJudge`](crate::skill_attribution::AttributionJudge) — SK-04's own trait, SK-04's own rule table, SK-04's
-//! own [`crate::skill_attribution::attribution_call_purpose`] for an LLM tier.
+//! [`AttributionDecisions`](crate::skill_attribution::AttributionDecisions) — SK-04's own decision path, SK-04's own rule table, SK-04's
+//! own [`crate::skill_attribution::attribution_call_purpose`] for a model tier.
 //! There is no second classifier here and no LLM client: the import direction
 //! is the proof, and a host that wants a model tier implements SK-04's trait
 //! rather than a new one.
@@ -75,7 +75,7 @@ mod taxonomy;
 
 pub use self::audit::{
     AmendmentAuditFixture, held_out_amendment_fixtures, judge_audit_reports, run_judge_audit,
-    run_judge_audit_with_judge,
+    run_judge_audit_with_decisions,
 };
 pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,

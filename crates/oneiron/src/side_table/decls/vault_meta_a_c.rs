@@ -385,8 +385,6 @@ side_tables! {
     CLAIM_CONFLICT_RESOLUTION: VaultMeta b"consent_bundle.claim_conflict.resolved.v1:" Raw;
     /// Content-addressed claim-conflict review packet. Key: bytes32.
     CLAIM_CONFLICT_PACKET: VaultMeta b"consent_bundle.claim_conflict.v1:" LegacyJson;
-    /// Vault-local content-addressed store of a recoverable full tool/agent output blob. Key: hash32.
-    COMPACTION_OUTPUT_BLOB: VaultMeta b"context:output:v1:" Raw;
     /// Immutable derived text summary of one output, keyed by source content hash and summarization-
     /// recipe hash. Key: hash32 + hash32.
     COMPACTION_OUTPUT_SUMMARY: VaultMeta b"context:summary:v1:" Raw;

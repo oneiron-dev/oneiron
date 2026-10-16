@@ -346,6 +346,16 @@ impl Vault {
                 header.learned_at,
                 TopologyDeletePhase::Committed,
             )?;
+            // Deleting a world destroys its keys (fix 7); a cleanup archive
+            // stays undoable and destroys nothing.
+            if reason != DeleteReason::ArchivedByCleanup {
+                self.destroy_world_keys_for_delete_in_txn(
+                    &mut wtxn,
+                    *id,
+                    crate::world_keys::WorldKeyDestroyCause::LocalDelete,
+                    Some(tombstone.request_id),
+                )?;
+            }
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
