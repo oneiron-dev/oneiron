@@ -32,7 +32,8 @@ pub struct RepresentationContext {
 }
 impl Vault {
     /// The model host receives only these admitted source texts. Claim bytes
-    /// and owner voice are never read through an unscoped fallback.
+    /// and owner voice are never read through an unscoped fallback, and a
+    /// relationship's rows need the Dreamer's live AccessGrant.
     pub fn representation_context(
         &self,
         request: &RepresentationRequest,
@@ -50,8 +51,12 @@ impl Vault {
         crate::outbound::outbound_verb_contract(&request.channel, &request.verb)
             .map_err(|_| invalid())?;
         let actor = self.dreamer_authority()?.entity_ref();
+        // Relationship and private rows pass only on the Dreamer's own live
+        // grants, as consolidation's message reader reads them.
         let reader = self.scoped_read(
-            ScopedReadActorKey::with_actor_class(actor.to_hex(), "system").ok_or_else(invalid)?,
+            ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+                .ok_or_else(invalid)?
+                .require_relationship_grants(Some(actor)),
         );
         let mut seen = BTreeSet::new();
         let mut receipt = reader.read_receipt(None, 0)?;

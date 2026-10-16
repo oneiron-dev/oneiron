@@ -25,6 +25,7 @@
 use crate::extraction_eval::Of360EvalError;
 
 pub mod archive;
+pub mod authoring;
 pub mod beam_promotion;
 mod config;
 pub mod coverage;

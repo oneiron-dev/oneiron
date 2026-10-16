@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::{EntityId, Vault};
-use oneiron_mesh_transport::{MeshConnection, MeshError, MeshStream};
+use oneiron_mesh_transport::{MeshConnection, MeshError, MeshFuture, MeshService, MeshStream};
 use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal};
 use tokio::runtime::Handle;
 
@@ -25,6 +25,7 @@ use crate::spec::{LentInput, OrganCall, OrganInput};
 /// node's host. The transport has already admitted the peer (its MACHINE
 /// row and its grant for this ALPN), and that node read every input under
 /// its own actor's authority before it sent the bytes.
+#[derive(Clone)]
 pub struct OrganService {
     host: Arc<OrganHost>,
     vault: Arc<Vault>,
@@ -40,14 +41,14 @@ impl std::fmt::Debug for OrganService {
 
 impl OrganService {
     #[must_use]
-    pub fn new(host: Arc<OrganHost>, vault: Arc<Vault>) -> Arc<Self> {
-        Arc::new(Self { host, vault })
+    pub fn new(host: Arc<OrganHost>, vault: Arc<Vault>) -> Self {
+        Self { host, vault }
     }
 
     /// Serves one admitted connection until it closes. Each stream the peer
     /// opens is one request; a call's asks go back on streams this side
     /// opens. A connection on another ALPN is closed at once.
-    pub async fn serve_connection(self: Arc<Self>, conn: Box<dyn MeshConnection>) {
+    pub async fn serve_connection(&self, conn: Box<dyn MeshConnection>) {
         if conn.alpn() != ORGAN_ALPN {
             conn.close();
             return;
@@ -55,7 +56,7 @@ impl OrganService {
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
         let staging = Arc::new(Staging::default());
         while let Ok(stream) = conn.accept_stream().await {
-            let service = Arc::clone(&self);
+            let service = self.clone();
             let conn = Arc::clone(&conn);
             let staging = Arc::clone(&staging);
             tokio::spawn(async move {
@@ -181,6 +182,15 @@ impl OrganService {
         Ok(match outcome {
             Ok(outcome) => PeerResult::Done(offered(outcome, staging)),
             Err(err) => PeerResult::Failed(failure(err, asked)),
+        })
+    }
+}
+
+impl MeshService for OrganService {
+    fn serve(&self, connection: Box<dyn MeshConnection>) -> MeshFuture<'_, ()> {
+        Box::pin(async move {
+            self.serve_connection(connection).await;
+            Ok(())
         })
     }
 }

@@ -8495,6 +8495,8 @@ dependencies = [
  "oneiron-keystore",
  "oneiron-llm-anthropic",
  "oneiron-llm-openai",
+ "oneiron-mesh-transport",
+ "oneiron-organ-host",
  "oneiron-remote",
  "oneiron-spawn",
  "oneiron-vault-contract",
