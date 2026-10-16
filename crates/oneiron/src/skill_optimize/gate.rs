@@ -171,7 +171,10 @@ pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
-pub use live::{measure_skill_edit_goal_axes, skill_edit_goal_axis_report, skill_goal_axis_plan};
+pub use live::{
+    measure_skill_edit_goal_axes, skill_edit_goal_axis_report, skill_edit_needs_goal_axis_report,
+    skill_goal_axis_plan,
+};
 pub use measurement::{
     AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation, JudgeMeasurements,
     PreferredResponse, WorldAxisScore,

@@ -238,6 +238,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_identity_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.identity.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.identity.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_identity_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.identity.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.identity.settle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_people_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.people.list")?;
         let output = py
@@ -679,6 +693,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_disclosure_offer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.disclosure.offer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.disclosure.offer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shares_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_hooks_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.hooks.replay")?;
         let output = py
@@ -1014,6 +1042,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.companions.sharing.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.companions.sharing.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_companions_sharing_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.companions.sharing.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.companions.sharing.set", input))
             .map_err(raise)?;
         encode(&output)
     }

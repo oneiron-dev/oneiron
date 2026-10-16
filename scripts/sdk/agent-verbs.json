@@ -91,6 +91,28 @@
       "section": false
     },
     {
+      "name": "self.identity.answer",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
+      "call": "memory.identity_answer(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.identity.settle",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityActNowRequest",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentityActNow",
+      "call": "memory.identity_act_now(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.people.list",
       "input": "crate::memory::PeopleListRequest",
       "output": "crate::memory::PeoplePage",
@@ -977,6 +999,29 @@
       "section": false
     },
     {
+      "name": "vault.disclosure.offer",
+      "input": "crate::task_verb::sdk::DisclosureOfferRequest",
+      "output": "crate::task_verb::sdk::DisclosureOffered",
+      "call": "crate::task_verb::sdk::offer_contact_disclosure_as_caller(memory, input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shares.create",
+      "input": "crate::task_verb::sdk::ShareCreateRequest",
+      "output": "crate::task_verb::sdk::ShareCreated",
+      "call": "crate::task_verb::sdk::create_share_as_caller(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.hooks.replay",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
       "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
@@ -1710,6 +1755,21 @@
       "output": "crate::workspace_roster::CompanionSharingView",
       "call": "memory.companion_sharing_get(&crate::workspace_roster::CompanionSharingTarget { companion: crate::EntityId::from_hex(&input.companion_ref)?, contact: crate::EntityId::from_hex(&input.contact_ref)? })?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.companions.sharing.set",
+      "input": "CompanionSharingSetRequest",
+      "output": "crate::workspace_roster::CompanionSharingView",
+      "call": "memory.companion_sharing_set(&input.target()?, &input.proposal_ref, &input.delta()?)?",
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },

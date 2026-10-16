@@ -36,13 +36,15 @@ pub(crate) struct ExportSnapshot {
     pub(crate) secrets_included: bool,
 }
 
-/// One run's result manifests, as its replay record names them.
+/// One run's result manifests, as its replay record names them, each with
+/// why the egress door withholds the run's occurrence of it, if it does.
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
-    pub(crate) outputs: Vec<crate::code_run::CodeRunRawOutput>,
+    pub(crate) outputs: Vec<(crate::code_run::CodeRunRawOutput, Option<&'static str>)>,
 }
 
-/// One result body: its bytes, or why the egress door withholds them.
+/// One result body a clean occurrence names: its bytes, or why they are
+/// not exported.
 pub(crate) struct ExportSnapshotBody {
     pub(crate) bytes: u64,
     pub(crate) body: std::result::Result<Vec<u8>, &'static str>,
@@ -402,9 +404,12 @@ impl Vault {
         .map_err(E::from)
     }
 
-    /// The run result closure (OF-190 B++): every run's manifests, and each
-    /// body they name once, through the egress door. A body no row holds
-    /// any longer is withheld as absent.
+    /// The run result closure (OF-190 B++): every run's manifests, each
+    /// occurrence through the egress door before any bytes are shared
+    /// (Docs Q08), and each body a clean occurrence names, once. A withheld
+    /// occurrence keeps its mark and names no body, so one clean occurrence
+    /// of the same bytes neither clears it nor ships its body for it. A body
+    /// no row holds any longer is withheld as absent.
     fn export_run_results_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -415,25 +420,28 @@ impl Vault {
         let mut runs = Vec::new();
         let mut bodies = BTreeMap::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
-            for output in &outputs {
-                if bodies.contains_key(&output.raw_blake3) {
-                    continue;
+            let mut occurrences = Vec::with_capacity(outputs.len());
+            for output in outputs {
+                let withheld =
+                    super::whole_vault_export_withholds_result(self, rtxn, run_id, &output)?;
+                if withheld.is_none() && !bodies.contains_key(&output.raw_blake3) {
+                    let body = self
+                        .code_run_result_body_in_txn(rtxn, &output)?
+                        .ok_or("absent");
+                    bodies.insert(
+                        output.raw_blake3,
+                        ExportSnapshotBody {
+                            bytes: output.raw_len,
+                            body,
+                        },
+                    );
                 }
-                let body = match super::whole_vault_export_withholds_result(self, rtxn, output)? {
-                    Some(reason) => Err(reason),
-                    None => self
-                        .code_run_result_body_in_txn(rtxn, output)?
-                        .ok_or("absent"),
-                };
-                bodies.insert(
-                    output.raw_blake3,
-                    ExportSnapshotBody {
-                        bytes: output.raw_len,
-                        body,
-                    },
-                );
+                occurrences.push((output, withheld));
             }
-            runs.push(ExportSnapshotRun { run_id, outputs });
+            runs.push(ExportSnapshotRun {
+                run_id,
+                outputs: occurrences,
+            });
         }
         Ok((runs, bodies))
     }

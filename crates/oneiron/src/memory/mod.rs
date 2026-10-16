@@ -55,6 +55,7 @@ mod machine_write;
 mod notes;
 mod outbound;
 mod owner_door;
+mod presented_credential;
 mod read_lane;
 mod reads;
 mod recall;
@@ -77,6 +78,7 @@ pub use asset_resolve::{
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
     pull_image,
 };
+pub(crate) use asset_resolve::asset_image_in_lane;
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,

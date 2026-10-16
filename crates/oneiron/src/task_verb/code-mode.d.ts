@@ -50,6 +50,10 @@ declare namespace self {
   const grants: {
     ask(input: { pr: string; scope: { kind: 'messages' | 'summaries' | 'relationship_claims'; space_ref: string } | { kind: 'companion_profile'; facet_ref?: string | null } }): Promise<unknown>;
   };
+  const identity: {
+    answer(input: { ask: string; choice: string }): Promise<unknown>;
+    settle(input: { conversation?: string | null; effect: "send" | "pay" | "invite" | "share"; name: string; prompt: string; someone_new: string }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;
@@ -111,6 +115,7 @@ declare const vault: {
   companions: {
     sharing: {
       get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+      set(input: { companion_ref: string; contact_ref: string; expected_delta: string; proposal_ref: string }): Promise<unknown>;
     };
   };
   conversations: {
@@ -120,6 +125,9 @@ declare const vault: {
     };
   };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
+  disclosure: {
+    offer(input: { ask?: string | null; beneficiary: string; channel: string; contact: string; expires_at: number; owner_ref: string; purpose: string; scope: unknown }): Promise<unknown>;
+  };
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
@@ -233,6 +241,9 @@ declare const vault: {
     propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
     propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
     receipt(input: { receipt_id: string }): Promise<unknown>;
+  };
+  shares: {
+    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;

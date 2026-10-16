@@ -78,8 +78,30 @@ pub(crate) fn copy_births(src: &LoroDoc, dst: &LoroDoc, owners: &[EntityId]) -> 
     Ok(())
 }
 
+/// Where a window copy's rows go, as their births see it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BirthReach {
+    /// Among the owner's own machines: births go whole.
+    OwnMachines,
+    /// To or from another vault.
+    OtherVault,
+}
+
+/// Copies the births `src` carries for every entity `dst` holds, as far as
+/// `reach` lets them go. A birth is all vault refs (input rows, actor,
+/// trigger, input hash), and vault refs never travel (OF-491): a copy to or
+/// from another vault carries none. Owner question Q26 decides what a birth
+/// that crosses carries; every crossing comes through here, so its answer
+/// changes the one arm.
+pub(crate) fn copy_births_within(src: &LoroDoc, dst: &LoroDoc, reach: BirthReach) -> Result<()> {
+    match reach {
+        BirthReach::OwnMachines => copy_births_for_entities(src, dst),
+        BirthReach::OtherVault => Ok(()),
+    }
+}
+
 /// Copies the births `src` carries for every entity `dst` holds.
-pub(crate) fn copy_births_for_entities(src: &LoroDoc, dst: &LoroDoc) -> Result<()> {
+fn copy_births_for_entities(src: &LoroDoc, dst: &LoroDoc) -> Result<()> {
     let owners: Vec<EntityId> = dst
         .get_map("entities")
         .keys()

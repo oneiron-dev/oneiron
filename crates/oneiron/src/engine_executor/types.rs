@@ -234,6 +234,9 @@ pub enum JsResultCall {
     Store { name: Option<String> },
     /// `describe(r)`: the card of one of the run's results.
     Describe(JsResultTarget),
+    /// `can({read: r})`: whether this run may read one of its results now,
+    /// by the checks a read makes, without reading it.
+    CanRead(JsResultTarget),
     /// `slice`, `search`, `query` or `chunks` of one of the run's results:
     /// the facet, and its input less the reference.
     Read {

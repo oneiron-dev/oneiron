@@ -6,6 +6,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.memory.diary", post(self_memory_diary))
         .route("/self.memory.diary.reads", post(self_memory_diary_reads))
         .route("/self.memory.diary.review", post(self_memory_diary_review))
+        .route("/self.identity.answer", post(self_identity_answer))
+        .route("/self.identity.settle", post(self_identity_settle))
         .route("/vault.people.list", post(vault_people_list))
         .route("/vault.people.get", post(vault_people_get))
         .route("/self.message", post(self_message))
@@ -81,6 +83,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
         .route("/vault.lenses.list", post(vault_lenses_list))
         .route("/vault.lenses.default", post(vault_lenses_default))
+        .route("/vault.disclosure.offer", post(vault_disclosure_offer))
+        .route("/vault.shares.create", post(vault_shares_create))
         .route("/vault.hooks.replay", post(vault_hooks_replay))
         .route("/vault.artifacts.view", post(vault_artifacts_view))
         .route("/vault.artifacts.export", post(vault_artifacts_export))
@@ -166,6 +170,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route(
             "/vault.companions.sharing.get",
             post(vault_companions_sharing_get),
+        )
+        .route(
+            "/vault.companions.sharing.set",
+            post(vault_companions_sharing_set),
         )
         .route(
             "/vault.workspace.work_companion.get",
@@ -301,6 +309,46 @@ async fn self_memory_diary_review(
         actor,
         class,
         "self.memory.diary.review",
+        value,
+    )?))
+}
+async fn self_identity_answer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.identity.answer",
+        value,
+    )?))
+}
+async fn self_identity_settle(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.identity.settle",
         value,
     )?))
 }
@@ -1494,6 +1542,46 @@ async fn vault_lenses_default(
         value,
     )?))
 }
+async fn vault_disclosure_offer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.disclosure.offer",
+        value,
+    )?))
+}
+async fn vault_shares_create(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.shares.create",
+        value,
+    )?))
+}
 async fn vault_hooks_replay(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -2358,6 +2446,26 @@ async fn vault_companions_sharing_get(
         actor,
         class,
         "vault.companions.sharing.get",
+        value,
+    )?))
+}
+async fn vault_companions_sharing_set(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.companions.sharing.set",
         value,
     )?))
 }

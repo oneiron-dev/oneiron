@@ -137,6 +137,10 @@ export class Oneiron {
         query: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as unknown),
       }),
     },
+    identity: {
+      answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentityAnswer(input) as unknown),
+      settle: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentitySettle(input) as unknown),
+    },
     message: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMessage(input) as unknown),
     grants: {
       ask: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfGrantsAsk(input) as unknown),
@@ -251,6 +255,12 @@ export class Oneiron {
       list: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesList(input) as unknown),
       default: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultLensesDefault(input) as unknown),
     },
+    disclosure: {
+      offer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultDisclosureOffer(input) as unknown),
+    },
+    shares: {
+      create: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultSharesCreate(input) as unknown),
+    },
     hooks: {
       replay: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultHooksReplay(input) as unknown),
     },
@@ -320,6 +330,7 @@ export class Oneiron {
     companions: {
       sharing: {
         get: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as unknown),
+        set: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as unknown),
       },
     },
     workspace: {

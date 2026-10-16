@@ -145,13 +145,14 @@ impl Vault {
     pub fn manifest_contributions(&self) -> Result<Vec<ManifestContribution>> {
         let txn = self.store.env.read_txn()?;
         let mut out = Vec::new();
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(&txn, &[ENTITY_TYPE_POLICY_MANIFEST])?
-        {
-            let (index, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&index)?;
+        let manifests = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &txn,
+            ENTITY_TYPE_POLICY_MANIFEST,
+            None,
+        )?;
+        for id in manifests {
+            let id = id?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
                 .ok_or(Error::CorruptedIndex("manifest contribution"))?;
             let body = raw
@@ -311,10 +312,7 @@ impl Vault {
     ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, manifest.as_bytes())?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &manifest)?
             .ok_or(Error::EntityNotFound)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|header| header.entity_type != ENTITY_TYPE_POLICY_MANIFEST)

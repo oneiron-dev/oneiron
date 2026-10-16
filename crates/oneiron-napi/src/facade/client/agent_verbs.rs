@@ -35,6 +35,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_identity_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.identity.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_identity_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.identity.settle", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_people_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.people.list", input)
@@ -572,6 +590,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_disclosure_offer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.offer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shares_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shares.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", input)
@@ -1075,6 +1108,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.companions.sharing.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_companions_sharing_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.companions.sharing.set", input)
             .map_err(facade_error)
     }
     #[napi]
