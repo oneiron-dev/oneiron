@@ -44,7 +44,10 @@ declare namespace self {
   const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
   const memory: {
-    diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+    diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
+      reads(input: { limit?: number | null }): Promise<unknown>;
+      review(input: { request: string; approve: boolean }): Promise<unknown>;
+    };
   };
   const skills: {
     call(input: { args: unknown; skill: string }): Promise<unknown>;
@@ -74,8 +77,10 @@ declare const vault: {
     propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
     put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
     read(input: { artifact_ref: string; version: number }): Promise<unknown>;
+    release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
+    waits(input: { artifact_ref: string }): Promise<unknown>;
   };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
@@ -112,6 +117,9 @@ declare const vault: {
     replay(input: { binding: string; limit?: number | null; since?: string | null }): Promise<unknown>;
   };
   hydrate(input: { refs: string[] }): Promise<unknown>;
+  images: {
+    view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
     get(input: { key: string; namespace: string[] }): Promise<unknown>;

@@ -25,6 +25,7 @@ mod admission;
 pub mod ai_host;
 mod api;
 mod auth;
+mod big_rung;
 mod broadcast;
 mod byte_line;
 pub mod cli;
@@ -52,12 +53,14 @@ mod oneironer;
 mod owner;
 pub mod projection;
 mod protocol;
+pub mod replay_judge;
 pub mod runtime;
 pub mod server;
 mod skills_pack;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;
+pub mod wire_health;
 pub mod wire_telemetry;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.

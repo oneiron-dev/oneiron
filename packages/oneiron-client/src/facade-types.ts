@@ -316,7 +316,7 @@ export type ExportReceipt = {
 }
 export type MemoryExport = {
   format: string
-  archive: (number)[]
+  archive: string
   digest: string
 }
 export type WitnessMessage = {
