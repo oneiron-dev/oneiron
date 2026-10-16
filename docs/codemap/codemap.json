@@ -7271,7 +7271,7 @@
      "surface": {
       "const": 2,
       "fn": 2,
-      "mod": 7,
+      "mod": 8,
       "struct": 1
      }
     },
@@ -7556,6 +7556,19 @@
      "path": "src/campaign/enrollment/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignJudgmentRow"
+     ],
+     "path": "src/campaign/judgments.rs",
+     "purpose": "Campaign membership joins for resident-authored graph judgment workflows",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -25033,6 +25046,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
+      "crate-vis": 4,
       "fn": 3,
       "struct": 6,
       "trait": 1
@@ -25053,8 +25067,8 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 3,
+      "re-export": 7
      }
     },
     {
@@ -25065,6 +25079,21 @@
      "purpose": "Idempotent outcome projection over durable facts and immutable question versions",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQuestionInput",
+      "GraphQuestionRef"
+     ],
+     "path": "src/llm/decision/questions/recipe.rs",
+     "purpose": "Explicit, resident-authored context recipes over immutable graph questions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -25123,6 +25152,7 @@
      "path": "src/llm/decision/questions/standing.rs",
      "purpose": "Explicit graph-unit backfill with same-snapshot authority and source pins",
      "surface": {
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -35786,6 +35816,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphSkillAnswerRef",
+      "GraphSkillFailure",
+      "GraphSkillInput",
+      "GraphSkillProgram",
+      "GraphSkillResult",
+      "GraphSkillStage"
+     ],
+     "path": "src/skill/graph.rs",
+     "purpose": "Run resident-authored graph workflows from the admitted skill source tree",
+     "surface": {
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -35848,7 +35896,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -45767,7 +45815,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -46425,7 +46473,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46817,7 +46865,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47085,7 +47133,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2834,
+   "source_files": 2837,
    "test_files": 903
   },
   "oneiron-android": {
