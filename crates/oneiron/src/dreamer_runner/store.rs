@@ -15,16 +15,17 @@ use super::codec::{
 };
 use super::constants::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
-    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
-    DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+    DREAMER_RUNNER_ATTEMPT_KIND, DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
     DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
-    DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunTreeRecord, EnqueueDreamerAttempt,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt,
-    FailDreamerAttemptOutcome, ParkDreamerAttempt,
+    DreamerAttemptStatus, DreamerConsolidationScope, DreamerParkedAttemptRecord,
+    DreamerRunTreeRecord, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerSkillOptimizeAttempt,
+    EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt, FailDreamerAttemptOutcome,
+    ParkDreamerAttempt,
 };
 use crate::error::MaintenanceError;
 
@@ -139,10 +140,16 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         input: EnqueueDreamerConsolidationAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let macro_scope = input.scope == DreamerConsolidationScope::Macro;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        if macro_scope {
+            // A hint drives only Micro; Macro work arms through the deadline
+            // lane, which re-reads on this watch.
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(outcome)
     }
 
@@ -251,6 +258,32 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(status.attempt.id)
     }
 
+    /// Queues the wake policy's receipt for `trigger`'s recipe in the
+    /// policy's own commit, beside its outbox row and cursors. One receipt
+    /// per decision: a receipt whose input a later one already consumed
+    /// settles as nothing to do.
+    pub(crate) fn enqueue_recipe_wake_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        trigger: &crate::dreamer_wake::WakePolicyTrigger,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let input = serde_json::to_string(trigger)
+            .map_err(|_| invalid_dreamer_runner("dreamer recipe wake input is not encodable"))?;
+        self.enqueue_kind_in_txn(
+            wtxn,
+            DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
+            DreamerAttemptPayload {
+                attempt_type: DREAMER_RECIPE_WAKE_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::from(input),
+                parent_attempt: None,
+            },
+            None,
+            None,
+            now,
+        )
+    }
+
     /// Co-commits a Timer/Macro wake and its cleanup attempt.
     pub(crate) fn enqueue_timer_wake(
         &self,
@@ -259,7 +292,7 @@ impl<'a> DreamerRunnerStore<'a> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.vault.with_write_txn_grouped(|wtxn| {
+        let outcome = self.vault.with_write_txn_grouped(|wtxn| {
             crate::dreamer_wake::request_wake_in_txn(
                 self,
                 wtxn,
@@ -269,7 +302,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 run_id,
                 now,
             )
-        })
+        })?;
+        // Timer work admits at Macro scope, which only the deadline lane drives.
+        self.vault.store.notify_proactivity_changes();
+        Ok(outcome)
     }
 
     /// Enqueues an ARCH-0073 vault-cleanup attempt (ONE-1931).
@@ -607,15 +643,17 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(record)
     }
 
-    /// Clears a parked-attempt row so the attempt becomes admissible again through
-    /// the normal admission path (ONE-1288).
+    /// Clears a parked-attempt row and queues the attempt again as the same
+    /// try, so the normal admission path takes it (ONE-1288) and its step
+    /// memo, keyed by its id, still holds.
     ///
     /// Returns the attempt status when a parked row was cleared. An attempt with NO
     /// parked row is an idempotent no-op: `Ok(None)`, nothing mutated
     /// (pinned). A row parked by a DIFFERENT owner than `park_owner` is a
-    /// fail-closed error, nothing deleted. `now` is accepted for symmetry
-    /// with the other transition inputs; the queue row is not touched —
-    /// re-admission re-leases it.
+    /// fail-closed error, nothing deleted. A park is not a running lease:
+    /// whoever holds the row's lease stopped at the park, so the lease is
+    /// released whoever it names. `now` is accepted for symmetry with the
+    /// other transition inputs.
     pub fn resume_parked(
         &self,
         attempt_id: AttemptId,
@@ -626,6 +664,10 @@ impl<'a> DreamerRunnerStore<'a> {
         let resumed = self.resume_parked_in_txn(&mut wtxn, attempt_id, park_owner, now)?;
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
+        if resumed.is_some() {
+            // The deadline lane arms the queued try at once.
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(resumed)
     }
 
@@ -651,6 +693,13 @@ impl<'a> DreamerRunnerStore<'a> {
             .status(attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
+            // Callers pass their own clock (the trap layer's counts
+            // milliseconds); the queue row keeps the vault's seconds.
+            let at = self.vault.store.clock.now_recorded_at();
+            self.attempts
+                .release_lease_in_txn(wtxn, attempt_id, lease_owner, at)?;
+        }
         Ok(Some(status))
     }
 
@@ -714,6 +763,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
+        || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }
 
 /// The refusal-facing name of a wake trigger.

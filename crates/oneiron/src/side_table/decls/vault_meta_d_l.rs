@@ -2,6 +2,13 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// The creation record of one deck made from a kept outline: born-from, template, slides,
+    /// write set and fit. Key: id16 (artifact).
+    DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;
+    /// The design directions compiled from one kept outline. Key: id16 (outline note).
+    DECK_DESIGN_SPEC: VaultMeta b"deck:design_spec:v1:" Named;
+    /// A person's keep of one outline brief: frontier, exact bytes and hash. Key: id16 (note).
+    DECK_OUTLINE_KEEP: VaultMeta b"deck:outline_keep:v1:" Named;
     /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
     /// run. Key: ().
     DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
@@ -173,6 +180,9 @@ side_tables! {
     DREAMER_WATERMARK: VaultMeta b"dreamer:watermark:v1:" Raw;
     /// Committed weave-recipe result bound to its pin, evidence and claim. Key: id16(attempt).
     DREAMER_WEAVE_RECIPE_RESULT: VaultMeta b"dreamer:weave:result:v1:" LegacyJson;
+    /// One compiled acting revision (a charter or brief revision compiled from one principal's
+    /// approved preferences) and its answer. Key: string (revision id, 64 hex).
+    EDIT_DISTANCE_ACTING_REVISION: VaultMeta b"edit_distance/acting_revision/v1\0" Named;
     /// Write-once Δ side-ledger row for one receipt: a captured edit-distance measurement (canonical
     /// JSON), or the literal marker "uncaptured" when capture was attempted and failed. Key: string.
     EDIT_DISTANCE_AMENDMENT_DELTA: VaultMeta b"edit_distance/amendment_delta/v1\0" Raw;
@@ -296,6 +306,9 @@ side_tables! {
     FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// The owner's confidence scale for claims one federation peer sends, this device's local
+    /// truth (OF-149). Key: id16(peer principal).
+    FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
@@ -482,9 +495,28 @@ side_tables! {
     TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
+    /// A `learning.*` cell's key, estimate form and what counted. Key: cell digest (32 bytes).
+    LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named;
+    /// Subject index over `learning.*` cells (value: the member). Key: subject id16 + cell digest.
+    LEARNING_CELL_SUBJECT: VaultMeta b"learning:cell_subject:v1:" Named;
+    /// A team's derived coordination cost (wait by reason, reuse delay, duplicate work): a
+    /// diagnostic, never a score. Key: string (team reference).
+    LEARNING_COORDINATION: VaultMeta b"learning:coordination:v1:" Named;
+    /// An audit's label that two pieces of one team's work duplicated each other. Key: string
+    /// (team reference "\0" first "\0" second).
+    LEARNING_DUPLICATE_LABEL: VaultMeta b"learning:duplicate_label:v1:" Named;
+    /// One admitted anchored outcome for a `learning.*` cell. Key: cell digest + receipt string.
+    LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named;
+    /// A judge swap's fitted score map, applied as a projection. Key: string (old judge revision).
+    LEARNING_JUDGE_CONVERSION: VaultMeta b"learning:judge_conversion:v1:" Named;
+    /// A `learning.*` cell's engine-written prior (origin, value, weight in runs). Key: cell digest.
+    LEARNING_PRIOR: VaultMeta b"learning:prior:v1:" Named;
     /// Owner seed or pin over one learned-setting catalog row (value, weight in runs, setter, why).
     /// Key: string (setting key "\0" mode).
     LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw;
+    /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
+    /// (setting key).
+    LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
     /// Tracker issue id to task id. Key: string.

@@ -339,6 +339,23 @@ pub(crate) fn epoch_exportable_in(
     }
 }
 
+/// Whether a reader who is not the owner may be shown row `id`, as the epoch
+/// fence judges it: by the export door's rule, with `admits` judging one
+/// source's row for that reader. An epoch summary shows only while neither
+/// it nor any record its words came from (through nested epochs) is
+/// withdrawn, and the reader may see each of those records. Every other row
+/// passes.
+pub(crate) fn epoch_disclosable_in(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+    admits: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+) -> Result<bool> {
+    epoch_exportable_in(store, rtxn, id, entity_type, body, admits)
+}
+
 /// A 32-hex entity ref, validated as one rather than accepted as any string.
 fn epoch_summary_hex_ref(value: &Value) -> Result<String> {
     let text = value.as_str().ok_or(Error::InvariantViolation(
@@ -617,7 +634,7 @@ pub(super) fn mint_epoch_summary_with(
         let prior = match request.log {
             WindowLog::Conversation => prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?,
             // The host's own rows re-check this position in `extra`.
-            WindowLog::Host { prior } => prior,
+            WindowLog::Host { prior, .. } => prior,
         };
         validate_epoch_boundary(prior, turn_start)?;
         let epoch = match prior {

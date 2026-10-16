@@ -83,7 +83,8 @@ impl MadeByProcess {
     }
 }
 
-/// The initiating task or ask, not a free-text label.
+/// The initiating task, ask, run or skill, not a free-text label
+/// (ARCH-0078 born-from: "the task, the run or the skill that caused it").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByTrigger {
@@ -91,6 +92,20 @@ pub enum MadeByTrigger {
     Task(#[serde(with = "super::entity_ref_wire")] EntityId),
     /// The TURN row that carries the initiating ask.
     Ask(#[serde(with = "super::entity_ref_wire")] EntityId),
+    /// The code-mode run, by the id of its durable replay record.
+    Run(#[serde(with = "super::entity_ref_wire")] EntityId),
+    /// The SKILL row whose execution caused the birth.
+    Skill(#[serde(with = "super::entity_ref_wire")] EntityId),
+}
+
+impl MadeByTrigger {
+    /// The ref the trigger names; reading it backwards lists what it produced.
+    #[must_use]
+    pub const fn row(&self) -> EntityId {
+        match self {
+            Self::Task(id) | Self::Ask(id) | Self::Run(id) | Self::Skill(id) => *id,
+        }
+    }
 }
 
 /// One commit's derivation envelope. Document and operation span live on its receipt.

@@ -14,10 +14,11 @@ mod ladder;
 pub(crate) use brief::calendar_date;
 pub use brief::{
     Asset, AssetKind, Block, BlockContent, Brief, BriefError, Carrier, Cell, Column, ColumnKind,
-    Communication, Dataset, Division, Page, Pin, Priority,
+    Communication, Dataset, Division, NumberFormat, Page, Pin, Priority,
 };
 
 use crate::deck::{DeckError, Placeholder, RetainedNode, TemplateView};
+use crate::fonts::FontBook;
 use crate::retained_opc::Package;
 use assembly::Assembly;
 use ladder::PageOutcome;
@@ -230,6 +231,8 @@ pub enum Content {
     Table(String),
     /// A dataset id.
     Chart(String),
+    /// A dataset id, as parts of one whole (a pie).
+    Share(String),
     /// An asset id with raster media.
     Picture(String),
     /// An asset id compiled to native shapes.
@@ -271,6 +274,10 @@ pub struct Estimate {
     pub block: String,
     pub need: i64,
     pub room: i64,
+    /// The font face whose metrics measured the text; `None` when the em
+    /// rule stood in (no face, an unmapped character, or text that needs
+    /// shaping).
+    pub font: Option<String>,
 }
 
 /// The parts emission creates and the existing parts it may change.
@@ -312,12 +319,24 @@ pub enum TraceOutcome {
     Omitted,
 }
 
-/// Compile the kept brief against `template`. Every page is planned or, when
-/// no rung holds it, returned as a decision; a plan is all or nothing.
+/// Compile the kept brief against `template` with no font book: every
+/// estimate uses the em rule.
 pub fn compile(
     kept: &KeptBrief<'_>,
     template: &Package,
     assets: &BTreeMap<String, AssetBinding>,
+) -> Result<Outcome, CompileError> {
+    compile_with_fonts(kept, template, assets, &FontBook::new())
+}
+
+/// Compile the kept brief against `template`, estimating text with the real
+/// faces in `fonts` where they measure it. Every page is planned or, when
+/// no rung holds it, returned as a decision; a plan is all or nothing.
+pub fn compile_with_fonts(
+    kept: &KeptBrief<'_>,
+    template: &Package,
+    assets: &BTreeMap<String, AssetBinding>,
+    fonts: &FontBook,
 ) -> Result<Outcome, CompileError> {
     if *blake3::hash(kept.bytes).as_bytes() != kept.content_hash {
         return Err(CompileError::StaleBrief);
@@ -337,7 +356,7 @@ pub fn compile(
         .iter()
         .find(|master| !master.layouts.is_empty())
         .ok_or(CompileError::EmptyTemplate)?;
-    let profiles = capability::Template::read(master);
+    let profiles = capability::Template::read(master, fonts);
     let mut pages = Vec::new();
     let mut decisions = Vec::new();
     for page in &brief.pages {
@@ -369,7 +388,7 @@ pub fn compile(
         .iter()
         .filter(|dataset| {
             slides.iter().flat_map(|slide| &slide.placements).any(|placement| {
-                matches!(&placement.content, Content::Table(id) | Content::Chart(id) if *id == dataset.id)
+                matches!(&placement.content, Content::Table(id) | Content::Chart(id) | Content::Share(id) if *id == dataset.id)
             })
         })
         .cloned()

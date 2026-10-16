@@ -264,8 +264,20 @@ guard. If the server is killed mid-pass, the next start requeues the
 interrupted attempt and runs it once more; durable steps that already have a
 response are not paid for again. A pass that ran out of budget is parked on a
 budget trap instead, and a restart leaves it parked: only the trap's resume
-signal lets it spend again. `SIGTERM` or Ctrl-C stops cleanly: a pass in
-flight reaches its attempt boundary first.
+signal lets it spend again. Once that signal (or a consent answer, or a
+person's response) is sent, here or on a peer that syncs it in, the next pass
+resumes the parked attempt as the same try. `SIGTERM` or Ctrl-C stops cleanly:
+a pass in flight reaches its attempt boundary first.
+
+Beside sittings, the Dreamer's wake policy (ARCH-0026) wakes its three
+recipes from the vault's wake-policy row: Continuous after landed turns,
+Weave on accumulation, a quiet window or the longest wait, and Nightly on its
+cadence. Continuous reads new turns through the sieve. Nightly queues the
+vault cleanup pass and the Coach's retrieval tune. Weave's input waits in the
+policy outbox for its recipe body. Each wake waits for no running chat turn,
+no running workflow and `idle_secs` of quiet since the last turn. A peer's sync apply wakes the
+Dreamer too, so turns another host wrote are read without waiting for a local
+one.
 
 ## 4. Chat
 
@@ -390,6 +402,17 @@ room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` 
 `compaction` object: `used_tokens`, `compact_at`, `window_tokens`,
 `in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
 `turn_scoped` with the failed `check`, or `sticky` with `why`).
+
+A run whose actor is a saved agent definition compacts by that agent's
+`memory_profile`: its `window_token_budget` is the run's window, its summary
+share sizes the summary, and `compaction = "byoa"` leaves the window to the
+agent's own harness (`sticky` with `why: "harness_compacts"`). Its
+`compaction_backend` names `code-mode-compaction` (the seat above) or a
+reasoning seat by its role's key (`checker`, `local_reasoner`,
+`generative_reasoner`); a key this host does not serve compacts on the seat
+above. Any other run uses the table above. A long run never outgrows one
+summary's sources: each summary stands for the records the calls before it
+were served, so the next one names only the records served since.
 
 ### Type check (shadow mode)
 
@@ -600,6 +623,15 @@ stays rare (0.9 asked nobody on test 5's held-out set) until the Coach tunes
 it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
+
+To tune it, the host keeps each changed answer
+(`HumanDecisionRequest::changed_by`) with `Vault::record_person_changed_answer`,
+bound to its ask. The Coach's nightly `coach.person_threshold` job (a host job:
+lease it with `admit_next_coach_host_job`, run it with
+`Vault::run_coach_person_threshold`) reads each record once, asks the host's
+`PersonThresholdPolicy` for a number and files it as a Proposed
+`coach.person_threshold.proposal` row. The Coach never sets the live row; the
+host applies an accepted proposal with `set_person_threshold`.
 
 The owner can probe the read at `POST /v1/llm/decision_read`
 (`oneiron.skills.md`): it returns the raw read, writes nothing and decides
