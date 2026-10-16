@@ -1487,7 +1487,7 @@
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -23399,7 +23399,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 9,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 3
@@ -32027,7 +32027,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -32099,8 +32099,27 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 9
+      "crate-vis": 17,
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContributionCheck",
+      "CreditOptions",
+      "PackAttributionFields",
+      "PackLearningContext",
+      "SkillContribution",
+      "UsedProvenanceEdge"
+     ],
+     "path": "src/receipt/pack_attribution.rs",
+     "purpose": "Frozen execution and actual-use facts on an attempt's pack receipt",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 6
      }
     },
     {
@@ -35150,12 +35169,40 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LateCreditReceipt",
+      "LateCreditShare"
+     ],
+     "path": "src/skill_attribution/late_credit.rs",
+     "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 6,
-      "re-export": 8
+      "re-export": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnchoredPackOutcome"
+     ],
+     "path": "src/skill_attribution/pack_learning.rs",
+     "purpose": "The manifest-to-learning bridge",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -35195,7 +35242,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AttributionSweepReport",
@@ -45315,7 +45362,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45490,7 +45537,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 14,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45744,7 +45791,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2747,
+   "source_files": 2750,
    "test_files": 903
   },
   "oneiron-android": {
