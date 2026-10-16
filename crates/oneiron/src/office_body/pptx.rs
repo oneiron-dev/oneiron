@@ -11,8 +11,8 @@
 //! versions stay authoritative: an export is a proposal artifact, not a version.
 
 use super::{
-    COMMITS, DOCS, FORKS, ForkState, HEADS, OfficeBodyEdit, OfficeBodyFork, OfficeBodyHead,
-    OfficeBodyKind, bounded_ops, check_made_by, invalid,
+    COMMITS, DOCS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyFork, OfficeBodyKind, bounded_ops,
+    check_made_by, invalid, source,
 };
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -20,6 +20,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
+use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use oneiron_docedit::live::{
@@ -31,13 +32,14 @@ use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub(super) const SCHEMA: u32 = 1;
-
-/// The stored body: the deck at its head and the operations that made it.
+/// The stored body: the deck at its head, the operations that made it, the
+/// frontier it was imported at and its commit count.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct DeckState {
     deck: LiveDeck,
     log: Vec<StampedOp>,
+    import_frontier: Vec<u8>,
+    commits: u64,
 }
 
 /// A typed read of the deck body at its head.
@@ -72,14 +74,30 @@ impl DeckState {
     pub(super) fn import(bytes: &[u8], limits: Limits) -> Result<Self> {
         let package = Package::open(bytes, limits)
             .map_err(|_| invalid("the PPTX package could not be read"))?;
-        Ok(Self {
+        let mut state = Self {
             deck: LiveDeck::import(&package).map_err(live)?,
             log: Vec::new(),
-        })
+            import_frontier: Vec::new(),
+            commits: 0,
+        };
+        state.import_frontier = state.frontier();
+        Ok(state)
+    }
+
+    pub(super) fn load(store: &Store, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<Self> {
+        let bytes = DOCS
+            .get(store, txn, artifact)?
+            .ok_or(Error::CorruptedIndex("office body document missing"))?;
+        serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("office body deck"))
+    }
+
+    /// The import frontier, the head frontier and the commit count.
+    pub(super) fn head(&self) -> (Vec<u8>, Vec<u8>, u64) {
+        (self.import_frontier.clone(), self.frontier(), self.commits)
     }
 
     /// The head's identity: its version and state hash.
-    pub(super) fn frontier(&self) -> Vec<u8> {
+    fn frontier(&self) -> Vec<u8> {
         let mut out = self.deck.version.to_be_bytes().to_vec();
         out.extend_from_slice(&self.deck.state_hash());
         out
@@ -106,21 +124,16 @@ impl DeckState {
             .map(|id| id.0.to_string())
             .collect())
     }
-
-    pub(super) fn encode(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|_| invalid("deck body encoding"))
-    }
 }
 
 impl Vault {
     /// The deck body at its head, with who made each visible thing.
     pub fn read_pptx_body(&self, artifact: &EntityId) -> Result<PptxBody> {
         let txn = self.store.env.read_txn()?;
-        let head = deck_head(self, &txn, artifact)?;
-        let state = self.load_deck(&txn, artifact, &head)?;
+        let state = load_deck(&self.store, &txn, artifact)?;
         Ok(PptxBody {
             attribution: AttributionIndex::build(&state.deck, &state.log),
-            frontier: head.frontier,
+            frontier: state.frontier(),
             deck: state.deck,
         })
     }
@@ -142,19 +155,19 @@ impl Vault {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
         self.with_write_txn_grouped(|wtxn| {
-            let mut head = deck_head(self, wtxn, artifact)?;
-            if head.frontier != expected_head {
+            let mut state = load_deck(&self.store, wtxn, artifact)?;
+            if state.frontier() != expected_head {
                 return Err(invalid("the deck moved since it was read; read it again"));
             }
-            let mut state = self.load_deck(wtxn, artifact, &head)?;
             let start = state.log.len();
             let minted = state.apply(&actor.entity_ref().to_hex(), made_by.at, ops)?;
             let receipt = log_receipt(*artifact, start, state.log.len(), made_by)?;
-            head.frontier = self.store_deck(wtxn, artifact, &state)?;
-            self.record_commit(wtxn, artifact, &mut head.commits, &receipt)?;
-            HEADS.put(&self.store, wtxn, artifact, &head)?;
+            let mut commits = state.commits;
+            self.record_commit(wtxn, artifact, &mut commits, &receipt)?;
+            state.commits = commits;
+            store_deck(&self.store, wtxn, artifact, &state)?;
             Ok(OfficeBodyEdit {
-                frontier: head.frontier.clone(),
+                frontier: state.frontier(),
                 minted,
                 receipt,
             })
@@ -165,6 +178,7 @@ impl Vault {
     /// fork's proposal state.
     pub fn edit_pptx_body_fork(
         &self,
+        artifact: &EntityId,
         fork: &EntityId,
         ops: &[DeckOp],
         actor: WriteActor,
@@ -173,26 +187,28 @@ impl Vault {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
         self.with_write_txn_grouped(|wtxn| {
+            let key = (*artifact, *fork);
             let mut record = FORKS
-                .get(&self.store, wtxn, fork)?
+                .get(&self.store, wtxn, &key)?
                 .ok_or(Error::EntityNotFound)?;
             if record.state != ForkState::Open || record.opener != actor.entity_ref() {
                 return Err(invalid("only the opener writes to its open fork"));
             }
-            deck_head(self, wtxn, &record.artifact)?;
-            let mut work = load_fork(self, wtxn, fork)?;
+            let mut work = load_fork(&self.store, wtxn, fork)?;
             let mut proposal = DeckState {
                 deck: work.candidate().map_err(live)?,
                 log: Vec::new(),
+                import_frontier: Vec::new(),
+                commits: 0,
             };
             let start = work.ops.len();
             let minted = proposal.apply(&actor.entity_ref().to_hex(), made_by.at, ops)?;
             let frontier = proposal.frontier();
             work.ops.extend(proposal.log);
-            let receipt = log_receipt(record.artifact, start, work.ops.len(), made_by)?;
-            store_fork(self, wtxn, fork, &work)?;
+            let receipt = log_receipt(*artifact, start, work.ops.len(), made_by)?;
+            store_fork(&self.store, wtxn, fork, &work)?;
             self.record_commit(wtxn, fork, &mut record.commits, &receipt)?;
-            FORKS.put(&self.store, wtxn, fork, &record)?;
+            FORKS.put(&self.store, wtxn, &key, &record)?;
             Ok(OfficeBodyEdit {
                 frontier,
                 minted,
@@ -204,18 +220,15 @@ impl Vault {
     /// The deck fork's merge preflight against the live head: the three-way
     /// diff with its named conflicts, the replay onto the head, and the stale
     /// units.
-    pub fn pptx_body_fork_review(&self, fork: &EntityId) -> Result<PptxReview> {
+    pub fn pptx_body_fork_review(&self, artifact: &EntityId, fork: &EntityId) -> Result<PptxReview> {
         let txn = self.store.env.read_txn()?;
-        let record = FORKS
-            .get(&self.store, &txn, fork)?
-            .ok_or(Error::EntityNotFound)?;
-        let head = deck_head(self, &txn, &record.artifact)?;
-        let state = self.load_deck(&txn, &record.artifact, &head)?;
-        let work = load_fork(self, &txn, fork)?;
+        let state = load_deck(&self.store, &txn, artifact)?;
+        open_record(&self.store, &txn, artifact, fork)?;
+        let work = load_fork(&self.store, &txn, fork)?;
         Ok(PptxReview {
             report: preflight(&state.deck, &work).map_err(live)?,
             stale_units: work.stale_units(&state.deck),
-            head: head.frontier,
+            head: state.frontier(),
         })
     }
 
@@ -225,6 +238,7 @@ impl Vault {
     /// its receipts the body's, so attribution survives the landing.
     pub fn merge_pptx_body_fork(
         &self,
+        artifact: &EntityId,
         fork: &EntityId,
         expected_head: &[u8],
         actor: WriteActor,
@@ -233,22 +247,17 @@ impl Vault {
     ) -> Result<LandingReceipt> {
         let at = self.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
-            let mut record = FORKS
-                .get(&self.store, wtxn, fork)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.state != ForkState::Open {
-                return Err(invalid("the fork is not open"));
-            }
+            let key = (*artifact, *fork);
+            let mut record = open_record(&self.store, wtxn, artifact, fork)?;
             // "The opener's lineage and its forks never settle their own proposal."
             if record.opener == actor.entity_ref() {
                 return Err(invalid("a fork's opener cannot merge it"));
             }
-            let mut head = deck_head(self, wtxn, &record.artifact)?;
-            if head.frontier != expected_head {
+            let mut state = load_deck(&self.store, wtxn, artifact)?;
+            if state.frontier() != expected_head {
                 return Err(invalid("the deck moved since the review; review it again"));
             }
-            let mut state = self.load_deck(wtxn, &record.artifact, &head)?;
-            let work = load_fork(self, wtxn, fork)?;
+            let work = load_fork(&self.store, wtxn, fork)?;
             let report = preflight(&state.deck, &work).map_err(live)?;
             let receipt = land(
                 &mut state.deck,
@@ -261,17 +270,18 @@ impl Vault {
             )
             .map_err(live)?;
             state.log.extend(work.ops.iter().cloned());
-            head.frontier = self.store_deck(wtxn, &record.artifact, &state)?;
+            let mut commits = state.commits;
             for (_, commit) in COMMITS.scan_from(&self.store, wtxn, fork.as_bytes())? {
-                self.record_commit(wtxn, &record.artifact, &mut head.commits, &commit)?;
+                self.record_commit(wtxn, artifact, &mut commits, &commit)?;
             }
-            HEADS.put(&self.store, wtxn, &record.artifact, &head)?;
+            state.commits = commits;
+            store_deck(&self.store, wtxn, artifact, &state)?;
             record.state = ForkState::Merged {
                 by: actor.entity_ref(),
                 at,
-                head: head.frontier.clone(),
+                head: state.frontier(),
             };
-            FORKS.put(&self.store, wtxn, fork, &record)?;
+            FORKS.put(&self.store, wtxn, &key, &record)?;
             DOCS.delete(&self.store, wtxn, fork)?;
             Ok(receipt)
         })
@@ -281,86 +291,128 @@ impl Vault {
     /// profile's export gate opens the result is a proposal artifact: nothing
     /// lands, and the caller proposes the bytes through the edit rails.
     pub fn export_pptx_body(&self, artifact: &EntityId) -> Result<PptxExport> {
-        let (head, state) = {
+        let head = self
+            .office_body_head(artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        let state = {
             let txn = self.store.env.read_txn()?;
-            let head = deck_head(self, &txn, artifact)?;
-            let state = self.load_deck(&txn, artifact, &head)?;
-            (head, state)
+            load_deck(&self.store, &txn, artifact)?
         };
         let profile = ExportProfile::default();
-        let package = Package::open(&self.body_source(artifact, &head)?, self.docedit_package_limits()?)
-            .map_err(|_| invalid("the PPTX package could not be read"))?;
-        let outcome = project(&state.deck, &package, &artifact.to_hex(), &profile).map_err(live)?;
+        let package = Package::open(
+            &self.body_source(artifact, &head)?,
+            self.docedit_package_limits()?,
+        )
+        .map_err(|_| invalid("the PPTX package could not be read"))?;
+        let outcome =
+            project(&state.deck, &package, &artifact.to_hex(), &profile).map_err(live)?;
         Ok(PptxExport {
-            frontier: head.frontier,
+            frontier: state.frontier(),
             authoritative: Gate::closed(&profile.name).is_open(),
             outcome,
         })
     }
 
-    /// Open a deck fork at the live head; [`Vault::open_office_body_fork`]
-    /// routes a PPTX body here.
+    /// Store an imported deck as the artifact's body; the import is an empty
+    /// span of the operation log, since imported content has unknown authorship.
+    pub(super) fn birth_deck(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &EntityId,
+        mut state: DeckState,
+        made_by: &MadeBy,
+    ) -> Result<()> {
+        let receipt = log_receipt(*artifact, 0, 0, made_by)?;
+        self.record_commit(wtxn, artifact, &mut state.commits, &receipt)?;
+        store_deck(&self.store, wtxn, artifact, &state)
+    }
+
+    /// Open a deck fork at the live head for `actor`'s machine work.
     pub(super) fn open_deck_fork(
         &self,
         wtxn: &mut RwTxn<'_>,
-        head: &OfficeBodyHead,
-        fork: &OfficeBodyFork,
-    ) -> Result<()> {
-        let state = self.load_deck(wtxn, &head.artifact, head)?;
+        artifact: &EntityId,
+        actor: WriteActor,
+    ) -> Result<OfficeBodyFork> {
+        let state = load_deck(&self.store, wtxn, artifact)?;
+        let fork = OfficeBodyFork {
+            id: self.new_entity_id()?,
+            artifact: *artifact,
+            opener: actor.entity_ref(),
+            base: state.frontier(),
+            commits: 0,
+            opened_at: self.now_recorded_at(),
+            state: ForkState::Open,
+        };
         let work = state
             .deck
             .fork_at(&fork.id.to_hex(), &fork.opener.to_hex(), None);
-        store_fork(self, wtxn, &fork.id, &work)
+        store_fork(&self.store, wtxn, &fork.id, &work)?;
+        FORKS.put(&self.store, wtxn, &(*artifact, fork.id), &fork)?;
+        Ok(fork)
     }
 
-    fn store_deck(
+    pub(super) fn discard_deck_fork(
         &self,
         wtxn: &mut RwTxn<'_>,
         artifact: &EntityId,
-        state: &DeckState,
-    ) -> Result<Vec<u8>> {
-        DOCS.put(&self.store, wtxn, artifact, &state.encode()?)?;
-        Ok(state.frontier())
-    }
-
-    fn load_deck(
-        &self,
-        txn: &RoTxn<'_>,
-        artifact: &EntityId,
-        head: &OfficeBodyHead,
-    ) -> Result<DeckState> {
-        let bytes = DOCS
-            .get(&self.store, txn, artifact)?
-            .ok_or(Error::CorruptedIndex("office body document missing"))?;
-        let state: DeckState = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::CorruptedIndex("office body deck"))?;
-        if state.frontier() != head.frontier {
-            return Err(Error::CorruptedIndex("office body frontier"));
-        }
-        Ok(state)
+        fork: &EntityId,
+        actor: WriteActor,
+    ) -> Result<()> {
+        let mut record = open_record(&self.store, wtxn, artifact, fork)?;
+        record.state = ForkState::Discarded {
+            by: actor.entity_ref(),
+            at: self.now_recorded_at(),
+        };
+        FORKS.put(&self.store, wtxn, &(*artifact, *fork), &record)?;
+        DOCS.delete(&self.store, wtxn, fork)?;
+        Ok(())
     }
 }
 
-fn deck_head(vault: &Vault, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeBodyHead> {
-    let head = HEADS
-        .get(&vault.store, txn, artifact)?
-        .ok_or(Error::EntityNotFound)?;
-    if head.kind != OfficeBodyKind::Pptx {
+/// The artifact's deck body; another format refuses.
+fn load_deck(store: &Store, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<DeckState> {
+    if source(store, txn, artifact)?.kind != OfficeBodyKind::Pptx {
         return Err(invalid("the artifact's live body is another format"));
     }
-    Ok(head)
+    DeckState::load(store, txn, artifact)
 }
 
-fn load_fork(vault: &Vault, txn: &RoTxn<'_>, fork: &EntityId) -> Result<DeckFork> {
+fn store_deck(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    state: &DeckState,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(state).map_err(|_| invalid("deck body encoding"))?;
+    DOCS.put(store, wtxn, artifact, &bytes)
+}
+
+fn open_record(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    fork: &EntityId,
+) -> Result<OfficeBodyFork> {
+    let record = FORKS
+        .get(store, txn, &(*artifact, *fork))?
+        .ok_or(Error::EntityNotFound)?;
+    if record.state != ForkState::Open {
+        return Err(invalid("the fork is not open"));
+    }
+    Ok(record)
+}
+
+fn load_fork(store: &Store, txn: &RoTxn<'_>, fork: &EntityId) -> Result<DeckFork> {
     let bytes = DOCS
-        .get(&vault.store, txn, fork)?
+        .get(store, txn, fork)?
         .ok_or(Error::CorruptedIndex("office body fork missing"))?;
     serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("office body deck fork"))
 }
 
-fn store_fork(vault: &Vault, wtxn: &mut RwTxn<'_>, fork: &EntityId, work: &DeckFork) -> Result<()> {
+fn store_fork(store: &Store, wtxn: &mut RwTxn<'_>, fork: &EntityId, work: &DeckFork) -> Result<()> {
     let bytes = serde_json::to_vec(work).map_err(|_| invalid("deck fork encoding"))?;
-    DOCS.put(&vault.store, wtxn, fork, &bytes)
+    DOCS.put(store, wtxn, fork, &bytes)
 }
 
 /// A deck call's receipt: its span of the operation log (peer 0, which no Loro
