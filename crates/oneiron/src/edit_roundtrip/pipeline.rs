@@ -146,7 +146,7 @@ fn run_pipeline<S: EditSession>(
     if plan
         .ops
         .iter()
-        .any(|op| matches!(op, EditOp::DocxRevision { .. }))
+        .any(|op| matches!(op, EditOp::DocxRevision { .. } | EditOp::DeckTransaction { .. }))
     {
         return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
             "a docx revision must use the native docx writer",

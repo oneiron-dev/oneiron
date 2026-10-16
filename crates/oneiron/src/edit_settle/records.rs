@@ -135,6 +135,9 @@ pub struct SettlementRecord {
     pub reason: Option<String>,
     /// Per-cell typed answer evidence retained on Keep (also present on a stale proposal).
     pub sheet_answers: Option<Box<SheetAnswerBundle>>,
+    /// The native deck transaction a Keep settled: its handoff hash, part
+    /// diff report and context (made_by, thread, review renders).
+    pub deck: Option<Box<crate::edit_roundtrip::DeckSettleEvidence>>,
 }
 
 /// One cell's kept answer, linked to the file version and consume-once receipt.
