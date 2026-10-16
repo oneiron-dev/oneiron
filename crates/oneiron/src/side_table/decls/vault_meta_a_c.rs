@@ -13,6 +13,8 @@ side_tables! {
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
+    /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
+    AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
@@ -90,6 +92,22 @@ side_tables! {
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
+    /// One autoresearch candidate's held-out basis, its one sealed confirmation (consumed before
+    /// the cohort is released) and its promotion receipt. Key: id16 (root attempt) + id16
+    /// (candidate attempt).
+    AUTORESEARCH_BASIS: VaultMeta b"autoresearch:basis:v1:" Named;
+    /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
+    /// share, written once. Key: id16 (root attempt).
+    AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One autoresearch experiment node annotating an existing attempt: lineage, candidate pin,
+    /// search and held-out evidence, buggy, weave and prune receipts. Key: id16 (root attempt) +
+    /// id16 (node attempt).
+    AUTORESEARCH_NODE: VaultMeta b"autoresearch:node:v1:" Named;
+    /// One RSI reservation an autoresearch campaign holds or held. Key: id16 (root attempt) +
+    /// id16 (reservation id).
+    AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
+    /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
+    AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or

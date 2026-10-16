@@ -312,6 +312,69 @@ pub(crate) fn reading_default(
     WorldAuthoritySet::new(resolved.allowed_set.include_base(), [])
 }
 
+impl crate::Vault {
+    /// The three world tiers a board shows for `actor`, folded now with no
+    /// retrieval run. The tiers are the ones its planner reads: an actor no
+    /// owner grant ever governed, or a caller with no entity principal, reads
+    /// base reality only (ARCH-0022), so its allowed, default and active tiers
+    /// are base. A governed actor folds its owner grants and its own default,
+    /// over the rows its authority snapshot admits; with no selection and no
+    /// stored default it reads base only while its grant holds base. A
+    /// `selected` set outside the allowed tier is refused, never widened.
+    pub fn board_world_authority(
+        &self,
+        actor: Option<EntityId>,
+        selected: Option<WorldAuthoritySet>,
+    ) -> Result<ResolvedWorldAuthority> {
+        let rtxn = self.store.env.read_txn()?;
+        let at = self.store.clock.now_recorded_at();
+        let grants = WorldGrantIndex::read(&self.store, &rtxn)?;
+        let governed = match actor {
+            Some(actor) => grants.governs(&self.store, &rtxn, actor)?.then_some(actor),
+            None => None,
+        };
+        let Some(actor) = governed else {
+            let base = WorldAuthoritySet::new(true, [])?;
+            let active_set = selected.unwrap_or_else(|| base.clone());
+            if !active_set.is_subset_of(&base) {
+                return Err(Error::InvalidConfig(
+                    "requested world selection is outside base reality, the only world an \
+                     ungoverned actor reads"
+                        .to_owned(),
+                ));
+            }
+            return Ok(ResolvedWorldAuthority {
+                allowed_set: base.clone(),
+                default_subset: base,
+                active_set,
+                allowed_claim_ids: Vec::new(),
+                default_claim_id: None,
+            });
+        };
+        // Folded once, and only for a governed actor: a grant row the
+        // authority fold quarantines never counts.
+        let fold = std::cell::OnceCell::new();
+        let admit = |id: &EntityId, body: &ClaimBody| -> Result<bool> {
+            if fold.get().is_none() {
+                let _ = fold.set(self.authority_fold_readonly_in_txn(&rtxn)?);
+            }
+            let fold = fold.get().expect("authority fold was just set");
+            crate::authority::claim_causal_admitted(&self.store, &rtxn, fold, id, body)
+        };
+        let explicit = selected.is_some();
+        let selection = ActiveWorldSelection {
+            agent_ref: actor,
+            selected,
+        };
+        let mut resolved =
+            resolve_world_authority_admitting(&self.store, &rtxn, &selection, at, &admit)?;
+        if !explicit && resolved.default_claim_id.is_none() {
+            resolved.active_set = WorldAuthoritySet::new(resolved.allowed_set.include_base(), [])?;
+        }
+        Ok(resolved)
+    }
+}
+
 /// One world-access authority CLAIM row that is in force for this resolution.
 struct WorldAccessRow {
     id: EntityId,

@@ -5,10 +5,10 @@
 //! (for example an ABI conformance fixture); it makes no QuickJS provenance
 //! claim. No WASI, environment, filesystem or network imports are linked.
 
+mod isolated;
 #[cfg(test)]
 mod tests;
 mod typed;
-mod isolated;
 mod wire;
 
 /// Types generated from the canonical guest/SDK WIT.
@@ -124,7 +124,10 @@ impl WasmtimeComponentRuntime {
     }
 
     #[must_use]
-    pub fn with_foreign_egress(mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Self {
+    pub fn with_foreign_egress(
+        mut self,
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Self {
         self.foreign_egress = Some(relay);
         self
     }
@@ -300,8 +303,12 @@ fn drive_host(
 }
 
 impl JsCodeModeRuntime for WasmtimeComponentRuntime {
-    fn bind_foreign_egress(&mut self, relay: std::sync::Arc<dyn oneiron_container::EgressRelay>) -> Result<()> {
-        self.foreign_egress = Some(relay); Ok(())
+    fn bind_foreign_egress(
+        &mut self,
+        relay: std::sync::Arc<dyn oneiron_container::EgressRelay>,
+    ) -> Result<()> {
+        self.foreign_egress = Some(relay);
+        Ok(())
     }
 
     fn run_step(
@@ -332,6 +339,7 @@ struct Bridge<'a> {
 enum StreamTarget {
     Console,
     Finish { start: bool },
+    Store { start: bool },
     File(String),
 }
 
@@ -340,6 +348,7 @@ impl StreamTarget {
         match self {
             Self::Console => JsCodeModeStream::Console,
             Self::Finish { start } => JsCodeModeStream::Finish { start: *start },
+            Self::Store { start } => JsCodeModeStream::Store { start: *start },
             Self::File(path) => JsCodeModeStream::File(path),
         }
     }
@@ -371,6 +380,9 @@ impl HeldOutput {
         match target {
             StreamTarget::Console => self.console.extend_from_slice(&frame),
             StreamTarget::Finish { .. } => self.finish.extend_from_slice(&frame),
+            // A stored value is a result of the run: a host with no store
+            // has nowhere to keep it.
+            StreamTarget::Store { .. } => return Err(failure("store needs a result store")),
             StreamTarget::File(path) => match self.files.iter_mut().find(|(held, _)| *held == path)
             {
                 Some((_, bytes)) => bytes.extend_from_slice(&frame),

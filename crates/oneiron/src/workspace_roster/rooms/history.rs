@@ -649,7 +649,7 @@ impl Memory<'_> {
 /// chain followed to its end. Admission keeps a reply whose own parent is
 /// readable even when that parent's ancestor is withheld; the thread fold
 /// then meets the gap. Dropping the whole cut chain lets it fold the rest.
-fn answer_closed(turns: Vec<RoomTurn>) -> Vec<RoomTurn> {
+pub(super) fn answer_closed(turns: Vec<RoomTurn>) -> Vec<RoomTurn> {
     let held: BTreeSet<&str> = turns.iter().map(|turn| turn.turn_id.as_str()).collect();
     let mut answers = std::collections::BTreeMap::<&str, Vec<&str>>::new();
     let mut cut = Vec::new();

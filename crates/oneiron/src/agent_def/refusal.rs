@@ -208,7 +208,9 @@ impl Vault {
     }
 
     pub(crate) fn vault_kind_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<VaultKind> {
-        Ok(VaultKind::of(self.shared_vault_creation_in_txn(txn)?.as_ref()))
+        Ok(VaultKind::of(
+            self.shared_vault_creation_in_txn(txn)?.as_ref(),
+        ))
     }
 }
 
@@ -237,17 +239,23 @@ pub(super) fn decode_refusal_dial(value: &Value) -> Result<RefusalDial> {
     };
     let mut dial = RefusalDial::new();
     for (key, level) in entries {
-        let domain = key.as_str().and_then(RefusalDomain::parse).ok_or(Error::Artifact(
-            ArtifactError::InvalidAgentDefBody("refusal keys must be one of bond|logistics"),
-        ))?;
+        let domain = key
+            .as_str()
+            .and_then(RefusalDomain::parse)
+            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "refusal keys must be one of bond|logistics",
+            )))?;
         if dial.get(domain).is_some() {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "duplicate refusal key",
             )));
         }
-        let level = level.as_str().and_then(RefusalLevel::parse).ok_or(Error::Artifact(
-            ArtifactError::InvalidAgentDefBody("refusal levels must be one of none|voice|veto|full"),
-        ))?;
+        let level = level
+            .as_str()
+            .and_then(RefusalLevel::parse)
+            .ok_or(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "refusal levels must be one of none|voice|veto|full",
+            )))?;
         dial = dial.with(domain, level);
     }
     validate_refusal_dial(dial)?;

@@ -13,7 +13,7 @@ use crate::{
     TypeInput, WaitForInput, WaitForOutput,
 };
 use oneiron_container::{
-    GuestLimits, SessionLease, SessionManifest, SessionTransport, EgressRelay,
+    EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,18 +69,38 @@ pub struct BrowserSession {
 impl BrowserSession {
     /// The engine selects and proves a backend before attaching the browser.
     /// A lower driver crate must never silently select a weaker backend.
-    pub fn attach(config: &BrowserGuest, transport: SessionTransport, relay: Arc<dyn EgressRelay>) -> Result<Self, BrowserError> {
+    pub fn attach(
+        config: &BrowserGuest,
+        transport: SessionTransport,
+        relay: Arc<dyn EgressRelay>,
+    ) -> Result<Self, BrowserError> {
         if transport.manifest.fence_unproven || transport.manifest.fence_proof.is_none() {
-            return Err(BrowserError::Unavailable("browser session fence unproven".to_owned()));
+            return Err(BrowserError::Unavailable(
+                "browser session fence unproven".to_owned(),
+            ));
         }
-        let SessionTransport { reader, writer, manifest, lease } = transport;
-        let driver = CdpDriver::attach(Pipe::with_egress(reader, writer, Some(relay)), config.wait_cap)?;
-        Ok(Self { driver, guest: lease, manifest })
+        let SessionTransport {
+            reader,
+            writer,
+            manifest,
+            lease,
+        } = transport;
+        let driver = CdpDriver::attach(
+            Pipe::with_egress(reader, writer, Some(relay)),
+            config.wait_cap,
+        )?;
+        Ok(Self {
+            driver,
+            guest: lease,
+            manifest,
+        })
     }
 
     /// A browser may only be started through the engine's tier selector.
     pub fn start(_config: &BrowserGuest) -> Result<Self, BrowserError> {
-        Err(BrowserError::Unavailable("engine-selected sandbox and egress proxy required".into()))
+        Err(BrowserError::Unavailable(
+            "engine-selected sandbox and egress proxy required".into(),
+        ))
     }
 
     /// What the guest's container proved, for the run's receipt.
@@ -96,10 +116,14 @@ impl BrowserSession {
     }
 
     #[must_use]
-    pub fn abandoned(&self) -> bool { self.guest.abandoned() }
+    pub fn abandoned(&self) -> bool {
+        self.guest.abandoned()
+    }
 
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
-        if self.guest.abandoned() { return Err(BrowserError::Abandoned); }
+        if self.guest.abandoned() {
+            return Err(BrowserError::Abandoned);
+        }
         if self.guest.is_running() {
             Ok(&mut self.driver)
         } else {

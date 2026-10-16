@@ -346,3 +346,70 @@ pub(crate) fn thread_tasks(
     }
     Ok(result)
 }
+
+/// The open TASKs bound to `roots`' threads, each with its thread root, for
+/// the engine's room upkeep: the TASK facts [`thread_tasks`] folds, read in
+/// `txn` through no reader's lane. Whether a reader may read each one is the
+/// caller's to judge; `count` is the census the caller raises.
+pub(crate) fn open_thread_tasks_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    roots: &BTreeMap<EntityId, EntityId>,
+    bindings: &BTreeMap<EntityId, EntityId>,
+    members: &[EntityId],
+    now: u64,
+    count: &mut crate::scan_check::ScanCount,
+) -> crate::Result<Vec<(EntityId, EntityId)>> {
+    let mut open = Vec::new();
+    if roots.is_empty() && bindings.is_empty() {
+        return Ok(open);
+    }
+    // Walk explicit bindings and members' tasks through the owner index,
+    // never every TASK in the vault. Each one's live owner is checked below.
+    let mut owned: BTreeSet<_> = bindings.keys().copied().collect();
+    for member in members {
+        owned.extend(super::owner_index::indexed_tasks_of_in(
+            &vault.store,
+            txn,
+            member,
+        )?);
+    }
+    for id in owned {
+        count.row();
+        let Some(body) = task_verb_body_in(vault, txn, id)? else {
+            continue;
+        };
+        let Some(thread) = bindings
+            .get(&id)
+            .copied()
+            .or_else(|| thread_for_body(&body, roots))
+        else {
+            continue;
+        };
+        let Some(authority) = vault.task_authority_state_in(txn, id)? else {
+            continue;
+        };
+        if authority.owner_ref.to_hex() != body.owner_ref
+            || !members.contains(&authority.owner_ref)
+            || authority.cancelled
+            || body.terminal().is_some()
+            || body.ttl.as_ref().is_some_and(|ttl| ttl.deadline_at <= now)
+        {
+            continue;
+        }
+        // A consult whose ask group has settled is answered.
+        if let Some(group) = body.consult.as_ref().map(|payload| payload.correlation_ref)
+            && super::ask_record::read_group(vault, txn, group)?.is_some_and(|record| {
+                record
+                    .members
+                    .iter()
+                    .any(|member| member.task == id.to_hex())
+            })
+            && super::ask_settlement::read_result(vault, txn, group)?.is_some()
+        {
+            continue;
+        }
+        open.push((id, thread));
+    }
+    Ok(open)
+}
