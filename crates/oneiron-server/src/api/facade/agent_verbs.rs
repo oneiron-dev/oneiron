@@ -34,6 +34,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.artifacts.proposals",
             post(vault_artifacts_proposals),
         )
+        .route("/vault.artifacts.waits", post(vault_artifacts_waits))
+        .route(
+            "/vault.artifacts.release_wait",
+            post(vault_artifacts_release_wait),
+        )
         .route(
             "/vault.artifacts.propose_deck",
             post(vault_artifacts_propose_deck),
@@ -687,6 +692,46 @@ async fn vault_artifacts_proposals(
         actor,
         class,
         "vault.artifacts.proposals",
+        value,
+    )?))
+}
+async fn vault_artifacts_waits(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.artifacts.waits",
+        value,
+    )?))
+}
+async fn vault_artifacts_release_wait(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.artifacts.release_wait",
         value,
     )?))
 }

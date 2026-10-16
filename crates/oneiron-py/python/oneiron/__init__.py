@@ -426,6 +426,12 @@ class Oneiron:
         def proposals(self, request: dict[str, Any]) -> list[dict[str, Any]]:
             """The proposals waiting beside one artifact for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_proposals(json.dumps(request, allow_nan=False))))
+        def waits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """The organ calls held beside one artifact until one of your nodes can run them, each with why it waits."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_waits(json.dumps(request, allow_nan=False))))
+        def release_wait(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Lets one held organ call go, by its run ref, under the consent a Discard needs."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_release_wait(json.dumps(request, allow_nan=False))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
