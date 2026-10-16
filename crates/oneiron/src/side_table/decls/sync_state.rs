@@ -169,6 +169,10 @@ side_tables! {
     IDENTITY_MACHINE_ID: SyncState b"m:machine_id" Raw;
     /// This install's machine signing-key seed (32 B), minted with its machine id. Key: ().
     IDENTITY_MACHINE_SK: SyncState b"m:machine_sk" Raw;
+    /// The owner recovery root this install pins (its id and anchor key), and the admitter
+    /// its machine was mine under before the pin last changed. Local like the machine id:
+    /// never synced, and dropped wherever the machine id is. Key: ().
+    IDENTITY_PINNED_ROOT: SyncState b"m:pinned_root" Raw;
     /// Monotonic counter allocating the next u:e: sequence number for one entity's text document.
     /// Key: hex32 (entity id).
     SYNC_M_U_SEQ_E: SyncState b"m:u_seq:e:" Raw;
@@ -322,9 +326,9 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
-    /// A crossed `[limits]` row's question (OF-520) for one minute: the row's key and bound, what
-    /// it saw at its first crossing in the minute, and when it asked. Key: string (the row's key)
-    /// ":" u64 (decimal, zero-padded to 20 digits; window start).
+    /// A crossed `[limits]` row's question (OF-520) for one minute: the row's bound, the most it
+    /// saw, and how many times it was crossed. Key: string (the row's key) ":" u64 (decimal,
+    /// zero-padded to 20 digits; window start).
     WIRE_LIMIT_QUESTION: SyncState b"wire:limit-question:v1:" Named;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
     /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).

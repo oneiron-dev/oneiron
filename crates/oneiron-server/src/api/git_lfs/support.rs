@@ -2,6 +2,7 @@
 
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
+use axum::body::Body;
 use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;
@@ -11,6 +12,7 @@ use axum::http::header::HOST;
 use axum::http::header::RETRY_AFTER;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use futures_util::StreamExt;
 use oneiron::ErrorKind;
 use oneiron::origin::lfs::LFS_JSON_MEDIA_TYPE;
 use serde::Serialize;
@@ -93,11 +95,45 @@ pub(super) fn lfs_refusal(status: StatusCode, message: &'static str) -> Response
     response
 }
 
-/// Every LFS transfer permit is held: refused now, never queued.
-pub(super) fn lfs_saturated() -> Response {
+/// The transfer waited its whole deadline for its turn. Nothing was started.
+pub(super) fn lfs_waited_out() -> Response {
     lfs_refusal(
         StatusCode::SERVICE_UNAVAILABLE,
-        "lfs transfers are at their limit; retry later",
+        "lfs transfer waited past limits.queue_wait_timeout_ms for its turn; nothing was started; retry",
+    )
+}
+
+/// A request body read whole, at most `limit` bytes. A request that waits
+/// for a transfer permit reads its body only at its turn, so one in line
+/// holds none of it; the listener ends a body that pauses past its idle
+/// limit. The buffer grows by doubling but never past `limit`, so what the
+/// memory row counts for it holds.
+pub(super) async fn read_whole(body: Body, limit: usize) -> Result<Vec<u8>, ApiError> {
+    let mut pieces = body.into_data_stream();
+    let mut whole = Vec::new();
+    while let Some(piece) = pieces.next().await {
+        let piece = piece.map_err(|_| {
+            ApiError::bad_request("the request body ended before it was whole", None)
+        })?;
+        let length = whole.len().saturating_add(piece.len());
+        if length > limit {
+            return Err(ApiError::payload_too_large("body", limit, length));
+        }
+        if length > whole.capacity() {
+            let grown = length.max(whole.capacity().saturating_mul(2)).min(limit);
+            whole.reserve_exact(grown - whole.len());
+        }
+        whole.extend_from_slice(&piece);
+    }
+    Ok(whole)
+}
+
+/// The upload would take the vault's disk below its reserve: the disk
+/// floor, the one refusal an upload meets.
+pub(super) fn lfs_disk_floor() -> Response {
+    lfs_refusal(
+        StatusCode::INSUFFICIENT_STORAGE,
+        "the vault's disk is at its free-space reserve (limits.disk_reserve_bytes); nothing was stored",
     )
 }
 

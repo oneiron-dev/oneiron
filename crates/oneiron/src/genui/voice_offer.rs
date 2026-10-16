@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn cross_axis_bound_substitution_cannot_consume_nonce_or_mint() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-        let actor = person(&vault, 0xC4)?;
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let owner = vault.authenticate_owner(actor, "owner", true, GateDecisionId::now())?;
         let offered = GrantBound::disclosure(
             AudienceBound::singleton("alice")?,
@@ -379,7 +379,7 @@ mod tests {
         let mut config = crate::VaultConfig::device();
         config.store_clock = clock.bundle();
         let (_dir, vault) = crate::test_util::open_test_vault_with(config);
-        let actor = person(&vault, 0xC3)?;
+        let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let bound = disclosure()?;
         assert!(
             vault

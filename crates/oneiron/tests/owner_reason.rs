@@ -5,9 +5,8 @@ use oneiron::consent::{
     ActionClass, ActionEnvelope, ActorBound, ComposedEffect, EffectFacts, GrantBound,
     OwnerReasonConfirm, OwnerReasonVerdict, ReasonMatchConfidence,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{Vault, VaultConfig};
 
 fn setup() -> (
     tempfile::TempDir,
@@ -16,15 +15,8 @@ fn setup() -> (
 ) {
     let dir = tempfile::tempdir().expect("valid owner-reason fixture");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("valid owner-reason fixture");
-    let id = EntityId::from_bytes([0x52; 16]).expect("valid owner-reason fixture");
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
+    let id = vault
+        .ensure_embedded_owner_actor()
         .expect("valid owner-reason fixture");
     let owner = vault
         .authenticate_owner(id, "principal:owner", true, GateDecisionId::now())
