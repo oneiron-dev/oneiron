@@ -106,9 +106,6 @@ impl Vault {
             staged.push((hash, entry));
         }
         for (entry, occurred, learned_at) in entries {
-            if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
-                return Err(invalid_authority());
-            }
             if let Some(fold) = &local
                 && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
                 && super::door_refuses_retired_standing(

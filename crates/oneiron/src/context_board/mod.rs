@@ -106,11 +106,13 @@ pub use tasks::{
 };
 pub(crate) use tasks::{ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled};
 
-/// Collapse control characters so a rendered row is always one physical line.
+/// Collapse control characters and the Unicode line and paragraph separators
+/// (which are not controls) so a rendered row is always one physical line,
+/// even for a consumer that splits on U+2028/U+2029 (F31).
 pub(super) fn one_line_token(s: &str) -> String {
     s.chars()
         .map(|character| {
-            if character.is_control() {
+            if character.is_control() || matches!(character, '\u{2028}' | '\u{2029}') {
                 ' '
             } else {
                 character
