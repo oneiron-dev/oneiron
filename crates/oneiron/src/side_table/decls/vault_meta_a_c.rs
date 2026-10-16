@@ -49,6 +49,13 @@ side_tables! {
     /// Legacy pre-1890 per-vault system-agent enable toggle (single byte 0x00/0x01), consumed once
     /// and deleted by the manifest seeder. Key: string.
     AGENT_DEF_SYSTEM_TOGGLE_LEGACY: VaultMeta b"agent_def:system_toggle:v1:" Raw;
+    /// The anchor a thread held before one re-anchor sweep moved it onto a version, so a restore
+    /// of that earlier version reattaches it by exact stored identity. Key: id16 (artifact) +
+    /// id16 (thread) + u64be (the version it moved to).
+    ANNOTATION_PRIOR_ANCHOR: VaultMeta b"anchored_annotation:prior:v1:" Named;
+    /// A detached comment's snapshot of the text it was anchored on, for the Unattached list and
+    /// the exact-words reattach offer. Key: id16 (artifact) + id16 (thread).
+    ANNOTATION_UNATTACHED: VaultMeta b"anchored_annotation:unattached:v1:" Named;
     /// Channel pointer (published/preview) naming the fork hash a codebase artifact currently serves.
     /// Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
