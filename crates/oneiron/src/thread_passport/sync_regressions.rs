@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 #[test]
 fn observer_b_quarantines_malformed_alias_and_indexes_passport_before_owner_arrival() {
-    let (_dir, vault) = test_vault();
+    let (_dir, vault) = replicating_test_vault();
     let vault = Arc::new(vault);
     let identity = entity(0x61);
     let doc = LoroDoc::new();
@@ -67,8 +67,8 @@ fn observer_b_quarantines_malformed_alias_and_indexes_passport_before_owner_arri
 
 #[test]
 fn observer_b_reconciles_duplicate_passports_without_replicated_edge_rows() {
-    let (_left_dir, left) = test_vault();
-    let (_right_dir, right) = test_vault();
+    let (_left_dir, left) = replicating_test_vault();
+    let (_right_dir, right) = replicating_test_vault();
     let identity = entity(0x61);
     for vault in [&left, &right] {
         seed_identity(vault, identity, "agent@example.com");
@@ -94,7 +94,7 @@ fn observer_b_reconciles_duplicate_passports_without_replicated_edge_rows() {
         .collect();
     let mut results = Vec::new();
     for reversed in [false, true] {
-        let (_dir, target) = test_vault();
+        let (_dir, target) = replicating_test_vault();
         let target = Arc::new(target);
         seed_identity(&target, identity, "agent@example.com");
         let doc = LoroDoc::new();

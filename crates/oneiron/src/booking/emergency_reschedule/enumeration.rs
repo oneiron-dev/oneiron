@@ -40,7 +40,7 @@ pub(super) fn enumerate_with_refusals(
 ) -> Result<Vec<AffectedBooking>, BookingError> {
     verify_logged_owner_instruction(vault, request)?;
     let mut events = Vec::new();
-    visit_calendar_events(&CalendarRead::Vault(vault), |row| {
+    visit_calendar_events_for_effect(&CalendarRead::Vault(vault), |row| {
         if let Some(occurred) = row.occurred
             && occurred.start > now_utc
             && occurred.start <= request.affected_window.end
@@ -67,20 +67,27 @@ pub(super) fn enumerate_with_refusals(
             if !context.owner_refs.contains(&request.owner_ref.to_hex()) {
                 return Ok(None);
             }
-            if read_fact::<BookingStatusValue>(vault, event_ref, BOOKING_STATUS_PREDICATE)?
-                .is_none_or(|value| value.status != BookingStatus::Confirmed)
+            if target_fact::<BookingStatusValue>(
+                vault,
+                request,
+                event_ref,
+                BOOKING_STATUS_PREDICATE,
+            )?
+            .is_none_or(|value| value.status != BookingStatus::Confirmed)
             {
                 return Ok(None);
             }
-            let page = read_fact::<BookingSourcePageValue>(
+            let page = target_fact::<BookingSourcePageValue>(
                 vault,
+                request,
                 event_ref,
                 BOOKING_SOURCE_PAGE_PREDICATE,
             )?
             .ok_or_else(|| refused("confirmed booking has no source page"))?
             .page_ref;
-            let event_type = read_fact::<BookingEventTypeRefValue>(
+            let event_type = target_fact::<BookingEventTypeRefValue>(
                 vault,
+                request,
                 event_ref,
                 BOOKING_EVENT_TYPE_REF_PREDICATE,
             )?
@@ -115,12 +122,28 @@ pub(super) fn enumerate_with_refusals(
     Ok(affected)
 }
 
-pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
+/// The fact an emergency acts on. A Cancel only restricts, so it takes a held
+/// fact as it stands; any other action never acts on a held fact.
+fn target_fact<T: serde::de::DeserializeOwned>(
     vault: &Vault,
+    request: &EmergencyRescheduleRequest,
     subject: EntityId,
     predicate: &str,
 ) -> Result<Option<T>, BookingError> {
+    let cancel = request.action_policy == EmergencyActionPolicy::Cancel;
+    Ok(live_fact(vault, subject, predicate)?
+        .and_then(|(value, settled)| (settled || cancel).then_some(value)))
+}
+
+/// The one live `predicate` fact on `subject`, and whether its confirm is
+/// settled. A held fact still competes.
+pub(super) fn live_fact<T: serde::de::DeserializeOwned>(
+    vault: &Vault,
+    subject: EntityId,
+    predicate: &str,
+) -> Result<Option<(T, bool)>, BookingError> {
     let mut found = None;
+    let mut settled = false;
     for id in vault
         .claims_for_subject(&subject)
         .map_err(storage_failure)?
@@ -141,6 +164,9 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
         rmpv::encode::write_value(&mut bytes, &body.value).map_err(storage_failure)?;
         found =
             Some(rmp_serde::from_slice(&bytes).map_err(|_| refused("booking fact is malformed"))?);
+        settled = vault
+            .claim_settled_and_active(&id)
+            .map_err(storage_failure)?;
     }
-    Ok(found)
+    Ok(found.map(|value| (value, settled)))
 }

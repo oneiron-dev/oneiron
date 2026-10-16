@@ -36,7 +36,12 @@ impl PassportRow {
 /// Reuse the existing type and inbound ClaimOf indexes. No complete CLAIM
 /// table scan, and no unsynchronized local predicate cache. apply_put maintains
 /// ClaimOf for this family, including raw batch writes and sync materialization.
-fn thread_claims(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Vec<(EntityId, ClaimBody)>> {
+/// Rows awaiting their owner's confirm join only when `include_held` is set.
+fn thread_claims(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    include_held: bool,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
     let mut rows = BTreeMap::new();
     for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
         let owner = entry?;
@@ -65,7 +70,10 @@ fn thread_claims(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Vec<(EntityId,
                 continue;
             }
             validate_thread_claim_owner_in_txn(store, rtxn, &body, false)?;
-            if body.lifecycle == ClaimLifecycleStatus::Active {
+            if body.lifecycle == ClaimLifecycleStatus::Active
+                && (include_held
+                    || crate::gate::claim_critical_confirm_settled_in_txn(store, rtxn, &id)?)
+            {
                 rows.insert(id, body);
             }
         }
@@ -126,7 +134,7 @@ pub(super) struct ThreadState {
 
 impl ThreadState {
     pub(super) fn load(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Self> {
-        Self::from_claims(thread_claims(&vault.store, rtxn)?)
+        Self::from_claims(thread_claims(&vault.store, rtxn, false)?)
     }
 
     fn from_claims(claims: Vec<(EntityId, ClaimBody)>) -> Result<Self> {
@@ -259,6 +267,21 @@ impl ThreadState {
     }
 }
 
+/// Passports awaiting their owner's confirm that the full evidenced graph
+/// keeps. They route nothing; the sticky mask read still lets one pin.
+pub(super) fn held_passport_rows(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<PassportRow>> {
+    let mut held = Vec::new();
+    for row in ThreadState::from_claims(thread_claims(&vault.store, rtxn, true)?)?.rows {
+        if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &row.claim_id)? {
+            held.push(row);
+        }
+    }
+    Ok(held)
+}
+
 #[cfg(test)]
 pub(super) fn active_passport_rows(
     vault: &Vault,
@@ -325,7 +348,7 @@ pub(super) fn validate_thread_claim_provenance_in_txn(
     let ClaimSubject::Entity(subject) = body.subject else {
         unreachable!("validated subject")
     };
-    let mut claims = thread_claims(store, rtxn)?;
+    let mut claims = thread_claims(store, rtxn, false)?;
     claims.retain(|(resident, _)| resident != id);
     if body.predicate == PREDICATE_THREAD_PASSPORT {
         claims.push((*id, body.clone()));

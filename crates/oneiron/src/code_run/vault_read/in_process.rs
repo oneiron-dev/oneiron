@@ -6,6 +6,7 @@ use crate::context_pack::{
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
 };
 use crate::pipeline::ScoredEntity;
+use crate::receipt::ServedForm;
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
@@ -165,7 +166,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
         let candidate_limit = self
             .scoped_read
-            .search_candidate_limit(limit, query.is_some(), vector.is_some())
+            .search_candidate_limit(limit)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let mut builder = self
             .scoped_read
@@ -250,7 +251,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         short_id: String,
         content_hash: u8,
         view: View,
-    ) -> VaultReadResult<CoreHydrateResponse> {
+    ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
         let hydrated = self
             .scoped_read
             .read(&[PointRead::short(&short_id, content_hash)], None)
@@ -267,6 +268,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         )
     }
 
+    /// One hydrated item, and the text form it serves in place of an
+    /// image's body: the caller records it before it answers.
     fn project_hydrate(
         &self,
         method: VaultReadMethod,
@@ -275,7 +278,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         view: View,
         hydrated: Option<ReadRow>,
         narrowing: &mut crate::claim::ScopedReadReceipt,
-    ) -> VaultReadResult<CoreHydrateResponse> {
+    ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
         let Some(ReadRow {
@@ -291,7 +294,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         };
         let content_hash = format!("{content_hash:02x}");
         let Some(body) = body else {
-            return Ok(CoreHydrateResponse {
+            let response = CoreHydrateResponse {
                 narrowing: narrowing.clone(),
                 status: CoreHydrateStatus::Deleted,
                 short_id,
@@ -300,7 +303,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 entity_type: (entity_type != 0).then_some(entity_type),
                 deletion,
                 item: None,
-            });
+            };
+            return Ok((response, None));
         };
         // A generated image is served the form a reader that declared no
         // image input reads (OF-329): its ASSET_TEXT, read through this lane.
@@ -313,12 +317,22 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 if let Some(producers) = self.producers {
                     producers.list([asset_text]);
                 }
-                served = Some(body);
+                served = Some((body, asset_text));
             }
         }
-        let body = served.as_deref().unwrap_or(&body);
-        let item = entity_record_from_parts(&id, entity_type, learned_at, None, body, view);
-        Ok(CoreHydrateResponse {
+        let item = entity_record_from_parts(
+            &id,
+            entity_type,
+            learned_at,
+            None,
+            served.as_ref().map_or(&body, |(text, _)| text),
+            view,
+        );
+        // A Standard item carries no body, so it serves no text.
+        let served = served
+            .filter(|_| !matches!(view, View::Standard))
+            .map(|(_, asset_text)| ServedForm::text(id, asset_text));
+        let response = CoreHydrateResponse {
             narrowing: narrowing.clone(),
             status: CoreHydrateStatus::Live,
             short_id,
@@ -327,17 +341,23 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             entity_type: Some(entity_type),
             deletion: None,
             item: Some(item),
-        })
+        };
+        Ok((response, served))
     }
 
     fn hydrate_op(&self, request: &CoreHydrateRequest) -> VaultReadResult<CoreHydrateResponse> {
+        const METHOD: VaultReadMethod = VaultReadMethod::Hydrate;
         let (short_id, content_hash) = parse_short_ref_request(request)?;
-        self.hydrate_ref(
-            VaultReadMethod::Hydrate,
+        let (response, served) = self.hydrate_ref(
+            METHOD,
             short_id,
             content_hash,
             request.view.unwrap_or(View::Full),
-        )
+        )?;
+        self.scoped_read
+            .commit_served_forms(served.as_slice())
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        Ok(response)
     }
 
     fn hydrate_many_op(
@@ -363,6 +383,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let mut narrowing = hydrated.receipt;
         let mut values = hydrated.value.into_iter();
         let mut results = Vec::with_capacity(request.refs.len());
+        let mut served = Vec::new();
         for (reference, parsed) in request.refs.iter().zip(parsed) {
             let Some((short_id, content_hash)) = parsed else {
                 results.push(CoreBatchShortIdHydrateItem {
@@ -374,16 +395,26 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             };
             // The batch receipt covers every item in the same authority txn,
             // and each text an item's asset is served.
-            let result = self.project_hydrate(
-                METHOD,
-                short_id,
-                content_hash,
-                view,
-                values.next().flatten(),
-                &mut narrowing,
-            );
+            let result = self
+                .project_hydrate(
+                    METHOD,
+                    short_id,
+                    content_hash,
+                    view,
+                    values.next().flatten(),
+                    &mut narrowing,
+                )
+                .map(|(response, form)| {
+                    served.extend(form);
+                    response
+                });
             results.push(batch_item_from_result(reference.clone(), result)?);
         }
+        // Every text the batch served is recorded in one write before it
+        // answers.
+        self.scoped_read
+            .commit_served_forms(&served)
+            .map_err(|error| engine_failure(METHOD, &error))?;
         Ok(CoreBatchShortIdHydrateResponse { narrowing, results })
     }
 

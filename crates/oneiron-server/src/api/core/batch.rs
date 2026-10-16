@@ -5,6 +5,7 @@ use super::super::json_payload;
 use super::super::parse_optional_entity_id;
 use super::write_shape::CORE_MAX_BATCH_ENTITIES;
 use super::write_shape::CoreEntityWriteResponse;
+use super::write_shape::commit_core_batch;
 use super::write_shape::core_entity_timestamps;
 use super::write_shape::normalize_platform_announcement_body;
 use super::write_shape::stage_core_entity_put;
@@ -167,7 +168,7 @@ pub(crate) async fn core_batch(
         });
     }
 
-    batch.commit().map_err(|error| {
+    commit_core_batch(&auth, batch).map_err(|error| {
         tracing::error!(kind = ?error.kind(), "core batch commit failed");
         core_engine_error("core batch commit failed", error)
     })?;
