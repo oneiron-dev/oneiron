@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use futures_core::Stream;
 use oneiron::{LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, ModelId};
-use oneiron_mesh_transport::{MachineId, MeshConnection, MeshError, MeshStream};
+use oneiron_mesh_transport::{
+    MachineId, MeshConnection, MeshError, MeshFuture, MeshService, MeshStream,
+};
 
 use super::{Batch, LLM_ALPN, Reply, Request, Staging, decode, encode, lock};
 
@@ -35,6 +37,7 @@ pub trait LlmMeshHandler: Send + Sync + 'static {
 }
 
 /// Serves `oneiron/llm/1`: the owner's other nodes use this node's models.
+#[derive(Clone)]
 pub struct LlmMeshService {
     handler: Arc<dyn LlmMeshHandler>,
 }
@@ -58,13 +61,13 @@ struct Session {
 
 impl LlmMeshService {
     #[must_use]
-    pub fn new(handler: Arc<dyn LlmMeshHandler>) -> Arc<Self> {
-        Arc::new(Self { handler })
+    pub fn new(handler: Arc<dyn LlmMeshHandler>) -> Self {
+        Self { handler }
     }
 
     /// Serves one admitted connection until it closes. A connection on
     /// another ALPN is closed at once.
-    pub async fn serve_connection(self: Arc<Self>, conn: Box<dyn MeshConnection>) {
+    pub async fn serve_connection(&self, conn: Box<dyn MeshConnection>) {
         if conn.alpn() != LLM_ALPN {
             conn.close();
             return;
@@ -74,7 +77,7 @@ impl LlmMeshService {
         let session = Arc::new(Session::default());
         let mut tasks = Vec::new();
         while let Ok(stream) = conn.accept_stream().await {
-            let service = Arc::clone(&self);
+            let service = self.clone();
             let session = Arc::clone(&session);
             tasks.push(tokio::spawn(async move {
                 // A stream that breaks leaves the asker without a reply; it
@@ -151,6 +154,15 @@ impl LlmMeshService {
             return Err(format!("this node does not run {}", request.model));
         }
         Ok(request)
+    }
+}
+
+impl MeshService for LlmMeshService {
+    fn serve(&self, connection: Box<dyn MeshConnection>) -> MeshFuture<'_, ()> {
+        Box::pin(async move {
+            self.serve_connection(connection).await;
+            Ok(())
+        })
     }
 }
 
