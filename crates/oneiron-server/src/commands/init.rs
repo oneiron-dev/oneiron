@@ -1,4 +1,6 @@
 //! First-run embedder and tagger choices, using the same config and providers as serve.
+//! `init` asks the questions; [`setup_models`] is the shared non-terminal
+//! operation that writes the config and opens the vault (ARCH-0036).
 use crate::cli::InitArgs;
 use crate::config::{
     EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerConfig,
@@ -54,9 +56,89 @@ fn init_with_env(
         .or_else(|| env.config_path.clone())
         .or(default_path)
         .ok_or_else(|| anyhow::anyhow!("no config location; pass --config"))?;
-    let config_text = config_text(&args, choice, &path)?;
+    // The questions are answered; the shared operation does the work.
+    args.embedder = Some(choice);
+    let (vault, outcome) = setup_models(&args, &path, env)?;
+    super::print_doctor_report(&vault)?;
+    writeln!(output, "config: {}", outcome.config.display())?;
+    if let Some(embedder) = &outcome.embedder {
+        writeln!(
+            output,
+            "embedder: provider={} model_id={} dimensions={} device={}",
+            embedder.provider, embedder.model_id, embedder.dimensions, embedder.device
+        )?;
+    }
+    if let Some(tagger) = &outcome.tagger {
+        write!(
+            output,
+            "tagger: provider={} mode={}",
+            tagger.provider, tagger.mode
+        )?;
+        match &tagger.engine {
+            Some(engine) => writeln!(output, " engine={} ({})", engine.id, engine.pick)?,
+            None => writeln!(output)?,
+        }
+    }
+    writeln!(output, "Embedder guide: {EMBEDDER_DOCS}")?;
+    if choice == EmbedderProvider::Endpoint {
+        writeln!(
+            output,
+            "Known-good servers: LM Studio (https://lmstudio.ai), Ollama (https://ollama.com), llama-server (https://github.com/ggml-org/llama.cpp), mistral.rs serve (https://mistral.rs). Keys come from --embedder-api-key-env NAME, never argv values."
+        )?;
+    }
+    Ok(())
+}
+
+/// What first-run model setup configured: the config file it wrote, the
+/// embedder and the active tagger as serve will run them.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ModelSetupOutcome {
+    pub(crate) config: PathBuf,
+    pub(crate) embedder: Option<EmbedderOutcome>,
+    pub(crate) tagger: Option<TaggerOutcome>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct EmbedderOutcome {
+    pub(crate) provider: &'static str,
+    pub(crate) model_id: String,
+    pub(crate) dimensions: usize,
+    /// Where it runs: the local device, or the endpoint's locality.
+    pub(crate) device: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct TaggerOutcome {
+    pub(crate) provider: &'static str,
+    pub(crate) mode: &'static str,
+    /// The engine a local tagger serves on, and how it was picked.
+    pub(crate) engine: Option<TaggerEngine>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct TaggerEngine {
+    pub(crate) id: String,
+    pub(crate) pick: &'static str,
+}
+
+/// First-run model setup (ARCH-0036): the one operation every first-run
+/// door shares. `init` asks its questions on a terminal and hands the
+/// answers here; a caller with no terminal states them directly. The answers
+/// are init's typed flags (an embedder left unset is none). It writes the one
+/// config serve reads (`[embedder]`, `[oneironer]`, the vault keys), after
+/// validating exactly what serve will read, building the tagger and embedder
+/// slots serve builds and preparing a local embedder's model; then it opens
+/// the vault, creating it on a first run, and returns it with what it
+/// configured. It reads no terminal and prints nothing.
+pub(crate) fn setup_models(
+    answers: &InitArgs,
+    path: &Path,
+    env: EnvConfig,
+) -> anyhow::Result<(oneiron::Vault, ModelSetupOutcome)> {
+    let choice = answers.embedder.unwrap_or(EmbedderProvider::None);
+    let config_text = config_text(answers, choice, path)?;
     // Validate exactly what serve will read before downloading or creating a vault.
-    let staged = stage_config(&path, &config_text)?;
+    let staged = stage_config(path, &config_text)?;
     let result = (|| {
         let config = read_config(&staged, env)?;
         // The same slot serve builds: a local bundle loads on its engine, and
@@ -85,43 +167,32 @@ fn init_with_env(
             None => "none".to_owned(),
         };
         let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
-        std::fs::rename(&staged, &path)?;
-        super::print_doctor_report(&vault)?;
-        writeln!(output, "config: {}", path.display())?;
-        if let Some(embedder) = config.embedder.as_ref() {
-            writeln!(
-                output,
-                "embedder: provider={} model_id={} dimensions={} device={device}",
-                embedder.provider.as_str(),
-                embedder.model_id,
-                embedder.dimensions
-            )?;
-        }
-        if let Some(tagger) = config.oneironer.as_ref().filter(|t| t.is_active()) {
-            write!(
-                output,
-                "tagger: provider={} mode={}",
-                tagger.provider.as_str(),
-                tagger.mode.as_str()
-            )?;
-            match tagger_slot.as_ref().and_then(|slot| slot.serving()) {
-                Some(serving) => writeln!(
-                    output,
-                    " engine={} ({})",
-                    serving.engine.id(),
-                    serving.pick.as_str()
-                )?,
-                None => writeln!(output)?,
-            }
-        }
-        writeln!(output, "Embedder guide: {EMBEDDER_DOCS}")?;
-        if choice == EmbedderProvider::Endpoint {
-            writeln!(
-                output,
-                "Known-good servers: LM Studio (https://lmstudio.ai), Ollama (https://ollama.com), llama-server (https://github.com/ggml-org/llama.cpp), mistral.rs serve (https://mistral.rs). Keys come from --embedder-api-key-env NAME, never argv values."
-            )?;
-        }
-        Ok(())
+        std::fs::rename(&staged, path)?;
+        let outcome = ModelSetupOutcome {
+            config: path.to_path_buf(),
+            embedder: config.embedder.as_ref().map(|embedder| EmbedderOutcome {
+                provider: embedder.provider.as_str(),
+                model_id: embedder.model_id.clone(),
+                dimensions: embedder.dimensions,
+                device,
+            }),
+            tagger: config
+                .oneironer
+                .as_ref()
+                .filter(|tagger| tagger.is_active())
+                .map(|tagger| TaggerOutcome {
+                    provider: tagger.provider.as_str(),
+                    mode: tagger.mode.as_str(),
+                    engine: tagger_slot
+                        .as_ref()
+                        .and_then(|slot| slot.serving())
+                        .map(|serving| TaggerEngine {
+                            id: serving.engine.id(),
+                            pick: serving.pick.as_str(),
+                        }),
+                }),
+        };
+        Ok((vault, outcome))
     })();
     if staged.exists() {
         let _ = std::fs::remove_file(staged);
