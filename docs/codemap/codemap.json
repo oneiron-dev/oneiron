@@ -1372,6 +1372,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnnotationHold",
+      "AnnotationHoldSweep"
+     ],
+     "path": "src/attempt_queue/annotation_hold.rs",
+     "purpose": "OF-368: a comment's agent task waits while its comment is unattached",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -1515,7 +1531,7 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5
      }
     },
@@ -1589,7 +1605,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 17,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -12646,7 +12662,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 2,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -12780,6 +12796,25 @@
      "purpose": "Scoped-capability identity and channel rules: normalization, canonical segments, provenance minting…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackConnectionCheck",
+      "PackConnectionEvidence",
+      "PackConnectionVerifier",
+      "ProviderConnectionChecks"
+     ],
+     "path": "src/connector_key/setup.rs",
+     "purpose": "Guided pack setup's grants and connection checks (OF-378)",
+     "surface": {
+      "const": 5,
+      "crate-vis": 4,
+      "fn": 4,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -37823,13 +37858,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 7
      }
     },
@@ -38020,8 +38055,8 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 14
+      "crate-vis": 7,
+      "re-export": 17
      }
     },
     {
@@ -38135,6 +38170,66 @@
      "path": "src/skill_hub/pack_catalog/script_runtime/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackSetup",
+      "PackSetupAccount",
+      "PackSetupAuth",
+      "PackSetupConnection",
+      "PackSetupPermission",
+      "PackSetupRisk",
+      "PackSetupSecret"
+     ],
+     "path": "src/skill_hub/pack_catalog/setup.rs",
+     "purpose": "The typed `setup` key of PACK.md (OF-378): the accounts a pack needs, the connections it makes and how each…",
+     "surface": {
+      "const": 4,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 8,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackSetupCardAction"
+     ],
+     "path": "src/skill_hub/pack_catalog/setup_cards.rs",
+     "purpose": "The guided setup as GenUI cards (OF-378), composed from the existing closed atom kit: a checklist of…",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackSetupAnswer",
+      "PackSetupCheck",
+      "PackSetupCheckRecord",
+      "PackSetupConnectionState",
+      "PackSetupCustodyRef",
+      "PackSetupGrantRef",
+      "PackSetupKeyRef",
+      "PackSetupPermissionState",
+      "PackSetupSecretState",
+      "PackSetupSession",
+      "PackSetupView"
+     ],
+     "path": "src/skill_hub/pack_catalog/setup_session.rs",
+     "purpose": "Source-bound guided pack setup (OF-378)",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 2,
+      "fn": 3,
+      "struct": 9
+     }
     },
     {
      "bucket": "s",
@@ -47201,8 +47296,8 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 39,
-     "impl_vault": false,
+     "files": 40,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
@@ -47474,7 +47569,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48363,9 +48458,9 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 74,
+     "files": 77,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
@@ -48615,9 +48710,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 97,
+   "over_bar": 98,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2931,
+   "source_files": 2936,
    "test_files": 903
   },
   "oneiron-android": {
