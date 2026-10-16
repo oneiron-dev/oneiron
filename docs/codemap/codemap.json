@@ -489,7 +489,24 @@
      "surface": {
       "crate-vis": 15,
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OptionalMemory",
+      "OptionalMemoryProfile"
+     ],
+     "path": "src/agent_def/optional_memory.rs",
+     "purpose": "How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -566,9 +583,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 47,
+      "crate-vis": 48,
       "enum": 5,
-      "fn": 19,
+      "fn": 20,
       "struct": 4
      }
     },
@@ -12866,7 +12883,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 59,
+      "fn": 60,
       "struct": 1
      }
     },
@@ -12910,7 +12927,7 @@
      "path": "src/context_pack/empty_pack.rs",
      "purpose": "Why a context pack came back empty, at each serialization stage",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -20733,7 +20750,7 @@
      "purpose": "Human TASK follow-up shared types, stage machine and timing bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1,
       "struct": 5,
@@ -20755,7 +20772,7 @@
      "path": "src/human_task/storage.rs",
      "purpose": "vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -23982,6 +23999,7 @@
      "kind": "src",
      "notable": [
       "AssetConsumer",
+      "HydratedAsset",
       "LandedImage",
       "ResolvedAsset",
       "ServedAssetForm"
@@ -23990,8 +24008,8 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "crate-vis": 5,
-      "enum": 1,
-      "fn": 4,
+      "enum": 2,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -31707,11 +31725,19 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/scan_check/table_tests.rs",
+     "purpose": "The code's own list of engine scans: none refuses for how many rows it reads (rule 5)",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -37558,7 +37584,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -37964,7 +37990,7 @@
      "path": "src/task_verb/owner_index.rs",
      "purpose": "Shared derived tasks-by-owner index for inbox and saved plan queries",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -38005,7 +38031,7 @@
      "path": "src/task_verb/presence_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -38069,7 +38095,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -38856,12 +38882,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "IdScanPage"
+     ],
      "path": "src/vault/edges.rs",
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
-      "crate-vis": 7,
-      "fn": 13
+      "crate-vis": 8,
+      "fn": 13,
+      "struct": 1
      }
     },
     {
@@ -38873,7 +38902,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "fn": 19,
       "struct": 1
      }
@@ -39013,7 +39042,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 12,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -41741,7 +41770,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42770,10 +42799,10 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
@@ -43115,8 +43144,8 @@
    },
    "over_bar": 44,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2594,
-   "test_files": 880
+   "source_files": 2595,
+   "test_files": 881
   },
   "oneiron-android": {
    "files": [
@@ -43857,7 +43886,7 @@
      "path": "src/beam/model_scaffold/paired.rs",
      "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -46801,6 +46830,7 @@
      "path": "src/design_plan/brief.rs",
      "purpose": "The brief: the kept, typed outline a design is compiled from (ARCH-0077, \"Create: an approved argument, then…",
      "surface": {
+      "crate-vis": 1,
       "enum": 8,
       "fn": 3,
       "struct": 8
@@ -46862,7 +46892,7 @@
      "path": "src/design_plan/mod.rs",
      "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 12,
       "fn": 10,
       "re-export": 1,
@@ -47273,7 +47303,7 @@
      "path": "src/native_patch/workbook.rs",
      "purpose": "The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -52728,7 +52758,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -52748,7 +52778,17 @@
      "path": "src/api/context_pack/mod.rs",
      "purpose": "Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/reader.rs",
+     "purpose": "The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -53584,6 +53624,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/asset_forms.rs",
+     "purpose": "OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -53927,6 +53975,14 @@
      "notable": [],
      "path": "src/api/tests/reactive.rs",
      "purpose": "Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/reader_optional_memory.rs",
+     "purpose": "A reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): zero optional memory…",
      "surface": {}
     },
     {
@@ -57548,7 +57604,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 197,
+     "files": 200,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57788,8 +57844,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 355,
-   "test_files": 169
+   "source_files": 356,
+   "test_files": 171
   },
   "oneiron-spawn": {
    "files": [

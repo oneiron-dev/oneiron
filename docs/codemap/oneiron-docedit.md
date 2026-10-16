@@ -24,10 +24,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deck/template.rs` | src | s | 4 struct · 1 fn | LayoutView, MasterView, TemplateView, TextStyle | The template reader: masters and their layouts, each placeholder with its resolved geometry and the… |
 | `src/deck/tests.rs` | test | m | — | — | ONE-2527 acceptance: the four resolvers in all four states; masters, inheritance, `p:clrMapOvr`, groups and… |
 | `src/design_plan/assembly.rs` | src | s | 3 crate-vis | — | Plan assembly: part names allocated above the template's high-water marks, the package row's parts and… |
-| `src/design_plan/brief.rs` | src | m | 8 struct · 8 enum · 3 fn | Asset, AssetKind, Block, BlockContent, Brief, BriefError, Carrier, Cell +8 | The brief: the kept, typed outline a design is compiled from (ARCH-0077, "Create: an approved argument, then… |
+| `src/design_plan/brief.rs` | src | m | 8 struct · 8 enum · 3 fn · 1 crate-vis | Asset, AssetKind, Block, BlockContent, Brief, BriefError, Carrier, Cell +8 | The brief: the kept, typed outline a design is compiled from (ARCH-0077, "Create: an approved argument, then… |
 | `src/design_plan/capability.rs` | src | m | 16 crate-vis | — | Layout capability (ARCH-0077, "Layout selection"): each placeholder's role, type and index, effective bounds… |
 | `src/design_plan/ladder.rs` | src | m | 4 crate-vis | — | One page through the ladder (ARCH-0077, "Layout selection"): a layout chosen by capability; then a… |
-| `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 10 fn · 1 re-export · 1 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
+| `src/design_plan/mod.rs` | src | m | 16 struct · 12 enum · 10 fn · 1 re-export · 2 crate-vis | ApprovedInput, AssetBinding, CompileError, Composition, Content, Decision, DecisionOption, DesignPlan +20 | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/edit/check.rs` | src | m | 15 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/media.rs` | src | s | 5 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
@@ -59,7 +59,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 2 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
 | `src/native_patch/tests.rs` | test | m | — | — | — |
-| `src/native_patch/workbook.rs` | src | m | 14 crate-vis | — | The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the… |
+| `src/native_patch/workbook.rs` | src | m | 16 crate-vis | — | The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the… |
 | `src/ooxml.rs` | src | m | 3 struct · 9 fn · 4 const | Node, XmlError, XmlTree | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | L | 2 struct · 1 enum · 8 fn · 1 re-export | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
