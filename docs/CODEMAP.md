@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2570 | 860 | 42 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2571 | 865 | 42 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 24 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 108 | 18 | 0 |
@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 54 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 15 | 8 | 0 |
-| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned… | 11 | 5 | 1 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 39 | 11 | 1 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 18 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
@@ -65,7 +65,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `agent_inbox_lens` | file+dir | 4 | s | yes | Renderer-neutral inbox query |
 | `agent_run_status` | file | 1 | s | — | AgentRunStatus contract shared by Context Board and run-tree viewers |
 | `analyzer` | file | 1 | s | — | Multilingual analyzer subsystem |
-| `anchored_annotation` | dir | 10 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
+| `anchored_annotation` | dir | 11 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 5 | L | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 38 | m | — | Generic LMDB-backed background attempt queue |
 | `authority` | dir | 117 | m | yes | AUTHORITY_LOG record substrate |
@@ -137,7 +137,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_roundtrip` | dir | 30 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `edit_settle` | dir | 8 | m | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 11 | L | yes | — |
-| `engine_executor` | dir | 18 | L | — | Engine-native JS code-mode executor |
+| `engine_executor` | dir | 19 | L | — | Engine-native JS code-mode executor |
 | `entity_doc` | dir | 12 | m | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file | 1 | s | — | Entity ids, world ids and the presentation-id grammar |
 | `error` | file | 1 | s | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
@@ -172,7 +172,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `llm` | dir | 74 | m | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 3 | s | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `maintain` | dir | 6 | m | — | — |
-| `memory` | dir | 114 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `memory` | dir | 117 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 8 | m | — | Durable batched speculation over real detached worktrees |
 | `note` | file+dir | 37 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 17 | m | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
@@ -360,8 +360,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `deck` | dir | 10 | m | Typed, read-only deck views over a retained OPC package (ARCH-0077, "The typed deck model") |
+| `design_plan` | dir | 6 | m | Compile a kept brief into a validated `DesignPlan` (ARCH-0077, "Create: an approved argument, then a design") |
+| `emit` | dir | 4 | m | Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 "Creation result and checks") |
+| `graphic` | dir | 7 | m | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
+| `native_patch` | dir | 5 | m | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `ooxml` | file | 1 | m | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
-| `retained_opc` | dir | 6 | L | Bounded, retained OPC archives |
+| `retained_opc` | dir | 7 | L | Bounded, retained OPC archives |
 | `xlfn` | file | 1 | s | Excel's storage qualifiers for post-2007 worksheet functions |
 
 ## oneiron-driver
