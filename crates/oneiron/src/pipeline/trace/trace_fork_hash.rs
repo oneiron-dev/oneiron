@@ -54,6 +54,11 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
         &mut hasher,
         crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
     );
+    fork_hash_affect_policy(
+        &mut hasher,
+        &builder.affect_policy,
+        builder.affect_policy.congruence_query(builder.query_affect),
+    );
 
     fork_hash_bm25_config(&mut hasher, bm25_config);
     // The recency the run applies: a host temporal window switches a
@@ -566,6 +571,26 @@ fn fork_hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
 
 fn fork_hash_raw_bytes(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes);
+}
+
+/// The OF-423 affect policy and the query VAD its congruence stage uses.
+/// `+ 0.0` folds a validated `-0.0` dial onto `0.0`.
+fn fork_hash_affect_policy(
+    hasher: &mut Sha256,
+    policy: &crate::pipeline::AffectRetrievalPolicy,
+    query: Option<crate::affect::Vad>,
+) {
+    fork_hash_f32(hasher, policy.arousal_stretch + 0.0);
+    fork_hash_bool(hasher, policy.availability_floor.is_some());
+    fork_hash_f32(hasher, policy.availability_floor.unwrap_or(0.0) + 0.0);
+    fork_hash_f32(hasher, policy.floor_arousal + 0.0);
+    fork_hash_f32(hasher, policy.emotion_weight + 0.0);
+    fork_hash_bool(hasher, query.is_some());
+    if let Some(query) = query {
+        fork_hash_f32(hasher, query.valence + 0.0);
+        fork_hash_f32(hasher, query.arousal + 0.0);
+        fork_hash_f32(hasher, query.dominance + 0.0);
+    }
 }
 
 fn fork_hash_bool(hasher: &mut Sha256, value: bool) {
