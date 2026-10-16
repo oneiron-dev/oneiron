@@ -33,6 +33,16 @@ the write is refused with `INVENTED_REFERENCE` (the field pointer, never the ref
 the row (HTTP facade, MCP, code mode, SDK) meets the check once. Declare citation slots
 only: a write's own target and create-or-get ids are the engine's own lookup, and free
 text is never parsed for refs. Only a plain memory row takes `refs`.
+`prose_links` (OF-063 prose links: Engine ruling 10-17) lists a row's text slots, read for
+Markdown links `[label](oneiron://<ref>)` (code spans and fences skipped, bounded in count
+and length) by `gate::record_references::admit_prose_links` before the engine call. A
+pointer may end at an opaque value, whose every string is read, and `*[key=value]` takes
+only the array items whose `key` is that string, which declares them AI-written (otherwise
+the writer's class decides). An AI-written link that does not resolve for its writer never
+refuses or rewrites the text: it writes the same `reference_refusal` receipt with outcome
+`unlinked`. Readers turn text into typed spans with `vault.refs.links`, each link resolved
+under their own read through `vault.refs.resolve`; one they cannot read is its plain label.
+Prose links are display only and never feed a grant, scope or authority path.
 `vault.witness` and `vault.claims.upsert` retain their size checks. `vault.recall`
 and `vault.receipts` need the scope restriction as well as query/limit validation. Their shared SDK
 request DTOs preserve the wire defaults. Language-specific DTO conversion stays
