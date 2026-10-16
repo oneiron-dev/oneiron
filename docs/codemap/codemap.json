@@ -2017,7 +2017,7 @@
      "path": "src/authority/revoke_proof.rs",
      "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -2432,7 +2432,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/tier_floor.rs",
@@ -2656,7 +2656,7 @@
      "path": "src/authority/tier_floor.rs",
      "purpose": "Causal floor updates: softenings clear only observed restrictions",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
