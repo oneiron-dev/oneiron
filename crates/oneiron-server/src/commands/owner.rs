@@ -610,6 +610,9 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         ImportCommand::Codex(args) => {
             return super::history_import::import_history(HistorySource::Codex, *args);
         }
+        ImportCommand::HookTranscript(args) => {
+            return super::history_import::import_history(HistorySource::HookTranscript, *args);
+        }
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
         ImportCommand::Preview(args) => (args.batch, None, args.serve),
         ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
