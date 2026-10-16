@@ -117,7 +117,9 @@ impl Vault {
                 .ok_or_else(|| invalid_body("connector slate required"))?;
             let slate = read_connector_slate_in_txn(self, &txn, slate_id)?
                 .ok_or_else(|| invalid_body("connector slate missing"))?;
-            if record.consent_required && (slate.owner_actor().is_none() || slate.revision() == 0) {
+            if record.consent_required
+                && (slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds())
+            {
                 return Err(invalid_body("connector slate not consented for qualification").into());
             }
             (
@@ -145,7 +147,8 @@ impl Vault {
         }
         let slate = read_connector_slate_in_txn(self, &wtxn, expected_slate_id)?
             .ok_or_else(|| invalid_body("connector slate missing"))?;
-        if record.consent_required && (slate.owner_actor().is_none() || slate.revision() == 0)
+        if record.consent_required
+            && (slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds())
             || slate.revision() != stamped_revision
             || slate.manifest_hash() != manifest_hash
             || slate.tool_names() != report.tools.iter().map(|tool| tool.name.as_str()).collect()

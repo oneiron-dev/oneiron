@@ -266,6 +266,26 @@ pub(crate) fn evaluate_external_effect_policy(
     {
         consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
     }
+    // ARCH-0072 `always allow` (L08 seam addition): the governing key's slate
+    // row bypasses the per-call ask. It folds in as a covering grant only, so
+    // a catastrophe still asks inside the consent verdict (DEC-0006).
+    let slate_scoped = matched_grant
+        .as_ref()
+        .filter(|(_, grant)| grant.scope.scoped_mcp_grant().is_some())
+        .zip(hydrated_effect.scoped_mcp_call.as_ref())
+        .map(|((grant_id, _), call)| (call.server.as_str(), grant_id, call.tool.as_str()));
+    if connector_key::effect_slate_always_allows(
+        store,
+        &*wtxn,
+        &hydrated_effect.channel,
+        &hydrated_effect.verb,
+        slate_scoped,
+        hydrated_effect.provenance.actor_entity_ref.as_ref(),
+    )? && let Some(requirement) = external_effect_action_requirement(&hydrated_effect)
+        && let Ok(grant) = crate::consent::ActionGrant::new(requirement)
+    {
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
     // The exact engine-computed digest is the only approve-once lookup key.
     // Reading it on THIS write transaction yields either no approval, one
     // unforgeable available authorization, or a typed spent-replay refusal.
@@ -511,6 +531,29 @@ pub(crate) fn evaluate_external_effect_policy(
                 GateDecision::pending(vec![GateReasonCode::PendingConnectorManifestDrift])
                     .with_receipt_reasons(["connector_manifest_drift"]),
             );
+        }
+
+        // ARCH-0072 capability settings (L08 seam addition): `never allow`
+        // removes the tool; `always ask` asks unless this exact call was
+        // approved once.
+        if charter_wall.is_none() {
+            match connector_key::connector_tool_setting_in_txn(store, &*wtxn, &key, manifest_verb)? {
+                connector_key::SlateDisposition::NeverAllow => {
+                    charter_wall = Some(
+                        GateDecision::deny(GateReasonCode::DenyCharterNeverList)
+                            .with_receipt_reasons(["connector_key_slate_never_allow"]),
+                    );
+                }
+                connector_key::SlateDisposition::AlwaysAsk if approve_once.is_none() => {
+                    charter_wall = Some(
+                        GateDecision::pending(vec![
+                            GateReasonCode::PendingConsentIrreversibleEffect,
+                        ])
+                        .with_receipt_reasons(["connector_key_slate_always_ask"]),
+                    );
+                }
+                _ => {}
+            }
         }
 
         if key.status != ConnectorKeyStatus::Active {
