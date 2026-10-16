@@ -36,10 +36,9 @@ impl EntityStoreRead for Memory {
                 .map(|(id, _)| Ok(*id)),
         ))
     }
-    fn port_entity_long_spanning<'a>(
+    fn port_entity_long_ending_after<'a>(
         &self,
         txn: &'a Snapshot,
-        started_before: u64,
         ended_after: u64,
     ) -> Result<PortRows<'a, (EntityId, crate::TimeRange)>> {
         let q = TimelineQuery {
@@ -52,9 +51,8 @@ impl EntityStoreRead for Memory {
                 Err(error) => Some(Err(error)),
                 Ok(time) => {
                     let row = &txn.entities[&time.id];
-                    (row.occurred.start < started_before
-                        && row.occurred.end.saturating_sub(row.occurred.start)
-                            > crate::batch::LONG_INTERVAL_THRESHOLD_SECS)
+                    (row.occurred.end.saturating_sub(row.occurred.start)
+                        > crate::batch::LONG_INTERVAL_THRESHOLD_SECS)
                         .then_some(Ok((time.id, row.occurred)))
                 }
             },
