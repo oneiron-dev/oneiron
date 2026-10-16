@@ -32,8 +32,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
 | `src/error/code.rs` | src | s | 1 enum · 1 crate-vis | CodeError | Code-domain errors: codebase snapshots and symbol manifests, repo mutations, the micro-VM backend, code… |
 | `src/error/gate.rs` | src | m | 1 struct · 3 enum · 7 fn · 2 crate-vis | GateDenial, GateDenialOutcome, GateDenialReason, GateError | Gate-domain errors: consent grants and bounds, disclosure scope and clamps, and the Gate write refusal with… |
+| `src/error/hook.rs` | src | s | 1 enum | VerbHookStop | A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a pre-hook skipped or asked, or a… |
 | `src/error/maintenance.rs` | src | s | 2 enum · 1 crate-vis | CompactionPacketError, MaintenanceError | Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup… |
-| `src/error/mod.rs` | src | m | 2 enum · 7 fn · 1 type · 13 re-export | Error, ErrorKind | — |
+| `src/error/mod.rs` | src | m | 2 enum · 7 fn · 1 type · 14 re-export | Error, ErrorKind | — |
 | `src/error/off_record.rs` | src | s | 1 enum · 1 crate-vis | OffRecordError | Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the… |
 | `src/error/record.rs` | src | m | 1 enum · 1 crate-vis | RecordError | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
 | `src/error/registry.rs` | src | s | 1 enum · 1 crate-vis | RegistryError | Registry-domain errors: structural-kind registration, entity-type and edge-kind refusals raised by the… |
@@ -47,7 +48,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/limit_ask.rs` | src | s | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 2 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
-| `src/memory/error.rs` | src | m | 5 struct · 7 fn · 1 type · 13 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory/error.rs` | src | m | 5 struct · 7 fn · 1 type · 14 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
