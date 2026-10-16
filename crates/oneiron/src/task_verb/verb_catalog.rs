@@ -26,6 +26,11 @@ pub enum AgentVerb {
     VaultKvSearch,
     VaultKvNamespaces,
     VaultPacksPut,
+    VaultLensesPropose,
+    VaultLensesActivate,
+    VaultLensesDeactivate,
+    VaultLensesList,
+    VaultLensesDefault,
     VaultHooksReplay,
     VaultArtifactsView,
     VaultArtifactsExport,
@@ -133,6 +138,11 @@ impl AgentVerb {
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
         Self::VaultPacksPut,
+        Self::VaultLensesPropose,
+        Self::VaultLensesActivate,
+        Self::VaultLensesDeactivate,
+        Self::VaultLensesList,
+        Self::VaultLensesDefault,
         Self::VaultHooksReplay,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
@@ -243,6 +253,11 @@ impl AgentVerb {
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultLensesPropose => "vault.lenses.propose",
+            Self::VaultLensesActivate => "vault.lenses.activate",
+            Self::VaultLensesDeactivate => "vault.lenses.deactivate",
+            Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
@@ -349,6 +364,11 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -463,6 +483,11 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -611,6 +636,11 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
+                | Self::VaultLensesList
+                | Self::VaultLensesDefault
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -703,6 +733,9 @@ impl AgentVerb {
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultPacksPut
+                | Self::VaultLensesPropose
+                | Self::VaultLensesActivate
+                | Self::VaultLensesDeactivate
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -751,6 +784,7 @@ impl AgentVerb {
             Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
+                | Self::VaultLensesPropose
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -783,6 +817,11 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesActivate => &["spec"],
+            Self::VaultLensesDeactivate => &["spec"],
+            Self::VaultLensesList => &["spec"],
+            Self::VaultLensesDefault => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -891,6 +930,11 @@ impl AgentVerb {
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultLensesPropose => &["spec"],
+            Self::VaultLensesActivate => &["spec"],
+            Self::VaultLensesDeactivate => &["spec"],
+            Self::VaultLensesList => &["spec"],
+            Self::VaultLensesDefault => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],

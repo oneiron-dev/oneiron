@@ -593,6 +593,11 @@ fn mcp_agent_verb_input(
         "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.propose" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.default" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
@@ -857,6 +862,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.propose" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.activate" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.deactivate" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.default" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.hooks.replay" => {
@@ -1496,6 +1516,55 @@ async fn execute_agent_verb_listing(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::vault_packs_put(server, auth, input)
                 .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.propose" => {
+            let input: oneiron::lens::LensProposeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_lenses_propose(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.activate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.lenses.activate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::lens::LensActivateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_lenses_activate(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.deactivate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.lenses.deactivate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::lens::LensDeactivateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_lenses_deactivate(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.list" => {
+            let input: oneiron::lens::LensListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_lenses_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.default" => {
+            let input: oneiron::lens::LensDefaultRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_lenses_default(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

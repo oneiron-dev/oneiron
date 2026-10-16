@@ -127,6 +127,13 @@ declare const vault: {
     put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
     search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
   };
+  lenses: {
+    activate(input: { compiled_hash: string; expected_active_ref?: string | null; lens_ref: string }): Promise<unknown>;
+    deactivate(input: { expected_active_ref: string; slot: object }): Promise<unknown>;
+    default(input: { dossiers?: object[]; ledger?: string[]; threads?: string[]; title: string }): Promise<unknown>;
+    list(input: { after?: string | null; limit?: number | null; pack_name?: string | null; with_compiled?: boolean }): Promise<unknown>;
+    propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
+  };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {
     create(input: { kind: string; markdown: string }): Promise<unknown>;
