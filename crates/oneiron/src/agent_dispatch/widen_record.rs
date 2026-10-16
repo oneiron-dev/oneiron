@@ -131,6 +131,8 @@ impl WidenIntent {
                     .map(EntityId::from_hex)
                     .transpose()?,
                 scope: self.scope.clone(),
+                // A widened spawn is a child: it inherits its parent's origin.
+                origin_conversation: None,
             },
         ))
     }

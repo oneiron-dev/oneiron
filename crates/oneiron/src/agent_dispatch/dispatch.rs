@@ -201,8 +201,13 @@ impl<'a> AgentDispatcher<'a> {
             return Ok(existing);
         }
         let requested_parent = input.parent_attempt;
+        let origin =
+            self.origin_conversation_in_txn(wtxn, requested_parent, spawn.origin_conversation)?;
         let dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
-        let encoded = encode_agent_dispatch_input(&dispatch_input)?;
+        let encoded = super::origin::with_origin_conversation(
+            encode_agent_dispatch_input(&dispatch_input)?,
+            origin,
+        );
         let outcome = self.runner.enqueue_with_task_ref_in_txn(
             wtxn,
             EnqueueDreamerAttempt {
