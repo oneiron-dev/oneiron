@@ -108,6 +108,19 @@ connection floor and each address's unauthenticated share. Managed serve
 (`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
 `/a/` is unchanged until the supervisor routes an artifact origin.
 
+`artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
+comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
+`ONEIRON_ARTIFACT_VAULT_NAME`, a DNS label) put this vault on a subdomain of
+its own on the artifact listener: `<vault>.<domain>/<artifact>/...` serves what
+`/a/<artifact>/...` serves, with the same tiers, pointers and cache headers, on
+an origin per vault. The edge, DNS and certificates stay static config: route
+each domain's subdomains to the artifact port. A subdomain that names no vault
+here answers exactly as a forbidden artifact does (the artifact 404), and so
+does every refusal from this vault there. Other hosts keep plain `/a/`. A
+device publishes to this server by syncing: a pinned pointer reaches it once
+window sync has delivered the bytes and rows it names. Managed serve refuses
+both flags for now.
+
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
 floor at the disk's last byte. The count rows sit far above fleet scale (each
@@ -140,6 +153,11 @@ git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while 
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
 disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
+code_result_inline_bytes = 1048576 # one code-mode result kept inline in LMDB; a bigger one is a file in the vault's bodies/
+code_result_disk_floor_bytes = 1073741824 # free disk the result body store keeps; below it the row asks and the result is stored whole
+code_result_scan_bytes = 268435456 # bytes one result search or query scans before it answers with a cursor
+code_result_memory_bytes = 8589934592 # result bodies every run holds in memory at once (default: memory / 8, the least of RAM and the container limit)
+code_result_session_memory_bytes = 1073741824 # result bodies one run holds in memory (default: memory / 64); past either, a body is read from its file by range
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

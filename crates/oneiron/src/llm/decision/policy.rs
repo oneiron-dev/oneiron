@@ -37,6 +37,15 @@ pub struct PersonThreshold {
     pub version: u32,
 }
 
+/// The "does this need more thinking?" row. A read whose paired P(yes) reaches
+/// `threshold` steps to the next rung while the call has time. No row never steps on
+/// it; the Coach tunes it from quick answers that later proved wrong.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThinkThreshold {
+    pub threshold: f64,
+    pub version: u32,
+}
+
 /// Vault-owned policy snapshot. No learned row means shadow at the dial's
 /// seed band, not an implicit permission to enforce a global threshold.
 /// No person row means a person reading never routes.
@@ -44,9 +53,29 @@ pub struct PersonThreshold {
 pub struct DecisionBandPolicy {
     rows: BTreeMap<(EntityId, u32, Reversibility), LearnedBand>,
     person: Option<PersonThreshold>,
+    think: Option<ThinkThreshold>,
+    questions_per_call: Option<usize>,
 }
 
+/// The questions-per-call row's value until the vault sets one.
+pub const DEFAULT_QUESTIONS_PER_CALL: usize = 16;
+
 impl DecisionBandPolicy {
+    /// The questions-per-call row (Rule 5): a pack larger than it goes as several requests
+    /// in turn under the same clock. A decision is never refused for count.
+    pub fn set_questions_per_call(&mut self, count: usize) -> Result<()> {
+        if count == 0 {
+            return Err(invalid("invalid questions per call"));
+        }
+        self.questions_per_call = Some(count);
+        Ok(())
+    }
+
+    pub fn questions_per_call(&self) -> usize {
+        self.questions_per_call
+            .unwrap_or(DEFAULT_QUESTIONS_PER_CALL)
+    }
+
     pub fn set_person_threshold(&mut self, threshold: f64, version: u32) -> Result<()> {
         if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
             return Err(invalid("invalid person threshold"));
@@ -56,6 +85,21 @@ impl DecisionBandPolicy {
         }
         self.person = Some(PersonThreshold { threshold, version });
         Ok(())
+    }
+
+    pub fn set_think_threshold(&mut self, threshold: f64, version: u32) -> Result<()> {
+        if !(threshold > 0.0 && threshold <= 1.0) || version == 0 {
+            return Err(invalid("invalid think threshold"));
+        }
+        if self.think.is_some_and(|row| row.version >= version) {
+            return Err(invalid("think threshold version must advance"));
+        }
+        self.think = Some(ThinkThreshold { threshold, version });
+        Ok(())
+    }
+
+    pub fn think_threshold(&self) -> Option<ThinkThreshold> {
+        self.think
     }
 
     pub fn person_threshold(&self) -> Option<PersonThreshold> {

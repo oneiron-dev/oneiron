@@ -229,6 +229,11 @@ impl LimitsConfig {
             retained_memory_bytes,
             feedback_inbox_bytes,
             keyed_filter_json_bytes,
+            code_result_inline_bytes,
+            code_result_disk_floor_bytes,
+            code_result_scan_bytes,
+            code_result_memory_bytes,
+            code_result_session_memory_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -260,8 +265,23 @@ impl LimitsConfig {
         set(&mut self.live_documents, live_documents);
         set(&mut self.retained_memory_bytes, retained_memory_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
-        if let Some(bound) = keyed_filter_json_bytes {
-            self.engine.set(EngineLimit::KeyedFilterJsonBytes, bound);
+        for (row, bound) in [
+            (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
+            (EngineLimit::CodeResultInlineBytes, code_result_inline_bytes),
+            (
+                EngineLimit::CodeResultDiskFloorBytes,
+                code_result_disk_floor_bytes,
+            ),
+            (EngineLimit::CodeResultScanBytes, code_result_scan_bytes),
+            (EngineLimit::CodeResultMemoryBytes, code_result_memory_bytes),
+            (
+                EngineLimit::CodeResultSessionMemoryBytes,
+                code_result_session_memory_bytes,
+            ),
+        ] {
+            if let Some(bound) = bound {
+                self.engine.set(row, bound);
+            }
         }
     }
 
@@ -366,4 +386,9 @@ pub(super) struct LimitsConfigOverride {
     pub(super) retained_memory_bytes: Option<u64>,
     pub(super) feedback_inbox_bytes: Option<u64>,
     pub(super) keyed_filter_json_bytes: Option<u64>,
+    pub(super) code_result_inline_bytes: Option<u64>,
+    pub(super) code_result_disk_floor_bytes: Option<u64>,
+    pub(super) code_result_scan_bytes: Option<u64>,
+    pub(super) code_result_memory_bytes: Option<u64>,
+    pub(super) code_result_session_memory_bytes: Option<u64>,
 }

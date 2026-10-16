@@ -31,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/edit/check.rs` | src | m | 15 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/media.rs` | src | s | 5 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
-| `src/edit/mod.rs` | src | s | 5 struct · 3 enum · 1 fn · 1 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, Target, ValueEdit, Xfrm | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
+| `src/edit/mod.rs` | src | s | 5 struct · 3 enum · 1 fn · 1 mod · 2 re-export · 1 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, Target, ValueEdit, Xfrm | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `src/edit/structure/check.rs` | src | m | 4 crate-vis | — | The independent check for structural edits |
 | `src/edit/structure/mod.rs` | src | m | 2 struct · 2 enum · 2 fn · 2 crate-vis | NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
 | `src/edit/structure/slides/check.rs` | src | m | 2 crate-vis | — | The independent check for slide-level edits |
@@ -41,6 +41,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/structure/timing.rs` | src | s | 6 crate-vis | — | The delete cascade over a small, tested timing subset (ARCH-0077, "Animation dependencies") |
 | `src/edit/tests.rs` | test | L | 7 crate-vis | — | ONE-2528 acceptance: per verb, the edit changes only the declared fields and parts (exact part sets), keeps… |
 | `src/edit/text.rs` | src | m | 8 crate-vis | — | `set_text` and `replace_run_text` |
+| `src/edit/transaction.rs` | src | L | 10 struct · 8 enum · 1 trait · 15 fn · 2 const | AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets +11 | Deck transactions (ARCH-0077, "Transactions and allowed part changes"): the unit the engine proposes and… |
 | `src/edit/xfrm.rs` | src | s | 6 crate-vis | — | `set_xfrm` and `move_in_slide_space`: a shape's own transform, attribute by attribute |
 | `src/edit/xml.rs` | src | s | 18 crate-vis | — | Byte-span writing over a parsed part: every edit is a list of splices on the retained bytes, so whatever it… |
 | `src/emit/check.rs` | src | m | 1 crate-vis | — | The candidate checks, run on the exported bytes and independent of the writer's bookkeeping: the write set… |

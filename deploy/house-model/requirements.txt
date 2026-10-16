@@ -1,0 +1,5 @@
+# The EXL3 server's Python environment. Install a CUDA PyTorch wheel that
+# matches the host's driver first; exllamav3 builds against it.
+exllamav3==1.6.0
+jinja2
+llguidance

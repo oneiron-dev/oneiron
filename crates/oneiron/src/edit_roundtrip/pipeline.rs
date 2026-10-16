@@ -143,11 +143,12 @@ fn run_pipeline<S: EditSession>(
 
     // The spreadsheet seam must not pass native DOCX transactions to an
     // arbitrary external session, even if it reports them as applied.
-    if plan
-        .ops
-        .iter()
-        .any(|op| matches!(op, EditOp::DocxRevision { .. }))
-    {
+    if plan.ops.iter().any(|op| {
+        matches!(
+            op,
+            EditOp::DocxRevision { .. } | EditOp::DeckTransaction { .. }
+        )
+    }) {
         return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
             "a docx revision must use the native docx writer",
         )));

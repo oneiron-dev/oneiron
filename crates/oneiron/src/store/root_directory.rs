@@ -306,7 +306,7 @@ pub(crate) fn arm_after_root_entry_removed(callback: impl FnMut(&std::ffi::CStr)
 
 /// Removes every entry of `dir`, depth first. A link is removed, never
 /// followed.
-fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Result<()> {
+pub(super) fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Result<()> {
     let mut entries = Vec::new();
     for entry in Dir::read_from(dir)? {
         let entry = entry?;

@@ -40,10 +40,12 @@ pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
     CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
-    CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayGeneration,
-    CodeRunReplayRecord, CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
+    CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor,
+    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
+    code_run_replay_abi_layout_checks,
 };
 pub use self::storage::CodeRunModelHealCount;
+pub(crate) use self::storage::code_run_body_file_of_row;
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
