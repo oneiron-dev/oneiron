@@ -21,13 +21,26 @@ pub enum ProviderKind {
     /// A retrieval tagger speaking the Oneironer slot contract. It serves the
     /// `extraction_encoder` role only and never generates text.
     Oneironer,
+    /// Cartesia's speech API (`POST /tts/bytes`, `x-api-key`): a
+    /// `[models.media.speech]` rung only.
+    Cartesia,
+    /// ElevenLabs' speech API (`POST /v1/text-to-speech/{voice}/stream`,
+    /// `xi-api-key`): a `[models.media.speech]` rung only.
+    Elevenlabs,
 }
 
 impl ProviderKind {
     /// Whether this kind answers `generate` calls on the LLM slot.
     #[must_use]
     pub fn generates(self) -> bool {
-        !matches!(self, Self::Oneironer)
+        !matches!(self, Self::Oneironer) && !self.speech_only()
+    }
+
+    /// Whether this kind is a hosted speech wire, which serves the speech
+    /// media seat and nothing else.
+    #[must_use]
+    pub fn speech_only(self) -> bool {
+        matches!(self, Self::Cartesia | Self::Elevenlabs)
     }
 
     /// Whether this kind serves the `reranker` role, over `/v1/rerank`.
@@ -38,7 +51,9 @@ impl ProviderKind {
 
     fn default_locality(self) -> ModelLocality {
         match self {
-            Self::OpenaiCompat | Self::AnthropicCompat => ModelLocality::ThirdParty,
+            Self::OpenaiCompat | Self::AnthropicCompat | Self::Cartesia | Self::Elevenlabs => {
+                ModelLocality::ThirdParty
+            }
             Self::LocalOpenaiCompat | Self::Oneironer => ModelLocality::OwnServer,
         }
     }
@@ -63,7 +78,7 @@ impl ProviderKind {
                 LlmCapability::ToolCalling,
                 LlmCapability::ToolResults,
             ],
-            Self::Oneironer => Vec::new(),
+            Self::Oneironer | Self::Cartesia | Self::Elevenlabs => Vec::new(),
         }
     }
 }
