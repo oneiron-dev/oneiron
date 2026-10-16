@@ -39,8 +39,8 @@ pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_
 pub(crate) use self::trusted_contact::TrustedContactFire;
 pub use self::trusted_contact::{
     TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk,
-    TrustedContactDial, TrustedContactParty, TrustedContactReach, TrustedContactRevocation,
-    TrustedContactTier,
+    TrustedContactAskOutcome, TrustedContactDial, TrustedContactParty, TrustedContactReach,
+    TrustedContactRevocation, TrustedContactTier,
 };
 pub use self::trusted_contact_notice::{
     TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TRUSTED_CONTACT_NOTICE_CONTENT_REF, TrustedContactNotice,

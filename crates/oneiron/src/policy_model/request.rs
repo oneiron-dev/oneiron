@@ -245,6 +245,14 @@ pub struct PolicyModelConfig {
     /// Host-supplied explanation shown identically to the user and model on a human hold.
     /// Empty or oversized text falls back to the engine's generic explanation.
     pub owner_hold_notice: Option<String>,
+    /// Host-supplied text shown identically to the user and model when a
+    /// `RouteToHelp` sends the person's trusted contact their check-in notice.
+    /// Empty or oversized text falls back to the engine's generic statement.
+    pub trusted_contact_notified_notice: Option<String>,
+    /// Host-supplied text shown identically to the user and model when a
+    /// `RouteToHelp` asks the person before reaching their trusted contact.
+    /// Empty or oversized text falls back to the engine's generic statement.
+    pub trusted_contact_ask_notice: Option<String>,
     pub generation: PolicyGenerationParams,
     /// How much of the OWNER plane's content reaches the model. Read by the
     /// owner-plane pass and stamped on the owner-plane receipt; the hosted

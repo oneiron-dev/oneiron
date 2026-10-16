@@ -488,7 +488,7 @@ impl Vault {
                         .iter()
                         .position(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_AUDIT)
                         .unwrap_or(system_notices.len());
-                    system_notices.splice(at..at, trusted_contact_notices(fire));
+                    system_notices.splice(at..at, trusted_contact_notices(fire, config));
                 }
                 let mut reason_codes = policy_model_reason_codes(&verdict);
                 if moved {

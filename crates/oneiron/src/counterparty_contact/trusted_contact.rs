@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::policy_model::PolicyModelConfig;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateSystemNoticeRecord;
 
@@ -120,6 +121,29 @@ pub struct TrustedContactAsk {
     pub tier: TrustedContactTier,
     pub asked_at: u64,
     pub answer: Option<TrustedContactAnswer>,
+    /// When the naming asked about was revoked or replaced before an answer.
+    /// It closes the ask: answering it sends nothing, and says so.
+    pub superseded: Option<u64>,
+}
+
+impl TrustedContactAsk {
+    /// Neither answered nor superseded.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.answer.is_none() && self.superseded.is_none()
+    }
+}
+
+/// What the person's answer to one ask did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrustedContactAskOutcome {
+    /// A yes: the notice is staged, and these notices tell the person and the
+    /// model it was sent, as the gate's own fire does.
+    Notified(Vec<GateSystemNoticeRecord>),
+    /// A no: nothing is sent.
+    Declined,
+    /// The naming asked about was revoked or replaced: nothing is sent.
+    Superseded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,12 +184,30 @@ fn validate_reach(reach: &TrustedContactReach) -> Result<()> {
     Ok(())
 }
 
+/// Closes every open ask about `person`'s naming of `contact`, in the
+/// transaction that revokes or replaces that naming.
+fn supersede_open_asks_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    person: EntityId,
+    contact: EntityId,
+    now: u64,
+) -> Result<()> {
+    for (key, mut ask) in ASKS.scan(&vault.store, wtxn)? {
+        if ask.person == person && ask.contact == contact && ask.is_open() {
+            ask.superseded = Some(now);
+            ASKS.put(&vault.store, wtxn, &key, &ask)?;
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
     /// The person names `contact`, another live PERSON, as their trusted
     /// contact, reached on `reach`. The relation is not live until the
     /// contact accepts it. Naming the same contact again replaces it, and the
     /// contact's consent with it; a notice staged for the old naming is not
-    /// sent.
+    /// sent, and an ask still open about it is superseded.
     pub fn name_trusted_contact(
         &self,
         person: &AuthenticatedOwner,
@@ -195,6 +237,7 @@ impl Vault {
                 revoked: None,
             };
             RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
+            supersede_open_asks_in_txn(self, wtxn, person, contact, now)?;
             Ok(relation)
         })
     }
@@ -226,9 +269,10 @@ impl Vault {
         })
     }
 
-    /// Either side ends the relation. A revoked relation never fires, and a
-    /// notice already staged from it is not sent: this waits for a send
-    /// already under way, and none starts once it returns.
+    /// Either side ends the relation. A revoked relation never fires, a
+    /// notice already staged from it is not sent, and an ask still open about
+    /// it is superseded: this waits for a send already under way, and none
+    /// starts once it returns.
     pub fn revoke_trusted_contact(
         &self,
         party: &AuthenticatedOwner,
@@ -253,6 +297,7 @@ impl Vault {
                 relation.revoked = Some(TrustedContactRevocation { at: now, by });
                 RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
             }
+            supersede_open_asks_in_txn(self, wtxn, person, contact, now)?;
             Ok(relation)
         })
     }
@@ -306,7 +351,7 @@ impl Vault {
         })
     }
 
-    /// The proven person's unanswered asks.
+    /// The proven person's open asks.
     pub fn trusted_contact_asks(
         &self,
         person: &AuthenticatedOwner,
@@ -317,21 +362,22 @@ impl Vault {
             .scan(&self.store, &rtxn)?
             .into_iter()
             .map(|(_, ask)| ask)
-            .filter(|ask| ask.person == person && ask.answer.is_none())
+            .filter(|ask| ask.person == person && ask.is_open())
             .collect())
     }
 
-    /// The person answers one ask, once. A yes stages the notice when the
-    /// relation is still live at the version asked about, and returns the
-    /// notice that tells the person and the model it was sent, as the gate's
-    /// own fire does; nothing else returns one.
+    /// The person answers one ask, once. A yes stages the notice and returns
+    /// the notices that tell the person and the model it was sent, each
+    /// body as `config` words it. An ask whose naming was revoked or replaced
+    /// is superseded, whatever the answer.
     pub fn answer_trusted_contact_ask(
         &self,
         person: &AuthenticatedOwner,
         ask: EntityId,
         yes: bool,
+        config: &PolicyModelConfig,
         now: u64,
-    ) -> Result<Vec<GateSystemNoticeRecord>> {
+    ) -> Result<TrustedContactAskOutcome> {
         self.with_write_txn(|wtxn| {
             let person = person.revalidate_person_in_txn(self, wtxn)?;
             let mut pending = ASKS
@@ -343,24 +389,32 @@ impl Vault {
             }
             let relation = RELATIONS
                 .get(&self.store, wtxn, &(pending.person, pending.contact))?
-                .filter(|relation| {
-                    yes && relation.is_live() && relation.version == pending.version
-                });
+                .filter(|relation| relation.is_live() && relation.version == pending.version);
+            let Some(relation) = relation.filter(|_| pending.superseded.is_none()) else {
+                if pending.superseded.is_none() {
+                    pending.superseded = Some(now);
+                    ASKS.put(&self.store, wtxn, &ask, &pending)?;
+                }
+                return Ok(TrustedContactAskOutcome::Superseded);
+            };
             pending.answer = Some(TrustedContactAnswer {
                 yes,
                 at: now,
-                notified: relation.is_some(),
+                notified: yes,
             });
             ASKS.put(&self.store, wtxn, &ask, &pending)?;
-            let Some(relation) = relation else {
-                return Ok(Vec::new());
-            };
+            if !yes {
+                return Ok(TrustedContactAskOutcome::Declined);
+            }
             stage_notice_in_txn(self, wtxn, &relation, ask, now)?;
-            Ok(crate::policy_model::trusted_contact_notices(
-                TrustedContactFire {
-                    notified: 1,
-                    asked: 0,
-                },
+            Ok(TrustedContactAskOutcome::Notified(
+                crate::policy_model::trusted_contact_notices(
+                    TrustedContactFire {
+                        notified: 1,
+                        asked: 0,
+                    },
+                    config,
+                ),
             ))
         })
     }
@@ -405,7 +459,7 @@ impl Vault {
                 ask.person == person
                     && ask.contact == relation.contact
                     && ask.version == relation.version
-                    && ask.answer.is_none()
+                    && ask.is_open()
             });
             if !open {
                 let ask = EntityId::now();
@@ -421,6 +475,7 @@ impl Vault {
                         tier,
                         asked_at: now,
                         answer: None,
+                        superseded: None,
                     },
                 )?;
             }

@@ -46,8 +46,10 @@ pub(super) const POLICY_MODEL_HELP_MESSAGE: &str =
     "Support resources should be offered alongside the reply without diagnosing the person.";
 pub(super) const SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_NOTIFIED: &str = "trusted_contact_notified";
 pub(super) const SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_ASK: &str = "trusted_contact_ask";
-const TRUSTED_CONTACT_NOTIFIED_NOTICE: &str = "Oneiron is sending this person's trusted contact the check-in notice both of them agreed to, and nothing else. Tell the person it was sent.";
-const TRUSTED_CONTACT_ASK_NOTICE: &str = "This person has a trusted contact who agreed to receive a check-in notice. Ask the person first: nothing is sent unless they say yes.";
+/// The engine's generic trusted-contact bodies, for a host that words none.
+/// They state what happened and instruct no one.
+const TRUSTED_CONTACT_NOTIFIED_NOTICE: &str = "Oneiron is sending this person's trusted contact the check-in notice both of them agreed to, and nothing else.";
+const TRUSTED_CONTACT_ASK_NOTICE: &str = "This person has a trusted contact who agreed to receive a check-in notice. Nothing is sent to them unless this person says yes.";
 
 /// The hosted notice-body templates, split around the one variable part (the
 /// jurisdiction) so the registration guard can price them. They live as
@@ -110,10 +112,10 @@ fn owner_notice(
 ) -> GateSystemNoticeRecord {
     let row_ref = safe_notice_row_ref(row_ref);
     let body = match (decision, row_ref.as_deref()) {
-        (PolicyClassifyDecision::Hold, _) => config.owner_hold_notice.as_deref()
-            .filter(|body| !body.trim().is_empty() && body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN)
-            .unwrap_or("The policy check held this content and queued it for the human named by the matched policy row. It is not waiting for that person to be online.")
-            .to_owned(),
+        (PolicyClassifyDecision::Hold, _) => host_notice_body(
+            config.owner_hold_notice.as_deref(),
+            "The policy check held this content and queued it for the human named by the matched policy row. It is not waiting for that person to be online.",
+        ).to_owned(),
         (PolicyClassifyDecision::Block, Some(row_ref)) => format!(
             "Oneiron withheld this outbound content because your policy row {row_ref} asked it to."
         ),
@@ -138,22 +140,37 @@ fn owner_notice(
     }
 }
 
+/// Host-supplied notice text, or the engine's generic `fallback` when the
+/// host's is empty or past the ledger's bound.
+fn host_notice_body<'a>(host: Option<&'a str>, fallback: &'a str) -> &'a str {
+    host.filter(|body| !body.trim().is_empty() && body.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN)
+        .unwrap_or(fallback)
+}
+
 /// What a `RouteToHelp` did for the person's trusted contacts, told to the
-/// person and the model alike: every fire is said, none is silent. Neither
-/// body names the contact, the row or anything the turn said.
+/// person and the model alike: every fire is said, none is silent. The host
+/// words each body in `config`; neither the host's nor the engine's generic
+/// body may name the contact, the row or anything the turn said.
 pub(crate) fn trusted_contact_notices(
     fire: crate::counterparty_contact::TrustedContactFire,
+    config: &PolicyModelConfig,
 ) -> Vec<GateSystemNoticeRecord> {
     [
         (
             fire.notified,
             SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_NOTIFIED,
-            TRUSTED_CONTACT_NOTIFIED_NOTICE,
+            host_notice_body(
+                config.trusted_contact_notified_notice.as_deref(),
+                TRUSTED_CONTACT_NOTIFIED_NOTICE,
+            ),
         ),
         (
             fire.asked,
             SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_ASK,
-            TRUSTED_CONTACT_ASK_NOTICE,
+            host_notice_body(
+                config.trusted_contact_ask_notice.as_deref(),
+                TRUSTED_CONTACT_ASK_NOTICE,
+            ),
         ),
     ]
     .into_iter()

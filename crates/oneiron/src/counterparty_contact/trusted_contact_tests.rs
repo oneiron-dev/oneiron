@@ -3,8 +3,9 @@
 //! concern, over the OF-327 outbound rails.
 
 use super::{
-    TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TrustedContact, TrustedContactDial, TrustedContactNotice,
-    TrustedContactParty, TrustedContactReach, TrustedContactTier,
+    TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TrustedContact, TrustedContactAskOutcome,
+    TrustedContactDial, TrustedContactNotice, TrustedContactParty, TrustedContactReach,
+    TrustedContactTier,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::consent::AuthenticatedOwner;
@@ -354,6 +355,39 @@ fn either_side_revokes_and_a_revoked_relation_never_fires() -> Result<()> {
         "{sent:?}"
     );
     assert!(sink.calls.is_empty());
+
+    // An ask still open when its naming is revoked or replaced closes with
+    // it: the next crisis asks once, about the live naming, and a yes to the
+    // old ask is told it was superseded and reaches no one.
+    for revoked in [true, false] {
+        let fx = fixture()?;
+        let first = fx.live(TrustedContactDial::AskFirst)?;
+        fx.crisis()?;
+        let old = fx.vault.trusted_contact_asks(&fx.person)?;
+        assert_eq!(old.len(), 1);
+        if revoked {
+            fx.vault
+                .revoke_trusted_contact(&fx.contact, fx.person_id, fx.contact_id, now())?;
+        }
+        let live = fx.live(TrustedContactDial::AskFirst)?;
+        assert!(live.version > first.version);
+        fx.crisis()?;
+        let open = fx.vault.trusted_contact_asks(&fx.person)?;
+        assert_eq!(
+            open.iter().map(|ask| ask.version).collect::<Vec<_>>(),
+            [live.version],
+            "revoked={revoked}: one open ask, about the live naming"
+        );
+        let answered = fx.vault.answer_trusted_contact_ask(
+            &fx.person,
+            old[0].ask,
+            true,
+            &PolicyModelConfig::default(),
+            now(),
+        )?;
+        assert_eq!(answered, TrustedContactAskOutcome::Superseded);
+        assert_eq!(fx.staged()?, 0);
+    }
     Ok(())
 }
 
@@ -451,19 +485,20 @@ fn the_tier_and_dial_decide_whether_the_person_is_asked_first() -> Result<()> {
     let asks = fx.vault.trusted_contact_asks(&fx.person)?;
     assert_eq!(asks.len(), 1);
     assert_eq!(asks[0].tier, TrustedContactTier::Concern);
+    let config = PolicyModelConfig::default();
     assert!(
         fx.vault
-            .answer_trusted_contact_ask(&fx.contact, asks[0].ask, true, now())
+            .answer_trusted_contact_ask(&fx.contact, asks[0].ask, true, &config, now())
             .is_err()
     );
-    assert!(
+    assert_eq!(
         fx.vault
-            .answer_trusted_contact_ask(&fx.person, asks[0].ask, false, now())?
-            .is_empty()
+            .answer_trusted_contact_ask(&fx.person, asks[0].ask, false, &config, now())?,
+        TrustedContactAskOutcome::Declined
     );
     assert!(
         fx.vault
-            .answer_trusted_contact_ask(&fx.person, asks[0].ask, true, now())
+            .answer_trusted_contact_ask(&fx.person, asks[0].ask, true, &config, now())
             .is_err()
     );
     assert_eq!(fx.staged()?, 0);
@@ -472,9 +507,12 @@ fn the_tier_and_dial_decide_whether_the_person_is_asked_first() -> Result<()> {
     fx.crisis()?;
     let ask = fx.vault.trusted_contact_asks(&fx.person)?[0].ask;
     // A yes is told, like the gate's own fire.
-    let yes = fx
-        .vault
-        .answer_trusted_contact_ask(&fx.person, ask, true, now())?;
+    let TrustedContactAskOutcome::Notified(yes) =
+        fx.vault
+            .answer_trusted_contact_ask(&fx.person, ask, true, &config, now())?
+    else {
+        panic!("a yes to a live ask notifies");
+    };
     assert!(yes.iter().any(|notice| {
         notice.notice_type == "trusted_contact_notified" && notice.audience == "user_and_model"
     }));
