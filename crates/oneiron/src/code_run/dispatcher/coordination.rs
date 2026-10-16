@@ -12,11 +12,13 @@ use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
     SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome, SelfEffect,
-    SelfFailedResult,
+    SelfFailedResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
-use crate::task_verb::{TaskAskHandle, TaskAskSpec, TaskAskWait};
+use crate::task_verb::{
+    ConsultPayloadRef, SelfRefusalInput, TaskAskHandle, TaskAskSpec, TaskAskWait,
+};
 use crate::temporal::TimeRange;
 use crate::{Vault, WriteActor};
 
@@ -189,6 +191,53 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(match memory.tasks_ask(&call) {
             Ok(receipt) => SelfDispatchOutcome::TaskAsk(receipt),
             Err(error) => failed(SelfEffect::TasksAsk, error),
+        })
+    }
+
+    /// `tasks.refuse`: the bound agent's own refusal of the TASK her attempt
+    /// realizes, through her dial. A run bound to no TASK has nothing to
+    /// refuse, and naming another TASK is refused; both answer as a typed
+    /// failure the script can read.
+    pub(super) fn dispatch_tasks_refuse(
+        &self,
+        call: SelfTaskRefuseCall,
+    ) -> Result<SelfDispatchOutcome> {
+        let refused = |code: &str| {
+            SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::TasksRefuse,
+                error: code.to_owned(),
+            })
+        };
+        let vault = self.coordination_vault()?;
+        let Some(parent) = self.agent_parent else {
+            return Ok(refused("tasks_refuse_unbound"));
+        };
+        let live = DreamerRunnerStore::new(vault)
+            .status(parent)?
+            .ok_or_else(invalid)?;
+        let Some(task) = live.attempt.task_ref.as_deref() else {
+            return Ok(refused("tasks_refuse_unbound"));
+        };
+        let task = crate::EntityId::from_hex(task)?;
+        if call.task_ref.is_some_and(|requested| requested != task) {
+            return Ok(refused("tasks_refuse_other_task"));
+        }
+        let Ok(reason_ref) = ConsultPayloadRef::parse(vault, &call.reason_ref) else {
+            return Ok(refused("tasks_refuse_invalid_reason"));
+        };
+        let input = SelfRefusalInput {
+            domain: call.domain,
+            reason_ref,
+            at: call.at,
+        };
+        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        Ok(match memory.land_task_refusal(task, &input) {
+            Ok(receipt) => SelfDispatchOutcome::TaskRefusal(SelfTaskRefusalResult {
+                task_ref: receipt.task_ref,
+                level: receipt.level,
+                replay: receipt.idempotent_replay,
+            }),
+            Err(error) => failed(SelfEffect::TasksRefuse, error),
         })
     }
 

@@ -12,6 +12,7 @@ pub enum RunVerb {
     SelfCompact,
     SelfUnfold,
     SelfFolds,
+    TasksRefuse,
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
@@ -23,6 +24,7 @@ impl RunVerb {
         Self::SelfCompact,
         Self::SelfUnfold,
         Self::SelfFolds,
+        Self::TasksRefuse,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -37,6 +39,7 @@ impl RunVerb {
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
+            Self::TasksRefuse => "tasks.refuse",
         }
     }
     pub const fn writes(self) -> bool {
@@ -48,6 +51,7 @@ impl RunVerb {
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
+                | Self::TasksRefuse
         )
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
@@ -60,6 +64,7 @@ impl RunVerb {
             Self::SelfCompact => crate::code_run::SelfEffect::Fold,
             Self::SelfUnfold => crate::code_run::SelfEffect::Fold,
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
+            Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
         }
     }
 }

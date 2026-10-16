@@ -1402,6 +1402,13 @@
       "scope": "Read",
       "context": "run",
       "effect": "Fold"
+    },
+    {
+      "name": "tasks.refuse",
+      "input": "crate::code_run::TaskRefuseInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "TasksRefuse"
     }
   ]
 }

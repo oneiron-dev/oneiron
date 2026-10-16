@@ -318,6 +318,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.folds",
                 crate::code_run::vault_read::request_schema::<crate::compaction::FoldsInput>(),
             ),
+            (
+                "tasks.refuse",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
+            ),
         ])
     });
     SCHEMAS.get(verb)
