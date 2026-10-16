@@ -20733,7 +20733,7 @@
      "purpose": "Human TASK follow-up shared types, stage machine and timing bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 1,
       "struct": 5,
@@ -20755,7 +20755,7 @@
      "path": "src/human_task/storage.rs",
      "purpose": "vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -31708,7 +31708,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -37559,7 +37559,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 28
      }
     },
     {
@@ -37965,7 +37965,7 @@
      "path": "src/task_verb/owner_index.rs",
      "purpose": "Shared derived tasks-by-owner index for inbox and saved plan queries",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -38006,7 +38006,7 @@
      "path": "src/task_verb/presence_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -38070,7 +38070,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
