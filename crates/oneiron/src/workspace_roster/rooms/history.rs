@@ -119,7 +119,7 @@ impl Memory<'_> {
         }
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            require_member(self.vault(), &txn, room, self.actor())?;
+            require_reader(self.vault(), &txn, room, self.actor())?;
             for turn in &mut turns {
                 if super::liveness::is_thread_root(turn) {
                     turn.converted_project = self

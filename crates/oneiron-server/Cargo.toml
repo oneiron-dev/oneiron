@@ -62,6 +62,8 @@ oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
 # models/anthropic.rs).
 oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
 oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
+# The System One seat on the host's decision ladder (decision_host.rs).
+oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh"] }
 loro = "1.10"
