@@ -28,20 +28,18 @@ use oneiron::code_run::HostSelfDispatcher;
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, ParkDreamerAttempt};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, RunCompaction,
+    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
 use oneiron::failure_ladder::{
     FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
     HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
-use oneiron::llm::seat::{SeatKind, SeatTask};
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use tokio::sync::broadcast;
 
 use super::SyncServer;
-use crate::mcp::McpCodeModeProvider;
+use crate::mcp::{McpCodeModeProvider, enter_engine_native_run};
 
 const LEASE_OWNER: &str = "oneiron-server-residents";
 /// The park a run waiting on a durable signal holds its lease under; a
@@ -293,58 +291,16 @@ fn enter_run(
 ) -> Result<EngineExecutorOutcome, String> {
     let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?;
-    let mut runtime = provider.runtime();
-    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-    let has_seat = vault.model_manifest().map_err(text)?.is_some()
-        || vault
-            .model_seat_receipt(config.run_id)
-            .map_err(text)?
-            .is_some();
-    let seat = if has_seat {
-        let decisions = provider
-            .seat_decisions()
-            .ok_or("manifest-backed run requires seat decisions")?;
-        let facet = provider
-            .seat_facet()
-            .ok_or("manifest-backed run requires a capability profile")?;
-        let task = SeatTask {
-            kind: SeatKind::Attempt,
-            warm_scope: format!("resident-run:{}", config.run_id.to_hex()),
-            task: config.task.clone(),
-            purpose: oneiron::CallPurpose::Other {
-                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
-            },
-            facet: facet.to_owned(),
-            required: Vec::new(),
-            min_context_tokens: 1,
-            locality: config.model_locality,
-            override_model: None,
-            override_effort: None,
-        };
-        Some(
-            vault
-                .birth_model_seat(config.run_id, &task, decisions)
-                .map_err(text)?,
-        )
-    } else {
-        None
-    };
-    let mut routed_config = config.clone();
-    let mut executor =
-        EngineNativeExecutor::new(vault, provider.backend(), provider.lease(), runtime, &bound);
-    if let Some(seat) = &seat {
-        routed_config.model = seat.model().clone();
-        routed_config.model_locality = seat.locality();
-        routed_config.seat_effort = Some(seat.effort());
-        executor = executor.with_model_seat(seat);
-    }
-    if let Some(seat) = compaction {
-        executor = executor.with_compaction(seat);
-    }
-    if let Some(shadow) = provider.code_check() {
-        executor = executor.with_code_check(shadow);
-    }
-    reactor.block_on(executor.run(&routed_config)).map_err(text)
+    enter_engine_native_run(
+        vault,
+        provider,
+        &bound,
+        config,
+        format!("resident-run:{}", config.run_id.to_hex()),
+        compaction,
+        reactor,
+    )
+    .map_err(text)
 }
 
 /// The run's task: its frozen definition's instructions, then what woke it.
