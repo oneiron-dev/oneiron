@@ -11,6 +11,33 @@ public.
   it by tier heading, not by line number: `## Tier-1: Endpoint Activation Index`, `## Tier-2:
   Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
 
+## Use the engine from an agent
+
+On a Linux/macOS development/build host, from the repo root:
+
+```sh
+python3 examples/agent-quickstart/quickstart.py --keep-running
+```
+
+This installs this checkout, initializes a fresh vault with no model downloads,
+mints an agent credential, starts loopback HTTP, saves and recalls a private diary
+memory, and connects MCP stdio. Needs Python 3.11+, curl 7.76+, rustup and native
+compiler tools; `--binary /absolute/path/to/oneiron` skips the build. It ignores
+inherited `ONEIRON_*` overrides and never overwrites a vault. It prints the URL,
+stop command, and absolute-path MCP config for Claude Code, Codex, or OpenCode.
+No account, dashboard, API key, or interactive pairing is needed. Follow the
+build-host rules below; never source-build this example on the owner's Mac.
+
+Read `docs/agent-setup.md` for prerequisites, client config and repair. The complete
+script is `examples/agent-quickstart/quickstart.py`. For direct HTTP use
+`POST /v1/core/facade/self.memory.diary` with `{"content":"project note"}`, then
+`POST /v1/core/facade/vault.recall` with
+`{"query":"project note","effort":"light","limit":5}`. Authenticate with the
+paired credential and holder proof (`oneiron api` signs it). For MCP, use the
+printed `oneiron mcp --surface tool-first --credential-file <file> --url <origin>`
+command, call `tools/list`, and pass verb inputs under `arguments.spec`.
+A stopped vault needs `serve --config <config>`; the MCP bridge does not start it.
+
 ## The vibe build (owner decree, 2026-10-17)
 
 These rules outrank every other process line in this repo.
