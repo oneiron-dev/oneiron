@@ -12848,8 +12848,8 @@
      "path": "src/connector_key/qualification/receipt.rs",
      "purpose": "Durable evidence for the suite that actually ran, retained on activation",
      "surface": {
-      "const": 1,
-      "crate-vis": 7,
+      "const": 2,
+      "crate-vis": 9,
       "struct": 1
      }
     },
@@ -12952,7 +12952,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 3,
       "trait": 1
      }
@@ -38550,13 +38550,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -38702,20 +38702,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorPackQualification",
       "PackConnectorReceipt",
       "ProbePackQualifier",
-      "QualifiedPackFitPolicy"
+      "QualifiedPackFitPolicy",
+      "SetupCheckQualifier"
      ],
      "path": "src/skill_hub/pack_catalog/qualify.rs",
      "purpose": "Connector packs use the engine's real wire probes, never a publisher's grade",
      "surface": {
       "crate-vis": 2,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -38848,7 +38849,7 @@
      "path": "src/skill_hub/pack_catalog/setup_session.rs",
      "purpose": "Source-bound guided pack setup (OF-378)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 3,
       "struct": 9
