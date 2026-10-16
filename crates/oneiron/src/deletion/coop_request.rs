@@ -46,15 +46,15 @@ pub struct SignedCooperativeDeletionRequest {
     pub signature: AuthoritySignature,
 }
 
-fn invalid() -> Error {
+pub(super) fn invalid() -> Error {
     RecordError::InvalidCooperativeDeletionRequest.into()
 }
-fn encode(value: &Value) -> Result<Vec<u8>> {
+pub(super) fn encode(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value).map_err(|_| invalid())?;
     Ok(bytes)
 }
-fn decode(bytes: &[u8]) -> Result<Value> {
+pub(super) fn decode(bytes: &[u8]) -> Result<Value> {
     // Bound allocation before invoking the general MessagePack reader.
     if bytes.len() > 32_768 {
         return Err(invalid());
@@ -66,7 +66,7 @@ fn decode(bytes: &[u8]) -> Result<Value> {
     }
     Ok(value)
 }
-fn fields<'a>(value: &'a Value, keys: &[&str]) -> Result<Vec<&'a Value>> {
+pub(super) fn fields<'a>(value: &'a Value, keys: &[&str]) -> Result<Vec<&'a Value>> {
     let pairs = value.as_map().ok_or_else(invalid)?;
     if pairs.len() != keys.len()
         || pairs
@@ -78,13 +78,13 @@ fn fields<'a>(value: &'a Value, keys: &[&str]) -> Result<Vec<&'a Value>> {
     }
     Ok(pairs.iter().map(|(_, value)| value).collect())
 }
-fn binary<const N: usize>(v: &Value) -> Result<[u8; N]> {
+pub(super) fn binary<const N: usize>(v: &Value) -> Result<[u8; N]> {
     let Value::Binary(bytes) = v else {
         return Err(invalid());
     };
     bytes.as_slice().try_into().map_err(|_| invalid())
 }
-fn uint(v: &Value) -> Result<u64> {
+pub(super) fn uint(v: &Value) -> Result<u64> {
     v.as_u64().ok_or_else(invalid)
 }
 
@@ -130,10 +130,6 @@ pub fn encode_signed_cooperative_deletion_request(
     req: &SignedCooperativeDeletionRequest,
 ) -> Result<Vec<u8>> {
     let body = encode_cooperative_deletion_request_body(&req.body)?;
-    let (suite, key) = match &req.signature.public_key {
-        AuthorityKey::Ed25519(key) => ("ed25519", key.to_vec()),
-        AuthorityKey::P256(key) => ("p256", key.clone()),
-    };
     if !verify_authority_signature(
         &req.signature,
         &[COOP_DELETION_REQUEST_DOMAIN, &body].concat(),
@@ -142,32 +138,13 @@ pub fn encode_signed_cooperative_deletion_request(
     }
     encode(&Value::Map(vec![
         (Value::from("body"), Value::Binary(body)),
-        (
-            Value::from("signature"),
-            Value::Map(vec![
-                (Value::from("suite"), Value::from(suite)),
-                (Value::from("public_key"), Value::Binary(key)),
-                (
-                    Value::from("signature"),
-                    Value::Binary(req.signature.signature.clone()),
-                ),
-            ]),
-        ),
+        (Value::from("signature"), signature_value(&req.signature)),
     ]))
 }
 
-/// Verifies the ASK's authenticity only. It is NOT a deletion proof and no
-/// proof exists in this protocol. Rejects unknown keys, duplicates and tails.
-pub fn decode_and_verify_cooperative_deletion_request(
-    bytes: &[u8],
-    expected_signer: &AuthorityKey,
-) -> Result<CooperativeDeletionRequest> {
-    let value = decode(bytes)?;
-    let outer = fields(&value, &["body", "signature"])?;
-    let Value::Binary(body_bytes) = outer[0] else {
-        return Err(invalid());
-    };
-    let sig = fields(outer[1], &["suite", "public_key", "signature"])?;
+/// The envelope's signature, read without trusting it.
+pub(super) fn envelope_signature(sig: &Value) -> Result<AuthoritySignature> {
+    let sig = fields(sig, &["suite", "public_key", "signature"])?;
     let (suite, public_key) = match sig[0].as_str() {
         Some("ed25519") => (
             AuthoritySignatureSuite::Ed25519,
@@ -184,11 +161,73 @@ pub fn decode_and_verify_cooperative_deletion_request(
         }
         _ => return Err(invalid()),
     };
-    let signature = AuthoritySignature {
+    Ok(AuthoritySignature {
         suite,
         public_key,
         signature: binary::<64>(sig[2])?.to_vec(),
+    })
+}
+
+/// The envelope's signature as a map, for re-encoding.
+pub(super) fn signature_value(signature: &AuthoritySignature) -> Value {
+    let (suite, key) = match &signature.public_key {
+        AuthorityKey::Ed25519(key) => ("ed25519", key.to_vec()),
+        AuthorityKey::P256(key) => ("p256", key.clone()),
     };
+    Value::Map(vec![
+        (Value::from("suite"), Value::from(suite)),
+        (Value::from("public_key"), Value::Binary(key)),
+        (
+            Value::from("signature"),
+            Value::Binary(signature.signature.clone()),
+        ),
+    ])
+}
+
+/// The pact an envelope names, read WITHOUT verifying anything: a lookup
+/// hint for finding the key to verify it against, never a trusted value.
+pub fn peek_cooperative_deletion_pact(bytes: &[u8]) -> Result<[u8; 32]> {
+    let value = decode(bytes)?;
+    let outer = fields(&value, &["body", "signature"])?;
+    let Value::Binary(body_bytes) = outer[0] else {
+        return Err(invalid());
+    };
+    let body = decode(body_bytes)?;
+    let pact = body
+        .as_map()
+        .ok_or_else(invalid)?
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("pact_id"))
+        .ok_or_else(invalid)?;
+    binary(&pact.1)
+}
+
+/// Decodes an envelope and verifies it against the key it carries: the
+/// owner-signed bytes a client hands its own host, checked for shape and
+/// self-consistency before they are queued. The peer verifies again against
+/// the key it pinned.
+pub fn decode_self_signed_cooperative_deletion_request(
+    bytes: &[u8],
+) -> Result<SignedCooperativeDeletionRequest> {
+    let value = decode(bytes)?;
+    let outer = fields(&value, &["body", "signature"])?;
+    let signature = envelope_signature(outer[1])?;
+    let body = decode_and_verify_cooperative_deletion_request(bytes, &signature.public_key)?;
+    Ok(SignedCooperativeDeletionRequest { body, signature })
+}
+
+/// Verifies the ASK's authenticity only. It is NOT a deletion proof and no
+/// proof exists in this protocol. Rejects unknown keys, duplicates and tails.
+pub fn decode_and_verify_cooperative_deletion_request(
+    bytes: &[u8],
+    expected_signer: &AuthorityKey,
+) -> Result<CooperativeDeletionRequest> {
+    let value = decode(bytes)?;
+    let outer = fields(&value, &["body", "signature"])?;
+    let Value::Binary(body_bytes) = outer[0] else {
+        return Err(invalid());
+    };
+    let signature = envelope_signature(outer[1])?;
     if &signature.public_key != expected_signer
         || !verify_authority_signature(
             &signature,

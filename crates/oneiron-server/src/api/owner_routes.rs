@@ -37,6 +37,7 @@ use crate::owner::{
     pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod cooperative_deletion_routes;
 mod history_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
@@ -74,6 +75,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(history_routes::routes())
+        .merge(cooperative_deletion_routes::routes())
         .merge(super::owner_origin::routes())
 }
 

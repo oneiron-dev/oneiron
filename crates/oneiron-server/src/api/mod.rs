@@ -78,6 +78,7 @@ mod conversation_dag;
 mod conversation_members;
 mod conversation_transcript;
 mod conversations;
+mod cooperative_deletion;
 mod core;
 mod discover;
 mod entity;
@@ -421,6 +422,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // The open feedback inbox: keyless, and mounted only when its
         // config section turns it on (ARCH-0056 #open-inbox).
         .merge(self::feedback_inbox::routes(&server))
+        // OF-273: a former peer's signed courtesy deletion ask and answer.
+        // Keyless; the signed body authenticates against the pinned pact key.
+        .merge(self::cooperative_deletion::routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
