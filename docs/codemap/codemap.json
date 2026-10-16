@@ -13468,7 +13468,7 @@
      "path": "src/context_board/history/claims.rs",
      "purpose": "Reserved board claim shape shared by admission and history reconstruction",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -14307,7 +14307,7 @@
      "path": "src/context_pack/mod.rs",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 7
      }
@@ -14336,6 +14336,16 @@
      "purpose": "Sync-quarantine rows read during pack assembly, and the index that excludes quarantined entities from a pack",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/retained_copies.rs",
+     "purpose": "Retained courtesy copies stay out of shared retrieval (BIZ-LEGAL-0004 B2, Docs Q09)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -15364,6 +15374,7 @@
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle)",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 13,
       "struct": 5
@@ -15583,7 +15594,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 8
      }
     },
@@ -20531,7 +20542,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 2,
       "re-export": 14
      }
@@ -20750,7 +20761,7 @@
      "purpose": "Terminal-pact per-world stale stamping (FED-04)",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -47679,7 +47690,7 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48787,7 +48798,7 @@
    },
    "over_bar": 98,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2941,
+   "source_files": 2942,
    "test_files": 903
   },
   "oneiron-android": {
