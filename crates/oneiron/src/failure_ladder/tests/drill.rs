@@ -2,7 +2,9 @@
 use super::*;
 use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::error::{Error, GateError};
+use crate::receipt::ReceiptRecord;
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::side_table::{ATTEMPT_PACK_RECEIPT, Named, SideTable};
 use crate::store::GateDecisionId;
 
 fn person(vault: &Vault, seed: u8) -> Result<crate::consent::AuthenticatedOwner> {
@@ -284,5 +286,73 @@ fn deleted_agent_definition_keeps_retained_failure_member_drillable() -> Result<
         drill.receipt_refs,
         vec![crate::receipt::attempt_pack_receipt_id(&leased.id)]
     );
+    Ok(())
+}
+
+/// ONE-2688#7: a retried try, its cancelled retry and a dispatch cancelled
+/// while queued are legitimate members that drill with their own terminal
+/// receipts. Only a receipt that is really gone still refuses, by name.
+#[test]
+fn retried_and_cancelled_members_drill_and_only_a_lost_receipt_refuses() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let owner_id = vault.ensure_embedded_owner_actor().expect("seed owner");
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let agent = put_scope_agent(&vault, 0xc6, "custom.retry_cancel")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    let FailureLadderOutcome::Retried {
+        scheduled_attempt, ..
+    } = DreamerRunnerStore::new(&vault).fail_agent_dispatch_with_evidence(
+        failure_input(&leased, transient(), 20),
+        auto_policy(agent),
+    )?
+    else {
+        panic!("expected a retry");
+    };
+    let queued = dispatch_attempt(&vault, agent, 30)?;
+    for (id, now) in [(scheduled_attempt.id, 21), (queued.id, 31)] {
+        AttemptQueue::new(&vault).intervene(crate::attempt_queue::InterveneAttempt {
+            id,
+            kind: crate::attempt_queue::AttemptInterventionKind::Cancel,
+            actor: "operator".to_owned(),
+            note: None,
+            now,
+        })?;
+    }
+    let class = FailureSignalClass::TaskFailure;
+    for (id, state) in [
+        (leased.id, AttemptState::Failed),
+        (scheduled_attempt.id, AttemptState::Cancelled),
+        (queued.id, AttemptState::Cancelled),
+    ] {
+        vault.record_custom_agent_failure(id, class)?;
+        let drill = vault.drill_custom_agent_failure(&owner, class, id)?;
+        assert_eq!(drill.trace.state, state);
+        for receipt in &drill.receipt_refs {
+            assert!(crate::receipt::attempt_pack_receipt(&vault, receipt)?.is_some());
+        }
+    }
+    let retry = vault.drill_custom_agent_failure(&owner, class, scheduled_attempt.id)?;
+    assert_eq!(retry.trace.retry_of, Some(leased.id));
+    // The dispatcher's skill index makes both of these receipt-bearing.
+    for id in [leased.id, queued.id] {
+        assert_eq!(
+            vault
+                .drill_custom_agent_failure(&owner, class, id)?
+                .receipt_refs,
+            vec![crate::receipt::attempt_pack_receipt_id(&id)]
+        );
+    }
+
+    let pack_receipts: SideTable<String, ReceiptRecord, Named> =
+        SideTable::new(&ATTEMPT_PACK_RECEIPT);
+    let lost = crate::receipt::attempt_pack_receipt_id(&queued.id);
+    assert!(vault.with_write_txn(|txn| pack_receipts.delete(&vault.store, txn, &lost))?);
+    assert!(matches!(
+        vault.drill_custom_agent_failure(&owner, class, queued.id),
+        Err(Error::CorruptedIndex(
+            "custom-agent failure receipt missing"
+        ))
+    ));
     Ok(())
 }
