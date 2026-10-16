@@ -26,8 +26,10 @@ pub const DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS: u64 = 16;
 pub const DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS: u64 = 8 * 1024 * 1024;
 /// The `authority_log_fold_memory_floor` row: the bytes one fold may project
 /// to hold at its peak. A log whose fold would pass it is the one count the
-/// fold refuses, with a typed issue naming the floor.
-pub const DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// fold refuses, with a typed issue naming the floor. The default sits under
+/// a 16 GiB machine: a one-chain log of about 5,000 counted rows reaches it,
+/// and one agent enrolled per row measured 4.4 GB at 4,000 rows.
+pub const DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// Device-local authority observation policy durations. Key: ().
 const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =

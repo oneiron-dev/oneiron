@@ -30,10 +30,12 @@ use crate::store::Store;
 pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
 
 /// What one fold holds at its peak, per row and per ancestor pair, measured
-/// on the fleet (10-16). A row's state holds what its ancestors added, so
-/// the pairs carry the states as well as the ancestry index.
-const FOLD_BYTES_PER_ROW: u64 = 4096;
-const FOLD_BYTES_PER_ANCESTOR_PAIR: u64 = 256;
+/// on the fleet (10-16) and rounded up: at most 11.6 KB a row with no
+/// ancestors, and 252 to 626 bytes a pair (a confirm chain, then one agent
+/// enrolled and bound per row). A row's state holds what its ancestors
+/// added, so the pairs carry the states as well as the ancestry index.
+const FOLD_BYTES_PER_ROW: u64 = 16 * 1024;
+const FOLD_BYTES_PER_ANCESTOR_PAIR: u64 = 640;
 
 #[cfg(test)]
 thread_local! {
