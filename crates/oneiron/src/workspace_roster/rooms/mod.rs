@@ -318,15 +318,14 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             // A handle may name an agent with no seat: naming enrolls no one
-            // and grants nothing (OF-529).
+            // and grants nothing (OF-529). A person stands on its seat or a
+            // live Ready join for the room (OF-417).
             let record = room_in(self, txn, room)?;
+            let now = self.store.clock.now_recorded_at();
+            let subject = participation::participant_in_txn(self, txn, actor, now)?;
             if !record.member_ids.contains(&actor.to_hex())
-                && !participation::addressable_agent_in_txn(
-                    self,
-                    txn,
-                    actor,
-                    self.store.clock.now_recorded_at(),
-                )?
+                && !participation::addressable_agent_in_txn(self, txn, actor, now)?
+                && !participation::person_stands_in_txn(self, txn, room, None, actor, subject)?
             {
                 return Err(invalid());
             }

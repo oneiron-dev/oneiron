@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2993 | 903 | 111 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2994 | 903 | 111 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 44 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 469 | 182 | 26 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 470 | 182 | 26 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 0 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 19 | 1 | 0 |
@@ -105,7 +105,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `commitment_lifecycle` | file+dir | 2 | m | — | Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541) |
 | `commitment_schedule` | file+dir | 5 | L | yes | Commitment schedule evaluation and durable projection (CMT-2, ONE-1539) |
 | `commitment_wake` | dir | 7 | m | yes | Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery |
-| `compaction` | file+dir | 14 | L | — | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
+| `compaction` | file+dir | 15 | L | — | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
 | `companion` | dir | 10 | m | yes | Companion task queue and PERSON/FACET persona compilation |
 | `config` | file+dir | 2 | m | — | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
 | `connector_key` | dir | 30 | L | yes | Connector-key registry records with effector budgets for OF-277 GOV-01 |
@@ -641,7 +641,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `byte_line` | file | 1 | m | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
 | `cli` | file+dir | 5 | L | — |
 | `commands` | file+dir | 33 | L | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
-| `config` | dir | 32 | L | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `config` | dir | 33 | L | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `control_keys` | file+dir | 3 | s | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
 | `decision_graph` | file | 1 | s | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
 | `decision_host` | file | 1 | m | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |

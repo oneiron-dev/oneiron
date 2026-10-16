@@ -737,6 +737,91 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     }
 }
 
+/// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
+/// same at `/v1/owner/legal-holds`. Lifting a hold is only the one "Lift the
+/// hold and erase?" confirm: its title and prompt are printed first, and it
+/// acts only with `--yes`.
+pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()> {
+    use crate::cli::{LegalHoldPlaceArgs, LegalHoldWidenArgs, LegalHoldsCommand};
+    use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
+
+    let (serve, route) = match &command {
+        LegalHoldsCommand::List(args) => (&args.serve, "GET /v1/owner/legal-holds"),
+        LegalHoldsCommand::Log(args) => (&args.serve, "GET /v1/owner/legal-holds/log"),
+        LegalHoldsCommand::Place(args) => (&args.serve, "POST /v1/owner/legal-holds --data -"),
+        LegalHoldsCommand::Widen(args) => {
+            (&args.serve, "POST /v1/owner/legal-holds/widen --data -")
+        }
+        LegalHoldsCommand::LiftAndErase(args) => {
+            eprintln!("{LIFT_AND_ERASE_TITLE}\n{LIFT_AND_ERASE_PROMPT}");
+            anyhow::ensure!(
+                args.yes,
+                "nothing was lifted or erased; run it again with --yes to confirm"
+            );
+            (
+                &args.serve,
+                "POST /v1/owner/legal-holds/lift-and-erase --data -",
+            )
+        }
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, route)?;
+    let owner = local_owner(&vault)?;
+    match command {
+        LegalHoldsCommand::List(_) => emit(&vault.legal_holds(&owner)?),
+        LegalHoldsCommand::Log(_) => emit(&vault.legal_hold_log(&owner)?),
+        LegalHoldsCommand::Place(args) => {
+            let LegalHoldPlaceArgs {
+                targets,
+                matter_ref,
+                ..
+            } = *args;
+            emit(&vault.place_legal_hold(&owner, hold_targets(&targets)?, matter_ref)?)
+        }
+        LegalHoldsCommand::Widen(args) => {
+            let LegalHoldWidenArgs {
+                hold_id, targets, ..
+            } = *args;
+            let hold = hold_id_arg(&hold_id)?;
+            emit(&vault.widen_legal_hold(&owner, hold, hold_targets(&targets)?)?)
+        }
+        LegalHoldsCommand::LiftAndErase(args) => {
+            let records = args
+                .records
+                .iter()
+                .map(|record| hold_id_arg(record))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let outcome = vault.confirm_lift_legal_hold_and_erase(&owner, &records)?;
+            emit(&oneiron::task_verb::sdk::LegalHoldLiftAndErased::from(
+                outcome,
+            ))
+        }
+    }
+}
+
+/// A 32-hex id given on the command line.
+fn hold_id_arg(hex: &str) -> anyhow::Result<oneiron::EntityId> {
+    oneiron::EntityId::from_hex(hex).map_err(|_| anyhow::anyhow!("{hex} is not a 32-hex id"))
+}
+
+/// The engine's hold targets from `--record` and `--gate-partition`.
+fn hold_targets(
+    args: &crate::cli::LegalHoldTargetArgs,
+) -> anyhow::Result<Vec<oneiron::deletion::LegalHoldTarget>> {
+    use oneiron::deletion::LegalHoldTarget;
+    let mut targets = Vec::with_capacity(args.records.len() + args.gate_partitions.len());
+    for record in &args.records {
+        targets.push(LegalHoldTarget::Record(hold_id_arg(record)?));
+    }
+    for partition in &args.gate_partitions {
+        targets.push(LegalHoldTarget::GatePartition(match partition.as_str() {
+            "none" => None,
+            claim => Some(hold_id_arg(claim)?),
+        }));
+    }
+    Ok(targets)
+}
+
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     let serve = match &command {
         RunsCommand::Pending(args) => &args.serve,

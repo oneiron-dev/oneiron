@@ -195,6 +195,7 @@ pub use crate::gate::RoomThreadFill;
 mod join_consent;
 mod join_door;
 mod join_receipt;
+mod workplace_join;
 pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
