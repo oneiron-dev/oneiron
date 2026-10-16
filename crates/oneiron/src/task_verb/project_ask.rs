@@ -20,6 +20,18 @@ impl Memory<'_> {
         task: EntityId,
         input: &TaskAskSpec,
     ) -> MemoryResult<TaskAskReceipt> {
+        self.tasks_ask_project_with(task, input, |_, _| Ok(()))
+    }
+
+    /// [`Self::tasks_ask_project`] with `effect` composed into the same
+    /// admission transaction, after the ask joins the project's list. A
+    /// replay has already committed it and does not run it twice.
+    pub(super) fn tasks_ask_project_with(
+        &self,
+        task: EntityId,
+        input: &TaskAskSpec,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<TaskAskReceipt> {
         if input.who.is_some() {
             return Err(MemoryError::bad_request(
                 "a project ask goes to the project's leader and board",
@@ -41,7 +53,7 @@ impl Memory<'_> {
                 ));
             }
             vault.append_project_ask_in_txn(txn, &ProjectAsk { project, task, ask })?;
-            Ok(())
+            effect(txn, ask)
         })
     }
 

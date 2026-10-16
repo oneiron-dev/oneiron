@@ -143,6 +143,13 @@ declare const vault: {
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
   };
+  projects: {
+    goal: {
+      dismiss(input: { expected_goal_ref: string; project_ref: string; question_digest: string }): Promise<unknown>;
+      revisions(input: { project_ref: string }): Promise<unknown>;
+    };
+    route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
+  };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;

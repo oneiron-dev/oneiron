@@ -651,6 +651,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_projects_goal_revisions(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.goal.revisions", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_projects_goal_dismiss(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.goal.dismiss", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_projects_route_tradeoff(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.route_tradeoff", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_conversations_turn_continue(
         &self,
         input: serde_json::Value,

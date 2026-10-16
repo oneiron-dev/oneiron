@@ -53,6 +53,7 @@ mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
 mod project_ask;
+mod project_tradeoff;
 mod proposal_create;
 mod query_facade;
 mod rate_limit;

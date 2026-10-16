@@ -58,6 +58,9 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultProjectsGoalRevisions,
+    VaultProjectsGoalDismiss,
+    VaultProjectsRouteTradeoff,
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
     VaultRoomsHost,
@@ -170,6 +173,9 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultProjectsGoalRevisions,
+        Self::VaultProjectsGoalDismiss,
+        Self::VaultProjectsRouteTradeoff,
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
         Self::VaultRoomsHost,
@@ -285,6 +291,9 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
+            Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
+            Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
             Self::VaultRoomsHost => "vault.rooms.host",
@@ -396,6 +405,9 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalRevisions
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
@@ -515,6 +527,9 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalRevisions
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
@@ -593,6 +608,7 @@ impl AgentVerb {
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
+                | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
                 | Self::VaultCommit
@@ -668,6 +684,9 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalRevisions
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultRoomsHost
@@ -747,6 +766,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsGoalDismiss
+                | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
                 | Self::VaultWorkspaceWorkCompanionSet
@@ -849,6 +870,9 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsGoalRevisions => &["spec"],
+            Self::VaultProjectsGoalDismiss => &["spec"],
+            Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
@@ -962,6 +986,9 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsGoalRevisions => &["spec"],
+            Self::VaultProjectsGoalDismiss => &["spec"],
+            Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
             Self::VaultRoomsHost => &["spec"],
