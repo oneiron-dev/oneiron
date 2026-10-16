@@ -32,15 +32,9 @@ pub(crate) fn execute(
     if attempt.status.payload.attempt_type != DREAMER_RECIPE_WAKE_ATTEMPT_KIND {
         return Err(invalid());
     }
-    let trigger: WakePolicyTrigger = serde_json::from_str(
-        attempt
-            .status
-            .payload
-            .input
-            .as_str()
-            .ok_or_else(invalid)?,
-    )
-    .map_err(|_| invalid())?;
+    let trigger: WakePolicyTrigger =
+        serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
+            .map_err(|_| invalid())?;
     if trigger.turn_count == 0 && trigger.record_count == 0 && trigger.nightly_count == 0 {
         return Err(invalid());
     }
@@ -69,10 +63,10 @@ fn continuous(ctx: &WakeAttemptContext<'_>, trigger: &WakePolicyTrigger, now: u6
     vault.with_write_txn_grouped(|txn| take_wake_recipe_input_in_txn(vault, txn, trigger).map(drop))
 }
 
-/// Nightly: the cadence wake registers the Timer wake's maintenance, the
-/// vault cleanup pass and the Coach's retrieval tune, as this receipt's
-/// children on its run tree, in the commit that takes its input. Both run
-/// on the elected home's next Timer pass.
+/// Nightly: the cadence wake registers the Timer wake's maintenance (the
+/// vault cleanup pass, the Coach's nightly jobs, the Dreamer's curator and
+/// harness audit) as this receipt's children on its run tree, in the commit
+/// that takes its input. They run on the elected home's next Timer pass.
 fn nightly(
     vault: &Vault,
     attempt: &DreamerAdmittedAttempt,
@@ -105,6 +99,8 @@ fn nightly(
             run_id.clone(),
             now,
         )?;
+        store.enqueue_coach_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
+        store.enqueue_dreamer_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         Ok(true)
     })?;
     if taken {

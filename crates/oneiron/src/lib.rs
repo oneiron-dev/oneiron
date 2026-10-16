@@ -125,6 +125,7 @@ pub mod human_task;
 pub mod linear_sync;
 pub mod task_authority;
 pub mod task_verb;
+pub mod team;
 // ===== Outbound effects, connectors & sync ===== one chokepoint under consent and budgets; ingest
 pub mod campaign;
 pub mod comm;
@@ -202,6 +203,7 @@ pub mod conversation_dag;
 pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
+pub mod office_body;
 pub mod edit_settle;
 pub mod git_wire;
 pub mod merge_queue;
@@ -252,15 +254,15 @@ pub use crate::attempt_queue::{
 };
 pub use crate::autoreason_campaign::{
     AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, BlindCampaignJudgeInput,
-    CAMPAIGN_TASTE_DIAL, CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport, CampaignBudgetLine,
-    CampaignComparisonReport, CampaignCorpusFilter, CampaignCost, CampaignCriticTier,
-    CampaignDatasetRef, CampaignError, CampaignEvaluationSplit, CampaignExecutableArm,
-    CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin, CampaignResult,
-    CampaignSmokeOutcome, CampaignSplitReport, CampaignTaste, CampaignTasteDecisions,
-    CampaignTasteWording, CampaignTournamentConfig,
-    CampaignVerdict, CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD, EXPERIMENT_VERDICT_KEEP,
-    ExperimentVerdict, build_campaign_held_out_decision, build_campaign_split_report,
-    compare_campaign, merge_campaign_arm_report,
+    CAMPAIGN_TASTE_DIAL, CampaignArmConfig, CampaignArmExecution, CampaignArmId, CampaignArmReport,
+    CampaignBudgetLine, CampaignComparisonReport, CampaignCorpusFilter, CampaignCost,
+    CampaignCriticTier, CampaignDatasetRef, CampaignError, CampaignEvaluationSplit,
+    CampaignExecutableArm, CampaignGoldAnchor, CampaignHeldOutDecision, CampaignMetricPin,
+    CampaignResult, CampaignSmokeOutcome, CampaignSplitReport, CampaignTaste,
+    CampaignTasteDecisions, CampaignTasteWording, CampaignTournamentConfig, CampaignVerdict,
+    CampaignVerdictReason, EXPERIMENT_VERDICT_DISCARD, EXPERIMENT_VERDICT_KEEP, ExperimentVerdict,
+    build_campaign_held_out_decision, build_campaign_split_report, compare_campaign,
+    merge_campaign_arm_report,
 };
 // CampaignConfig at the crate root is the reusable skill-driven schema.
 // The fixed OF-366 type remains at autoreason_campaign::CampaignConfig.
@@ -436,12 +438,12 @@ pub use crate::linear_sync::{
 };
 pub use crate::llm::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
-    AutoCheckCandidateOwned, AutoCheckOutcome, AutoChecker, BoundedAutoChecker,
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
-    ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend,
-    LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
-    LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
+    AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
+    BoundedAutoChecker, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope,
+    CallPurpose, ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent,
+    LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage,
+    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream,
+    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
     PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError, TierPrecedence,
     UnsupportedCapability, auto_check_llm_request,
 };

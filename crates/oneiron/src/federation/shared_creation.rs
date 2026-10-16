@@ -47,7 +47,7 @@ pub struct SharedVaultCreation {
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
-fn role_preset(role: Role) -> Result<GrantPreset> {
+pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
     Ok(match role {
         Role::Owner => GrantPreset::Owner,
         Role::Admin => GrantPreset::Admin,

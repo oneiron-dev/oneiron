@@ -28,11 +28,17 @@ mod healer_context;
 mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
+mod launch;
 mod leader_starter;
 pub use leader_starter::{
     LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner,
 };
+mod origin;
+pub(crate) use origin::dispatch_origin_conversation;
 mod resident;
+mod spend_calibration;
+mod spend_lease;
+mod spend_record;
 mod types;
 mod widen;
 mod widen_record;
@@ -47,6 +53,17 @@ pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStep
 mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
+
+pub use self::launch::{
+    LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
+};
+pub use self::spend_calibration::{
+    AgentSpendCalibration, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, SpendBasis,
+};
+pub use self::spend_record::{
+    ChildSpend, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal,
+    SpendState,
+};
 
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
