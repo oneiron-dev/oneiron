@@ -637,7 +637,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity/tests/subject_binding.rs` | test | s | — | — | — |
 | `src/channel_identity/transition.rs` | src | s | 1 struct · 4 crate-vis | DelegatedProvisionRequest | ChannelIdentity transition admission, custody re-proof, and uniqueness scan |
 | `src/channel_identity/vault_doors.rs` | src | m | 8 fn · 4 crate-vis | — | Vault doors for ChannelIdentity create, provision, transition, reads, and body apply |
-| `src/channel_identity_autonomy/autonomy.rs` | src | m | 6 fn · 4 crate-vis | — | Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve… |
+| `src/channel_identity_autonomy/autonomy.rs` | src | m | 6 fn · 5 crate-vis | — | Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve… |
 | `src/channel_identity_autonomy/codec.rs` | src | s | 26 crate-vis | — | The typed error, MessagePack value helpers, vault-meta key/address derivation, envelope/mode value codecs… |
 | `src/channel_identity_autonomy/envelopes.rs` | src | s | 4 fn · 6 crate-vis | — | Vault row primitives (owner check, row read/write, content-addressed envelope put) and the owner-only… |
 | `src/channel_identity_autonomy/graduation.rs` | src | s | 3 fn | — | Offer-only graduation: scope value, attributed review evidence (agent and owner doors), receipt-backed… |
@@ -3291,7 +3291,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_fetch/ladder.rs` | src | m | 6 fn · 13 crate-vis | — | Private ladder-driver internals: the rung-slot requirement and check, the per-rung and per-page… |
 | `src/web_fetch/render.rs` | src | m | 16 crate-vis | — | Private rendering support for the OF-444 ladder: URL parsing, normalization, validation, and credential… |
 | `src/web_fetch/tests.rs` | test | XL | — | — | — |
-| `src/workspace_roster/codec.rs` | src | m | 32 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
+| `src/workspace_roster/codec.rs` | src | m | 39 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
 | `src/workspace_roster/intent.rs` | src | s | 5 struct · 3 crate-vis | CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
 | `src/workspace_roster/mod.rs` | src | s | 5 re-export · 7 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `src/workspace_roster/project/conversion.rs` | src | m | 1 struct · 6 fn · 1 crate-vis | MessageHangs | Atomic conversion of a room thread into a project and its origin card |
@@ -3322,7 +3322,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/mod.rs` | src | m | 6 struct · 2 enum · 6 fn · 1 re-export · 10 crate-vis | RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThreadPage, RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn | Room participation and addressed turn claims |
 | `src/workspace_roster/rooms/tests.rs` | test | XL | — | — | — |
 | `src/workspace_roster/rooms/witness.rs` | src | s | 1 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |
-| `src/workspace_roster/runner.rs` | src | s | 3 fn · 2 crate-vis | — | Resumable onboarding runner, house-name rename, and roster read |
+| `src/workspace_roster/runner.rs` | src | s | 4 fn · 2 crate-vis | — | Resumable onboarding runner, house-name rename, and roster read |
 | `src/workspace_roster/steps.rs` | src | m | 18 crate-vis | — | Ordered onboarding writes and idempotent primitives |
 | `src/workspace_roster/tests.rs` | test | m | — | — | ONE-1832 workspace roster + member onboarding tests |
 | `src/workspace_roster/tests/authorization.rs` | test | L | — | — | — |
