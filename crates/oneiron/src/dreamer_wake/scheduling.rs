@@ -96,6 +96,13 @@ pub(crate) fn request_wake_in_txn(
             run_id.clone(),
             now,
         )?;
+        store.enqueue_honesty_audits_in_txn(
+            txn,
+            payload.parent_attempt,
+            dedupe_key.as_deref(),
+            run_id.clone(),
+            now,
+        )?;
     }
     store.enqueue_consolidation_in_txn(
         txn,

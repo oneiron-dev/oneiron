@@ -56,6 +56,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         DREAMER_RECIPE_WAKE_ATTEMPT_KIND => Some(DREAMER_RECIPE_WAKE_ATTEMPT_KIND),
         COACH_HEAL_ATTEMPT_KIND => Some(COACH_HEAL_ATTEMPT_KIND),
         COACH_RETRIEVAL_TUNE_FACET => Some(COACH_RETRIEVAL_TUNE_FACET),
+        super::super::maintenance::honesty::HONESTY_AUDIT_FACET => {
+            Some(super::super::maintenance::honesty::HONESTY_AUDIT_FACET)
+        }
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
         super::super::maintenance::representation::REPRESENTATION_FACET => {

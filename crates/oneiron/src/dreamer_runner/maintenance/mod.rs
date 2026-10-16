@@ -2,6 +2,7 @@
 //! authority, and the Coach's nightly retrieval tune on the same lane.
 mod curator;
 mod evaluation;
+pub mod honesty;
 mod proposals;
 pub mod representation;
 #[cfg(test)]
@@ -128,6 +129,9 @@ pub(crate) fn execute(
                 .vault
                 .store
                 .tune_retrieval_blend_weights_when_ready(Default::default())?;
+        }
+        honesty::HONESTY_AUDIT_FACET => {
+            let _ = honesty::run(ctx.vault, ctx.now_ms / 1000)?;
         }
         POLICY_WAKE_FACET => {
             let trigger: crate::dreamer_wake::WakePolicyTrigger =

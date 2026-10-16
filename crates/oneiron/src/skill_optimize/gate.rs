@@ -165,7 +165,8 @@ pub use ledger::{
     skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub use measurement::{
-    AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
+    AuditPair, BlindPreference, HonestyReplayObservation, JudgeMeasurements, PreferredResponse,
+    WorldAxisScore,
 };
 pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,

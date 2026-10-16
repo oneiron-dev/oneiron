@@ -47,6 +47,7 @@
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
+pub mod audit;
 use admission::stored_diagnostic_event;
 pub(crate) use admission::{
     reject_off_record_diagnostic_sources, validate_diagnostic_event_admission,

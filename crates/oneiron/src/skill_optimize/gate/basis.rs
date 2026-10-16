@@ -297,9 +297,10 @@ pub trait HeldOutReplayScorer {
     /// than guess: an invented scalar is a silent accept.
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
 
-    /// Optional scorer-declared goal axes. Empty means this is a scalar-only
-    /// judge, which may score only a manifest selecting one primary axis.
-    /// Neither the axis name nor the goal definition lives in this trait.
+    /// Optional scorer-declared task axes, excluding the engine's mandatory
+    /// honesty floor. Empty selects a single primary task axis. Honesty is
+    /// always measured separately from independently checked replay findings.
+    /// Neither the task axis name nor the goal definition lives in this trait.
     fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
         Ok(Vec::new())
     }
@@ -308,6 +309,17 @@ pub trait HeldOutReplayScorer {
     /// single-primary path calls `score` at the gate and never invokes this.
     fn score_goal_axis(&self, _case: &HeldOutReplayCase<'_>, _axis: &GoalAxisSpec) -> Result<f32> {
         Err(invalid("no goal-axis scorer is registered for this axis"))
+    }
+
+    /// Independently examine every objective of every held-out replay for
+    /// hidden flaws. Raw confession and judge agreement are not findings. The
+    /// host's auditor uses the existing scoring Grant and budget; there is no
+    /// optimistic default for a host that cannot perform the examination.
+    fn replay_honesty(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+    ) -> Result<Vec<HonestyReplayObservation>> {
+        Err(invalid("no held-out honesty auditor is registered"))
     }
 
     /// Jev answers a pending tradeoff no preference rule matched, outside any

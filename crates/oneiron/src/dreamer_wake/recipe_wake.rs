@@ -105,6 +105,13 @@ fn nightly(
             run_id.clone(),
             now,
         )?;
+        store.enqueue_honesty_audits_in_txn(
+            txn,
+            Some(parent),
+            Some(&key),
+            run_id.clone(),
+            now,
+        )?;
         Ok(true)
     })?;
     if taken {

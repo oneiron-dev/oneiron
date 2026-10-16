@@ -1,6 +1,7 @@
 //! Goal-axis replay scores. A host supplies the goal axes; scores are normalized
 //! to 0..=1 with larger always better (including cost axes).
 use super::*;
+use crate::learning::honesty::HONESTY_AXIS;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,8 +52,13 @@ fn validate_axes(axes: &[GoalAxisSpec]) -> Result<()> {
     if axes.is_empty()
         || axes.len() > 32
         || !axes.iter().any(|axis| axis.kind == GoalAxisKind::Primary)
+        || !axes
+            .iter()
+            .any(|axis| axis.name == HONESTY_AXIS && axis.kind == GoalAxisKind::Floor)
     {
-        return Err(invalid("goal axes require 1..=32 axes with a primary axis"));
+        return Err(invalid(
+            "goal axes require a primary axis and the honesty floor",
+        ));
     }
     let mut names = BTreeSet::new();
     for axis in axes {
@@ -113,6 +119,16 @@ fn manifest_axes_in_txn(
             }
         }
     }
+    match axes.iter().find(|axis| axis.name == HONESTY_AXIS) {
+        Some(axis) if axis.kind != GoalAxisKind::Floor => {
+            return Err(invalid("honesty is a floor, never a payoff or cost axis"));
+        }
+        Some(_) => {}
+        None => axes.push(GoalAxisSpec {
+            name: HONESTY_AXIS.into(),
+            kind: GoalAxisKind::Floor,
+        }),
+    }
     validate_axes(&axes)?;
     Ok((axes, policies))
 }
@@ -152,7 +168,8 @@ pub(super) fn goal_definition_in_txn(
     }
     validate_axes(&axes)?;
     let mut hash = Sha256::new();
-    hash.update(b"skill_optimize:effective_goal:v1\0");
+    hash.update(b"skill_optimize:effective_goal:v2\0");
+    hash.update(serde_json::to_vec(&axes).map_err(|_| invalid("goal axes hash encode failed"))?);
     hash.update(
         serde_json::to_vec(&policies).map_err(|_| invalid("goal policy hash encode failed"))?,
     );
@@ -213,27 +230,36 @@ pub(super) fn score_goal_axes(
     after: &HeldOutReplayCase<'_>,
     definition: &GoalDefinition,
 ) -> Result<BTreeMap<String, GoalAxisScore>> {
+    let task_axes: Vec<_> = definition
+        .axes
+        .iter()
+        .filter(|axis| axis.name != HONESTY_AXIS)
+        .cloned()
+        .collect();
     let declared = scorer.goal_axes(before)?;
-    let scalar_only = declared.is_empty()
-        && definition.axes.len() == 1
-        && definition.axes[0].kind == GoalAxisKind::Primary;
-    if !scalar_only && declared != definition.axes {
+    let scalar_only =
+        declared.is_empty() && task_axes.len() == 1 && task_axes[0].kind == GoalAxisKind::Primary;
+    if !scalar_only && declared != task_axes {
         return Err(invalid(
-            "scorer goal axes differ from the authenticated goal definition",
+            "scorer task axes differ from the authenticated goal definition",
         ));
     }
     let mut scored = BTreeMap::new();
     for axis in &definition.axes {
-        let old = validate_score(if scalar_only {
-            scorer.score(before)?
+        let (old, new) = if axis.name == HONESTY_AXIS {
+            let honesty = super::measurement::measure_honesty(scorer, before, after)?;
+            (honesty.before, honesty.after)
+        } else if scalar_only {
+            (
+                validate_score(scorer.score(before)?)?,
+                validate_score(scorer.score(after)?)?,
+            )
         } else {
-            scorer.score_goal_axis(before, axis)?
-        })?;
-        let new = validate_score(if scalar_only {
-            scorer.score(after)?
-        } else {
-            scorer.score_goal_axis(after, axis)?
-        })?;
+            (
+                validate_score(scorer.score_goal_axis(before, axis)?)?,
+                validate_score(scorer.score_goal_axis(after, axis)?)?,
+            )
+        };
         scored.insert(
             axis.name.clone(),
             GoalAxisScore {
@@ -250,6 +276,9 @@ pub(super) fn validate_goal_vector(axes: &BTreeMap<String, GoalAxisScore>) -> Re
     if axes.is_empty()
         || axes.len() > 32
         || !axes.values().any(|axis| axis.kind == GoalAxisKind::Primary)
+        || !axes
+            .get(HONESTY_AXIS)
+            .is_some_and(|axis| axis.kind == GoalAxisKind::Floor)
     {
         return Err(invalid("a judged verdict requires a primary goal axis"));
     }
