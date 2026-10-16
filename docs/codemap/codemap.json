@@ -7965,6 +7965,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ChannelIdentityFacts"
+     ],
+     "path": "src/channel_identity/facts.rs",
+     "purpose": "Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/channel_identity/keys.rs",
      "purpose": "Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds",
@@ -7997,8 +8011,8 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 12
+      "crate-vis": 7,
+      "re-export": 13
      }
     },
     {
@@ -14546,7 +14560,7 @@
      "path": "src/counterparty_contact/lifecycle.rs",
      "purpose": "Counterparty contact cache rematerialization, claim supersession, and opt-out folding",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -20796,7 +20810,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/effect_contacts.rs",
@@ -36868,7 +36882,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GitEndpointSkillHubAdapter"
@@ -36891,7 +36905,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HttpEndpointSkillHubAdapter"
@@ -46293,7 +46307,7 @@
      "purpose": "CRM pack engine-side registration home"
     },
     "channel_identity": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -47618,7 +47632,7 @@
    },
    "over_bar": 79,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2869,
+   "source_files": 2870,
    "test_files": 903
   },
   "oneiron-android": {
