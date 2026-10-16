@@ -39,6 +39,7 @@ pub(crate) fn sdk_error(
         read_receipt: None,
         policy_denial: None,
         wrong_root: None,
+        hook: None,
     }
 }
 

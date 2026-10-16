@@ -398,12 +398,13 @@ impl Memory<'_> {
         policy: &DecisionBandPolicy,
     ) -> MemoryResult<SlideReviewOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        let required = |value: &serde_json::Value, field: &str| -> MemoryResult<serde_json::Value> {
-            if value.is_null() {
-                return Err(invalid(&format!("a slide review names its {field}")).into());
-            }
-            Ok(value.clone())
-        };
+        let required =
+            |value: &serde_json::Value, field: &str| -> MemoryResult<serde_json::Value> {
+                if value.is_null() {
+                    return Err(invalid(&format!("a slide review names its {field}")).into());
+                }
+                Ok(value.clone())
+            };
         let question: DecisionQuestion =
             json_field(Some(required(&input.question, "question")?), "question")?
                 .ok_or_else(|| invalid("a slide review names its question"))?;
@@ -412,8 +413,9 @@ impl Memory<'_> {
         let labels: SlideReviewLabels =
             json_field(Some(required(&input.labels, "labels")?), "labels")?
                 .ok_or_else(|| invalid("a slide review names its labels"))?;
-        let reversibility: Reversibility = json_field(input.reversibility.clone(), "reversibility")?
-            .unwrap_or(Reversibility::ReversibleRead);
+        let reversibility: Reversibility =
+            json_field(input.reversibility.clone(), "reversibility")?
+                .unwrap_or(Reversibility::ReversibleRead);
         let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
         let units = input
             .units

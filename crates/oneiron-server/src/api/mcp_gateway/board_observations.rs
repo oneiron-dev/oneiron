@@ -158,6 +158,7 @@ fn ride_capabilities(
             header: &header,
             legend: &BoardLegend::canonical(),
             sections: &sections,
+            you: None,
             changes: None,
         },
         BoardBudgetRequest {

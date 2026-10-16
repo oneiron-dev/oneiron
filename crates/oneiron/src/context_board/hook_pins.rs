@@ -5,11 +5,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::TasksSection;
 use super::memories::MemoriesSection;
 use super::memories_frame::memory_row_text;
 use super::memories_projection::foreign_row;
 use super::memory_pins::pinned_row;
-use super::TasksSection;
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt};
 use crate::{EntityId, Result, Vault};
 

@@ -6,8 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt,
-    WitnessTurn};
+use super::{
+    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+};
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
 use crate::claim::ClaimReadStatus;
 use crate::context_board::{People, PersonKind, PersonRow};
@@ -167,7 +168,10 @@ impl Memory<'_> {
 
     /// `self.message`: one message to a person, in the Direct room the
     /// caller's person and theirs share. The room is made on first use.
-    pub fn message_person(&self, input: &MessagePersonRequest) -> MemoryResult<MessagePersonReceipt> {
+    pub fn message_person(
+        &self,
+        input: &MessagePersonRequest,
+    ) -> MemoryResult<MessagePersonReceipt> {
         let text = input.text.trim();
         if text.is_empty() {
             return Err(MemoryError::bad_request("message text is empty"));
@@ -181,11 +185,22 @@ impl Memory<'_> {
         if me == target {
             return Err(MemoryError::bad_request("a person cannot message itself"));
         }
-        let pair = if me < target { [me, target] } else { [target, me] };
-        let room = EntityId::derive(DIRECT_ROOM_DOMAIN, &[pair[0].as_bytes(), pair[1].as_bytes()])?;
+        let pair = if me < target {
+            [me, target]
+        } else {
+            [target, me]
+        };
+        let room = EntityId::derive(
+            DIRECT_ROOM_DOMAIN,
+            &[pair[0].as_bytes(), pair[1].as_bytes()],
+        )?;
         let now_ms = unix_ms();
         let exists = |vault: &crate::Vault| -> MemoryResult<bool> {
-            let txn = vault.store.env.read_txn().map_err(crate::error::Error::from)?;
+            let txn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
             Ok(vault.store.port_entity_record(&txn, &room)?.is_some())
         };
         if !exists(self.vault)? {
