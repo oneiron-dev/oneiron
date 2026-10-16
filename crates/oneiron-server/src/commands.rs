@@ -12,7 +12,7 @@ use axum::http::HeaderValue;
 #[cfg(test)]
 use rmpv::Value as MsgpackValue;
 use serde_json::{Value as JsonValue, json};
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::auth::{CoreScope, revoke_token_jti};
@@ -92,6 +92,7 @@ mod reembed;
 pub use reembed::reembed;
 mod serve;
 use self::serve::serve_with_config;
+pub(crate) use self::serve::stop_requested;
 mod dreamer;
 pub use self::dreamer::dreamer_grant;
 mod embedder_serve;
@@ -100,8 +101,8 @@ mod maintain;
 pub use maintain::maintain;
 mod owner;
 pub use owner::{
-    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs, secret_scan,
-    secrets, whoami,
+    backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs,
+    secret_scan, secrets, whoami,
 };
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
@@ -856,7 +857,7 @@ fn print_doctor_report(vault: &oneiron::Vault) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_tracing(log_level: &str) {
+pub(crate) fn init_tracing(log_level: &str) {
     use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
     let _ = crate::logging::subscriber(filter, io::stdout).try_init();
@@ -946,32 +947,14 @@ fn root_has_cjk_dict(root: &Path) -> bool {
         || root.join("ko").join("metadata.json").is_file()
 }
 
-fn build_cors_layer(config: &SyncServerConfig) -> anyhow::Result<CorsLayer> {
-    let allowed_origins = parse_allowed_origins(&config.allowed_origins)?;
-
-    if allowed_origins.is_empty() {
-        Ok(CorsLayer::new())
-    } else {
-        Ok(CorsLayer::new().allow_origin(AllowOrigin::list(allowed_origins)))
-    }
+pub(crate) fn build_cors_layer(config: &SyncServerConfig) -> anyhow::Result<CorsLayer> {
+    Ok(crate::web_client::cors_layer_for_origins(
+        parse_allowed_origins(&config.allowed_origins)?,
+    ))
 }
 
 fn parse_allowed_origins(origins: &[String]) -> anyhow::Result<Vec<HeaderValue>> {
-    origins
-        .iter()
-        .filter_map(|origin| {
-            let trimmed = origin.trim();
-            (!trimmed.is_empty()).then_some(trimmed)
-        })
-        .map(|origin| {
-            if origin == "*" {
-                anyhow::bail!("wildcard CORS origin is not allowed");
-            }
-            origin
-                .parse::<HeaderValue>()
-                .map_err(|e| anyhow::anyhow!("invalid CORS origin {origin:?}: {e}"))
-        })
-        .collect()
+    crate::web_client::parse_allowed_origins(origins)
 }
 
 #[cfg(test)]

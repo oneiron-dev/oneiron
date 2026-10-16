@@ -160,7 +160,8 @@ pub(super) fn decode_subject(value: &Value) -> Result<CompanionSubject> {
 
     match kind.ok_or(invalid_companion("subject missing kind"))? {
         "person" if relationship_ref.is_none() => Ok(CompanionSubject::Person {
-            person_ref: person_ref.ok_or(invalid_companion("person subject requires person_ref"))?,
+            person_ref: person_ref
+                .ok_or(invalid_companion("person subject requires person_ref"))?,
         }),
         "relationship" if person_ref.is_none() => {
             let (source_ref, target_ref) = relationship_ref.ok_or(invalid_companion(

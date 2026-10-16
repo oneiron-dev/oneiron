@@ -129,6 +129,7 @@ fn nightly(
             run_id.clone(),
             now,
         )?;
+        store.enqueue_honesty_audits_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_coach_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_dreamer_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_note_review_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
