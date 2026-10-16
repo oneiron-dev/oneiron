@@ -3,34 +3,32 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use oneiron::context_board::WakeEnvelope;
 use tokio::io::AsyncWriteExt as _;
 
+use super::board_stream::BoardDelivery;
 use super::{AdapterCommand, Instance, WakeBatch};
 
 /// A stalled helper must let the next configured adapter try.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Instance {
-    pub(crate) async fn deliver(&self, wakes: Vec<WakeEnvelope>, credential_env: &[String]) {
-        let mut fallback = Vec::new();
-        for wake in wakes {
-            match self.inbox.enqueue(&wake) {
-                Ok(false) => continue,
-                Ok(true) if self.config.inbox => continue,
-                Ok(true) => {}
-                Err(error) => {
-                    tracing::warn!(instance = %self.key, %error, "wake inbox failed; reoffering to a host adapter");
-                }
+    pub(crate) async fn deliver(&self, mut delivery: BoardDelivery, credential_env: &[String]) {
+        delivery.wakes.retain(|wake| match self.inbox.enqueue(wake) {
+            Ok(false) => false,
+            Ok(true) => !self.config.inbox,
+            Err(error) => {
+                tracing::warn!(instance = %self.key, %error, "wake inbox failed; reoffering to a host adapter");
+                true
             }
-            fallback.push(wake);
-        }
-        if fallback.is_empty() {
+        });
+        delivery.retain_frames();
+        if delivery.wakes.is_empty() {
             return;
         }
         let batch = WakeBatch {
             instance_key: &self.key,
-            wakes: &fallback,
+            wakes: &delivery.wakes,
+            frames: &delivery.frames,
         };
         let body = match serde_json::to_vec(&batch) {
             Ok(body) => body,
@@ -44,7 +42,7 @@ impl Instance {
                 Ok(()) => {
                     // The helper's zero exit is its acknowledgement of these
                     // occurrence ids, not of any later failure of the TASK.
-                    for wake in &fallback {
+                    for wake in &delivery.wakes {
                         if let Err(error) = self.inbox.acknowledge(&wake.event_ref) {
                             tracing::warn!(instance = %self.key, %error, "wake delivered; local acknowledgement could not be saved");
                         }
@@ -72,7 +70,7 @@ impl Instance {
                 }
             }
         }
-        tracing::warn!(instance = %self.key, count = fallback.len(), "wake adapters exhausted; TASKs remain in the vault and notices in the local inbox when writable");
+        tracing::warn!(instance = %self.key, count = delivery.wakes.len(), "wake adapters exhausted; TASKs remain in the vault and notices in the local inbox when writable");
     }
 }
 

@@ -5,6 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands;
 use crate::config::ServeArgs;
 
+mod deployment_args;
+pub use deployment_args::HostRelayArgs;
 mod hook_args;
 mod owner_args;
 mod wake_args;
@@ -209,12 +211,14 @@ pub enum HostCommand {
     /// Run one vault as a Firecracker VM behind a unix socket: start it on
     /// the first connection or a due wake, and sleep it when idle.
     Vm(Box<HostVmArgs>),
+    /// Run a blind iroh relay room and a ciphertext-only locker, never an engine.
+    Relay(HostRelayArgs),
 }
 
 #[derive(Args, Clone, Debug)]
 pub struct HostVmArgs {
     /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
-    /// vcpus, mem_mib and optional boot_args.
+    /// vcpus, mem_mib and optional boot_args and allowed_origins.
     #[arg(long)]
     pub config: PathBuf,
     #[arg(long)]
@@ -774,6 +778,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
+        Command::Host(HostCommand::Relay(args)) => crate::managed::run_relay(&args.config).await,
         #[cfg(target_os = "linux")]
         Command::Host(HostCommand::Vm(args)) => {
             crate::managed::run_vault_vm(crate::managed::VaultVmRun {

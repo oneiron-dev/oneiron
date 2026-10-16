@@ -79,6 +79,7 @@ mod repair;
 
 pub(crate) use repair::validate_repair_proposal;
 pub use repair::{
+    DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget,
     Healer, HealerInvocationStamp, RepairActor, RepairBundle, RepairConsentRoute,
     RepairCriticality, RepairOperation, RepairProposal, ReviewedRepair,
 };
