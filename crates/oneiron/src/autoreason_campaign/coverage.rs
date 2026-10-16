@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill_optimize::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayScorer,
-    SkillOptimizeDecisions, SkillReplayPair,
+    HonestyReplayObservation, SkillOptimizeDecisions, SkillReplayPair,
 };
 use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result};
@@ -213,6 +213,13 @@ impl HeldOutReplayScorer for CoverageFloorScorer<'_> {
         state: &serde_json::Value,
     ) -> Result<()> {
         self.inner.record_decision(question, decision, state)
+    }
+
+    fn replay_honesty(
+        &self,
+        case: &HeldOutReplayCase<'_>,
+    ) -> Result<Vec<HonestyReplayObservation>> {
+        self.inner.replay_honesty(case)
     }
 
     fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {

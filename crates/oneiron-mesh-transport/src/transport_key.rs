@@ -2,7 +2,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use zeroize::Zeroizing;
 
-use crate::MachineId;
+use crate::{MachineId, MeshError};
 
 const DOMAIN: &str = "oneiron/mesh-transport-ed25519/v1";
 
@@ -22,6 +22,15 @@ impl TransportKey {
             DOMAIN,
             device_signer.as_bytes(),
         )))
+    }
+    /// This install's MACHINE and its transport key, derived in the engine
+    /// from the machine key ([`oneiron::Vault::mesh_transport_seed`]); `None`
+    /// before the install has a machine id.
+    pub fn for_install(vault: &oneiron::Vault) -> Result<Option<(MachineId, Self)>, MeshError> {
+        Ok(vault
+            .mesh_transport_seed()
+            .map_err(|e| MeshError::Io(e.to_string()))?
+            .map(|(machine, seed)| (machine, Self(seed))))
     }
     pub fn endpoint_key(&self) -> [u8; 32] {
         SigningKey::from_bytes(&self.0).verifying_key().to_bytes()

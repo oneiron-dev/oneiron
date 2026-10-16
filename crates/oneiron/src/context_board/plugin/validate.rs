@@ -11,7 +11,7 @@ use crate::skill::{SkillLifecycle, SkillRecord};
 use std::collections::BTreeSet;
 
 /// Engine-defined core section names a plugin manifest may never claim.
-pub const CORE_SECTION_IDS: [&str; 8] = [
+pub const CORE_SECTION_IDS: [&str; 9] = [
     "WORLDS",
     "MEMORIES",
     "TASKS",
@@ -20,6 +20,7 @@ pub const CORE_SECTION_IDS: [&str; 8] = [
     "SKILLS",
     "PROPOSALS",
     "PACKS",
+    "INBOX",
 ];
 
 /// Longest accepted `section_id`.

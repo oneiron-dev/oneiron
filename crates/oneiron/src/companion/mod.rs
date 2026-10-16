@@ -28,14 +28,12 @@ pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
     })
 }
 
-pub(crate) use self::codec::companion_value_projection;
-pub use self::codec::{companion_value_from_json, companion_value_to_json};
 pub use self::keys::{
     COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ENTITY_TYPE_COMPANION_REGISTER,
 };
 pub use self::model::{
-    CompanionExpression, CompanionRecordKey, CompanionRecordKind, CompanionScope, CompanionSubject,
+    CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey,
 };
 pub use self::persona::{CompiledPersona, PERSONA_CHANGE_PREDICATE, PersonaChange, PersonaMadeBy};
 pub(crate) use self::persona::{body_fields as persona_body_fields, validated_persona_baseline};

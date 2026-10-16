@@ -113,8 +113,8 @@ fn pump(
 }
 
 /// Runs every open workflow as far as it will go. Returns whether any
-/// workflow is still open or any attempt is still held for an unattached
-/// comment (and so may need a timed re-check).
+/// workflow is still open, a wave plan is pending, or any attempt is still
+/// held for an unattached comment (and so may need a timed re-check).
 fn pump_once(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
@@ -129,6 +129,9 @@ fn pump_once(
             true
         }
     };
+    if !*stopped.borrow() {
+        super::waves::run_once(runtime, vault, runner, status)?;
+    }
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
@@ -221,7 +224,16 @@ fn pump_once(
             }
         }
     }
-    Ok(held || !dispatcher.open_workflow_roots()?.is_empty())
+    let wave_pending = AttemptQueue::new(vault).list()?.iter().any(|attempt| {
+        attempt.kind == oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND
+            && matches!(
+                attempt.state,
+                oneiron::attempt_queue::AttemptState::Queued
+                    | oneiron::attempt_queue::AttemptState::Scheduled
+                    | oneiron::attempt_queue::AttemptState::Leased
+            )
+    });
+    Ok(held || wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
 }
 
 fn now_secs() -> u64 {

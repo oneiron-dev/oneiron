@@ -15,6 +15,7 @@ doctest = false
 # (the of060 F4 fence in tests/organ_fence.rs).
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
 # An organ starts with its socket on fd 3 and stdio only.
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }

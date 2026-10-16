@@ -156,13 +156,15 @@ fn ingest_file_drop_transcript_inner(
             return persist_note_fallback(vault, request);
         }
     };
+    let actor = file_drop_import_actor(vault, request.arrived_at_ms / 1_000)?;
+    let session_key = vault.local_session_key(actor)?;
     vault.with_write_txn_grouped(|wtxn| {
         let hint = crate::session_lifecycle::SessionHintTimestamp {
             claimed_ms: parsed.claimed_started_ms,
             arrival_ms: request.arrived_at_ms,
             effective_ms: request.arrived_at_ms,
         };
-        match vault.mint_session_from_hint_in_txn(wtxn, hint)? {
+        match vault.mint_session_from_hint_in_txn(wtxn, session_key, hint)? {
             crate::session_lifecycle::SessionMintOutcome::AlreadyOpen(id) => {
                 Ok(TranscriptIngestOutcome::RetryOpenSession {
                     open_session_ref: id,
@@ -177,7 +179,7 @@ fn ingest_file_drop_transcript_inner(
                     &parsed.turns,
                     request.arrived_at_ms,
                 )?;
-                let wake = vault.plan_session_end_wake_in_txn(wtxn)?;
+                let wake = vault.plan_session_end_wake_in_txn(wtxn, &session_ref)?;
                 let wake_turn_refs = wake.planned_turn_ids.clone();
                 let end_hint = crate::session_lifecycle::SessionHintTimestamp {
                     claimed_ms: parsed.claimed_ended_ms,
@@ -226,7 +228,7 @@ fn persist_turns(
     vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     source_blob_ref: crate::EntityId,
-    _session_ref: crate::EntityId,
+    session_ref: crate::EntityId,
     turns: &[ParsedTranscriptTurn],
     arrived_at_ms: u64,
 ) -> crate::Result<Vec<crate::EntityId>> {
@@ -279,6 +281,12 @@ fn persist_turns(
             )
             .edge(&id, crate::edge::EdgeKind::ChildOf, &conversation_ref, 1.0)
             .apply(wtxn)?;
+        crate::session_lifecycle::record_turn_session_membership_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            Some(session_ref),
+        )?;
         ids.push(id);
     }
     Ok(ids)
