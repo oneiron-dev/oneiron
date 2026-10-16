@@ -145,6 +145,9 @@ pub(crate) fn execute(
             coach::run_read_hardening(ctx.vault, ctx.now_ms / 1000)?;
         }
         coach::COACH_TRIPWIRES_FACET => coach::run_tripwires(ctx.vault, ctx.now_ms / 1000)?,
+        coach::COACH_TRADEOFF_ESCALATION_FACET => {
+            coach::run_tradeoff_escalation(ctx.vault, ctx.now_ms / 1000)?;
+        }
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })

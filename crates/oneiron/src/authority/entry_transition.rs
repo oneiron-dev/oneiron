@@ -4,8 +4,9 @@
 //! state and no seen-time delay: the device-key widen ceremony, with its
 //! delayed-broadcast veto, died 2026-08-05 (identity canon, "Device-key widen
 //! ceremony (dead 2026-08-05)"; ARCH-0040 ONE-AUTHLOG-F6). Widening is owner
-//! action through the host, so an owner-signed enrollment, rotation or floor
-//! change is already the whole ceremony.
+//! action through the host, so an owner-signed enrollment or rotation is
+//! already the whole ceremony. Device tiers set no floor: a key's tier is
+//! custody metadata, and authority comes from host and slip standing.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
@@ -40,15 +41,9 @@ pub(super) fn fold_entry_state(
     if entry.validate_shape().is_err() || verify_entry_signatures(entry).is_err() {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    // Still decodes and hashes, so signed history stays byte-identical, but
-    // the ceremony it vetoed is dead (identity canon, "Device-key widen
-    // ceremony (dead 2026-08-05)"): there is never a pending widen to veto.
-    if matches!(entry.op, AuthorityOp::VetoPendingWiden { .. }) {
-        return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     // Slips are the client credential in every posture. Retired device-key
     // operations survive only as verified pre-handoff ancestry: a later
-    // client enrollment, rotation or floor change gains no authority.
+    // client enrollment or rotation gains no authority.
     if entry_is_retired(entry, hash, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
@@ -99,13 +94,8 @@ pub(super) fn fold_entry_state(
     {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    // `pending_widen_delay_secs` is a legacy signed field: validated on the
-    // wire, never read here.
     if let AuthorityOp::Genesis {
-        recovery,
-        device,
-        tier_floor,
-        ..
+        recovery, device, ..
     } = &entry.op
     {
         if *entry.signer_key() != device.key || entry.seq != 0 {
@@ -118,10 +108,8 @@ pub(super) fn fold_entry_state(
             slips: SlipAuthorityState::default(),
             vault_id,
             roster: BTreeMap::new(),
-            tier_floor: *tier_floor,
             genesis_recovery_dismissed: recovery.dismissed(),
             recovery_redundancy_established: false,
-            tier_floor_events: BTreeMap::from([(hash, (*tier_floor, BTreeSet::new()))]),
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
@@ -146,9 +134,6 @@ pub(super) fn fold_entry_state(
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
         };
-        if !tier_meets_floor(device.tier, *tier_floor) {
-            return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
-        }
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
         return EntryFold::Ready(state);
@@ -214,13 +199,6 @@ pub(super) fn fold_entry_state(
     if state
         .roster
         .get(&signer)
-        .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
-    {
-        return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
-    }
-    if state
-        .roster
-        .get(&signer)
         .is_none_or(|device| device.revoked)
     {
         return EntryFold::Invalid(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -257,7 +235,6 @@ pub(super) fn fold_entry_state(
         let old_root = &state.roster[&signer];
         if old_root.roles & ROLE_OWNER == 0
             || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
-            || !tier_meets_floor(new_device.tier, state.tier_floor)
         {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
@@ -342,13 +319,6 @@ pub(super) fn fold_entry_state(
     EntryFold::Ready(state)
 }
 
-/// A device-key op the host-rooted redesign retired (identity canon,
-/// op-vocabulary amendment 2026-08-05): client enrollment is pairing-only,
-/// `SetTierFloor` and the delayed veto died with the device-key ceremony plane,
-/// and `RotateKey` became the re-root. An agent-only enrollment is not one of
-/// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
-/// system actors through the authority registry at bootstrap), and an agent
-/// key holds no consent, so it widens no authority.
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
 /// edit, or a machine revision. The roster rule reads either as a replica
 /// with no floor does; this install never counts what it grants.
@@ -359,12 +329,16 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     )
 }
 
+/// A device-key op the host-rooted redesign retired (identity canon,
+/// op-vocabulary amendment 2026-08-05): client enrollment is pairing-only,
+/// and `RotateKey` became the re-root. An agent-only enrollment is not one of
+/// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
+/// system actors through the authority registry at bootstrap), and an agent
+/// key holds no consent, so it widens no authority.
 pub(super) fn op_is_retired_device_op(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::EnrollDevice { device } => device.roles != ROLE_AGENT,
-        AuthorityOp::RotateKey { .. }
-        | AuthorityOp::SetTierFloor { .. }
-        | AuthorityOp::VetoPendingWiden { .. } => true,
+        AuthorityOp::RotateKey { .. } => true,
         _ => false,
     }
 }
@@ -399,15 +373,6 @@ pub(super) fn active_participant_keys(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
             ));
         }
-        // A cosigner below the floor counts toward neither quorum nor consent
-        // (H71); the primary signer's tier is refused before this.
-        if state
-            .roster
-            .get(key)
-            .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
-        {
-            continue;
-        }
         participants.insert(key.clone());
     }
     Ok(participants)
@@ -424,29 +389,6 @@ pub(super) fn has_authority_consent(
             .get(key)
             .is_some_and(|device| context.device_can_consent(device))
     })
-}
-
-/// The participant rules of [`fold_entry_state`] (consent, peer quorum and
-/// the revocation quorum) for `entry` over its parents' merged `state`, so a
-/// row can be judged again under a floor a concurrent row raised (H71).
-pub(super) fn participant_rules_hold(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    context: FoldContext<'_>,
-) -> std::result::Result<(), AuthorityFoldIssue> {
-    let hash = authority_entry_hash(entry).unwrap_or([0; 32]);
-    let participants = active_participant_keys(state, entry)?;
-    if !has_authority_consent(state, &participants, context) {
-        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-    }
-    if (entry_requires_peer_cosign(entry)
-        && active_roster_count(state) >= 2
-        && participants.len() < 2)
-        || revoke_would_break_quorum(state, entry, &participants)
-    {
-        return Err(AuthorityFoldIssue::MissingQuorum(hash));
-    }
-    Ok(())
 }
 
 fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
@@ -470,10 +412,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
@@ -481,7 +421,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
-        | AuthorityOp::WorldKeyWraps(_) => false,
+        | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::OwnerHandover(_) => false,
     }
 }
 

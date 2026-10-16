@@ -11,6 +11,7 @@ mod mutate;
 mod prune;
 mod reads;
 mod redirect;
+mod task_lease;
 mod workflow;
 
 use crate::store::Store;
@@ -21,6 +22,11 @@ pub struct AttemptQueue<'a> {
     /// doors in [`super::cancel`] are inherent methods on this same handle and
     /// run against this same store under the same transactional discipline.
     pub(super) store: &'a Store,
+    /// The vault this handle was opened over ([`Self::new`]); `None` for a
+    /// store-only handle. Settling a row through a vault-opened handle also
+    /// records its inbox notification (OF-221) through the vault's own write
+    /// door; a store-only handle writes no entity.
+    pub(super) vault: Option<&'a crate::Vault>,
 }
 
 use self::enqueue_claim::ERR_DEDUPE_ACTOR_MISMATCH;
@@ -32,6 +38,6 @@ pub(super) use self::reads::{
 
 impl<'a> AttemptQueue<'a> {
     pub(crate) fn from_store(store: &'a Store) -> Self {
-        Self { store }
+        Self { store, vault: None }
     }
 }

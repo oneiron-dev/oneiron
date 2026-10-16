@@ -1,6 +1,6 @@
 //! Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`].
 //!
-//! Roster, tier-floor, actor-binding, federation-lifecycle, and pact-merge
+//! Roster, actor-binding, federation-lifecycle, and pact-merge
 //! mutations. Treated as a black box by [`super::entry_transition`].
 
 use crate::federation::{
@@ -68,17 +68,12 @@ pub(super) fn apply_op(
                 .insert(old_key.clone());
             upsert_device(state, new_device, Some(signer));
         }
-        AuthorityOp::SetTierFloor { tier_floor } => {
-            record_tier_floor(state, entry_hash, *tier_floor);
-        }
         AuthorityOp::ReRoot { new_device } => {
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
             upsert_device(state, new_device, Some(signer));
         }
-        // Legacy wire op: `fold_entry_state` rejects it before reaching here.
-        AuthorityOp::VetoPendingWiden { .. } => {}
         // `apply_op` returns `()` and cannot emit rejections; all lifecycle
         // validation and state transitions live in `fold_entry_state`'s
         // lifecycle arm.
@@ -94,6 +89,9 @@ pub(super) fn apply_op(
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::WorldKeyWraps(_) => {}
+        // The signed record of a shared-act change; the change itself is the
+        // execution's (`federation::shared_act`).
+        AuthorityOp::OwnerHandover(_) => {}
     }
 }
 

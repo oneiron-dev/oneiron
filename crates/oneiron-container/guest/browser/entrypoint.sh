@@ -3,12 +3,11 @@
 # They are the container's stdin and stdout, so the host driver is the only
 # client: no debugging port exists. stderr stays the container's stderr.
 set -eu
-# A fixture site, when the host mounts one, is served on the guest's loopback.
-if [ -d /srv/fixture ]; then
-  busybox httpd -p 127.0.0.1:8080 -h /srv/fixture
-fi
+# The engine serves a declared fixture through the same private HTTP door.
 exec chromium \
   --headless \
+  --no-sandbox \
+  --disable-quic \
   --remote-debugging-pipe \
   --user-data-dir=/tmp/profile \
   --no-first-run \

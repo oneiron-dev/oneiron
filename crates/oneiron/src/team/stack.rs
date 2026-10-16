@@ -38,12 +38,19 @@ pub struct NodeComparison {
 ///
 /// [`Error::InvalidClaimBody`] for fewer than two branches, a non-finite
 /// number, a negative tolerance or unequal budgets.
-pub fn compare_at_equal_budget(branches: &[BranchResult], tolerance: f64) -> Result<NodeComparison> {
+pub fn compare_at_equal_budget(
+    branches: &[BranchResult],
+    tolerance: f64,
+) -> Result<NodeComparison> {
     if branches.len() < 2 {
-        return Err(Error::InvalidClaimBody("a node compares at least two branches"));
+        return Err(Error::InvalidClaimBody(
+            "a node compares at least two branches",
+        ));
     }
     if !tolerance.is_finite() || tolerance < 0.0 {
-        return Err(Error::InvalidClaimBody("a budget tolerance is a non-negative share"));
+        return Err(Error::InvalidClaimBody(
+            "a budget tolerance is a non-negative share",
+        ));
     }
     if branches
         .iter()
@@ -61,7 +68,11 @@ pub fn compare_at_equal_budget(branches: &[BranchResult], tolerance: f64) -> Res
         ));
     }
     let mut ranked: Vec<&BranchResult> = branches.iter().collect();
-    ranked.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.project.cmp(&b.project)));
+    ranked.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.project.cmp(&b.project))
+    });
     Ok(NodeComparison {
         winner: ranked[0].project,
         losers: ranked[1..].iter().map(|b| b.project).collect(),

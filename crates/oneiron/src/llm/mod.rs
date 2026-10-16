@@ -35,6 +35,7 @@ pub(crate) use oneiron_model::llm::{
     parse_failure_rules,
 };
 pub mod manifest;
+pub mod model_trials;
 pub mod registry;
 pub mod routing;
 pub mod run_admission;

@@ -61,6 +61,9 @@ pub(super) struct GitCommandSpec<'a> {
     effect: GitExecutionEffect,
     worktree_target: Option<&'a Path>,
     expected_commit: Option<&'a GitOid>,
+    /// The common directory whose held coordinator this effect's child
+    /// inherits.
+    hold: Option<&'a Path>,
 }
 
 impl<'a> GitCommandSpec<'a> {
@@ -82,6 +85,7 @@ impl<'a> GitCommandSpec<'a> {
             effect,
             worktree_target,
             expected_commit,
+            hold: None,
         }
     }
 
@@ -146,6 +150,7 @@ impl<'a> GitCommandSpec<'a> {
             effect,
             worktree_target,
             expected_commit: None,
+            hold: None,
         })
     }
 
@@ -170,6 +175,7 @@ impl<'a> GitCommandSpec<'a> {
             effect,
             worktree_target: None,
             expected_commit: None,
+            hold: None,
         })
     }
 
@@ -187,6 +193,7 @@ impl<'a> GitCommandSpec<'a> {
             effect,
             worktree_target: None,
             expected_commit: None,
+            hold: None,
         }
     }
 
@@ -219,5 +226,16 @@ impl<'a> GitCommandSpec<'a> {
 
     pub(super) const fn expected_commit(&self) -> Option<&'a GitOid> {
         self.expected_commit
+    }
+
+    /// Hands the child this thread's hold on the repository behind
+    /// `common_dir`, when it holds one.
+    pub(super) fn holding(mut self, common_dir: &'a Path) -> Self {
+        self.hold = Some(common_dir);
+        self
+    }
+
+    pub(super) const fn hold(&self) -> Option<&'a Path> {
+        self.hold
     }
 }
