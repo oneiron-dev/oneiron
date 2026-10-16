@@ -9,7 +9,7 @@
 //!        │              │  RETURNED, not re-scored (retries are free)
 //!        │              ├─ judged replay: score both bodies on each goal axis
 //!        │              ├─ vector dominance (ties and floor regressions reject; tradeoffs await a decision)
-//!        │              ├─ tradeoff ladder: preference rule, then bound Jev band, then A/B ask
+//!        │              ├─ tradeoff ladder: preference rule, then judgment band, then A/B ask
 //!        │              ├─ commit-time: held-out set recomputed and compared
 //!        │              ├─ accept-time governance_tier recheck
 //!        │              └─ per-cycle ACCEPT cap, counted in PROPOSALS
@@ -96,7 +96,7 @@
 //! A posterior recomputed over held-out receipts cannot be measured offline for
 //! instructions that were never run, so the honest v1 score is a REPLAY:
 //! [`HeldOutReplayScorer`] is asked to judge the same held-out evidence against
-//! each instruction version in turn. The seam is the [`crate::skill_attribution::AttributionJudge`]
+//! each instruction version in turn. The seam is the [`crate::skill_attribution::AttributionDecisions`]
 //! posture — a host-supplied LLM tier under [`skill_edit_score_call_purpose`],
 //! injectable in tests, and structurally not the optimizer grading its own
 //! homework. No epsilon: strict `>` is the anti-Goodhart floor, and a tie is a

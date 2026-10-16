@@ -28,7 +28,7 @@ pub use oneiron_model::llm::{
     DeterministicRunner, DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute,
     FallbackError, FallbackRegistry, LlmEventBus, ProgressSnapshot, ProgressSubscriber, Scope,
     ScopeResource, StreamAssembly, StreamSubscription, TerminalSink, VoiceChunkPolicy,
-    VoiceChunker, image, scope,
+    VoiceChunker, image, media, scope,
 };
 pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
@@ -123,4 +123,4 @@ pub use budget::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
     RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
 };
-pub(crate) use step::resume_peer_result_steps;
+pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

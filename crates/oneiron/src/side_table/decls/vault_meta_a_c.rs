@@ -76,6 +76,10 @@ side_tables! {
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
+    /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or
+    /// whose provenance names an agent run, read backwards from the source. Key: bytes17 (source
+    /// kind byte + id16 or the run ref's blake3 prefix) + id16 (artifact) + u64be (version).
+    BLOB_ARTIFACT_BORN_FROM: VaultMeta b"blob_artifact:born_from:v1:" Named;
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
@@ -238,6 +242,12 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// A case where a person changed the decision ladder's answer, kept until the Coach's
+    /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
+    COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
+    /// When the Coach's person-threshold run read a source's record, so a replay never counts
+    /// twice. Key: id16.
+    COACH_PERSON_CHANGED_READ: VaultMeta b"coach:person_changed_read:v1:" Raw;
     /// Immutable tested snapshot of a code document at one exact operation frontier (document id + op
     /// fold hash). Key: hash32 + hash32.
     CODE_DOCUMENT_FRONTIER: VaultMeta b"code_document:frontier:v1:" Named;
@@ -379,8 +389,6 @@ side_tables! {
     CLAIM_CONFLICT_RESOLUTION: VaultMeta b"consent_bundle.claim_conflict.resolved.v1:" Raw;
     /// Content-addressed claim-conflict review packet. Key: bytes32.
     CLAIM_CONFLICT_PACKET: VaultMeta b"consent_bundle.claim_conflict.v1:" LegacyJson;
-    /// Vault-local content-addressed store of a recoverable full tool/agent output blob. Key: hash32.
-    COMPACTION_OUTPUT_BLOB: VaultMeta b"context:output:v1:" Raw;
     /// Immutable derived text summary of one output, keyed by source content hash and summarization-
     /// recipe hash. Key: hash32 + hash32.
     COMPACTION_OUTPUT_SUMMARY: VaultMeta b"context:summary:v1:" Raw;
