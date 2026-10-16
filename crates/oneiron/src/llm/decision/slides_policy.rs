@@ -125,6 +125,7 @@ impl SlideReviewRoute {
             DecisionRung::Rule => "rule",
             DecisionRung::Local => "local",
             DecisionRung::SystemOne => "system_one",
+            DecisionRung::Escalation => "escalation",
             DecisionRung::Big => "big",
             DecisionRung::Human => "human",
         }

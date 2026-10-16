@@ -287,6 +287,7 @@ pub fn review_slides(
                         band_version: band_policy.version,
                         evidence_versions: Vec::new(),
                         cost_per_thousand: None,
+                        paired: Vec::new(),
                     },
                     human_ask: None,
                 };

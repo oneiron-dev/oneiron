@@ -137,16 +137,19 @@ impl SlideReviewProvider for Provider {
                     ProviderDecision {
                         answer: DecisionAnswer::Abstain,
                         probability: None,
+                        paired: None,
                     }
                 } else if self.rung == DecisionRung::Local && matches!(slide, 5 | 11 | 20) {
                     ProviderDecision {
                         answer: DecisionAnswer::Noul(true),
                         probability: Some(0.5),
+                        paired: None,
                     }
                 } else {
                     ProviderDecision {
                         answer: DecisionAnswer::Noul(slide % 2 == 0),
                         probability: Some(0.9),
+                        paired: None,
                     }
                 }
             })
@@ -657,6 +660,7 @@ impl SlideReviewProvider for ChangingPin {
             .map(|_| ProviderDecision {
                 answer: DecisionAnswer::Noul(true),
                 probability: Some(0.9),
+                paired: None,
             })
             .collect())
     }
