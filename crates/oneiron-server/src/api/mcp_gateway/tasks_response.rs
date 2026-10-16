@@ -577,6 +577,7 @@ fn mcp_agent_verb_input(
         "vault.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts" => a.spec.clone().ok_or_else(invalid),
+        "vault.images.view" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.get" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.put" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
@@ -786,6 +787,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.receipts" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.images.view" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.kv.get" => {
@@ -1252,6 +1256,14 @@ async fn execute_agent_verb_listing(
                     .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
             );
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.images.view" => {
+            let input: oneiron::memory::ImageViewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_images_view(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.kv.get" => {

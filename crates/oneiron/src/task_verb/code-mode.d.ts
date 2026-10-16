@@ -85,6 +85,9 @@ declare const vault: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  images: {
+    view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;
     get(input: { key: string; namespace: string[] }): Promise<unknown>;

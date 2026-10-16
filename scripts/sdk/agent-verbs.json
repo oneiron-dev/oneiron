@@ -370,6 +370,29 @@
       }
     },
     {
+      "name": "vault.images.view",
+      "input": "crate::memory::ImageViewRequest",
+      "output": "crate::memory::PulledImage",
+      "call": "memory.view_image(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.\n",
+          "ts": "/** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */",
+          "py": "The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."
+        }
+      }
+    },
+    {
       "name": "vault.kv.get",
       "input": "crate::memory::KeyValueAddress",
       "output": "Option<crate::memory::KeyValueItem>",

@@ -69,7 +69,9 @@ mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_resolve::{
-    AssetConsumer, HydratedAsset, LandedImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
+    LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    pull_image,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
