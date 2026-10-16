@@ -76,6 +76,9 @@ side_tables! {
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
+    /// Native slide and shape id high-water marks of one deck artifact, raised at each settled
+    /// deck transaction (ARCH-0077 managed id history). Key: id16.
+    BLOB_ARTIFACT_DECK_ID_MARKS: VaultMeta b"blob_artifact:deck_id_marks:v1:" Named;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.

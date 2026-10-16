@@ -286,7 +286,7 @@ impl Vault {
     ) -> Result<TaskBrief> {
         let task_id = self.store.clock.entity_id()?;
         let brief_claim_id = self.store.clock.entity_id()?;
-        let brief_ref = format!("brief:{}", thread_id.to_hex());
+        let brief_ref = thread_brief_ref(thread_id);
         let task_body = task_role_body(TaskRole::Task)?;
         let brief_envelope = annotation_envelope(actor, "assign_brief")?;
         self.with_write_txn_grouped(|wtxn| {
@@ -593,6 +593,12 @@ pub(super) fn thread_from_head(
         drift: head.drift,
         head_claim_id,
     }
+}
+
+/// The brief a thread assignment creates; a standing-grant settle of work
+/// answering the thread rides this brief.
+pub(crate) fn thread_brief_ref(thread_id: &EntityId) -> String {
+    format!("brief:{}", thread_id.to_hex())
 }
 
 fn comments_from_active_claims(
