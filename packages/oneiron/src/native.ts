@@ -36,6 +36,7 @@ vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined): MemoryPack
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
+vaultReceiptsGet(input: unknown): unknown
 vaultKvGet(requestJson: string): string
 vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string

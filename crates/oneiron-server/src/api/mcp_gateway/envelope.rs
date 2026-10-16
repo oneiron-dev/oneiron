@@ -71,6 +71,10 @@ pub(crate) struct McpGatewayError {
     /// A `WRONG_ROOT` refusal's correction, surfaced as `error.data.attempted`,
     /// `error.data.replacement` and `error.data.schemaRef`.
     pub(super) wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
+    /// The refused `tools/call`'s lasting receipt (OF-538), surfaced as
+    /// `error.data.receipt_ref` (and `error.data.no_record` for the anonymous
+    /// exception). Boxed for size, as `effective_scope` is.
+    pub(super) call_receipt: Option<Box<crate::api::call_receipt::CallStamp>>,
 }
 
 impl McpGatewayError {
@@ -85,6 +89,7 @@ impl McpGatewayError {
             effective_scope: None,
             byte_bound: None,
             wrong_root: None,
+            call_receipt: None,
         }
     }
 
@@ -250,6 +255,62 @@ async fn mcp_endpoint(
     })
 }
 
+/// OF-538's one MCP door: records a `tools/call` once it has answered, in its
+/// own write transaction, and states the receipt on the reply, success or
+/// refusal alike: `structuredContent.meta.receipt_ref` on a result,
+/// `error.data.receipt_ref` on a refusal. A call inside an anonymous
+/// off-record session records nothing and states `receipt_ref: null` with
+/// `no_record: true`.
+fn mcp_call_receipt(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    tool: String,
+    request_digest: String,
+    anonymous: bool,
+    called: Result<Value, McpGatewayError>,
+) -> Result<Value, McpGatewayError> {
+    let (outcome, result_digest) = match &called {
+        Ok(result) => (
+            oneiron::receipt::CallOutcome::Ok,
+            Some(oneiron::receipt::call_json_digest(result)),
+        ),
+        Err(error) => (
+            oneiron::receipt::CallOutcome::Refused {
+                code: error.kind.to_owned(),
+            },
+            None,
+        ),
+    };
+    let stamp = crate::api::call_receipt::record(
+        server,
+        anonymous,
+        oneiron::receipt::CallReceiptInput {
+            transport: oneiron::receipt::CallTransport::Mcp,
+            verb: tool,
+            actor_ref: actor.actor_ref.to_hex(),
+            actor_class: actor.actor_class.gate_actor_class().to_owned(),
+            credential_ref: actor
+                .auth
+                .as_ref()
+                .and_then(crate::api::call_receipt::credential_ref),
+            outcome,
+            request_digest,
+            result_digest,
+            served: Vec::new(),
+        },
+    );
+    match called {
+        Ok(mut result) => {
+            crate::mcp::mcp_stamp_call_receipt(&mut result, &stamp);
+            Ok(result)
+        }
+        Err(mut error) => {
+            error.call_receipt = Some(Box::new(stamp));
+            Err(error)
+        }
+    }
+}
+
 /// The stable request id a result or refusal is keyed by.
 pub(super) fn mcp_request_id(id: &Value) -> String {
     match id {
@@ -314,6 +375,18 @@ pub(crate) async fn handle_mcp_request(
         "tools/call" => {
             let actor =
                 resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            // OF-538: what the call's receipt states of its request, taken
+            // before the params are consumed.
+            let tool = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let request_digest =
+                oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null));
+            let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers);
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
                 let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
@@ -330,14 +403,15 @@ pub(crate) async fn handle_mcp_request(
             // failures before this point are legitimately scope-less. Each is
             // released as a result is, by the rows its words and its scope
             // name (DEC-0005).
-            called.map_err(|error| {
+            let called = called.map_err(|error| {
                 super::device_release::mcp_release_error(
                     server,
                     &actor,
                     Some(&[]),
                     error.with_effective_scope(&actor),
                 )
-            })
+            });
+            mcp_call_receipt(server, &actor, tool, request_digest, anonymous, called)
         }
         _ => Err(McpGatewayError::new(
             -32601,

@@ -258,9 +258,9 @@ class Oneiron:
         def export(self, format: str | None = None) -> dict[str, Any]:
             """Exports the live vault through the five-format serializer."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
-        def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
-            """Governance receipts, newest first."""
-            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        @property
+        def receipts(self) -> "Oneiron._VaultReceiptsVerbs":
+            return Oneiron._VaultReceiptsVerbs(self._client)
         @property
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
@@ -276,6 +276,14 @@ class Oneiron:
         def upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
             """Upserts one claim. The consent gate, not this call, decides approval."""
             return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(claim))))
+    class _VaultReceiptsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, limit: int = 100) -> list[dict[str, Any]]:
+            """Governance receipts, newest first."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
     class _VaultKvVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

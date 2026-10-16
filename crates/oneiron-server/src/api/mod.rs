@@ -125,6 +125,7 @@ mod params;
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
 // consumers), so the non-test build sees a contract with no caller — the
 // `protocol::close_codes` posture.
+pub(crate) mod call_receipt;
 mod context_board;
 #[allow(dead_code)]
 mod reactive;
@@ -401,7 +402,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // `/v1/core/facade/<verb>` path, so it neither shadows nor is shadowed
         // by the storage-shaped `/v1/core` routes above, and its 64 MiB body
         // limit stays a property of this nest alone.
-        .nest("/v1/core/facade", self::facade::facade_routes())
+        .nest(
+            "/v1/core/facade",
+            self::facade::recorded_facade_routes(server.clone()),
+        )
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
         .route("/v1/usage/events", post(record_usage_event))
@@ -433,8 +437,18 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
         // owner's own off-record routes sit out here for the same reason.
-        .nest("/v1/core/off-record", self::off_record_rooms::routes())
-        .nest("/v1/owner", self::owner_routes::off_record_routes())
+        // OF-538's one exception: these replies carry no call receipt, and
+        // say so (`x-oneiron-receipt-ref: none; no-record`).
+        .nest(
+            "/v1/core/off-record",
+            self::off_record_rooms::routes()
+                .layer(middleware::map_response(call_receipt::no_record_reply)),
+        )
+        .nest(
+            "/v1/owner",
+            self::owner_routes::off_record_routes()
+                .layer(middleware::map_response(call_receipt::no_record_reply)),
+        )
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,

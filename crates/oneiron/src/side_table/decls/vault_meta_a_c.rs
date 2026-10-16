@@ -185,6 +185,9 @@ side_tables! {
     /// EVENT entity awaiting calendar-origin claim reconciliation after entity/claim/edge replay
     /// settled. Key: id16 (EVENT entity id).
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
+    /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
+    /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
