@@ -103,6 +103,31 @@ pub(crate) fn validate_facet_of_edge(
     kind: EdgeKind,
     tgt: EntityId,
 ) -> Result<()> {
+    validate_facet_of_edge_at(store, rtxn, (src, kind, tgt), false)
+}
+
+/// [`validate_facet_of_edge`] for the replay legs (Observer B, forward
+/// rematerialization, recovery), which restore rows this vault holds as
+/// they arrived. A text whose row arrived replicated holds no record
+/// position here, so the stamp its origin wrote with it is restored, and
+/// grants no read until this vault positions the row; a stamp onto a text
+/// this vault positioned elsewhere is still refused.
+pub(crate) fn validate_replayed_facet_of_edge(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+) -> Result<()> {
+    validate_facet_of_edge_at(store, rtxn, (src, kind, tgt), true)
+}
+
+fn validate_facet_of_edge_at(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    (src, kind, tgt): (EntityId, EdgeKind, EntityId),
+    replay: bool,
+) -> Result<()> {
     if kind != EdgeKind::FacetOf {
         return Ok(());
     }
@@ -120,7 +145,9 @@ pub(crate) fn validate_facet_of_edge(
         // A text is placed beside its sources at birth or not at all: a first
         // stamp here would widen who reads a text born unplaced.
         if src_type == ENTITY_TYPE_ASSET_TEXT
-            && !crate::federation::record_scope::asset_text::restores_birth(store, rtxn, src, tgt)?
+            && !crate::federation::record_scope::asset_text::restores_birth(
+                store, rtxn, src, tgt, replay,
+            )?
         {
             return Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
         }

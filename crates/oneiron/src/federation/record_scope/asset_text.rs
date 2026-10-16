@@ -63,12 +63,15 @@ pub(crate) fn sources_birth_facet(
 /// Whether a stamp `id -FacetOf-> facet` onto ASSET_TEXT `id` restores its
 /// birth: the stamp it carries, or, where that edge is gone, the facet its
 /// record position was born under. Any other stamp, a first one included,
-/// would place the text after its birth.
+/// would place the text after its birth. A `replay` of a text that holds no
+/// record position here, a row that arrived replicated, restores the stamp
+/// its origin wrote with it.
 pub(crate) fn restores_birth(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     facet: EntityId,
+    replay: bool,
 ) -> Result<bool> {
     if let Some(stamp) = birth_facet(store, txn, id)? {
         return Ok(stamp == facet);
@@ -76,11 +79,14 @@ pub(crate) fn restores_birth(
     if facet == crate::claim::substrate_facet_id(id)? {
         return Ok(false);
     }
-    Ok(SCOPE_RECORD.get(store, txn, &id)?.is_some_and(|stamp| {
-        stamp.version == 2
-            && stamp.kind == ENTITY_TYPE_ASSET_TEXT
-            && stamp.birth_facet == *facet.as_bytes()
-    }))
+    Ok(match SCOPE_RECORD.get(store, txn, &id)? {
+        Some(stamp) => {
+            stamp.version == 2
+                && stamp.kind == ENTITY_TYPE_ASSET_TEXT
+                && stamp.birth_facet == *facet.as_bytes()
+        }
+        None => replay,
+    })
 }
 
 /// Whether every source ASSET_TEXT `id` was written from, as `view` holds it
