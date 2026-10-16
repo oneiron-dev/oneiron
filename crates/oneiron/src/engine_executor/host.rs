@@ -1,7 +1,8 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
-use super::record::completed_step_count;
-use super::store::{RECOVERABLE_OUTPUT_CHUNK_BYTES, decode_text_output, observation_output_path};
+use super::store::{
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, recoverable_output_path, text_output_body,
+};
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
 };
@@ -28,9 +29,7 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
-    /// Each completed step's recorded output, and the reference its bytes
-    /// were verified to have once a read has loaded them.
-    recoverable: Vec<(u64, CodeRunRawOutput, Option<OutputRef>)>,
+    recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
     pub(super) bridge_calls: Vec<CodeRunBridgeCall>,
     pub(super) durable_wait: Option<SelfDurableWait>,
     /// First hard bridge failure (gate rejection or failed audited write).
@@ -72,23 +71,20 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// Bind only committed observations from the current run to the linked
     /// file-read import. A guest cannot turn a hash into another run's output.
+    /// Each reference was derived from its verified stored bytes.
     pub(super) fn with_recoverable_outputs(
         mut self,
         storage: &'s ExecutorStorage<'a>,
         record: &CodeRunReplayRecord,
+        observations: Vec<(u64, CodeRunRawOutput, ObservationRef)>,
     ) -> EngineExecutorResult<Self> {
         if record.run_id != self.run_id {
             return Err(Error::InvalidConfig("executor output run mismatch".into()).into());
         }
-        for seq in 0..completed_step_count(record)? {
-            let path = observation_output_path(seq);
-            let output = record
-                .outputs
-                .iter()
-                .find(|entry| entry.path == path)
-                .ok_or(Error::CorruptedIndex("executor replay output path"))?;
-            self.recoverable.push((seq, output.clone(), None));
-        }
+        self.recoverable = observations
+            .into_iter()
+            .map(|(seq, output, observation)| (seq, output, observation.source))
+            .collect();
         self.storage = Some(storage);
         Ok(self)
     }
@@ -134,17 +130,6 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     }
 }
 
-/// `{hash}/{len}/chunk/{offset}`, the part of a recorded-output chunk path
-/// after its step's prefix, as the reference and offset it names.
-fn parse_chunk_reference(rest: &str) -> Option<(OutputRef, usize)> {
-    let (hash, rest) = rest.split_once('/')?;
-    let (len, rest) = rest.split_once('/')?;
-    let offset = rest.strip_prefix("chunk/")?;
-    let named = OutputRef::from_handle(&format!("output:blake3:{hash}:{len}")).ok()?;
-    let parsed = offset.parse::<usize>().ok()?;
-    (offset == parsed.to_string()).then_some((named, parsed))
-}
-
 impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
@@ -162,40 +147,41 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             self.hard_failure = Some(err);
             return Err(refused);
         }
-        let invalid = || Error::InvalidConfig("invalid recoverable output reference".into());
-        for index in 0..self.recoverable.len() {
-            let (seq, output, verified) = &self.recoverable[index];
-            let Some(rest) =
-                path.strip_prefix(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/"))
-            else {
+        for (seq, output, source) in &self.recoverable {
+            if !path.starts_with(&format!("/mnt/outputs/.oneiron-context-ref/{seq}/")) {
                 continue;
-            };
-            // The path names the source and the offset: judge both before
-            // loading anything, and never load a source a read already showed
-            // is not the one named.
-            let (named, offset) = parse_chunk_reference(rest).ok_or_else(invalid)?;
-            if offset as u64 > named.byte_len {
+            }
+            let base = recoverable_output_path(*seq, *source);
+            let offset = path
+                .strip_prefix(&format!("{base}/chunk/"))
+                .and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|offset| value == offset.to_string())
+                })
+                .ok_or(Error::InvalidConfig(
+                    "invalid recoverable output reference".into(),
+                ))?;
+            if offset as u64 > source.byte_len {
                 return Err(Error::InvalidConfig(
                     "recoverable output offset exceeds source".into(),
                 ));
             }
-            if verified.is_some_and(|known| known != named) {
-                return Err(invalid());
-            }
-            let raw = storage
-                .get_code_run_raw_output(output)?
+            // Only the chunk leaves the store: the body is read in place.
+            let chunk = storage
+                .with_code_run_raw_output_bytes(output, |raw| {
+                    let text = text_output_body(&output.path, raw)?;
+                    if text.len() as u64 != source.byte_len {
+                        return Err(Error::CorruptedIndex("recoverable output integrity"));
+                    }
+                    let end = offset
+                        .saturating_add(RECOVERABLE_OUTPUT_CHUNK_BYTES)
+                        .min(text.len());
+                    Ok(text[offset..end].to_vec())
+                })?
                 .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-            let text = decode_text_output(&output.path, raw)?;
-            let source = OutputRef::from_bytes(text.as_bytes());
-            self.recoverable[index].2 = Some(source);
-            if source != named {
-                return Err(invalid());
-            }
-            let bytes = text.as_bytes();
-            let end = offset
-                .saturating_add(RECOVERABLE_OUTPUT_CHUNK_BYTES)
-                .min(bytes.len());
-            return Ok(Some(bytes[offset..end].to_vec()));
+            return Ok(Some(chunk));
         }
         Err(Error::InvalidConfig(
             "recoverable output is outside this run".into(),
