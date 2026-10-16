@@ -142,10 +142,11 @@ side_tables! {
     /// Crash-durable per-push intent journal recording every proposed ref move before any effect
     /// lands, keyed by repo identity then operation id. Key: string + id16.
     ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named;
-    /// The OF-520 check one origin scan raised for one scope, once. Key: u8 (scan) + id16 (the
-    /// repository), or the u8 alone for the vault-wide publication journal.
+    /// The OF-520 check one engine scan raised for one scope, once (`crate::scan_check`; the
+    /// origin's scans came first). Key: u8 (scan) + the scope's bytes (a repository's id16, ...),
+    /// or the u8 alone for a vault-wide scan.
     ORIGIN_SCAN_CHECK: VaultMeta b"origin:scan_check:v1:" Named;
-    /// Device-local threshold row (u64) of one origin scan. Key: u8 (scan).
+    /// Device-local threshold row (u64) of one engine scan. Key: u8 (scan).
     ORIGIN_SCAN_POLICY: VaultMeta b"origin:scan_policy:v1:" Raw;
     /// The publication currently advertised for one repository's ref name (value = id16). Key: id16
     /// "\x00" string.
@@ -270,6 +271,17 @@ side_tables! {
     PORTS_WITHDRAWN: VaultMeta b"ports:withdrawn:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
+    /// An owner question about a parent cycle past its world bound (OF-520), local. Key: id16
+    /// (the cycle's first project).
+    PROJECT_CYCLE_QUESTION: VaultMeta b"project.cycle_question.v1/" Named;
+    /// The last verified frontier of one project's signed history, LIVE. Key: id16 (project).
+    PROJECT_FRONTIER: VaultMeta b"project.frontier.v1/" Named;
+    /// A descendant of an over-budget project's frozen head applied as a meet. Key: id16
+    /// (project) + hash32 (revision).
+    PROJECT_FROZEN_APPLIED: VaultMeta b"project.frozen_applied.v1/" Raw;
+    /// A frozen descendant whose verdict waits on a parent project. Key: id16 (parent project) +
+    /// id16 (project) + hash32 (revision).
+    PROJECT_FROZEN_WAIT_PROJECT: VaultMeta b"project.frozen_wait_project.v1/" Raw;
     /// Local admission marker of one goal claim: `[1]` + body hash32 (sealed), `[2]` + project id16
     /// + payload hash32 (armed birth), or `[3]` + prior hash32 + allowed hash32 (supersession).
     /// Key: id16 (goal claim).
@@ -281,6 +293,8 @@ side_tables! {
     /// Permit for one goal-pointer change: old goal id16, new goal id16 (zeros for none), project
     /// body hash32. Key: id16 (project).
     PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw;
+    /// The vault's per-project history budget, set by the owner. Key: ().
+    PROJECT_HISTORY_POLICY: VaultMeta b"project.history_policy.v1" Named;
     /// A record admitted into a leader chat before its batch settles. Key: id16 (record id).
     PROJECT_LEADER_CHAT_PERMIT: VaultMeta b"project.leader_chat.permit.v1/" Raw;
     /// The authenticated speaker proof one leader-chat record carries. Key: id16 (record id).
@@ -296,6 +310,13 @@ side_tables! {
     PROJECT_ORIGIN_MESSAGE: VaultMeta b"project.origin_message.v1/" Raw;
     /// The project a room thread was converted into. Key: id16 (room id) + id16 (thread id).
     PROJECT_ORIGIN_THREAD: VaultMeta b"project.origin_thread.v1/" Raw;
+    /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
+    /// (revision).
+    PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
+    /// Version (u64be) of the one-time revision capture a writable open ran. Key: ().
+    PROJECT_REVISION_BACKFILL: VaultMeta b"project.revision_backfill.v1" Raw;
+    /// A held project revision companion and its origin. Key: id16 (project) + hash32 (revision).
+    PROJECT_REVISIONS: VaultMeta b"project.revisions.v1/" Named;
     /// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
     /// id16 (change event id).
     PROJECT_ROOM_CHANGES: VaultMeta b"project.room_changes.v1/" Named;

@@ -53,15 +53,14 @@
 //! ref and a generation. Neither has a value field to leak, and the
 //! grep-guard test asserts it of their `Debug` and their wire bodies.
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityRecord, EntityStoreRead};
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::decode_blob_artifact_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::secret_custody::{
     SecretCustodyStatus, policy_manifest_bodies_strict, put_secret_custody_in_txn,
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
@@ -500,13 +499,16 @@ pub(crate) fn taint_state_for_refs_in_txn(
 
 /// Reads the FORWARD taint refs of one exhaust entity inside a txn.
 ///
-/// The union of the two forward planes an entity can carry them on: the
-/// entity-keyed sidecar row, and — when the entity is a BLOB_ARTIFACT — the
-/// pinned `secret_taint.refs` body key. Union, not precedence: both are
-/// action-boundary attachments, and dropping either would under-report
-/// taint. A secret named by both keeps its LOWEST recorded generation,
-/// which is the fail-closed direction (the older generation is the one more
-/// likely to have been rotated away from).
+/// The union of the forward planes an entity can carry them on: the
+/// entity-keyed sidecar row, the pinned `secret_taint.refs` body key when
+/// the entity is a BLOB_ARTIFACT, and, when it is an ASSET, that key on
+/// every artifact a `blob.version` claim names as holding its bytes. Both
+/// the body and the claim replicate, so a version payload reads tainted on
+/// every device its artifact reached, not only where the sidecar was
+/// written. Union, not precedence: all are action-boundary attachments,
+/// and dropping any would under-report taint. A secret named twice keeps
+/// its LOWEST recorded generation, which is the fail-closed direction (the
+/// older generation is the one more likely to have been rotated away from).
 pub(crate) fn exhaust_taint_refs_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -515,20 +517,37 @@ pub(crate) fn exhaust_taint_refs_in_txn(
     let mut refs = EXHAUST_TAINT
         .get(store, txn, &HexId(*id))?
         .unwrap_or_default();
-    if let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode())
-        && let Some(header) = EntityMetadataHeader::parse(&raw)
-        && header.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
-    {
-        let body = decode_blob_artifact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        for r in body.secret_taint_refs {
-            match refs.iter_mut().find(|held| held.secret_ref == r.secret_ref) {
-                Some(held) => held.generation = held.generation.min(r.generation),
-                None => refs.push(r),
+    if let Some(row) = store.port_entity_record(txn, id)? {
+        if row.entity_type == ENTITY_TYPE_ASSET {
+            let hash = blake3::hash(&row.body);
+            for artifact in crate::blob_artifact::artifacts_claiming(store, txn, hash.as_bytes())? {
+                if let Some(artifact) = store.port_entity_record(txn, &artifact)? {
+                    union_refs(&mut refs, blob_artifact_taint_refs(&artifact)?);
+                }
             }
+        } else {
+            union_refs(&mut refs, blob_artifact_taint_refs(&row)?);
         }
     }
     refs.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
     Ok(refs)
+}
+
+/// The `secret_taint.refs` body key of `row`, when it is a BLOB_ARTIFACT.
+fn blob_artifact_taint_refs(row: &EntityRecord) -> Result<Vec<SecretTaintRef>> {
+    if row.entity_type != ENTITY_TYPE_BLOB_ARTIFACT {
+        return Ok(Vec::new());
+    }
+    Ok(decode_blob_artifact_body(&row.body)?.secret_taint_refs)
+}
+
+fn union_refs(into: &mut Vec<SecretTaintRef>, refs: Vec<SecretTaintRef>) {
+    for r in refs {
+        match into.iter_mut().find(|held| held.secret_ref == r.secret_ref) {
+            Some(held) => held.generation = held.generation.min(r.generation),
+            None => into.push(r),
+        }
+    }
 }
 
 /// Writes the forward taint sidecar for one exhaust entity, inside a
