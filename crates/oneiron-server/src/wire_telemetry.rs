@@ -90,10 +90,13 @@ pub enum LimitRow {
     WindowsPerConnection,
     /// Decision reads the owner's probe route holds at once.
     DecisionReads,
+    /// Booking requests per minute under the owner's slot-list, hold and book
+    /// rules: an authenticated caller past one waits for it to open.
+    BookingWindows,
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -107,6 +110,7 @@ impl LimitRow {
         Self::EmbedderAnswerBytes,
         Self::WindowsPerConnection,
         Self::DecisionReads,
+        Self::BookingWindows,
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -126,6 +130,7 @@ impl LimitRow {
             Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
             Self::WindowsPerConnection => "max_windows_per_connection",
             Self::DecisionReads => "limits.decision_reads",
+            Self::BookingWindows => "booking.anti_abuse:per_minute",
         }
     }
 }

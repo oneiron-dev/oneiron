@@ -34,7 +34,7 @@ const VERSION: &str = "brief@7";
 const FLOW: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"><rect x="10" y="20" width="80" height="60" fill="#4F81BD"/><circle cx="150" cy="50" r="30" fill="#C0504D"/></svg>"##;
 
 /// A decodable RGB PNG, so the oracle has pixels to render.
-fn png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
+pub(crate) fn png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
         out.extend(u32::try_from(data.len()).unwrap().to_be_bytes());
         let mut crc = crc32fast::Hasher::new();
@@ -61,7 +61,7 @@ fn png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
     out
 }
 
-fn record(handle: &str, media: MediaType, bytes: &[u8], origin: Origin) -> AssetRecord {
+pub(crate) fn record(handle: &str, media: MediaType, bytes: &[u8], origin: Origin) -> AssetRecord {
     AssetRecord {
         artifact: handle.to_owned(),
         version: 1,
@@ -366,6 +366,8 @@ fn every_planned_block_is_placed_traced_and_read_back() {
         .collect();
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains(r#"<c:smooth val="0"/>"#));
+    // Its months are 1900-system serials shown as dates.
+    assert!(lines[0].contains(r#"<c:numCache><c:formatCode>yyyy-mm-dd</c:formatCode><c:ptCount val="4"/><c:pt idx="0"><c:v>46053</c:v></c:pt><c:pt idx="1"><c:v>46081</c:v></c:pt><c:pt idx="2"><c:v>46112</c:v></c:pt><c:pt idx="3"><c:v>46142</c:v></c:pt></c:numCache>"#));
     let (slide, table) = unit(report, "d-table");
     assert_eq!(
         shape(&view, &slide.part, table.shape).kind,
@@ -673,9 +675,9 @@ fn oracle_template() -> Package {
     Package::open(&bytes, limits()).unwrap()
 }
 
-#[test]
-#[ignore = "writes the Office-oracle candidate to $ONEIRON_EMIT_CANDIDATE"]
-fn office_oracle_candidate() {
+/// The deck the Office oracle opened clean (run b13a-2536-3); the ONE-2528
+/// oracle candidate edits it.
+pub(crate) fn oracle_deck() -> Candidate {
     // Three regions: the 4:3 template's table room holds no more.
     let mut brief = the_brief();
     let regions = &mut brief["datasets"][2];
@@ -686,7 +688,13 @@ fn office_oracle_candidate() {
     }
     let fixture = Fixture::new(oracle_template(), &brief);
     let plan = fixture.plan();
-    let candidate = fixture.emit(&plan);
+    fixture.emit(&plan)
+}
+
+#[test]
+#[ignore = "writes the Office-oracle candidate to $ONEIRON_EMIT_CANDIDATE"]
+fn office_oracle_candidate() {
+    let candidate = oracle_deck();
     assert!(candidate.fit.is_err());
     let path = std::env::var("ONEIRON_EMIT_CANDIDATE").unwrap();
     std::fs::write(&path, &candidate.bytes).unwrap();

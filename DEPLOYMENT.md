@@ -132,10 +132,12 @@ embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until 
 decision_reads = 2048             # owner decision-read probes held at once; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
+projection_body_bytes = 4194304   # body bytes one multi-row read decodes
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
-disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
+disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
@@ -176,7 +178,19 @@ arrive from its one address. A push to a repository another push holds waits
 its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
 set) lands and the row asks; an upload that would take the vault's disk below
 `disk_reserve_bytes` is refused with 507, by its declared size before any byte
-is read.
+is read. A push holds its command section and status report on that disk past
+memory, and is answered 507 when a write of them would take it below the
+reserve. Each such write asks first and claims nothing, so writes at the same
+moment can each pass the reserve by their own bytes.
+
+The two retrieval rows bound one request's shape, not how much a caller may
+read. A query past `retrieval_query_bytes` is refused with a 413 that names
+the field and the bound, and the first such query from a caller at a door
+leaves a check for the operator. A list, search or query whose decoded bodies
+would pass `projection_body_bytes` serves every row, and the rows past it
+carry `bodyOmitted` in place of their body; reading that row on its own
+returns its body whole. An over-large `limit` is served at 1,000 rows, and
+the response says it was clamped.
 
 ## CJK Dictionaries
 

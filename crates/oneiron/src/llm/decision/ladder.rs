@@ -225,8 +225,9 @@ pub trait HumanDecisionQueue: Send + Sync {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
 }
 
-/// Slots are fixed and cannot silently skip a missing rung. The last rung is
-/// a queue, not a model-produced human answer.
+/// Slots are fixed. A step up skips a rung with no provider, up to the dial's
+/// ceiling, and the receipt's pins name every rung that ran. The last rung is a
+/// queue, not a model-produced human answer.
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
@@ -262,6 +263,7 @@ impl DecisionLadder<'_> {
         let mut prior = None;
         let mut in_band = false;
         let mut needs_person = false;
+        let mut unavailable = false;
         if rung != DecisionRung::Human {
             let answer = self.run_provider(rung, question, evidence, &mut readings)?;
             in_band = answer.probability.is_some_and(|p| row.band.contains(p));
@@ -270,19 +272,32 @@ impl DecisionLadder<'_> {
             if needs_person {
                 rung = DecisionRung::Human;
             } else if in_band && row.mode == BandMode::Enforce && rung < dial.ceiling {
-                rung = next_rung(rung);
-                if rung != DecisionRung::Human {
-                    let answer = self.run_provider(rung, question, evidence, &mut readings)?;
-                    if asks_person(&answer, person_row) {
-                        needs_person = true;
-                        rung = DecisionRung::Human;
+                match self.next_available(rung, dial.ceiling) {
+                    None => unavailable = true,
+                    Some(DecisionRung::Human) => rung = DecisionRung::Human,
+                    Some(next) => {
+                        rung = next;
+                        let answer = self.run_provider(rung, question, evidence, &mut readings)?;
+                        if asks_person(&answer, person_row) {
+                            needs_person = true;
+                            rung = DecisionRung::Human;
+                        }
+                        prior = Some(answer);
                     }
-                    prior = Some(answer);
                 }
             }
         }
         let mut human_ask = None;
-        let outcome = if rung == DecisionRung::Human {
+        let outcome = if unavailable {
+            // No rung up to the ceiling can take the step: a typed abstention.
+            human_ask = Some(HumanAskReason::ProviderUnavailable);
+            ProviderDecision {
+                answer: DecisionAnswer::Abstain,
+                probability: None,
+                paired: None,
+                person: None,
+            }
+        } else if rung == DecisionRung::Human {
             validate_pin(&self.human_pin, DecisionRung::Human)?;
             let reason = if needs_person {
                 HumanAskReason::NeedsPerson
@@ -333,14 +348,8 @@ impl DecisionLadder<'_> {
         })
     }
 
-    fn run_provider(
-        &self,
-        rung: DecisionRung,
-        question: &DecisionQuestion,
-        evidence: &[EntityId],
-        readings: &mut Readings,
-    ) -> Result<ProviderDecision> {
-        let provider = match rung {
+    fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
+        match rung {
             DecisionRung::Rule => self.rule,
             DecisionRung::Local => self.local,
             DecisionRung::SystemOne => self.system_one,
@@ -348,7 +357,35 @@ impl DecisionLadder<'_> {
             DecisionRung::Big => self.big,
             DecisionRung::Human => None,
         }
-        .ok_or_else(|| invalid("decision provider unavailable"))?;
+    }
+
+    /// The next rung above `rung` that can answer, up to `ceiling`. The person's
+    /// queue is always present (ARCH-0076 #posture: no house model sends the step
+    /// to the big model or the person).
+    fn next_available(
+        &self,
+        mut rung: DecisionRung,
+        ceiling: DecisionRung,
+    ) -> Option<DecisionRung> {
+        while rung < ceiling {
+            rung = next_rung(rung);
+            if rung == DecisionRung::Human || self.slot(rung).is_some() {
+                return Some(rung);
+            }
+        }
+        None
+    }
+
+    fn run_provider(
+        &self,
+        rung: DecisionRung,
+        question: &DecisionQuestion,
+        evidence: &[EntityId],
+        readings: &mut Readings,
+    ) -> Result<ProviderDecision> {
+        let provider = self
+            .slot(rung)
+            .ok_or_else(|| invalid("decision provider unavailable"))?;
         let pin = provider.pin();
         validate_pin(&pin, rung)?;
         let answer = provider.decide(question, evidence)?;

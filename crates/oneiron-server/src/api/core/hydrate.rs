@@ -321,22 +321,28 @@ pub(crate) async fn core_batch_short_id_hydrate(
     // Each item starts from the bulk read's receipt; a successor an item's
     // observation reads narrows that item and the batch.
     let mut batch_narrowing = narrowing.clone();
+    // The batch decodes its bodies under one budget; a single hydrate reads
+    // its one body whole.
+    let mut bodies =
+        projection::BodyBudget::new(&server.vault, server.config.limits.projection_body_bytes);
     let mut values = hydrated.value.into_iter();
     let mut results = Vec::with_capacity(req.refs.len());
     for (reference, parsed) in req.refs.into_iter().zip(parsed) {
         let item = match parsed {
-            Ok((short_id, content_hash, _)) => {
+            Ok((short_id, content_hash, mode)) => {
                 match project_hydrated_short_id(
                     &scoped_read,
                     short_id,
                     content_hash,
                     view,
+                    mode,
                     values.next().flatten(),
                     staged_observations.as_mut(),
                     ItemReceipts {
                         start: narrowing.clone(),
                         response: &mut batch_narrowing,
                     },
+                    Some(&mut bodies),
                 )? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
@@ -407,12 +413,14 @@ pub(crate) fn hydrate_short_id_response_with_mode(
         short_id,
         content_hash,
         view,
+        mode,
         read.value,
         observations,
         ItemReceipts {
             start: receipt.clone(),
             response: &mut receipt,
         },
+        None,
     )?;
     Ok(oneiron::claim::ScopedReadResult { value, receipt })
 }
@@ -424,14 +432,20 @@ pub(crate) struct ItemReceipts<'a> {
     pub(crate) response: &'a mut oneiron::claim::ScopedReadReceipt,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one hydrated item: its ref, mode, row and receipts, and the batch's body budget"
+)]
 pub(crate) fn project_hydrated_short_id(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
     content_hash: u8,
     view: View,
+    mode: oneiron::memory::ReadMode,
     hydrated: Option<oneiron::claim::ReadRow>,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
     receipts: ItemReceipts<'_>,
+    bodies: Option<&mut projection::BodyBudget<'_>>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let ItemReceipts {
         start: mut narrowing,
@@ -461,7 +475,31 @@ pub(crate) fn project_hydrated_short_id(
             item: None,
         }));
     };
-    if let Some(observations) = observations
+    // One of a batch decodes its body, to project it or to observe it, only
+    // while the batch's budget holds it.
+    let (decoded, mut bodies) = match bodies {
+        Some(bodies) => (bodies.admits(body.len()), Some(bodies)),
+        None => (true, None),
+    };
+    // A live generated image is served the form a reader that declared no
+    // image input reads (OF-329): its ASSET_TEXT, read through this lane, its
+    // stored body charged to the same budget.
+    let served = if decoded
+        && matches!(mode, oneiron::memory::ReadMode::Live)
+        && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
+    {
+        let mut admits = |len: usize| bodies.as_mut().is_none_or(|bodies| bodies.admits(len));
+        let asset = oneiron::memory::hydrated_asset(scoped_read, id, &mut admits)
+            .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
+        narrowing.restrict_with(&asset.receipt);
+        response.restrict_with(&asset.receipt);
+        asset.value
+    } else {
+        oneiron::memory::HydratedAsset::Stored
+    };
+    let decoded = decoded && !matches!(served, oneiron::memory::HydratedAsset::Omitted);
+    if decoded
+        && let Some(observations) = observations
         && let Some(successor) = observations
             .observe_snapshot(
                 scoped_read,
@@ -475,7 +513,19 @@ pub(crate) fn project_hydrated_short_id(
         narrowing.restrict_with(&successor);
         response.restrict_with(&successor);
     }
-    let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
+    let item = match bodies {
+        Some(bodies) if !decoded => bodies.omitted(&id, entity_type, learned_at, &body, view, mode),
+        _ => projection::project_entity_parts(
+            &id,
+            entity_type,
+            learned_at,
+            match &served {
+                oneiron::memory::HydratedAsset::Text { body: text, .. } => text,
+                _ => &body,
+            },
+            view,
+        ),
+    };
     Ok(Some(CoreHydrateResponse {
         narrowing,
         status: CoreHydrateStatus::Live,

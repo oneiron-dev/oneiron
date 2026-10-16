@@ -175,9 +175,14 @@ pub fn review_slides(
         return Err(invalid("invalid slide review selection or dial").into());
     }
     let provider_pins: Vec<_> = providers.iter().map(|provider| provider.pin()).collect();
+    // The route starts at the dial's first rung and skips a rung with no provider
+    // (ARCH-0076 #posture), so each provider sits above the one before it.
     for (index, pin) in provider_pins.iter().enumerate() {
-        if pin.rung
-            != rung_from(dial.first, index).ok_or_else(|| invalid("invalid provider sequence"))?
+        if index
+            .checked_sub(1)
+            .map_or(pin.rung != dial.first, |previous| {
+                pin.rung <= provider_pins[previous].rung
+            })
             || pin.rung > dial.ceiling
             || pin.rung == DecisionRung::Human
             || pin.model.trim().is_empty()
@@ -353,20 +358,6 @@ fn evidence_hash(unit: &SlideReviewUnit) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-fn rung_from(first: DecisionRung, steps: usize) -> Option<DecisionRung> {
-    let rungs = [
-        DecisionRung::Rule,
-        DecisionRung::Local,
-        DecisionRung::SystemOne,
-        DecisionRung::Escalation,
-        DecisionRung::Big,
-    ];
-    rungs
-        .iter()
-        .position(|r| *r == first)
-        .and_then(|i| rungs.get(i + steps).copied())
-}
-
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
@@ -456,8 +447,7 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
             || (decision.receipt.providers.len() == 2
                 && (row.band_mode != BandMode::Enforce
                     || !decision.in_band
-                    || rung_from(decision.receipt.providers[0].rung, 1)
-                        != Some(decision.receipt.providers[1].rung)))
+                    || decision.receipt.providers[1].rung <= decision.receipt.providers[0].rung))
             || decision.receipt.providers.iter().any(|pin| {
                 pin.model.trim().is_empty()
                     || pin.version.trim().is_empty()

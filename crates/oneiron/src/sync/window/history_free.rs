@@ -19,7 +19,10 @@
 use std::collections::BTreeSet;
 
 use loro::json::{JsonOpContent, MapOp};
-use loro::{ContainerID, ContainerType, ExportMode, Frontiers, LoroDoc, LoroValue, VersionVector};
+use loro::{
+    CommitOptions, ContainerID, ContainerType, ExportMode, Frontiers, LoroDoc, LoroValue,
+    VersionVector,
+};
 
 use super::super::local_claims::claim_sync_allowed;
 use super::super::loro_support::{
@@ -27,6 +30,7 @@ use super::super::loro_support::{
     map_for_each_value_bytes,
 };
 use super::super::types::WindowKey;
+use super::bridge::BRIDGE_ORIGIN;
 use super::egress::{
     history_free_window_required, scrub_local_claim_carriers, scrub_local_only_carriers,
     scrub_redacted_attribution_carriers, scrub_withdrawn_delete_carriers,
@@ -504,6 +508,11 @@ fn scrub_for_export(
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    // Every update and replacement ships each held revision of a PROJECT row the window
+    // carries, whatever month it was learned in (Astra #1434 F2).
+    if super::project_history::carry_project_history(vault, doc)? {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     let check = if secret_scrubbed
         || claims_scrubbed
         || authors_scrubbed
