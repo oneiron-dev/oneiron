@@ -1293,13 +1293,25 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     )).await;
     assert!(forwarded.starts_with("HTTP/1.1 200 OK"), "{forwarded}");
 
-    // The supervisor asks for quiescence.
-    match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
-        CtlResponse::PrepareReap { quiescent, .. } => {
-            assert!(quiescent, "an idle canary vault reports quiescent");
+    // The supervisor asks for quiescence. The lifecycle tick starts a
+    // housekeeping pass at boot, admitted like a served write, so the first
+    // ask can find it still in flight and answer "not yet". The freeze turns
+    // later passes away, so asking again under it settles once that one is done.
+    tokio::time::timeout(NO_HANG_BOUND, async {
+        loop {
+            match ctl_response(&ctl_roundtrip(&ctl, r#"{"op":"prepare_reap"}"#).await) {
+                CtlResponse::PrepareReap {
+                    quiescent: true, ..
+                } => break,
+                CtlResponse::PrepareReap {
+                    quiescent: false, ..
+                } => tokio::time::sleep(Duration::from_millis(25)).await,
+                other => panic!("expected a prepare_reap reply, got {other:?}"),
+            }
         }
-        other => panic!("expected a prepare_reap reply, got {other:?}"),
-    }
+    })
+    .await
+    .expect("an idle canary vault reports quiescent once its admitted work is done");
 
     // The same write, over the same socket, now gets the typed refusal.
     let refused = http_over_unix(&http, &conversation_write(&during)).await;
