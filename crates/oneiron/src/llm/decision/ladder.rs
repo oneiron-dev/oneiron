@@ -1,11 +1,13 @@
 //! Host-injected, one-step decision ladder. The engine owns routing and receipts.
 
-use super::policy::{BandMode, DecisionBandPolicy, PersonThreshold, Reversibility};
+use super::policy::{BandMode, DecisionBandPolicy, PersonThreshold, Reversibility, ThinkThreshold};
 use super::types::{invalid, paired_valid};
 use super::{
-    DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung, HumanAskReason,
-    PairedReading, PersonChangedAnswer, ProviderPin, TypedDecision,
+    DecisionAnswer, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung, DecisionTime,
+    HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause,
+    StopCause, TypedDecision,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -75,12 +77,15 @@ impl ProviderDecision {
 
 /// Providers see only caller-prepared, access-checked evidence references.
 /// Their outputs contain no authority fields, receipt, or provenance label.
+/// `deadline` is the call's one clock: a provider with a native deadline gets
+/// [`RetrievalDeadline::decision_time_left`], and its client waits no longer.
 pub trait DecisionProvider: Send + Sync {
     fn pin(&self) -> ProviderPin;
     fn decide(
         &self,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        deadline: &RetrievalDeadline,
     ) -> Result<ProviderDecision>;
 }
 
@@ -125,6 +130,7 @@ impl DecisionProvider for RuleDecisionProvider {
         &self,
         question: &DecisionQuestion,
         _evidence: &[EntityId],
+        _deadline: &RetrievalDeadline,
     ) -> Result<ProviderDecision> {
         self.rows
             .get(&(question.id, question.version))
@@ -140,6 +146,7 @@ pub trait DecisionModel: Send + Sync {
         &self,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        deadline: &RetrievalDeadline,
     ) -> Result<ProviderDecision>;
 }
 
@@ -169,8 +176,9 @@ impl DecisionProvider for ModelDecisionProvider {
         &self,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        deadline: &RetrievalDeadline,
     ) -> Result<ProviderDecision> {
-        self.model.decide(question, evidence)
+        self.model.decide(question, evidence, deadline)
     }
 }
 
@@ -239,6 +247,18 @@ pub struct DecisionLadder<'a> {
 }
 
 impl DecisionLadder<'_> {
+    /// One typed decision under one clock, `deadline` (an anytime budget, or a raw
+    /// deadline). The first permitted rung answers first; a stronger rung starts only
+    /// while work time is left, and only for a cause: a small margin under an enforced
+    /// band, or a paired reading at its row. A step skips a rung with no provider, up
+    /// to the ceiling; with none left the call abstains. At a cut a reversible step
+    /// takes the answer it holds and an irreversible one abstains and asks; with no
+    /// answer, or an answer inside its band, the call abstains. The last quarter of
+    /// the time stays the answer's.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's clock joins the question, its scope, the dial and the policy"
+    )]
     pub fn run(
         &self,
         question: &DecisionQuestion,
@@ -247,6 +267,7 @@ impl DecisionLadder<'_> {
         dial: DecisionDial,
         policy: &DecisionBandPolicy,
         reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
     ) -> Result<TypedDecision> {
         question.validate()?; // Provenance cannot reach any provider or queue.
         dial.band.validate()?;
@@ -261,46 +282,83 @@ impl DecisionLadder<'_> {
         let mut readings = Readings::default();
         let mut rung = dial.first;
         let mut prior = None;
+        let mut answered = None;
         let mut in_band = false;
         let mut needs_person = false;
         let mut unavailable = false;
+        let mut stop = StopCause::Done;
+        let mut reasoning = Reasoning::NotNeeded;
         if rung != DecisionRung::Human {
-            let answer = self.run_provider(rung, question, evidence, &mut readings)?;
-            in_band = answer.probability.is_some_and(|p| row.band.contains(p));
-            needs_person = asks_person(&answer, person_row);
-            prior = Some(answer);
-            if needs_person {
-                rung = DecisionRung::Human;
-            } else if in_band && row.mode == BandMode::Enforce && rung < dial.ceiling {
-                match self.next_available(rung, dial.ceiling) {
-                    None => unavailable = true,
-                    Some(DecisionRung::Human) => rung = DecisionRung::Human,
-                    Some(next) => {
-                        rung = next;
-                        let answer = self.run_provider(rung, question, evidence, &mut readings)?;
-                        if asks_person(&answer, person_row) {
-                            needs_person = true;
-                            rung = DecisionRung::Human;
+            match self.run_provider(rung, question, evidence, deadline, &mut readings)? {
+                Read::NotStarted | Read::Cut => stop = StopCause::Deadline,
+                Read::Answer(answer) => {
+                    in_band = answer.probability.is_some_and(|p| row.band.contains(p));
+                    needs_person = asks_person(&answer, person_row);
+                    let cause = step_cause(&answer, in_band, row.mode, policy.think_threshold())
+                        .filter(|_| rung < dial.ceiling);
+                    prior = Some(answer);
+                    answered = Some(rung);
+                    if needs_person {
+                        rung = DecisionRung::Human;
+                    } else if let Some(cause) = cause {
+                        // A stronger rung, the person's included, starts only while work
+                        // time is left.
+                        match self.next_available(rung, dial.ceiling) {
+                            None => {
+                                unavailable = true;
+                                reasoning = Reasoning::Skipped(cause);
+                            }
+                            Some(_) if !deadline.decision_may_start() => {
+                                stop = StopCause::Deadline;
+                                reasoning = Reasoning::Skipped(cause);
+                            }
+                            Some(DecisionRung::Human) => rung = DecisionRung::Human,
+                            Some(next) => match self.run_provider(
+                                next,
+                                question,
+                                evidence,
+                                deadline,
+                                &mut readings,
+                            )? {
+                                Read::NotStarted => {
+                                    stop = StopCause::Deadline;
+                                    reasoning = Reasoning::Skipped(cause);
+                                }
+                                Read::Cut => {
+                                    stop = StopCause::Deadline;
+                                    reasoning = Reasoning::Cut(cause);
+                                }
+                                Read::Answer(answer) => {
+                                    reasoning = Reasoning::Ran(cause);
+                                    rung = next;
+                                    answered = Some(next);
+                                    if asks_person(&answer, person_row) {
+                                        needs_person = true;
+                                        rung = DecisionRung::Human;
+                                    }
+                                    prior = Some(answer);
+                                }
+                            },
                         }
-                        prior = Some(answer);
                     }
                 }
             }
         }
+        // At a cut an irreversible step never takes an unfinished answer, and no step
+        // takes an answer the call does not have, or one inside its band, enforced or
+        // in shadow (packet rule 5: an in-band answer is not eligible).
+        let abstains_at_cut = stop == StopCause::Deadline
+            && (prior.is_none() || reversibility == Reversibility::OutboundEffect || in_band);
+        if abstains_at_cut && dial.ceiling == DecisionRung::Human {
+            rung = DecisionRung::Human;
+        }
         let mut human_ask = None;
-        let outcome = if unavailable {
-            // No rung up to the ceiling can take the step: a typed abstention.
-            human_ask = Some(HumanAskReason::ProviderUnavailable);
-            ProviderDecision {
-                answer: DecisionAnswer::Abstain,
-                probability: None,
-                paired: None,
-                person: None,
-            }
-        } else if rung == DecisionRung::Human {
+        let outcome = if rung == DecisionRung::Human {
             validate_pin(&self.human_pin, DecisionRung::Human)?;
             let reason = if needs_person {
                 HumanAskReason::NeedsPerson
+            } else if abstains_at_cut {
+                HumanAskReason::Deadline
             } else if prior.is_some() {
                 HumanAskReason::Uncertain
             } else {
@@ -318,15 +376,19 @@ impl DecisionLadder<'_> {
             })?;
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
-            ProviderDecision {
-                answer: DecisionAnswer::Abstain,
-                probability: None,
-                paired: None,
-                person: None,
-            }
+            abstained()
+        } else if abstains_at_cut {
+            human_ask = Some(HumanAskReason::Deadline);
+            abstained()
+        } else if unavailable {
+            // No rung up to the ceiling can take the step: a typed abstention.
+            human_ask = Some(HumanAskReason::ProviderUnavailable);
+            abstained()
         } else {
             prior.expect("a non-human rung has an answer")
         };
+        // A rung that abstained answered nothing.
+        let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
         Ok(TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
@@ -344,6 +406,13 @@ impl DecisionLadder<'_> {
                 cost_per_thousand: None,
                 paired: readings.paired,
                 person: readings.person,
+                time: Some(DecisionTime {
+                    budget_ms: millis(deadline.budget()),
+                    used_ms: millis(deadline.used()),
+                    stop,
+                    answered,
+                    reasoning,
+                }),
             },
         })
     }
@@ -376,19 +445,33 @@ impl DecisionLadder<'_> {
         None
     }
 
+    /// One provider read on the call's clock. Routing skips an empty slot, so only
+    /// the dial's own first rung reaches here empty, and it fails even with no time
+    /// left. A failure with time left still fails the call.
     fn run_provider(
         &self,
         rung: DecisionRung,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        deadline: &RetrievalDeadline,
         readings: &mut Readings,
-    ) -> Result<ProviderDecision> {
+    ) -> Result<Read> {
         let provider = self
             .slot(rung)
             .ok_or_else(|| invalid("decision provider unavailable"))?;
         let pin = provider.pin();
         validate_pin(&pin, rung)?;
-        let answer = provider.decide(question, evidence)?;
+        if !deadline.decision_may_start() {
+            return Ok(Read::NotStarted);
+        }
+        let answer = match provider.decide(question, evidence, deadline) {
+            Ok(answer) => answer,
+            Err(_) if !deadline.decision_may_start() => return Ok(Read::Cut),
+            Err(error) => return Err(error),
+        };
+        if deadline.answer_due() {
+            return Ok(Read::Cut);
+        }
         answer.validate(question)?;
         if let Some(reading) = answer.paired {
             readings.paired.push(reading.bind(pin.clone()));
@@ -397,8 +480,48 @@ impl DecisionLadder<'_> {
             readings.person.push(reading.bind(pin.clone()));
         }
         readings.pins.push(pin);
-        Ok(answer)
+        Ok(Read::Answer(answer))
     }
+}
+
+/// What one provider read gave the call.
+enum Read {
+    Answer(ProviderDecision),
+    /// No work time was left to start it.
+    NotStarted,
+    /// Its client gave up once the work time was spent, or its reply came after the
+    /// answer's time: an unfinished reply is not an answer.
+    Cut,
+}
+
+fn abstained() -> ProviderDecision {
+    ProviderDecision {
+        answer: DecisionAnswer::Abstain,
+        probability: None,
+        paired: None,
+        person: None,
+    }
+}
+
+/// Why a read needs more thinking: a small margin under an enforced band, or a paired
+/// reading at its row. A missing paired reading is no reading, never P(yes) = 0.
+fn step_cause(
+    answer: &ProviderDecision,
+    in_band: bool,
+    mode: BandMode,
+    think: Option<ThinkThreshold>,
+) -> Option<ReasoningCause> {
+    if in_band && mode == BandMode::Enforce {
+        return Some(ReasoningCause::SmallMargin);
+    }
+    think
+        .zip(answer.paired)
+        .is_some_and(|(row, paired)| paired.probability >= row.threshold)
+        .then_some(ReasoningCause::PairedHigh)
+}
+
+pub(super) fn millis(time: std::time::Duration) -> u64 {
+    u64::try_from(time.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// What a run's measurements leave on the receipt.

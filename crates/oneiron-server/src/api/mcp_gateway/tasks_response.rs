@@ -371,6 +371,11 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
 
 /// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
 pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+    if let Some(correction) = error.wrong_root {
+        let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
+        refusal.wrong_root = Some(correction);
+        return refusal;
+    }
     let code = match error.code.as_str() {
         oneiron::MEMORY_CODE_NOT_FOUND => -32004,
         oneiron::MEMORY_CODE_FORBIDDEN
@@ -441,6 +446,16 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         let (max_bytes, received_bytes) = *bound;
         object.insert("max_bytes".to_owned(), json!(max_bytes));
         object.insert("received_bytes".to_owned(), json!(received_bytes));
+    }
+    if let Some(correction) = error.wrong_root
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("attempted".to_owned(), Value::String(correction.attempted));
+        object.insert(
+            "replacement".to_owned(),
+            Value::String(correction.replacement),
+        );
+        object.insert("schemaRef".to_owned(), Value::String(correction.schema_ref));
     }
     json!({
         "jsonrpc": "2.0",

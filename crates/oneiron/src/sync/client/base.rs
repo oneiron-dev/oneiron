@@ -52,6 +52,9 @@ pub struct SyncClient {
     pub(crate) _message_stream_subscription: Subscription,
     pub(crate) lfs_download: Option<crate::sync::chunks::ChunkDownload>,
     pub(crate) last_lfs_download: Option<crate::origin::lfs::LfsPutOutcome>,
+    /// When each owed artifact publication, by digest, may be sent again on
+    /// this connection. Cleared at every connect.
+    pub(crate) artifact_publication_resend: HashMap<[u8; 32], std::time::Instant>,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -157,6 +160,7 @@ impl SyncClient {
             _message_stream_subscription: message_stream_subscription,
             lfs_download: None,
             last_lfs_download: None,
+            artifact_publication_resend: HashMap::new(),
             status: SyncStatus::Disconnected,
             event_tx,
         };

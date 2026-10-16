@@ -8,6 +8,7 @@ use oneiron::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionLadder, DecisionProvider, DecisionQuestion,
     DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
 };
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::self_heal::DiagnosticEventClass;
 use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
 use oneiron::store::RetrievalRunRecord;
@@ -40,6 +41,7 @@ impl DecisionProvider for HostHead {
         &self,
         question: &DecisionQuestion,
         evidence: &[EntityId],
+        _: &RetrievalDeadline,
     ) -> Result<ProviderDecision> {
         self.asked
             .lock()
@@ -79,6 +81,7 @@ fn decisions(local: Option<&dyn DecisionProvider>, principal: EntityId) -> Detec
         principal,
         dial: DETECTOR_DIAL,
         bands: DecisionBandPolicy::default(),
+        budget: std::time::Duration::from_secs(3600),
     }
 }
 

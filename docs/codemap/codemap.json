@@ -1097,7 +1097,7 @@
       "crate-vis": 3,
       "enum": 4,
       "fn": 18,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -1109,6 +1109,22 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactPublicationFrame",
+      "ArtifactPublicationOutcome"
+     ],
+     "path": "src/artifact_hosting/publication_sync.rs",
+     "purpose": "Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -4633,7 +4649,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 15,
       "struct": 3
      }
@@ -10593,7 +10609,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 9
      }
     },
@@ -15207,7 +15223,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -17969,7 +17985,7 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 3,
       "fn": 7,
       "struct": 4
@@ -18014,13 +18030,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/recovery.rs",
-     "purpose": "Value-only canonical recovery for generic EntityDoc owners",
+     "purpose": "Canonical recovery for generic EntityDoc owners: the current value, and the causal state its forks, pins…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18190,7 +18206,7 @@
      "path": "src/failure_ladder/healer_case.rs",
      "purpose": "Durable failure-ladder cases bind healer admission to the fenced failure",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18234,7 +18250,7 @@
      "path": "src/failure_ladder/mod.rs",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
       "re-export": 7
      }
@@ -18342,8 +18358,38 @@
       "crate-vis": 2,
       "enum": 4,
       "fn": 9,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CandidateFix",
+      "CandidateFixResult",
+      "CodeFixExport",
+      "CodeFixReplay",
+      "CodeFixVerdict",
+      "CodeFixWithheld",
+      "ExportScrubber",
+      "FixOutcome",
+      "InventedExampleDraft",
+      "InventedFailureExample",
+      "InventedMessage",
+      "InventedRole",
+      "ReplayRun",
+      "ScrubRun",
+      "ShadowRun"
+     ],
+     "path": "src/failure_signals/code_fix.rs",
+     "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
+     "surface": {
+      "const": 5,
+      "enum": 8,
+      "fn": 3,
+      "struct": 5,
+      "trait": 2
      }
     },
     {
@@ -18363,6 +18409,17 @@
      "path": "src/failure_signals/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/verbatim.rs",
+     "purpose": "The FIX6 verbatim-span guard: an invented example shares no run of words with the real chat it was drawn from",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -21655,7 +21712,27 @@
      "path": "src/ingest/history/codex.rs",
      "purpose": "Codex session rollouts: one JSONL file per session under `sessions/YYYY/MM/DD/`",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/copilot.rs",
+     "purpose": "GitHub Copilot session logs, as a hook hands them over (`transcript_path`): VS Code's own transcript…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/cursor.rs",
+     "purpose": "Cursor agent transcripts, as its hooks hand them over (`transcript_path`), seen at…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21703,7 +21780,7 @@
       "HistoryThreadKind"
      ],
      "path": "src/ingest/history/mod.rs",
-     "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports and the on-device Claude Code…",
+     "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and…",
      "surface": {
       "const": 3,
       "crate-vis": 1,
@@ -23271,7 +23348,7 @@
      "path": "src/llm/decision/ladder.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 6,
       "trait": 3
@@ -23315,14 +23392,15 @@
       "DecisionBandPolicy",
       "LearnedBand",
       "PersonThreshold",
-      "Reversibility"
+      "Reversibility",
+      "ThinkThreshold"
      ],
      "path": "src/llm/decision/policy.rs",
      "purpose": "Question- and reversibility-scoped escalation bands; learning starts in shadow",
      "surface": {
       "enum": 2,
-      "fn": 5,
-      "struct": 3
+      "fn": 7,
+      "struct": 4
      }
     },
     {
@@ -23488,7 +23566,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DecisionSeat",
@@ -23551,20 +23629,24 @@
       "DecisionQuestion",
       "DecisionReceipt",
       "DecisionRung",
+      "DecisionTime",
       "EvidenceVersion",
       "HumanAskReason",
       "PairedReading",
       "PersonChangedAnswer",
       "ProviderPin",
+      "Reasoning",
+      "ReasoningCause",
+      "StopCause",
       "TypedDecision"
      ],
      "path": "src/llm/decision/types.rs",
      "purpose": "Closed answer contracts and engine-owned decision receipts",
      "surface": {
       "crate-vis": 4,
-      "enum": 5,
+      "enum": 8,
       "fn": 6,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -26789,19 +26871,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OriginAuthority",
       "OriginAuthorityLease",
+      "OriginHostAuthority",
       "OriginResidence"
      ],
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
       "crate-vis": 10,
-      "enum": 1,
-      "fn": 4,
+      "enum": 2,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -27141,7 +27224,7 @@
      "purpose": "One-request orchestration: coordinator lock, reconcile, threaded exchange, finish",
      "surface": {
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 1,
       "trait": 1
      }
@@ -27158,7 +27241,7 @@
      "purpose": "The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -30786,9 +30869,17 @@
      "notable": [
       "CanonicalBaseEdge",
       "CanonicalContainerManifest",
+      "CanonicalDocumentFork",
+      "CanonicalDocumentPin",
+      "CanonicalDocumentPurge",
+      "CanonicalDocumentReceipt",
+      "CanonicalDocumentVersion",
       "CanonicalEntity",
       "CanonicalEntityDocument",
+      "CanonicalEntityDocumentHistory",
+      "CanonicalForkStatus",
       "CanonicalSchemaManifest",
+      "CanonicalSettleVerb",
       "CanonicalShellWorld",
       "CanonicalSnapshot",
       "CanonicalTombstone"
@@ -30797,9 +30888,10 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 17,
-      "fn": 6,
-      "struct": 8
+      "crate-vis": 18,
+      "enum": 2,
+      "fn": 8,
+      "struct": 14
      }
     },
     {
@@ -31746,7 +31838,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecallExecution",
@@ -31756,8 +31848,8 @@
      "path": "src/retrieval_depth/controls.rs",
      "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 8,
+      "crate-vis": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -36437,6 +36529,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/artifacts.rs",
+     "purpose": "Pinned artifact publications on the owner lane: each owed one goes out once the NOTE session binds, and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -37467,7 +37569,7 @@
      "path": "src/sync/transport/documents.rs",
      "purpose": "Entity-key frames and bounded, non-nesting document batches",
      "surface": {
-      "const": 8,
+      "const": 10,
       "fn": 4,
       "mod": 1,
       "struct": 1
@@ -38615,7 +38717,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 5,
       "re-export": 1,
       "struct": 18
      }
@@ -41727,6 +41829,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/decision_deadline.rs",
+     "purpose": "DECISION-DEADLINE (owner, 2026-10-16): every typed decision runs under one clock",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42286,7 +42396,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42825,7 +42935,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 4,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -42951,7 +43061,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 53,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43483,7 +43593,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43639,8 +43749,8 @@
    },
    "over_bar": 52,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2617,
-   "test_files": 902
+   "source_files": 2623,
+   "test_files": 903
   },
   "oneiron-android": {
    "files": [
@@ -46515,14 +46625,15 @@
       "MemoryError",
       "MemoryGateDenial",
       "MemoryPolicyDenial",
-      "MemoryPolicyExceptionProposal"
+      "MemoryPolicyExceptionProposal",
+      "MemoryWrongRoot"
      ],
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 11,
-      "fn": 6,
-      "struct": 4,
+      "const": 12,
+      "fn": 7,
+      "struct": 5,
       "type": 1
      }
     },
@@ -52991,7 +53102,17 @@
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/artifacts/host.rs",
+     "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -53001,7 +53122,7 @@
      "path": "src/api/artifacts/route.rs",
      "purpose": "One typed codec for artifact bundle entry and canonical file URLs",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -54149,7 +54270,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -54233,13 +54354,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_origin.rs",
+     "purpose": "`/v1/owner/origin-authority`: the owner's origin cutover (ARCH-0068 RA7)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -55531,7 +55662,7 @@
      "purpose": "The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import…",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -58607,7 +58738,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 208,
+     "files": 210,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58847,7 +58978,7 @@
    },
    "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 374,
+   "source_files": 376,
    "test_files": 182
   },
   "oneiron-spawn": {

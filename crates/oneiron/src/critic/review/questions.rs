@@ -6,6 +6,8 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
     DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility, TypedDecision,
 };
+use crate::retrieval_depth::RetrievalDeadline;
+use std::time::{Duration, Instant};
 
 /// The registered question family every lens asks.
 const QUESTION: &str = "critic.review";
@@ -86,13 +88,16 @@ pub trait ReviewNotes {
 }
 
 /// The shared decision path a review's questions go through: the host's ladder, the principal
-/// the answers are for, the dial and learned bands, the wording, and optional notes. The target
-/// reaches a provider only as an evidence id; run and attempt ids stay host metadata.
+/// the answers are for, the dial and learned bands, each question's anytime budget, the wording,
+/// and optional notes. The target reaches a provider only as an evidence id; run and attempt ids
+/// stay host metadata.
 pub struct ReviewDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
+    /// Each question's one clock, from when it is asked.
+    pub budget: Duration,
     pub wording: ReviewWording,
     pub notes: Option<&'a dyn ReviewNotes>,
 }
@@ -240,6 +245,7 @@ impl ReviewDecisions<'_> {
             self.dial,
             &self.bands,
             Reversibility::ReversibleRead,
+            &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
         if matches!(decision.answer, DecisionAnswer::Abstain) {
             return Err(invalid_critic_config("review question abstained"));

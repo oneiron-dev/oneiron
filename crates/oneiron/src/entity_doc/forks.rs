@@ -104,13 +104,13 @@ pub struct TextReceipt {
 }
 
 /// Durable identity/provenance/status of one open or settled document fork.
-const ENTITY_DOC_FORK: SideTable<String, ForkRecord, Named> =
+pub(super) const ENTITY_DOC_FORK: SideTable<String, ForkRecord, Named> =
     SideTable::new(&side_table::ENTITY_DOC_FORK);
 /// Shallow Loro snapshot of a fork's diverged content at its opening base.
-const ENTITY_DOC_FORK_SNAPSHOT: SideTable<String, Vec<u8>, Raw> =
+pub(super) const ENTITY_DOC_FORK_SNAPSHOT: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::ENTITY_DOC_FORK_SNAPSHOT);
 /// Review bundle of every fork opened under one text-edit proposal.
-const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
+pub(super) const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
 /// Durable settlement receipt for one fork's merge/switch/reject verdict,
 /// keyed by entity then receipt id.

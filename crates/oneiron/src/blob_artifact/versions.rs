@@ -607,6 +607,30 @@ impl Vault {
         };
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
     }
+
+    /// One version record's stored bytes, which publication sync carries
+    /// verbatim to the sync server's replica of this vault.
+    pub(crate) fn blob_artifact_version_record_bytes_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        VERSIONS.get_bytes(&self.store, rtxn, &(*artifact_id, version))
+    }
+
+    /// Writes a synced publication's version record on this replica. The
+    /// caller checks it against its claim and its bytes before it commits.
+    pub(crate) fn put_synced_blob_artifact_version_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+    ) -> Result<BlobArtifactVersion> {
+        let record = VERSIONS.decode_value(bytes)?;
+        VERSIONS.put(&self.store, wtxn, &(*artifact_id, record.version), &record)?;
+        Ok(record)
+    }
 }
 
 impl Vault {

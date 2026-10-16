@@ -37,6 +37,7 @@ pub use self::custom_review::{
     AgentKind, CustomFailureGroup, FailureSignalClass, TierOneFailureCount,
 };
 pub use self::drill::CustomFailureDrill;
+pub(crate) use self::healer_case::get_in_txn as healer_case_in_txn;
 pub(crate) use self::healer_case::require_in_txn as require_healer_case_in_txn;
 pub use self::ladder::{FailureLadder, failure_card_ref, failure_case_ref};
 pub(crate) use self::lineage::retry_lineage_ordinal;

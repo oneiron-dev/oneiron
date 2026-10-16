@@ -192,6 +192,11 @@ pub(crate) fn bound_rpc_reply(
 ) -> Result<RpcReply, ProtocolError> {
     let result = (|| {
         if !read_method(&request.method) {
+            // A canonical verb under the wrong root is refused with its
+            // correction, before scope, identity or any engine call.
+            if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(&request.method) {
+                return Err(refusal.into());
+            }
             return Err(AppError::bad_request("unknown read RPC", Some("method")));
         }
         // HTTP order: scope, request/limit validation, identity, engine call.
