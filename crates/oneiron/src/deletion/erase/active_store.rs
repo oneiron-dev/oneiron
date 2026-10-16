@@ -41,6 +41,13 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        // A purged world takes its keys with it (fix 7).
+        self.destroy_world_keys_for_delete_in_txn(
+            wtxn,
+            *id,
+            crate::world_keys::WorldKeyDestroyCause::LocalDelete,
+            request_id.copied(),
+        )?;
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // A purged message's turns stop matching its words: read them while
@@ -57,6 +64,7 @@ impl Vault {
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id)?;
         // Saved tags read the turn's messages through their PartOf edges, so
         // they go before the graph is torn down.
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
@@ -120,6 +128,7 @@ impl Vault {
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,

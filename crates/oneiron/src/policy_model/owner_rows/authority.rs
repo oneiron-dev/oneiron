@@ -113,17 +113,14 @@ fn shared_members_in_txn(
         serde_json::from_slice(&raw).map_err(|_| invalid())?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     let mut grants = Vec::new();
-    for entry in vault
-        .store
-        .type_index
-        .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_FEDERATION_GRANT])?
-    {
-        let (index, _) = entry?;
-        let id = crate::vault::entity_id_from_type_index_key(&index)?;
-        let raw = vault
-            .store
-            .entities
-            .get(txn, id.as_bytes())?
+    for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = entry?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
             .ok_or_else(invalid)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT)

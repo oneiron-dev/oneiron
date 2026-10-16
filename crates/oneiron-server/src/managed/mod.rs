@@ -41,8 +41,14 @@ pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 pub(crate) use state_serve::ManagedWidenHolder;
 mod vault_gates;
+#[cfg(target_os = "linux")]
+mod vm_guest;
+#[cfg(target_os = "linux")]
+mod vm_host;
+#[cfg(target_os = "linux")]
+pub use self::vm_host::{SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun, run_vault_vm};
 
-pub use self::args::{ManagedArgs, ManagedError};
+pub use self::args::{ManagedArgs, ManagedError, NO_FD};
 pub use self::ledger::{LEDGER_REV_KEY, WakeLedger};
 pub use self::listener::{
     BoundServeListener, HYPNOS_LISTEN_FD, ManagedCtl, ServeListener, adopt_listen_fd, signal_ready,

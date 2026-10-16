@@ -607,6 +607,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // traffic to.
     host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
+    #[cfg(target_os = "linux")]
+    if let Some(link) = host.vm_link() {
+        super::vm_guest::spawn_lifecycle(
+            link,
+            Arc::clone(&state),
+            Arc::clone(&sync_server),
+            shutdown.clone(),
+        );
+    }
 
     if let Err(_error) = state.ledger().push_if_changed(&sync_server).await {
         tracing::warn!(
