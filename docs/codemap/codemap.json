@@ -1793,7 +1793,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum predicates",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -1882,7 +1882,7 @@
      "path": "src/authority/fold_state.rs",
      "purpose": "Folded-state data model and the two-state merge",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -2225,7 +2225,7 @@
      "path": "src/authority/revoke_proof.rs",
      "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -2884,16 +2884,6 @@
      "path": "src/authority/tests/world_root_spam.rs",
      "purpose": "World privacy P6b acceptance for root spam (contract §8, check 7b; Wonder R1-F5, Sol R1b-F8): roots are…",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/tier_floor.rs",
-     "purpose": "Causal floor updates: softenings clear only observed restrictions",
-     "surface": {
-      "crate-vis": 8
-     }
     },
     {
      "bucket": "m",
@@ -44123,7 +44113,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 125,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45490,7 +45480,7 @@
    },
    "over_bar": 70,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2731,
+   "source_files": 2730,
    "test_files": 903
   },
   "oneiron-android": {
@@ -45549,7 +45539,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 83,
+      "const": 78,
       "re-export": 1,
       "type": 1
      }
@@ -45568,7 +45558,7 @@
      "purpose": "Authority key material and signature verification",
      "surface": {
       "enum": 3,
-      "fn": 14,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -45582,7 +45572,7 @@
      "path": "src/authority/device.rs",
      "purpose": "Device authority material and the folded-device consent predicates",
      "surface": {
-      "fn": 7,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -45617,7 +45607,7 @@
      "purpose": "The authority op vocabulary and the signed log-entry envelope",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -45722,7 +45712,7 @@
      "path": "src/authority/wire_encode.rs",
      "purpose": "`rmpv::Value` encoding for every authority type",
      "surface": {
-      "fn": 10
+      "fn": 7
      }
     },
     {
