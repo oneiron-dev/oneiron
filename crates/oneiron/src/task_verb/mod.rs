@@ -215,6 +215,7 @@ mod sdk_connector;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_host;
+mod sdk_legal_hold;
 mod sdk_self;
 mod sdk_share;
 mod sdk_shared;

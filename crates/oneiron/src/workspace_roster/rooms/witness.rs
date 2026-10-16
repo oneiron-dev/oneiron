@@ -25,13 +25,14 @@ pub(crate) fn admit_witness(
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         return Ok(());
     }
-    // OF-529: a person speaks from its seat, as before. An agent needs no
-    // seat: it stands on a Ready receipt, checked once its thread is known.
+    // OF-529: an agent needs no seat: it stands on a Ready receipt, checked
+    // once its thread is known. A person stands on its seat or a live Ready
+    // join, or joins by this write, at the participation gate below (OF-417).
     let now = vault.store.clock.now_recorded_at();
     let speaker = participant_in_txn(vault, txn, actor, now)?;
     let current_room = match speaker {
-        Some(JoinSubject::Agent(_)) => room_in(vault, txn, room)?,
-        _ => require_member(vault, txn, room, actor)?,
+        Some(_) => room_in(vault, txn, room)?,
+        None => require_member(vault, txn, room, actor)?,
     };
     let mut mentions = BTreeSet::new();
     let mut reply_to = None;
@@ -132,7 +133,15 @@ pub(crate) fn admit_witness(
             .messages
             .iter()
             .any(|m| m.author == WitnessAuthor::Companion);
-    if is_response {
+    // An accepted offer card lands as the agent's own turn (OF-530): the
+    // settlement that made its join Ready bound exactly this turn to the
+    // offer and its thread in this write, in place of a claim on an
+    // addressed turn. The speaking role and the author ceiling still decide.
+    let accepted_offer = is_response
+        && super::offers::accepts_offer_in_txn(vault, txn, room, branch, actor, turn_id)?;
+    if accepted_offer {
+        admit_speech_in(vault, txn, room, actor, standing.as_ref())?;
+    } else if is_response {
         // Only a speaker who speaks as a persona answers; the claim door
         // checks the same, and upkeep never holds one.
         admit_speech_in(vault, txn, room, actor, standing.as_ref())?;
