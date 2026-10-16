@@ -2073,16 +2073,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/mod.rs` | src | s | 2 mod · 12 re-export · 1 crate-vis | — | Typed question records and shared outcome projection |
 | `src/llm/decision/policy.rs` | src | s | 4 struct · 2 enum · 9 fn · 1 const | BandMode, DecisionBandPolicy, LearnedBand, PersonThreshold, Reversibility, ThinkThreshold | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/llm/decision/questions/arrival.rs` | src | m | 9 crate-vis | — | Outcome arrival projection in the materializing transaction |
-| `src/llm/decision/questions/graph_ask.rs` | src | m | 6 struct · 1 trait · 3 fn · 4 crate-vis | GraphAnswerer, GraphAskFailure, GraphAskResult, GraphContextSource, GraphPrediction, GraphTypeSelection, GraphUnitContext | One-off graph judgment: scoped context, injected answerer, and proposed claims |
+| `src/llm/decision/questions/graph_ask.rs` | src | m | 7 struct · 1 enum · 1 trait · 5 fn · 8 crate-vis | GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource, GraphDecision, GraphPrediction, GraphTypeSelection +1 | One-off graph judgment: scoped context, injected answerer, and proposed claims |
 | `src/llm/decision/questions/graph_ask_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/health_ask.rs` | src | s | 2 struct · 2 fn · 2 const | HealthAnswer, HealthBound | Wire health checks (OF-520) on the shared versioned question substrate |
 | `src/llm/decision/questions/mod.rs` | src | s | 8 re-export · 3 crate-vis | — | Versioned questions, scoped answer receipts, and bound outcome labels |
 | `src/llm/decision/questions/outcomes.rs` | src | s | 3 fn | — | Idempotent outcome projection over durable facts and immutable question versions |
 | `src/llm/decision/questions/recipe.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | GraphQuestionInput, GraphQuestionRef | Explicit, resident-authored context recipes over immutable graph questions |
 | `src/llm/decision/questions/records.rs` | src | s | 8 struct · 3 enum · 2 fn · 1 crate-vis | AnswerProposal, AnswerRecord, CalibrationPair, OutcomeBinding, OutcomeLabel, OutcomeSource, QuestionActivation, QuestionDefinition +3 | Immutable definitions and typed outcome bindings |
-| `src/llm/decision/questions/refresh.rs` | src | m | 2 struct · 3 fn | RefreshBatch, RefreshFailure | Host-driven answer work: observe under principal, invoke provider outside a write transaction, then… |
+| `src/llm/decision/questions/refresh.rs` | src | m | 2 struct · 4 fn | RefreshBatch, RefreshFailure | Host-driven answer work: observe under principal, invoke provider outside a write transaction, then… |
 | `src/llm/decision/questions/refresh/tests.rs` | test | m | — | — | — |
-| `src/llm/decision/questions/standing.rs` | src | m | 1 struct · 2 fn · 2 crate-vis | StandingAnswer | Explicit graph-unit backfill with same-snapshot authority and source pins |
+| `src/llm/decision/questions/standing.rs` | src | m | 1 struct · 2 fn · 3 crate-vis | StandingAnswer | Explicit graph-unit backfill with same-snapshot authority and source pins |
 | `src/llm/decision/questions/standing_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/store.rs` | src | s | 4 fn · 13 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one… |
 | `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
@@ -2160,7 +2160,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/maintain/tests.rs` | test | XL | — | — | — |
 | `src/maintain/text_ops.rs` | src | s | 4 crate-vis | — | Text-index clear, PPR cleanup, and postings compaction |
 | `src/memory/archive_purge.rs` | src | s | 2 struct · 4 fn | ArchivePurgeEntry, ArchivePurgePreview | Owner-only archive impact preview and confirmed ARCH-0038 delete |
-| `src/memory/asset_resolve.rs` | src | L | 8 struct · 2 enum · 12 fn · 1 const · 4 crate-vis | AssetConsumer, HydratedAsset, ImageHandle, ImagePick, ImageViewRequest, LandedImage, PixelRegion, PulledImage +2 | Generated images and the form each consumer reads (OF-328, OF-329) |
+| `src/memory/asset_resolve.rs` | src | L | 8 struct · 2 enum · 12 fn · 1 const · 5 crate-vis | AssetConsumer, HydratedAsset, ImageHandle, ImagePick, ImageViewRequest, LandedImage, PixelRegion, PulledImage +2 | Generated images and the form each consumer reads (OF-328, OF-329) |
 | `src/memory/authorship.rs` | src | m | 1 enum · 1 fn · 16 crate-vis | MemoryAuthoringAction | Actor-bound authorship checks |
 | `src/memory/birth_position.rs` | src | s | 1 fn · 1 crate-vis | — | Where a host binds a writer's TASKs to be born |
 | `src/memory/booking.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | EmergencyInstructionInput | Owner-authenticated booking operations on the existing Memory surface |
@@ -2196,7 +2196,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/key_value/writes.rs` | src | s | 2 fn | — | Key mutations compose the existing claim gate and lifecycle door in ONE transaction |
 | `src/memory/locality.rs` | src | s | 1 struct · 3 fn · 4 crate-vis | ProducerRows | Where a [`Memory`] caller sits, and the rows its reads derive an answer from, for a host that judges that… |
 | `src/memory/machine_write.rs` | src | s | 1 crate-vis | — | Machine-author claim stamping after the facade resolves its final approval |
-| `src/memory/mod.rs` | src | s | 2 mod · 33 re-export · 13 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 2 mod · 33 re-export · 14 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/outbound/calendar.rs` | src | s | 1 struct · 4 fn · 1 type | CalendarFreebusyIntervalDto | Calendar scoped-read surface (read/search/freebusy) plus the invite entry point |
 | `src/memory/outbound/dedupe.rs` | src | s | 7 crate-vis | — | Idempotent-replay receipts, retry-lineage walk, and gate-binding side index |
