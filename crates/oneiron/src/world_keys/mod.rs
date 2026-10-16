@@ -26,6 +26,7 @@ mod root_issue;
 mod session;
 mod state;
 mod vault_doors;
+mod vault_key;
 mod wrap;
 
 #[cfg(test)]
@@ -41,6 +42,7 @@ pub use self::root_issue::PreparedRoot;
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
+pub use self::vault_key::{VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind};
 pub use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;
 pub use oneiron_authority::authority::{

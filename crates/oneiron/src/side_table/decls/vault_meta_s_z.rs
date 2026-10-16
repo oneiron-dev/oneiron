@@ -491,4 +491,9 @@ side_tables! {
     /// Per-workspace roster preset (org, venture name, house actor/identity, house display name).
     /// Key: string (workspace_ref).
     WORKSPACE_ROSTER_PRESET: VaultMeta b"workspace_roster:preset:v1:" Raw;
+    /// The vault data key's commitment and birth (OF-570 E1). Never the key. Key: ().
+    VAULT_KEY_STATE: VaultMeta b"vault_key:state:v1" Named;
+    /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
+    /// metadata. Key: string (wrap id).
+    VAULT_KEY_WRAP: VaultMeta b"vault_key:wrap:v1:" Named;
 }

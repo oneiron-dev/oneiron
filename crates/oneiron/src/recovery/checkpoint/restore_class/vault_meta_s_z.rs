@@ -193,4 +193,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORKSPACE_ROSTER_MEMBER_INTENT, CONTENT),
     (&t::WORKSPACE_ONBOARDING, CONTENT),
     (&t::WORKSPACE_ROSTER_PRESET, CONTENT),
+    // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_STATE, LIVE),
+    (&t::VAULT_KEY_WRAP, LIVE),
 ];
