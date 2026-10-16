@@ -51634,13 +51634,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -52726,7 +52726,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -54735,7 +54735,7 @@
      "path": "src/http_listener.rs",
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -54773,7 +54773,7 @@
      "path": "src/lib.rs",
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "mod": 18,
       "re-export": 1
      }
@@ -56163,8 +56163,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 13,
-      "fn": 8,
+      "crate-vis": 14,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -56589,6 +56589,22 @@
      "notable": [],
      "path": "tests/it/api_cli.rs",
      "purpose": "`oneiron api call` through the shipped binary: a literal `--data` body and an `@FILE` body reach an…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/artifact_listener.rs",
+     "purpose": "F02 (H103): ordinary `oneiron serve` serves artifacts on a listener of their own, beside the API",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/artifact_origin_browser.rs",
+     "purpose": "F02 (H103), in a real browser",
      "surface": {}
     },
     {
@@ -57076,7 +57092,7 @@
    "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 353,
-   "test_files": 163
+   "test_files": 165
   },
   "oneiron-spawn": {
    "files": [
