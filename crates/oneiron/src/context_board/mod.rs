@@ -1,11 +1,14 @@
 //! Typed Context Board render projections.
 //!
-//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, SCRATCHPAD, session read-set riders and stream projections.
+//! WORLDS, MEMORIES, TASKS, AGENTS, SKILLS, INBOX, SCRATCHPAD, session read-set riders and stream
+//! projections.
 
 mod agents;
 mod agents_fanout;
 pub(crate) use agents_fanout::fanout_agent_rows;
 mod capabilities;
+mod inbox;
+pub use inbox::assemble_inbox_section;
 mod observations;
 #[cfg(test)]
 mod observations_tests;
@@ -66,8 +69,8 @@ mod surfaces_tests;
 mod tasks;
 
 pub use agents::{
-    AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence,
-    child_presence_for_actor, render_agents_section,
+    AgentLane, AgentRow, AgentsSection, ChildAgentPresence, PeerPresence, child_presence_for_actor,
+    render_agents_section,
 };
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
@@ -75,8 +78,8 @@ pub use frame::{
     CANONICAL_BOARD_LEGEND, CORE_SHED_ORDER, MAX_BOARD_ROW_BYTES, PLUGIN_SECTION_BUDGET_POLICY_REF,
     SHED_ORDER, SectionPolicy, SectionView, ShedOutcome, ShedRank, ShedSection,
     TASK_LABEL_MAX_BYTES, TASK_ROW_FIXED_TOKEN_BYTES, assemble_agents_section,
-    assemble_task_agent_sections, assemble_tasks_section, render_board_block,
-    resolve_board_budget, section_policy_for_budget_ref, shed,
+    assemble_task_agent_sections, assemble_tasks_section, render_board_block, resolve_board_budget,
+    section_policy_for_budget_ref, shed,
 };
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,

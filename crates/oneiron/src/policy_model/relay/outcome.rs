@@ -354,6 +354,7 @@ impl RelayBoundaryPass {
                 matches!(
                     pass.verdict.decision,
                     PolicyClassifyDecision::Block
+                        | PolicyClassifyDecision::Reword
                         | PolicyClassifyDecision::RouteToHelp
                         | PolicyClassifyDecision::Hold
                 ) || (pass.degrade_halts && pass.hosted_policy_in_play)

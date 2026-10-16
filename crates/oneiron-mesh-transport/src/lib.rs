@@ -3,12 +3,20 @@
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
+use oneiron::authority::PeerMachine;
 pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
 use oneiron::{ErrorKind, Vault, entity_id::EntityId};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[cfg(feature = "iroh")]
 pub mod iroh_transport;
+#[cfg(feature = "sync")]
+pub mod sync_dialer;
 pub mod transport_key;
+
+/// The ALPN sync rides (OF-535): the sync server's HTTP/1.1 routes and their
+/// WebSocket upgrades, on one long-lived stream per connection.
+pub const SYNC_ALPN: &[u8] = b"oneiron/sync/1";
 
 /// Protocol-neutral identifier of a MACHINE entity in this vault.
 pub type MachineId = EntityId;
@@ -86,6 +94,32 @@ impl MachineGrants for VaultMachineGrants {
     }
 }
 
+/// Grant verifier that also asks for the paired machine itself (OF-535): the
+/// endpoint's host-signed binding must name the key the machine stands on here,
+/// and the live grant must admit it (`Vault::mesh_peer_machine`). An address row
+/// or a grant on a re-keyed machine admits nothing.
+#[derive(Clone)]
+pub struct PairedMachineGrants(pub Arc<Vault>);
+impl std::fmt::Debug for PairedMachineGrants {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PairedMachineGrants")
+    }
+}
+impl MachineGrants for PairedMachineGrants {
+    fn permits(&self, machine: MachineId, key: [u8; 32], alpn: &[u8]) -> Result<bool, MeshError> {
+        match self
+            .0
+            .mesh_peer_machine(key, alpn)
+            .map_err(|e| MeshError::Io(e.to_string()))?
+        {
+            PeerMachine::Proven {
+                machine: proven, ..
+            } => Ok(proven == machine),
+            PeerMachine::Unknown => Ok(false),
+        }
+    }
+}
+
 /// Mandatory, trusted authority evaluation for the live MACHINE/key/ALPN tuple.
 /// Implementations must check the current grant and revocation state, not a cached roster flag.
 pub trait MachineGrants: Send + Sync + std::fmt::Debug {
@@ -124,13 +158,30 @@ pub trait MeshStream: Send {
     fn send<'a>(&'a mut self, bytes: &'a [u8]) -> MeshFuture<'a, ()>;
     fn recv(&mut self) -> MeshFuture<'_, Vec<u8>>;
 }
+/// One long-lived, ordered byte stream for a protocol that frames its own
+/// bytes (sync runs HTTP/1.1 and WebSocket on it). Admission is checked when it
+/// opens; the protocol on top keeps its own credential checks. It holds its
+/// connection open while it lives.
+pub trait MeshDuplex: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> MeshDuplex for T {}
+
 /// An authenticated peer connection. Opening multiple streams does not bypass admission.
 pub trait MeshConnection: Send + Sync {
     fn machine(&self) -> MachineId;
     fn alpn(&self) -> &[u8];
+    /// The endpoint key the handshake authenticated, never a roster hint.
+    fn endpoint_key(&self) -> [u8; 32];
     fn open_stream(&self) -> MeshFuture<'_, Box<dyn MeshStream>>;
     fn accept_stream(&self) -> MeshFuture<'_, Box<dyn MeshStream>>;
+    fn open_duplex(&self) -> MeshFuture<'_, Box<dyn MeshDuplex>>;
+    fn accept_duplex(&self) -> MeshFuture<'_, Box<dyn MeshDuplex>>;
     fn close(&self);
+}
+
+/// One protocol a mesh host serves on its ALPN: every admitted connection that
+/// arrives on it, until the connection ends.
+pub trait MeshService: Send + Sync {
+    fn serve(&self, connection: Box<dyn MeshConnection>) -> MeshFuture<'_, ()>;
 }
 /// Engine-side dial/accept seam. ALPN is selected by the caller, not by the relay.
 pub trait MeshTransport: Send + Sync {

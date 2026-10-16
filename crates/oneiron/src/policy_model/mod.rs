@@ -55,8 +55,9 @@
 //!
 //! No enforcement arm rewrites content. A verdict either lets the original
 //! bytes through (with a notice, for `Warn`) or withholds them entirely
-//! (`Block`, `RouteToHelp`) — the engine never hands a reader a substitute it
-//! silently authored.
+//! (`Block`, `RouteToHelp`, `Hold`, `Reword`) — the engine never hands a reader
+//! a substitute it silently authored. `Reword` returns the owner's disclosed
+//! constraint for a fresh candidate, not rewritten content.
 //!
 //! # Where this is going (design notes, no code)
 //!
@@ -85,6 +86,8 @@ mod classify;
 pub(crate) use classify::stateless_owner_classification;
 mod concurrent;
 mod contract;
+mod decide;
+pub use decide::PolicyDecisions;
 mod enforce;
 mod hold_queue;
 mod in_force;
@@ -106,6 +109,8 @@ mod prompt;
 mod receipt;
 mod relay;
 mod request;
+mod reword;
+pub use reword::PolicyRewordRequest;
 mod verdict;
 
 pub use binding::PolicyContentBinding;
