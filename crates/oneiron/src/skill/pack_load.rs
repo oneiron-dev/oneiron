@@ -223,6 +223,7 @@ impl Vault {
         lease_owner: &str,
         attempt_count: u32,
         executor_model: &str,
+        reliability: &crate::skill_reliability::SkillReliabilityQuery,
         at: u64,
     ) -> Result<Option<(EntityId, LoadedSkillPack)>> {
         let Some((winner, _)) = crate::skill_reliability::rank_resident_skill_versions(
@@ -230,6 +231,7 @@ impl Vault {
             resident,
             versions,
             executor_model,
+            reliability,
         )?
         .into_iter()
         .next() else {
