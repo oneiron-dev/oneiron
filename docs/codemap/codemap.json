@@ -43858,7 +43858,7 @@
      "path": "src/beam/model_scaffold/paired.rs",
      "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
