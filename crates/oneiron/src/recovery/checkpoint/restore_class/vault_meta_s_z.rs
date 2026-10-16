@@ -222,6 +222,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VOICE_OWNER_REF_OWNER_INDEX, LIVE),
     (&t::VOICE_REF_IDENTITY, LIVE),
     (&t::VOICE_REF_INCARNATION, LIVE),
+    // A restore never revives a withdrawn render consent.
+    (&t::VOICE_REF_RENDER_CONSENT, LIVE),
     (&t::VOICE_REF_TARGET, LIVE),
     (&t::VOICE_IDENTITY_CONSENT, LIVE),
     (&t::VOICE_IDENTITY_PRINT, LIVE),
