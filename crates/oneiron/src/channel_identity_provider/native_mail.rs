@@ -1,4 +1,7 @@
 //! Native mail fulfillment adapter. MTA, JMAP, DNS and DKIM stay in the host.
+pub mod pack;
+pub use pack::{NativeMailPack, PreparedNativeMailSend};
+
 use super::shared_validate::{
     normalize_domain, normalize_email_address, split_email_address,
     validate_email_inbound_metadata, validate_provision_intent,
@@ -28,6 +31,7 @@ use crate::surface_event::{
     InboundSurfaceEventInput, SurfaceCounterpartyStamp, SurfaceEventAdmission,
 };
 use crate::{EntityId, Error, Result, Vault};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeMailRunMode {
@@ -250,13 +254,20 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
         if self.address_for_identity(id) != format!("{local}@{domain}") {
             return Err(Error::InvalidConfig("noncanonical mailbox".into()));
         }
-        let (_, sender_domain) = split_email_address(&mail.envelope_from)?;
-        let sender = normalize_email_address(&mail.envelope_from, &sender_domain)?;
+        let sender = split_email_address(&mail.envelope_from)
+            .and_then(|(_, domain)| normalize_email_address(&mail.envelope_from, &domain));
+        let counterparty = match sender {
+            Ok(sender) => SurfaceCounterpartyStamp::unknown(format!("email:{sender}")),
+            Err(_) => SurfaceCounterpartyStamp::unparsed(
+                "email",
+                Sha256::digest(mail.envelope_from.as_bytes()).into(),
+            ),
+        };
         let mut event = InboundSurfaceEventInput::new(
             mail.provider_event_id,
             "email",
             self.address_for_identity(id),
-            SurfaceCounterpartyStamp::unknown(format!("email:{sender}")),
+            counterparty,
             mail.received_at,
             true,
         );
