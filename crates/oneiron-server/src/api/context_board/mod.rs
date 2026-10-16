@@ -132,7 +132,9 @@ pub(crate) struct ContextBoardResponse {
     /// TASKS detail rows: the project view when one rides, the caller's
     /// readable task rows, and the overflow footer.
     tasks: Vec<String>,
-    /// ROOM rows; absent when the board renders no room.
+    /// ROOM rows; absent when the board renders no room. A board whose
+    /// session id names a SESSION also names the room's host, or no host and
+    /// its candidates.
     #[serde(skip_serializing_if = "Option::is_none")]
     room: Option<Vec<String>>,
     /// The context pack retrieval produced; absent when retrieval was skipped.
@@ -273,6 +275,7 @@ pub(crate) async fn context_board_hydrate(
         req.retrieval
             .as_ref()
             .and_then(CoreContextPackRequest::conversation_id),
+        req.session.as_ref().and_then(|s| s.session_id.as_deref()),
         req.project.as_ref(),
         req.agents.as_ref(),
     )?;

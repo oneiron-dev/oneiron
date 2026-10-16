@@ -92,6 +92,9 @@ struct RoomTarget {
 pub(super) struct BoardTargets {
     actor: Option<(EntityId, oneiron::EdgeActorClass)>,
     room: Option<RoomTarget>,
+    /// The SESSION whose present participants ROOM reads its host among,
+    /// when the board's session id names one.
+    session: Option<EntityId>,
     project: Option<EntityId>,
     run_id: Option<String>,
 }
@@ -118,6 +121,7 @@ pub(super) fn board_targets(
     auth: &CoreAuth,
     room: Option<&ContextBoardRoomControls>,
     retrieval_room: Option<&str>,
+    session: Option<&str>,
     project: Option<&ContextBoardProjectControls>,
     agents: Option<&ContextBoardAgentsControls>,
 ) -> Result<BoardTargets, ApiError> {
@@ -151,6 +155,7 @@ pub(super) fn board_targets(
     Ok(BoardTargets {
         actor,
         room,
+        session: session.and_then(|session| EntityId::from_hex(session).ok()),
         project,
         run_id,
     })
@@ -204,9 +209,11 @@ pub(super) fn board_parts(
         crate::api::credential_memory(vault, Some(auth), actor, class).at(auth.locality())
     });
 
-    // ROOM, read fresh through the caller's own facade handle.
+    // ROOM, read fresh through the caller's own facade handle, with its host
+    // among the board session's present participants.
     let room = match (&targets.room, &memory) {
-        (Some(target), Some(memory)) => match memory.rooms_render(target.id) {
+        (Some(target), Some(memory)) => match memory.rooms_render_hosted(target.id, targets.session)
+        {
             Ok(room) => Some(room),
             Err(error) if !target.explicit && caller_fault(&error) => None,
             Err(error) => {
