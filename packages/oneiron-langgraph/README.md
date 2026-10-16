@@ -109,9 +109,6 @@ another actor.
   historical claims and gate receipts. It is not physical deletion, GDPR
   erasure, or `safe_delete`, and grants no cross-actor owner authority.
 
-No external application cutover is performed by installing this satellite.
-Existing external migrations remain held.
-
 ## Tests
 
 Install this package and its `test` extra in the test environment, then run

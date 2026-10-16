@@ -108,9 +108,10 @@ connection floor and each address's unauthenticated share. Managed serve
 (`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
 `/a/` is unchanged until the supervisor routes an artifact origin.
 
-`[limits]` bounds the work a caller can start. Every bound is finite, and a
-zero is a config error. The count rows sit far above fleet scale (each is at
-least ten times the 200 agents a fleet plans for, many of them on one
+`[limits]` bounds the work a caller can start. Every bound is finite. A zero is
+a config error on every row except `disk_reserve_bytes`, where zero puts the
+floor at the disk's last byte. The count rows sit far above fleet scale (each
+is at least ten times the 200 agents a fleet plans for, many of them on one
 credential and one address). Past a row, work waits its turn in a fair queue,
 round-robin across credentials and in arrival order within one, and the row
 asks whether everything is okay: a typed `inspect_limit_crossing` question

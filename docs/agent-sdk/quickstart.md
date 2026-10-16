@@ -242,19 +242,24 @@ you want to act as instead.
 | `Oneiron.connect(url, key)` | a remote handle |
 | `Oneiron.pair(link)` | `{ memory, credential }`: a remote handle and the credential to store |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
+| `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
 | `handle.witness(turn)` | `WitnessReceipt` |
 | `handle.claimUpsert(claim)` | `CommitReceipt` |
 | `handle.recall(query, opts?)` | `MemoryPack` |
 | `handle.receipts(limit?)` | `FacadeReceipt[]` |
 
-`recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`, default
-`"medium"`), `scope` (`{ worldRef?, facet? }`), `limit` (default `10`) and
-`format` (`"json" | "yaml" | "toon" | "md" | "txt"`). `high`, `xhigh` and `max` need
-a budget lease and return `LEASE_REQUIRED` without one; this package neither mints
-nor simulates a lease. A running server serves those efforts itself: it admits the
-recall on a line of its own and reranks on the reranker its `[models]` routes
-(`docs/ops/run-with-models.md`, section 8), or runs them unreranked and says so when
-it routes none.
+`recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
+default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
+`10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `asOf` (Unix seconds
+the query's time words resolve against; default now) and `deadlineMs` (1 to
+60000). `kinds` lists the registry kinds to return; unset returns every kind but
+conversations, sessions, facets and worlds. `high`, `xhigh` and `max` need
+a budget lease this package never mints: an embedded client returns `LEASE_REQUIRED`;
+a remote one gets what the server serves (reranked on its `[models]` reranker, or
+unreranked and saying so). `call` is call mode for live calls: light effort
+under a hard deadline (`deadlineMs`, or the vault's call-mode deadline). With a
+deadline, recall answers with the best results ready, marked `partial`; without
+one, it runs to the end.
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
 `occurredAt` stamps the current wall clock at the call boundary; supplying one
@@ -386,4 +391,4 @@ refs. It is idempotent while absent and retains history. It is not an owner
 [The LangGraph satellite](../oneiron-langgraph/README.md) adapts these doors to
 the real `BaseStore.batch/abatch` interface and includes a runnable graph.
 It is long-term memory, not a checkpoint saver. TTL and vector search are not
-supported. External application cutovers remain held.
+supported.

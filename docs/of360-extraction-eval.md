@@ -25,7 +25,7 @@ for the bundled seed subset.
 ## Metric Definitions
 
 Metric definitions are pinned as data in
-`crates/oneiron/src/data/of360_metric_definitions.v1.json`. The top-level
+`crates/oneiron-model/src/data/of360_metric_definitions.v1.json`. The top-level
 `derivation_envelope` uses the same keys accepted by the repo-provenance
 DerivationEnvelope-compatible shape:
 
@@ -53,7 +53,7 @@ question IDs refuse the run. Missing answers remain in the denominator.
 
 ## Gold Dataset Status
 
-`crates/oneiron/src/data/of360_gold_subset.v1.json` is a versioned smoke subset.
+`crates/oneiron-model/src/data/of360_gold_subset.v1.json` is a versioned smoke subset.
 It is not the 500-point owner-authored gold corpus requested by ONE-198 and
 ONE-1524. The fixture metadata keeps `owner_corpus_missing = true` and
 `target_full_memory_points = 500`; reports over this subset include a warning.
@@ -61,8 +61,6 @@ ONE-1524. The fixture metadata keeps `owner_corpus_missing = true` and
 `generate_of360_seeded_gold_subset` performs deterministic subset selection from
 the bundled seed rows. It does not synthesize replacement gold labels.
 
-The library has no full loader, and the repo ships no full corpus. A synthetic
-500-point v1 fixture and its integration test checked only the scorer's
-accounting (a perfect score from copied gold answers), not a model's extraction
-quality; both were removed in the 2026-10 test prune and remain in git history.
-Live systems must provide their own predictions.
+The repo bundles no owner-authored 500-point corpus. `of360_ar3_metric_tier`
+accepts an external `Of360GoldDataset`, so a full corpus can be passed in once
+it exists. Live systems must provide their own predictions.

@@ -1,8 +1,10 @@
 # Memory Wire — oneiron
 
 Memory Wire is the Oneiron developer profile. Start with `witness`, `recall`, and
-`receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS),
-the fourth verb in the engine’s authoritative `FACADE_VERB_CATALOG`.
+`receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS) and
+the other facade verbs listed under [API](#api). The verb set is generated from
+`scripts/sdk/agent-verbs.json` by `scripts/sdk/generate.py`; the shipped stubs
+(`oneiron/__init__.pyi`) carry the typed signatures.
 There is no separate lite SDK and no alternate mutation path.
 
 ```sh
@@ -96,13 +98,24 @@ created for the actor you want to act as instead.
 | `handle.claim_upsert(claim)` | `CommitReceipt` |
 | `handle.recall(query, ...)` | `MemoryPack` |
 | `handle.receipts(limit=100)` | `list[FacadeReceipt]` |
+| `handle.export(format=None)` | the live vault, serialized in one of the pack formats |
+| `handle.cancel(task_ref)` | `TaskCancelReceipt` |
+| `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
+| `handle.can(request)` | `TaskAskPreflight` |
+| `handle.peek(request)` | `list[TaskAskPersonEvidence]` |
+| `handle.key_value_get` / `_put` / `_delete` / `_search` / `_namespaces(request)` | exact, actor-owned keyed memory |
+| `handle.tasks.*` | `create`, `update`, `ask`, `wait`, `answer`, `outcomes` |
+| `handle.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
 
-`recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max"`,
+`recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
-(default `10`) and `format` (`"json" | "yaml" | "toon" | "md" | "txt"`).
+(default `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `as_of`
+(Unix seconds; the recall's reference time, default now) and `deadline_ms`.
 `high`, `xhigh` and `max` need a lease this package never mints: an embedded client raises
 `LEASE_REQUIRED`; a remote one gets what the server serves (reranked on its `[models]`
-reranker, or unreranked and saying so).
+reranker, or unreranked and saying so). `"call"` is call mode for live calls: light
+effort under a hard deadline (`deadline_ms`, or the vault's call-mode deadline, 100 ms
+by default), answering with the best results ready, marked `partial`.
 
 Timestamps are Unix **seconds** everywhere and are never converted. Omitting
 `occurred_at` stamps the current wall clock at the call boundary.
