@@ -351,7 +351,7 @@ impl Vault {
     ) -> Result<ReanchorSummary> {
         self.require_anchor_version(artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
-        let (threads, pptx) = {
+        let (threads, pptx, docx) = {
             let rtxn = self.store.env.read_txn()?;
             let threads = self.effect_annotation_threads_for_artifact_in_txn(&rtxn, artifact_id)?;
             let pptx = super::pptx_reanchor::PptxReanchor::load(
@@ -363,14 +363,28 @@ impl Vault {
                 &threads,
                 ops,
             )?;
-            (threads, pptx)
+            let docx = super::recovery::DocxReanchor::load(
+                self,
+                &rtxn,
+                artifact_id,
+                from_version,
+                to_version,
+                &threads,
+            )?;
+            (threads, pptx, docx)
         };
         for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
             }
-            let (head, drifted) =
-                plan_reanchored_head(&thread, from_version, to_version, ops, pptx.as_ref());
+            let (head, drifted) = plan_reanchored_head(
+                &thread,
+                from_version,
+                to_version,
+                ops,
+                pptx.as_ref(),
+                docx.as_ref(),
+            );
             // Each thread's head write + old-head supersede share ONE txn, so a
             // rejected supersede leaves that thread's original head live.
             let new_head_id = self.with_write_txn_grouped(|wtxn| {
@@ -380,6 +394,17 @@ impl Vault {
                     .is_none_or(|current| current.head_claim_id != thread.head_claim_id)
                 {
                     return Ok(None);
+                }
+                if drifted {
+                    self.record_detached_in_txn(
+                        wtxn,
+                        artifact_id,
+                        &thread,
+                        to_version,
+                        learned_at,
+                    )?;
+                } else {
+                    self.record_prior_anchor_in_txn(wtxn, artifact_id, &thread, to_version)?;
                 }
                 self.apply_reanchor_head_in_txn(
                     wtxn,
@@ -435,12 +460,33 @@ impl Vault {
             &threads,
             ops,
         )?;
+        let docx = super::recovery::DocxReanchor::load(
+            self,
+            wtxn,
+            artifact_id,
+            from_version,
+            to_version,
+            &threads,
+        )?;
         for thread in threads {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
             }
-            let (head, drifted) =
-                plan_reanchored_head(&thread, from_version, to_version, ops, pptx.as_ref());
+            let (head, drifted) = plan_reanchored_head(
+                &thread,
+                from_version,
+                to_version,
+                ops,
+                pptx.as_ref(),
+                docx.as_ref(),
+            );
+            // A detached comment joins the Unattached list with its words; a
+            // moved one keeps the anchor it left, for an exact restore.
+            if drifted {
+                self.record_detached_in_txn(wtxn, artifact_id, &thread, to_version, learned_at)?;
+            } else {
+                self.record_prior_anchor_in_txn(wtxn, artifact_id, &thread, to_version)?;
+            }
             let new_head_id = self.apply_reanchor_head_in_txn(
                 wtxn,
                 artifact_id,
@@ -496,11 +542,16 @@ fn plan_reanchored_head(
     to_version: u64,
     ops: &[ReanchorOp],
     pptx: Option<&super::pptx_reanchor::PptxReanchor>,
+    docx: Option<&super::recovery::DocxReanchor>,
 ) -> (ThreadHead, bool) {
-    let outcome = if matches!(thread.anchor.locator, Locator::Pptx { .. }) {
-        pptx.map_or(ReanchorOutcome::Drifted, |context| context.rebind(thread))
-    } else {
-        replay_locator(&thread.anchor.locator, ops)
+    let outcome = match &thread.anchor.locator {
+        Locator::Pptx { .. } => {
+            pptx.map_or(ReanchorOutcome::Drifted, |context| context.rebind(thread))
+        }
+        Locator::Docx { .. } => docx.map_or(ReanchorOutcome::Drifted, |context| {
+            context.rebind(&thread.anchor.locator)
+        }),
+        _ => replay_locator(&thread.anchor.locator, ops),
     };
     match outcome {
         ReanchorOutcome::Mapped(locator) => (

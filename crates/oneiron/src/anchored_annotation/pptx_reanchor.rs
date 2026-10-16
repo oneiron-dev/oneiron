@@ -89,8 +89,83 @@ impl PptxReanchor {
             return ReanchorOutcome::Drifted;
         }
         match (&self.before, &self.after) {
-            (Some(before), Some(after)) => rebind_locator(&thread.anchor.locator, before, after),
+            (Some(before), Some(after)) => {
+                match rebind_locator(&thread.anchor.locator, before, after) {
+                    ReanchorOutcome::Drifted => {
+                        identity_rebind(&thread.anchor.locator, before, after)
+                    }
+                    mapped => mapped,
+                }
+            }
             _ => ReanchorOutcome::Drifted,
         }
     }
+}
+
+/// The owner's rule for an edit inside the commented spot (OF-368,
+/// 2026-10-17): a shape or slide whose creation identity survives keeps its
+/// anchor even when its content changed. Only a missing or doubled identity
+/// detaches; [`rebind_locator`]'s unchanged-content rebind runs first.
+fn identity_rebind(
+    locator: &Locator,
+    before: &PptxInspection,
+    after: &PptxInspection,
+) -> ReanchorOutcome {
+    let Locator::Pptx { slide, shape_id } = locator else {
+        return ReanchorOutcome::Drifted;
+    };
+    let Some(old) = before.slides.iter().find(|s| s.slide == *slide) else {
+        return ReanchorOutcome::Drifted;
+    };
+    let Some(id) = old.creation_id else {
+        return ReanchorOutcome::Drifted;
+    };
+    let found: Vec<_> = after
+        .slides
+        .iter()
+        .filter(|s| s.creation_id == Some(id) && s.sld_id == old.sld_id)
+        .collect();
+    let [new] = found.as_slice() else {
+        return ReanchorOutcome::Drifted;
+    };
+    if shape_id == "slide" {
+        return ReanchorOutcome::Mapped(Locator::Pptx {
+            slide: new.slide,
+            shape_id: shape_id.clone(),
+        });
+    }
+    let key = |text: &str| {
+        text.trim_matches(|c| c == '{' || c == '}')
+            .to_ascii_uppercase()
+    };
+    let wanted = key(shape_id);
+    let number = shape_id.parse::<u32>().ok();
+    let old_shapes: Vec<_> = old
+        .shapes
+        .iter()
+        .filter(|s| {
+            s.creation_id.as_deref().is_some_and(|g| key(g) == wanted)
+                || number == Some(s.shape_id)
+        })
+        .collect();
+    let [old_shape] = old_shapes.as_slice() else {
+        return ReanchorOutcome::Drifted;
+    };
+    let Some(guid) = &old_shape.creation_id else {
+        return ReanchorOutcome::Drifted;
+    };
+    let unique = |shapes: &[crate::edit_roundtrip::pptx::PptxShapeIdentity]| {
+        shapes
+            .iter()
+            .filter(|s| s.creation_id.as_ref() == Some(guid))
+            .count()
+            == 1
+    };
+    if !unique(&old.shapes) || !unique(&new.shapes) {
+        return ReanchorOutcome::Drifted;
+    }
+    ReanchorOutcome::Mapped(Locator::Pptx {
+        slide: new.slide,
+        shape_id: guid.clone(),
+    })
 }

@@ -145,6 +145,16 @@ impl Vault {
                 if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                     return Err(already_settled(&existing));
                 }
+                // The comment's task waits while its comment is unattached
+                // (OF-368): work answering it keeps until it is reattached.
+                if let Some((_, _, context)) = deck
+                    && let Some(thread) = context.thread
+                    && self.annotation_thread_unattached_in_txn(wtxn, artifact_id, &thread)?
+                {
+                    return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
+                        "the comment this answers is unattached; its task waits until it is reattached",
+                    )));
+                }
                 // The stored artifact format, not public proposal tags, selects the
                 // verifier. Recheck inside the write transaction so a forged XLSX
                 // label can never bypass PowerPoint's semantic replay and write set.
