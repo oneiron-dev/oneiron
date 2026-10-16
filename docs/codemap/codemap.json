@@ -705,6 +705,26 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LaunchNode",
+      "LaunchPlan",
+      "LaunchRole",
+      "LaunchStatement",
+      "SpawnSpend",
+      "SpendCapView"
+     ],
+     "path": "src/agent_dispatch/launch.rs",
+     "purpose": "The launch statement (OF-532, ARCH-0079 #budget): before every agent launch, the whole tree's agent count…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 1,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -712,7 +732,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 9
      }
     },
     {
@@ -738,6 +758,57 @@
      "path": "src/agent_dispatch/resident_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentSpendCalibration",
+      "ExpectedSpend",
+      "SpendBasis"
+     ],
+     "path": "src/agent_dispatch/spend_calibration.rs",
+     "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/spend_lease.rs",
+     "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChildSpend",
+      "SpendRead",
+      "SpendRefused",
+      "SpendScope",
+      "SpendScopeId",
+      "SpendSettlement",
+      "SpendSignal",
+      "SpendState"
+     ],
+     "path": "src/agent_dispatch/spend_record.rs",
+     "purpose": "Durable spend scopes and their typed reads (OF-532)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 4,
+      "struct": 4
+     }
     },
     {
      "bucket": "XL",
@@ -777,9 +848,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 6,
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 5,
-      "fn": 7,
+      "fn": 10,
       "struct": 8
      }
     },
@@ -838,7 +909,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorkflowDispatchStatus",
@@ -43124,7 +43195,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 21,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44526,7 +44597,7 @@
    },
    "over_bar": 62,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2671,
+   "source_files": 2675,
    "test_files": 903
   },
   "oneiron-android": {
