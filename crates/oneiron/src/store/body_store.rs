@@ -21,7 +21,9 @@ use std::os::fd::AsFd;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::Path;
 
-use rustix::fs::{AtFlags, Dir, Mode, OFlags, fstatvfs, fsync, mkdirat, openat, renameat, unlinkat};
+use rustix::fs::{
+    AtFlags, Dir, Mode, OFlags, fstatvfs, fsync, mkdirat, openat, renameat, unlinkat,
+};
 use rustix::io::Errno;
 
 use super::Store;
@@ -163,8 +165,13 @@ impl BodyDir {
         };
         let bytes: Vec<u8> = index.iter().flat_map(|count| count.to_be_bytes()).collect();
         let written = file.write_all(&bytes).is_ok()
-            && renameat(&self.dir, temp.as_str(), &self.dir, format!("{name}{LINE_INDEX_SUFFIX}"))
-                .is_ok();
+            && renameat(
+                &self.dir,
+                temp.as_str(),
+                &self.dir,
+                format!("{name}{LINE_INDEX_SUFFIX}"),
+            )
+            .is_ok();
         if !written {
             self.discard(&temp);
         }
@@ -194,7 +201,11 @@ impl BodyDir {
     fn sweep_temps(&self) -> Result<()> {
         for entry in Dir::read_from(&self.dir).map_err(io)? {
             let entry = entry.map_err(io)?;
-            if entry.file_name().to_bytes().starts_with(TEMP_PREFIX.as_bytes()) {
+            if entry
+                .file_name()
+                .to_bytes()
+                .starts_with(TEMP_PREFIX.as_bytes())
+            {
                 unlinkat(&self.dir, entry.file_name(), AtFlags::empty()).map_err(io)?;
             }
         }
@@ -442,7 +453,11 @@ impl Store {
 
     /// The body directory of the off-record session `session_ref`, made when
     /// `create`. `None` when it has none and none is made.
-    pub(crate) fn session_body_dir(&self, session_ref: &str, create: bool) -> Result<Option<BodyDir>> {
+    pub(crate) fn session_body_dir(
+        &self,
+        session_ref: &str,
+        create: bool,
+    ) -> Result<Option<BodyDir>> {
         let Some(spill) = BodyDir::open_in(&self.body_root()?, SPILL_ROOT, create)? else {
             return Ok(None);
         };
