@@ -121,6 +121,10 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial,
     MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
+// OF-063: a write that names a record its writer cannot resolve is refused
+// with this code; hover and open resolve a typed record ref through the lens.
+pub use crate::lens::{RecordRef, RecordRefPreview, ResolveRecordRefRequest};
+pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,

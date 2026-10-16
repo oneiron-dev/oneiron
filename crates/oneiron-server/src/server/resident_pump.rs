@@ -446,7 +446,7 @@ fn settle(
 }
 
 /// Completes the attempt through the runner's one completion door, its
-/// result a handle on the run, and closes its spend.
+/// result the run's result TURN, and closes its spend.
 fn complete(
     vault: &Vault,
     status: &AgentDispatchStatus,
@@ -454,15 +454,33 @@ fn complete(
     now: u64,
 ) -> oneiron::Result<()> {
     let attempt = &status.attempt;
-    let body = serde_json::json!({ "run_id": outcome.replay_record.run_id.to_hex() }).to_string();
-    let entry = OutputContextEntry::capture(vault, body.as_bytes(), now, String::new())?;
-    AttemptQueue::new(vault).set_result(SetAttemptResult {
-        id: attempt.id,
-        lease_owner: LEASE_OWNER.to_owned(),
-        attempt_count: attempt.attempt_count,
-        result_ref: AttemptResultRef::new(entry.source.handle())?,
-        now,
-    })?;
+    // A run that settled its TASK itself (tasks.refuse; tasks.update once a
+    // run may report) is owed no Done from its result.
+    let settled_itself = outcome
+        .replay_record
+        .bridge_calls
+        .iter()
+        .any(|call| matches!(call.effect.as_str(), "tasks.refuse" | "tasks.update"));
+    if settled_itself {
+        let body =
+            serde_json::json!({ "run_id": outcome.replay_record.run_id.to_hex() }).to_string();
+        let entry = OutputContextEntry::capture(vault, body.as_bytes(), now, String::new())?;
+        AttemptQueue::new(vault).set_result(SetAttemptResult {
+            id: attempt.id,
+            lease_owner: LEASE_OWNER.to_owned(),
+            attempt_count: attempt.attempt_count,
+            result_ref: AttemptResultRef::new(entry.source.handle())?,
+            now,
+        })?;
+    } else {
+        // The run's durable result: the TASK's Done names it.
+        AgentDispatcher::new(vault).attach_resident_run_result(
+            attempt,
+            LEASE_OWNER,
+            &outcome.replay_record,
+            now,
+        )?;
+    }
     DreamerRunnerStore::new(vault).complete(CompleteDreamerAttempt {
         id: attempt.id,
         lease_owner: LEASE_OWNER.to_owned(),
