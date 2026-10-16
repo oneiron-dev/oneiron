@@ -78,6 +78,11 @@ pub struct OffRecordSessionRecord {
     /// and it evaporates with the room.
     #[serde(default)]
     pub notices: Vec<OffRecordNotice>,
+    /// Agents' save suggestions waiting for a holder of this vault's write
+    /// grant to confirm or decline them (ARCH-0052 #d5-save-grant), oldest
+    /// first, one per agent. A save answers every one of them.
+    #[serde(default)]
+    pub suggestions: Vec<OffRecordSaveSuggestion>,
 }
 
 /// What a person did with the talk, as the room hears of it.
@@ -97,6 +102,9 @@ pub enum OffRecordNoticeAct {
     Exported,
     /// An agent suggested a save. Nothing was saved.
     SaveSuggested,
+    /// A holder of this vault's write grant declined the waiting save
+    /// suggestions. Nothing was saved.
+    SaveDeclined,
 }
 
 /// One notice in the room's timeline: who did what, and when.
@@ -104,6 +112,14 @@ pub enum OffRecordNoticeAct {
 pub struct OffRecordNotice {
     pub act: OffRecordNoticeAct,
     /// The person or agent that acted.
+    pub by: [u8; 16],
+    pub at: u64,
+}
+
+/// An agent's save suggestion, waiting for a holder's answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OffRecordSaveSuggestion {
+    /// The agent that suggested it.
     pub by: [u8; 16],
     pub at: u64,
 }

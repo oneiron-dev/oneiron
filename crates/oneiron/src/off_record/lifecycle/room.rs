@@ -3,14 +3,16 @@
 //!
 //! An off-record stretch can run in a room: a conversation whose roster is
 //! everyone in it. Anyone on the roster may start a stretch there, and anyone
-//! may keep their own copy of the talk. A live owner of this vault saves it
-//! into this vault, which is theirs. This vault is nobody else's, so everyone
-//! else takes an export file; the engine never writes another vault. Each save
-//! or export posts a notice to the room's own timeline, naming who and what,
-//! never the content. An agent may suggest a save: the suggestion is a notice
-//! everyone sees, and it saves nothing. A stretch the owner entered alone has
-//! no room. It is the 1:1 with their own companion, and it posts no notice;
-//! nor does a room that holds only the owner and the vault's own agents.
+//! may keep their own copy of the talk. A holder of this vault's write grant,
+//! person or agent, saves it into this vault (ARCH-0052 #d5-save-grant, owner
+//! ruling 2026-10-16; see `save_grant`). Everyone else takes an export file;
+//! the engine never writes another vault. Each save or export posts a notice
+//! to the room's own timeline, naming who and what, never the content. An
+//! agent may suggest a save: the suggestion is a notice everyone sees, and it
+//! waits, saving nothing, until a holder confirms or declines it. A stretch
+//! the owner entered alone has no room. It is the 1:1 with their own
+//! companion, and it posts no notice; nor does a room that holds only the
+//! owner and the vault's own agents.
 //!
 //! Each room names its own stretches: the registry keys one as
 //! [`room_session_key`], so a name taken in one room says nothing about
@@ -25,42 +27,20 @@ use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
-use crate::off_record::promote::{PromoteInitiator, PromoteOutcome};
+use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use crate::session_overlay::{JournalEntry, JournalRole};
 
 use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
 use super::types::{
-    OffRecordBackendClass, OffRecordNotice, OffRecordNoticeAct, OffRecordSessionRecord,
-    OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
+    OffRecordBackendClass, OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion,
+    OffRecordSessionRecord, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
 };
 
-/// Whether this vault's authority log minted `credential` as it shows
-/// itself, holder key and bounds alike. A slip narrowed or handed on to
-/// another key since shows other claims than its mint; and a proof verified
-/// against a snapshot other than this vault's may name a live slip id, but
-/// not the claims this vault minted under it.
-fn minted_as_shown(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    credential: &VerifiedSlip,
-) -> Result<bool> {
-    let shown = credential.claims();
-    let fold = vault.authority_view_readonly_in_txn(txn)?;
-    Ok(fold.slips.mints.get(&shown.slip_id).is_some_and(|mint| {
-        // Verification trims the lifetime left to the moment it ran.
-        let minted = &mint.action.claims;
-        *minted
-            == crate::authority::SlipClaims {
-                ttl_secs: minted.ttl_secs,
-                ..shown.clone()
-            }
-    }))
-}
-
-/// The most notices a room's timeline holds; past it the oldest drop, so a
-/// member repeating an act cannot grow the room without bound.
+/// The most notices a room's timeline holds, and the most save suggestions
+/// that wait in it; past it the oldest drop, so a member repeating an act
+/// cannot grow the room without bound.
 const MAX_ROOM_NOTICES: usize = 1024;
 
 /// The prefix of every room stretch's registry key. A stretch the owner
@@ -191,8 +171,8 @@ impl OffRecordSession<'_> {
     }
 
     /// The stretch as `actor`, who is in its room, may see it: the notices
-    /// from the times their membership shows them, and no list of saved
-    /// turns (their copy marks which turns are saved).
+    /// and waiting suggestions from the times their membership shows them,
+    /// and no list of saved turns (their copy marks which turns are saved).
     pub fn record_for(&self, actor: EntityId) -> Result<OffRecordSessionRecord> {
         let room = self.require_in_room(actor)?;
         // A saver who left the room has stopped saving, read or not.
@@ -203,6 +183,9 @@ impl OffRecordSession<'_> {
         record
             .notices
             .retain(|notice| visible(Some(windows.as_slice()), notice.at));
+        record
+            .suggestions
+            .retain(|suggestion| visible(Some(windows.as_slice()), suggestion.at));
         Ok(record)
     }
 
@@ -234,12 +217,26 @@ impl OffRecordSession<'_> {
     }
 
     /// An agent in the room suggests a save. Everyone in the room sees the
-    /// suggestion in its timeline. Nothing is saved: only a person's own
-    /// [`Self::save_talk_by`] or [`Self::export_talk_by`] keeps a copy.
+    /// suggestion in its timeline, and it waits, one per agent, until a
+    /// holder of this vault's write grant answers it with
+    /// [`Self::confirm_save_by`] or [`Self::decline_save_by`]. Nothing is
+    /// saved: only a holder's own save, or someone's
+    /// [`Self::export_talk_by`], keeps a copy.
     pub fn suggest_save_by(&self, agent: EntityId) -> Result<()> {
         self.require_in_room(agent)?;
         let mut state = self.recording_state()?;
         let hearing = Hearing::now(self.vault, state.record.room);
+        let suggestions = &mut state.record.suggestions;
+        suggestions.retain(|suggestion| suggestion.by != *agent.as_bytes());
+        if suggestions.len() >= MAX_ROOM_NOTICES {
+            suggestions.remove(0);
+        }
+        // It waits even where no notice posts: the owner alone with their
+        // own agent still answers it.
+        suggestions.push(OffRecordSaveSuggestion {
+            by: *agent.as_bytes(),
+            at: hearing.at,
+        });
         post_notice(
             &mut state,
             OffRecordNoticeAct::SaveSuggested,
@@ -284,19 +281,22 @@ impl OffRecordSession<'_> {
         Ok(talk)
     }
 
-    /// Saves the whole talk so far into this vault for `person`, who is in the
-    /// room and a live owner of this vault, so the vault is theirs, on
-    /// `credential`: their own person's slip, as this vault minted it (not
+    /// Saves the whole talk so far into this vault for `holder`, who is in
+    /// the room and holds this vault's write grant (ARCH-0052
+    /// #d5-save-grant): a person who owns this vault or whose shared-vault
+    /// membership writes its content, or one of this vault's own agents. They
+    /// act on `credential`, their own slip as this vault minted it (not
     /// narrowed or handed on), able to write with no record bound. Every turn
     /// they could see that nobody saved yet lands in ONE transaction, which
-    /// checks again that they own the vault, that `credential` is live and
+    /// checks again that they hold the grant, that `credential` is live and
     /// the slip this vault's authority log minted, that they are in the room
     /// and that their membership shows each turn. The room hears a
-    /// `saved_talk` notice. A person this vault does not belong to is refused
-    /// and nothing is written; they keep their copy with
-    /// [`Self::export_talk_by`].
+    /// `saved_talk` notice, and every save suggestion waiting there is
+    /// answered. Anyone else is refused and nothing is written: a person
+    /// keeps their copy with [`Self::export_talk_by`], an agent asks with
+    /// [`Self::suggest_save_by`].
     ///
-    /// A handle names whom it saves for only with that person's slip
+    /// A handle names whom it saves for only with that holder's slip
     /// (H203); a caller holding the owner's proof uses [`Self::save_talk_as`]:
     ///
     /// ```compile_fail
@@ -308,50 +308,14 @@ impl OffRecordSession<'_> {
     /// # Errors
     ///
     /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
-    /// is not such a slip of `person`'s, when `person` owns no part of this
-    /// vault or when `credential` was revoked or expired,
+    /// is not such a slip of `holder`'s, when this vault grants them no write
+    /// or when `credential` was revoked or expired,
     /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room or
     /// their membership stopped showing a turn; otherwise as
     /// [`Self::promote_turn_as`].
-    pub fn save_talk_by(&self, person: EntityId, credential: &VerifiedSlip) -> Result<SavedTurns> {
-        let room = self.require_in_room(person)?;
-        let refused = || {
-            Error::OffRecord(OffRecordError::OffRecordPromoteUnauthenticated {
-                session_ref: self.session_ref.clone(),
-                actor_ref: person.to_hex(),
-            })
-        };
-        // The save names `person` in its receipts, so it runs only on their
-        // own slip: someone else's, or an agent's, saves nothing. It keeps
-        // the whole talk, so a slip bounded to some records, or narrowed by
-        // any caveat since its mint, keeps none of it. A save consumes no
-        // slip, so a one-shot slip would save again.
-        let claims = credential.claims();
-        let mut whole = crate::federation::Scope::top();
-        whole.verbs = credential.scope().verbs.clone();
-        if EntityId::from_hex(&claims.holder_ref).ok() != Some(person)
-            || claims.actor_class.as_deref() != Some("human")
-            || !(credential.allows_verb("write") || credential.allows_verb("core:write"))
-            || claims.single_use
-            || !credential.is_unattenuated()
-            || !claims.records.is_empty()
-            || !claims.channels.is_empty()
-            || !whole.is_narrowing_of(credential.scope())
-        {
-            return Err(refused());
-        }
-        let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
-            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &person)?
-                || !vault.capability_slip_is_live_in_txn(txn, credential)?
-                || !minted_as_shown(vault, txn, credential)?
-            {
-                return Err(refused());
-            }
-            Ok(())
-        };
-        // Refused the same way whether or not there is anything to save yet.
-        authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(PromoteInitiator::room_owner(person), Some(room), authority)
+    pub fn save_talk_by(&self, holder: EntityId, credential: &VerifiedSlip) -> Result<SavedTurns> {
+        self.save_talk_for_holder(holder, credential, false)
+            .map(Option::unwrap_or_default)
     }
 
     /// The owner's save of the whole talk so far; `owner`'s proof, and that
@@ -359,22 +323,8 @@ impl OffRecordSession<'_> {
     /// room the owner must be on the roster, and only the turns their
     /// membership shows them are saved.
     pub fn save_talk_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<SavedTurns> {
-        let room = match self.room()? {
-            Some(_) => {
-                let actor = owner.revalidate_as_vault_owner_in_txn(
-                    self.vault,
-                    &self.vault.store.env.read_txn()?,
-                )?;
-                Some(self.require_in_room(actor)?)
-            }
-            None => None,
-        };
-        let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
-            owner.revalidate_as_vault_owner_in_txn(vault, txn).map(drop)
-        };
-        // Refused the same way whether or not there is anything to save yet.
-        authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(PromoteInitiator::owner(self.vault, owner)?, room, authority)
+        self.save_talk_for_owner(owner, false)
+            .map(Option::unwrap_or_default)
     }
 
     /// The talk so far, gathered: the messages of this stretch already in

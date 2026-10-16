@@ -156,8 +156,8 @@ pub struct OffRecordPromoteReceipt {
     pub promoted_at: u64,
     /// The consenting actor's entity id, as lower-case hex.
     pub initiator_ref: String,
-    /// How they proved it: [`PROMOTE_INITIATOR_OWNER`] or
-    /// [`PROMOTE_INITIATOR_ROOM_OWNER`].
+    /// How they proved it: [`PROMOTE_INITIATOR_OWNER`],
+    /// [`PROMOTE_INITIATOR_ROOM_OWNER`] or [`PROMOTE_INITIATOR_ROOM_HOLDER`].
     pub initiator_kind: String,
     pub outcome: PromoteOutcome,
 }
@@ -171,6 +171,12 @@ pub const PROMOTE_INITIATOR_OWNER: &str = "owner";
 /// this vault, named by the transport with the credential it checked
 /// ([`OffRecordSession::save_talk_by`](crate::off_record::OffRecordSession::save_talk_by)).
 pub const PROMOTE_INITIATOR_ROOM_OWNER: &str = "room_owner";
+
+/// `initiator_kind` of a room's talk saved by someone in the room who holds
+/// this vault's write grant without owning it: a member whose shared-vault
+/// grant writes, or one of this vault's own agents (ARCH-0052
+/// #d5-save-grant), on the slip the transport checked.
+pub const PROMOTE_INITIATOR_ROOM_HOLDER: &str = "room_holder";
 
 /// Who consented to a promotion, as its receipt names them. Built only from
 /// the proof the saving door checks.
@@ -196,6 +202,13 @@ impl PromoteInitiator {
         Self {
             actor: person,
             kind: PROMOTE_INITIATOR_ROOM_OWNER,
+        }
+    }
+
+    pub(crate) const fn room_holder(holder: EntityId) -> Self {
+        Self {
+            actor: holder,
+            kind: PROMOTE_INITIATOR_ROOM_HOLDER,
         }
     }
 

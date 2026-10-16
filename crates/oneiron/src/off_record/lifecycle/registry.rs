@@ -159,6 +159,7 @@ impl OffRecordSessionRegistry {
             room: room.map(|(room, _)| *room.as_bytes()),
             started_by: room.map(|(_, by)| *by.as_bytes()),
             notices: Vec::new(),
+            suggestions: Vec::new(),
         };
         let overlay = SessionOverlay::new(budget_bytes);
         if mode == OffRecordMode::Anonymous {

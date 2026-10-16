@@ -67,6 +67,7 @@ mod participant;
 mod promotion;
 mod registry;
 mod room;
+mod save_grant;
 mod saving;
 mod session;
 mod telemetry;
@@ -80,8 +81,8 @@ pub use self::session::{OffRecordSession, OffRecordSessionVault};
 pub(crate) use self::telemetry::SessionRetrievalTelemetry;
 pub use self::types::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
-    OffRecordNotice, OffRecordNoticeAct, OffRecordSessionRecord, OffRecordTalk,
-    OffRecordTalkMessage, OffRecordTalkTurn,
+    OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion, OffRecordSessionRecord,
+    OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
 };
 
 #[cfg(test)]

@@ -33,12 +33,13 @@ mod promote;
 
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
-    OffRecordNotice, OffRecordNoticeAct, OffRecordSession, OffRecordSessionRecord,
-    OffRecordSessionVault, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn, SavedTurns,
-    room_session_key,
+    OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion, OffRecordSession,
+    OffRecordSessionRecord, OffRecordSessionVault, OffRecordTalk, OffRecordTalkMessage,
+    OffRecordTalkTurn, SavedTurns, room_session_key,
 };
 pub use promote::{
-    OffRecordPromoteReceipt, PROMOTE_INITIATOR_OWNER, PROMOTE_INITIATOR_ROOM_OWNER, PromoteOutcome,
+    OffRecordPromoteReceipt, PROMOTE_INITIATOR_OWNER, PROMOTE_INITIATOR_ROOM_HOLDER,
+    PROMOTE_INITIATOR_ROOM_OWNER, PromoteOutcome,
 };
 
 pub(crate) use lifecycle::OffRecordSessionRegistry;
