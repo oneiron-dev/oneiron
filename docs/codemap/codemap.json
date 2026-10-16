@@ -1289,7 +1289,7 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5
      }
     },
@@ -15517,7 +15517,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -15644,7 +15644,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 19,
+      "const": 20,
       "crate-vis": 34
      }
     },
@@ -15873,7 +15873,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerRunnerStore"
@@ -15881,7 +15881,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 14,
       "struct": 1
      }
@@ -16119,7 +16119,7 @@
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
       "fn": 8,
       "struct": 8
@@ -16169,6 +16169,16 @@
      "path": "src/dreamer_wake/recipe/tests.rs",
      "purpose": "Recipe read, trust and commit-to-settlement recovery regressions",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/recipe_wake.rs",
+     "purpose": "The wake policy's recipe lane (ARCH-0026 #wake)",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -24432,7 +24442,7 @@
      "path": "src/llm/step/peer_wait.rs",
      "purpose": "Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3,
       "struct": 1
      }
@@ -24532,7 +24542,7 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -43128,7 +43138,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44038,9 +44048,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2640,
+   "source_files": 2641,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53368,6 +53378,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/sync_wake.rs",
+     "purpose": "A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/test_support.rs",
      "purpose": "Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake…",
      "surface": {
@@ -53389,7 +53409,7 @@
      "path": "src/ai_host/turns.rs",
      "purpose": "Chat turns in flight",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -59098,7 +59118,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59345,7 +59365,7 @@
    },
    "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 380,
+   "source_files": 381,
    "test_files": 182
   },
   "oneiron-spawn": {
