@@ -62,6 +62,7 @@
     },
     {
       "name": "self.memory.diary",
+      "prose_links": ["/content"],
       "input": "DiaryEntryRequest",
       "output": "crate::task_verb::sdk::DiaryEntryReceipt",
       "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
@@ -229,6 +230,7 @@
     },
     {
       "name": "tasks.create",
+      "prose_links": ["/label", "/spec"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::msgpack_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
@@ -268,6 +270,7 @@
     },
     {
       "name": "vault.witness",
+      "prose_links": ["/messages/*[author=companion]/content"],
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
@@ -657,6 +660,54 @@
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.prepare",
+      "input": "PackSetupRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.get",
+      "input": "PackSetupRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.answer",
+      "input": "PackSetupAnswerRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.setup.verify",
+      "input": "PackSetupVerifyRequest",
+      "output": "crate::task_verb::sdk::PackSetupReceipt",
+      "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {
@@ -1427,6 +1478,7 @@
     },
     {
       "name": "vault.rooms.speak",
+      "prose_links": ["/messages/*[author=companion]/content"],
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
@@ -2161,6 +2213,18 @@
       "input": "crate::lens::ResolveRecordRefRequest",
       "output": "crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>",
       "call": "memory.resolve_record_ref(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.refs.links",
+      "input": "crate::lens::RecordLinksRequest",
+      "output": "crate::lens::RecordLinks",
+      "call": "memory.record_links(&input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true

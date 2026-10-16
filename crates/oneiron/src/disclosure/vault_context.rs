@@ -6,6 +6,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::affect::Vad;
@@ -333,9 +334,23 @@ impl DisclosureContext {
     }
 
     fn resolve_with(vault: &Vault, set: InterlocutorSet, reader: bool) -> Result<Self> {
+        Self::resolve_with_once(vault, set, reader, &BTreeMap::new())
+    }
+
+    /// [`Self::resolve_room`] (with no `reader`, [`Self::resolve`]) under the
+    /// `once` answers this assembly already spent
+    /// ([`Vault::spend_once_contact_disclosures`]): each contact in `once` is
+    /// held to that answer's Scope in place of its clearance. The mode still
+    /// follows the set.
+    pub fn resolve_with_once(
+        vault: &Vault,
+        set: InterlocutorSet,
+        reader: bool,
+        once: &BTreeMap<EntityId, Scope>,
+    ) -> Result<Self> {
         Ok(Self {
             mode: DisclosureMode::from_set(&set),
-            disclosable: DisclosableSet::resolve(vault, &set, reader)?,
+            disclosable: DisclosableSet::resolve_with_once(vault, &set, reader, once)?,
             interlocutors: set,
         })
     }

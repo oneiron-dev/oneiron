@@ -7,8 +7,10 @@
 //! the pack's own qualification still decides Active. The setup skill is
 //! read from the exact source, so a Candidate is set up before it qualifies.
 //!
-//! Model setup is not here: first-run model setup stays the one `init`
-//! flow, and a pack's setup covers the pack's own connections.
+//! Model setup is not here: first-run model setup is the server's one
+//! shared operation (`commands::init::setup_models`, ARCH-0036), and a
+//! pack's setup covers the pack's own connections. Agents reach this setup
+//! through the `vault.packs.setup.*` verbs, which never answer `allow`.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -17,7 +19,9 @@ use super::admission::{PACK_CANDIDATE, pack_permissions};
 use super::setup::{PackSetup, PackSetupConnection, PackSetupSecret};
 use super::{PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource, invalid};
 use crate::consent::AuthenticatedOwner;
-use crate::secret_custody::{SecretCustodyStatus, read_secret_custody_in_txn, resolve_secret_ref_in_txn};
+use crate::secret_custody::{
+    SecretCustodyStatus, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, error::Result};
@@ -99,7 +103,7 @@ pub struct PackSetupCheckRecord {
 
 /// What the owner sees: the declaration, the instructions, the whole
 /// permission card and every connection's state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackSetupView {
     pub session_id: String,
     pub pack_name: String,
@@ -118,7 +122,7 @@ pub struct PackSetupView {
     pub ready: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackSetupConnectionState {
     pub id: String,
     pub secrets: Vec<PackSetupSecretState>,
@@ -130,14 +134,14 @@ pub struct PackSetupConnectionState {
     pub ready: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackSetupSecretState {
     pub name: String,
     /// A live custody record holds the name.
     pub stored: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackSetupPermissionState {
     pub id: String,
     pub granted: bool,
@@ -145,7 +149,7 @@ pub struct PackSetupPermissionState {
     pub decision_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PackSetupCheck {
     Unchecked,
@@ -159,7 +163,9 @@ pub enum PackSetupCheck {
         checked_at: u64,
     },
     /// A grant, credential or key moved after the check.
-    Stale { checked_at: u64 },
+    Stale {
+        checked_at: u64,
+    },
 }
 
 /// One owner answer. A credential's value never passes here: it goes to the
@@ -180,7 +186,10 @@ pub enum PackSetupAnswer {
     },
     /// A registered connector key governs the connection; its real
     /// qualification becomes the connection's check.
-    BindKey { connection: String, key: String },
+    BindKey {
+        connection: String,
+        key: String,
+    },
 }
 
 /// One session's exact frame, read in one snapshot: the receipt, the live
@@ -368,10 +377,7 @@ impl Vault {
                 .ok_or_else(|| invalid("no source of this pack has that content hash"));
         }
         let mut found = None;
-        for (seen, entry) in PACK_CANDIDATE
-            .iter_from(&self.store, txn, &[])?
-            .enumerate()
-        {
+        for (seen, entry) in PACK_CANDIDATE.iter_from(&self.store, txn, &[])?.enumerate() {
             if seen >= MAX_CANDIDATE_SCAN {
                 return Err(invalid("candidate pack catalog exceeds bound"));
             }

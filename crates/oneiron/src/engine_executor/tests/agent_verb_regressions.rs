@@ -53,8 +53,8 @@ impl TaskCreateDoor {
     }
 }
 
-impl AgentVerbDoor for TaskCreateDoor {
-    fn call(
+impl TaskCreateDoor {
+    fn answer(
         &self,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
@@ -78,6 +78,17 @@ impl AgentVerbDoor for TaskCreateDoor {
             output: answer,
             rows: Some(Vec::new()),
         })
+    }
+}
+
+impl AgentVerbDoor for TaskCreateDoor {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        _: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(self.answer(call, origin))
     }
 
     fn admit_run_call(
@@ -731,10 +742,11 @@ impl AgentVerbDoor for ClosingDoor {
         &self,
         _: &SelfAgentVerbCall,
         _: &HostWriteOrigin,
-    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
-        Err(AgentVerbRefusal {
+        _: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
-        })
+        }))
     }
 
     fn admit_run_call(
@@ -968,10 +980,11 @@ impl AgentVerbDoor for GateWordDoor {
         &self,
         _: &SelfAgentVerbCall,
         _: &HostWriteOrigin,
-    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
-        Err(AgentVerbRefusal {
+        _: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
-        })
+        }))
     }
 
     fn admit_run_call(

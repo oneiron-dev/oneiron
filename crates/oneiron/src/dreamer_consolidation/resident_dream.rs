@@ -12,7 +12,9 @@
 use super::step_charge::StepChargeTally;
 use crate::agent_def::DreamingMode;
 use crate::dreamer_runner::{DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DreamerAdmittedAttempt};
-use crate::dreamer_wake::{DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext};
+use crate::dreamer_wake::{
+    DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::llm::manifest::ModelRole;
@@ -249,9 +251,7 @@ fn cut_for(
                 None,
             ),
     )?;
-    receipts.sort_by(|a, b| {
-        (a.occurred_at, &a.receipt_id).cmp(&(b.occurred_at, &b.receipt_id))
-    });
+    receipts.sort_by(|a, b| (a.occurred_at, &a.receipt_id).cmp(&(b.occurred_at, &b.receipt_id)));
     let mut receipt_lines = Vec::new();
     for receipt in receipts {
         let mut line = format!(
