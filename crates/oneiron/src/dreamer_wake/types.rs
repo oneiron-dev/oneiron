@@ -101,6 +101,10 @@ pub struct WakePassReport {
     /// result, and a pass that reported it as completed would be claiming work
     /// finished that a successor still has to do.
     pub landed: u32,
+    /// Selection retries whose source budget left admissible sources out:
+    /// each ran its originals and the oldest others that fit, and more
+    /// sources exist. A truncation, never a refusal.
+    pub sources_truncated: u32,
     pub stop: WakePassStop,
 }
 

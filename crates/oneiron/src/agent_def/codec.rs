@@ -14,10 +14,10 @@ use super::types::{
     KEY_DESC, KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
     KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS, KEY_LOGICAL_ID,
     KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
-    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_WINDOW_TOKEN_BUDGET, KEY_PROVENANCE, KEY_SCOPE,
-    KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES,
-    KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE, KEY_WORLD, MemoryProfile, SCOPE_ALL,
-    SCOPE_BASE, SCOPE_WORLD,
+    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
+    KEY_PROVENANCE, KEY_SCOPE, KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER,
+    KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE, KEY_WORLD, MemoryProfile,
+    SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
@@ -559,8 +559,8 @@ fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
     ])
 }
 
-/// Encodes a [`MemoryProfile`] sub-map: the four [`MEMORY_PROFILE_KEYS`] in
-/// pinned order, with `budget_split` elided when absent.
+/// Encodes a [`MemoryProfile`] sub-map: the [`MEMORY_PROFILE_KEYS`] in
+/// pinned order, with `budget_split` and `optional_memory` elided when absent.
 fn encode_memory_profile(profile: &MemoryProfile) -> Value {
     let mut entries = vec![(
         Value::from(KEY_PROFILE_WINDOW_TOKEN_BUDGET),
@@ -580,6 +580,12 @@ fn encode_memory_profile(profile: &MemoryProfile) -> Value {
         Value::from(KEY_PROFILE_COMPACTION),
         Value::from(profile.compaction.as_str()),
     ));
+    if let Some(optional_memory) = &profile.optional_memory {
+        entries.push((
+            Value::from(KEY_PROFILE_OPTIONAL_MEMORY),
+            super::optional_memory::encode_optional_memory_profile(optional_memory),
+        ));
+    }
     Value::Map(entries)
 }
 

@@ -3,7 +3,7 @@
 //! HIGH and MID are shorthands: each expands to the DETAILED form, a ladder
 //! of rungs per role key. A role written out in DETAILED replaces whatever a
 //! shorthand gave it.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -89,7 +89,9 @@ pub(super) struct RungFile {
     prompt_file: Option<PathBuf>,
 }
 
-/// `[models.roles.<role>]`: either one `model` or a `rungs` list.
+/// `[models.roles.<role>]`: either one `model` or a `rungs` list, and
+/// whether the seat's work may leave the device. A table that sets only
+/// `leave_device` keeps the ladder a shorthand gave the role.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RoleFile {
@@ -98,6 +100,50 @@ pub(super) struct RoleFile {
     prompt_file: Option<PathBuf>,
     #[serde(default)]
     rungs: Vec<RungFile>,
+    leave_device: Option<LeaveDevice>,
+}
+
+/// Whether a seat's work may leave the device (ARCH-0036 `#offers`).
+/// Unset, it may: the ladder is the owner's own order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LeaveDevice {
+    Never,
+    /// Asks before the work leaves; waits for the consent flow (OF-562).
+    Ask,
+    Allow,
+}
+
+impl RoleFile {
+    /// Only the setting: the ladder comes from a shorthand.
+    fn sets_only_leave_device(&self) -> bool {
+        self.leave_device.is_some()
+            && self.model.is_none()
+            && self.rungs.is_empty()
+            && self.prompt.is_none()
+            && self.prompt_file.is_none()
+    }
+}
+
+/// The roles whose work never leaves the device. `ask` is refused until
+/// someone can be asked.
+pub(super) fn stays_on_device(
+    roles: &BTreeMap<ModelRole, RoleFile>,
+) -> anyhow::Result<BTreeSet<ModelRole>> {
+    let mut stays = BTreeSet::new();
+    for (role, file) in roles {
+        match file.leave_device {
+            Some(LeaveDevice::Never) => {
+                stays.insert(*role);
+            }
+            Some(LeaveDevice::Ask) => anyhow::bail!(
+                "models.roles.{}.leave_device = \"ask\" waits for the consent flow; set \"never\" or \"allow\"",
+                role_key(*role)
+            ),
+            Some(LeaveDevice::Allow) | None => {}
+        }
+    }
+    Ok(stays)
 }
 
 /// The HIGH and MID keys of `[models]`.
@@ -164,6 +210,14 @@ pub(super) fn expand(
         }
     }
     for (role, file) in roles {
+        if file.sets_only_leave_device() {
+            anyhow::ensure!(
+                ladders.contains_key(&role),
+                "models.roles.{}: no shorthand fills this role; set `model` or `rungs` beside leave_device",
+                role_key(role)
+            );
+            continue;
+        }
         ladders.insert(role, role_ladder(role, file, base)?);
     }
     Ok(ladders)

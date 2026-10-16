@@ -9,6 +9,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
@@ -51,7 +52,10 @@ pub(super) fn load_pack_quarantine_index(
     store: &Store,
     rtxn: &RoTxn<'_>,
 ) -> Result<PackQuarantineIndex> {
-    let active_remat_markers = load_active_pack_entity_remat_markers(store, rtxn)?;
+    // Every marker and diagnostic is read: past the threshold row the index
+    // raises one check and is still whole, so no quarantined entity leaks.
+    let mut rows = ScanCount::start(store, rtxn, EngineScan::PackQuarantineRows, &[])?;
+    let active_remat_markers = load_active_pack_entity_remat_markers(store, rtxn, &mut rows)?;
     let mut active_entity_keys: HashSet<(u64, u32)> = active_remat_markers
         .iter()
         .map(|(_window, entity_key)| *entity_key)
@@ -59,6 +63,7 @@ pub(super) fn load_pack_quarantine_index(
     let iter = store.sync_queue.prefix_iter(rtxn, b"x:")?;
     for entry in iter {
         let (key, value) = entry?;
+        rows.row();
         if !is_quarantine_key(&key) {
             continue;
         }
@@ -74,15 +79,27 @@ pub(super) fn load_pack_quarantine_index(
             active_entity_keys.insert(entity_key);
         }
     }
+    rows.defer(store);
     Ok(PackQuarantineIndex { active_entity_keys })
+}
+
+/// The entities a pack keeps out, for the scan table.
+#[cfg(test)]
+pub(crate) fn quarantined_entity_count_for_test(store: &Store) -> Result<usize> {
+    let rtxn = store.env.read_txn()?;
+    Ok(load_pack_quarantine_index(store, &rtxn)?
+        .active_entity_keys
+        .len())
 }
 
 fn load_active_pack_entity_remat_markers(
     store: &Store,
     rtxn: &RoTxn<'_>,
+    rows: &mut ScanCount,
 ) -> Result<HashSet<(String, (u64, u32))>> {
     let mut markers = HashSet::new();
     for rest in REMAT_MARKERS.scan_keys(store, rtxn, &[])? {
+        rows.row();
         let Some((window_key, entity_hex)) = rest.split_once(':') else {
             continue;
         };

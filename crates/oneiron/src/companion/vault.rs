@@ -32,6 +32,8 @@ impl Vault {
     /// Lists the exact profiles this principal may read, using the same
     /// persisted authorization clock as `companion_profile_access_grant`.
     /// Deleted grants are skipped; malformed live grants still fail closed.
+    /// Every grant is read: past the threshold row the read raises the
+    /// owner's check and reads on (rule 5).
     pub fn authorized_companion_profile_personas(
         &self,
         principal_ref: &EntityId,
@@ -39,11 +41,18 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::AccessGrantRows,
+            &[],
+        )?;
         let mut personas = BTreeSet::new();
         for entry in self
             .store
             .port_entity_ids_by_type(&txn, ENTITY_TYPE_ACCESS_GRANT, None)?
         {
+            count.row();
             let id = entry?;
             let body = match live_entity_row_in_txn(&self.store, &txn, &id)? {
                 LiveEntityRow::Absent | LiveEntityRow::DeletedShell => continue,
@@ -63,6 +72,8 @@ impl Vault {
                 personas.insert(persona);
             }
         }
+        drop(txn);
+        count.finish(self);
         Ok(personas.into_iter().collect())
     }
 }
