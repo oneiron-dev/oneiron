@@ -594,7 +594,7 @@ async fn production_factory_executes_owner_admitted_agent_authored_recipe() -> R
 
     let (_dir, vault) = open_vault();
     let agent = EntityId::from_bytes([0x64; 16])?;
-    let owner = EntityId::from_bytes([0x65; 16])?;
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     let subject = EntityId::from_bytes([0x66; 16])?;
     let evidence = EntityId::from_bytes([0x67; 16])?;
     for (id, body) in [
