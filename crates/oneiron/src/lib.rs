@@ -205,6 +205,7 @@ pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
 pub mod office_body;
+pub mod typed_body;
 pub mod edit_settle;
 pub mod git_wire;
 pub mod merge_queue;
