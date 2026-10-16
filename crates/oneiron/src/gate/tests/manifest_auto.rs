@@ -77,6 +77,98 @@ fn system_dreamer_auto_write_still_requires_a_signed_manifest() -> Result<()> {
     Ok(())
 }
 
+/// H89 (closed, not exploitable): a signature is a marker nothing verifies,
+/// and the trust stamp is the boundary. A peer's or replayed pack carrying a
+/// forged marker beside the Dreamer's own grants buys no Auto write and no
+/// weave reach, because an untrusted pack contributes neither grants nor
+/// signatures. The same bytes installed as a trusted owner pack work.
+#[test]
+fn a_forged_signature_in_an_untrusted_pack_grants_the_dreamer_nothing() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let dreamer = vault.dreamer_authority()?;
+    // The host roots the vault and enrolls its engine writers, the Dreamer
+    // among them, as at bootstrap: a machine writes only with its host key.
+    crate::test_util::provision_engine_machines(&vault);
+    put_policy_manifest_bytes(&vault, test_id(0xC1), &encode_policy_manifest(vec![]))?;
+    // The Dreamer's own grants, in the shape weave reach reads: an Auto
+    // ceiling and an actor-bound, receipted and warned Generated permit.
+    let generated_permit = (
+        Value::from(POLICY_SOURCE_TRUST_KEY),
+        Value::Map(vec![(
+            Value::from(ClaimSource::Generated.as_str()),
+            Value::Map(vec![
+                (
+                    Value::from("actor_ref"),
+                    Value::from(dreamer.entity_ref().to_hex()),
+                ),
+                (
+                    Value::from("max_auto_sensitivity"),
+                    Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (Value::from("receipted"), Value::Boolean(true)),
+                (Value::from("warned"), Value::Boolean(true)),
+            ]),
+        )]),
+    );
+    let mut granting = encode_policy_manifest(vec![generated_permit, signatures_entry()]);
+    append_actor_ceiling(
+        &mut granting,
+        actor_ceiling_row_for_ref("system", &dreamer.entity_ref().to_hex(), "auto"),
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &test_id(0xC2),
+            ENTITY_TYPE_POLICY_MANIFEST,
+            test_time(1),
+            1,
+            &granting,
+        )
+        .commit()?;
+
+    let write = |claim_id: EntityId| -> Result<()> {
+        let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+        body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
+        let (candidate, dummy_envelope) = dreamer_claim_candidate_write_parts(
+            &vault,
+            &body,
+            first_party_connector_actor_id(),
+            "dreamer-forged-marker-run",
+        )?;
+        let envelope = crate::WriteEnvelope::new(
+            dreamer,
+            dummy_envelope.source(),
+            dummy_envelope.provenance().clone(),
+            dummy_envelope.approval(),
+        );
+        // The Dreamer is a machine writer: it signs as the engine's own
+        // writer does, so only the gate decides.
+        let envelope =
+            crate::test_util::sign_machine_candidate(&vault, &claim_id, &candidate, &envelope);
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()
+    };
+    let forged = test_id(0xC3);
+    let err = write(forged).expect_err("an untrusted pack's marker and grants confer nothing");
+    let typed = err.gate_denial().expect("typed gate rejection");
+    assert_eq!(typed.outcome().as_str(), "pending");
+    assert!(vault.get_raw(&forged)?.is_none());
+    assert!(!vault.dreamer_weave_reach()?.lands_auto);
+
+    // Control: the owner installs the same bytes as a trusted pack.
+    put_policy_manifest_bytes(&vault, test_id(0xC4), &granting)?;
+    assert!(vault.dreamer_weave_reach()?.lands_auto);
+    let trusted = test_id(0xC5);
+    write(trusted)?;
+    assert_eq!(
+        stored_claim_body(&vault, &trusted)?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
 #[test]
 fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
