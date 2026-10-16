@@ -914,8 +914,8 @@ pub(super) fn principal_stands_in_txn(
         return seats_hold_in_txn(vault, txn, &seats, &JoinSubject::Person(principal), at);
     }
     let own = WriteActor::new(principal, EdgeActorClass::Human);
-    Ok(
-        matches!(room_host_in_txn(vault, txn, room, own)?, Some(RoomHost::Owner))
-            || vault.members_in_txn(txn, room)?.contains(&principal),
-    )
+    Ok(matches!(
+        room_host_in_txn(vault, txn, room, own)?,
+        Some(RoomHost::Owner)
+    ) || vault.members_in_txn(txn, room)?.contains(&principal))
 }

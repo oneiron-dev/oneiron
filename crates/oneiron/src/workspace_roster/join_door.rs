@@ -321,7 +321,9 @@ fn settle_in_txn(
             &ready_key(request.room, &request.subject, request.branch),
             &filing.join_ref,
         )?;
-        Some(participate_in_txn(vault, txn, request, &consents, actor, now)?)
+        Some(participate_in_txn(
+            vault, txn, request, &consents, actor, now,
+        )?)
     } else {
         None
     };
