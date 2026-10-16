@@ -206,6 +206,20 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
             .transpose()?,
         provenance: task_body_field(entries, "provenance")?.clone(),
         created_at,
+        type_ref: task_body_optional(entries, "type_ref")?
+            .map(|value| {
+                value
+                    .as_str()
+                    .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                        "tasks.body.type_ref",
+                    )))
+                    .and_then(|wire| {
+                        crate::task_type::TaskTypeRef::parse_wire(wire).map_err(|_| {
+                            Error::Record(RecordError::InvalidTaskBody("tasks.body.type_ref"))
+                        })
+                    })
+            })
+            .transpose()?,
         refusal: task_body_optional(entries, "refusal")?
             .map(decode_task_refusal_record)
             .transpose()?,

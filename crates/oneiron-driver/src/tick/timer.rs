@@ -117,6 +117,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         }
         .next_deadline()?;
         let queue = AttemptQueue::new(self.vault);
+        let macro_ready = DreamerRunnerStore::new(self.vault).macro_schedulable_attempts()?;
         let mut macro_admissible = None;
         let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
@@ -153,7 +154,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                         }
                     },
                 };
-                if !eligible {
+                if !eligible || !macro_ready.contains(&attempt.id) {
                     continue;
                 }
             }

@@ -9,6 +9,8 @@ pub const TAG_DOCUMENT: u8 = 11;
 pub const TAG_BATCH: u8 = 12;
 
 const MAX_BATCH_DOCUMENTS: usize = 256;
+/// Maximum proposals carried by one node tick. Excess waits for its next tick.
+pub const MAX_NODE_BATCH_MEMBERS: usize = MAX_BATCH_DOCUMENTS;
 
 /// Document payload kinds. A state copy replaces the receiver's document.
 pub mod document_sub_tags {
@@ -121,6 +123,70 @@ pub fn decode_document_batch(mut data: &[u8]) -> Result<Vec<DocumentFrame<'_>>, 
         data = &data[len..];
     }
     Ok(frames)
+}
+
+/// One node tick's proposals: document traffic and ledger writes share one
+/// non-nesting BATCH. Each member still passes its ordinary admission door.
+pub fn encode_node_batch(frames: &[Vec<u8>]) -> EncodedFrame {
+    let result = (|| {
+        if frames.is_empty() || frames.len() > MAX_BATCH_DOCUMENTS {
+            return Err(TransportError::InvalidPayload("invalid node batch size"));
+        }
+        let mut size = 1;
+        for frame in frames {
+            validate_node_member(frame)?;
+            size = checked_encoded_frame_len(size, 4 + frame.len())?;
+        }
+        let mut out = Vec::with_capacity(size);
+        out.push(TAG_BATCH);
+        for frame in frames {
+            out.extend_from_slice(&(frame.len() as u32).to_be_bytes());
+            out.extend_from_slice(frame);
+        }
+        Ok(out)
+    })();
+    EncodedFrame(result)
+}
+
+/// Validate the whole node batch before dispatching any member. Root writes,
+/// RPCs, subscription controls and nested batches cannot ride this lane.
+pub fn decode_node_batch(mut data: &[u8]) -> Result<Vec<&[u8]>, TransportError> {
+    checked_encoded_frame_len(1, data.len())?;
+    let mut frames = Vec::new();
+    while !data.is_empty() {
+        if frames.len() == MAX_BATCH_DOCUMENTS || data.len() < 4 {
+            return Err(TransportError::InvalidPayload("invalid node batch length"));
+        }
+        let len = u32::from_be_bytes(data[..4].try_into().expect("length checked")) as usize;
+        data = &data[4..];
+        let frame = data.get(..len).ok_or(TransportError::InvalidPayload(
+            "truncated node batch member",
+        ))?;
+        validate_node_member(frame)?;
+        frames.push(frame);
+        data = &data[len..];
+    }
+    if frames.is_empty() {
+        return Err(TransportError::InvalidPayload("empty node batch"));
+    }
+    Ok(frames)
+}
+
+fn validate_node_member(frame: &[u8]) -> Result<(), TransportError> {
+    match frame.first() {
+        Some(&TAG_DOCUMENT) => decode_document(&frame[1..]).map(|_| ()),
+        Some(&super::TAG_WINDOW_SYNC) => {
+            let (_, kind, payload) = super::decode_window_sync(&frame[1..])?;
+            match kind {
+                super::window_sub_tags::UPDATE if !payload.is_empty() => Ok(()),
+                super::window_sub_tags::RESIDENCE_UPDATE if payload.len() > 8 => Ok(()),
+                _ => Err(TransportError::InvalidPayload(
+                    "batch requires window writes",
+                )),
+            }
+        }
+        _ => Err(TransportError::InvalidPayload("invalid node batch member")),
+    }
 }
 
 fn validate_member(frame: &[u8]) -> Result<DocumentFrame<'_>, TransportError> {

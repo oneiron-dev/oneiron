@@ -50,7 +50,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/organs/build", post(put_organ_build))
         .route("/packs/skills/import", post(import_skill))
         .route("/packs/skills/restore", post(restore_skill))
-        .route("/packs/skills/restore-defaults", post(restore_default_skills))
+        .route(
+            "/packs/skills/restore-defaults",
+            post(restore_default_skills),
+        )
         .route("/packs/skills/{entity}/sync", post(sync_skill))
         .route(
             "/packs/skills/{entity}/permissions/approve",
@@ -588,8 +591,7 @@ async fn import_skill(
             )?,
             _ => {
                 return Err(OwnerError::Invalid(
-                    "send a subtree, or hub, folder, pin_type, pin_value and publisher"
-                        .to_owned(),
+                    "send a subtree, or hub, folder, pin_type, pin_value and publisher".to_owned(),
                 ));
             }
         };
@@ -869,7 +871,9 @@ async fn approve_skill_activation(
             ));
         }
         Ok(ConsentRow::from(
-            server.vault().approve_marketplace_activation(&ask, &owner)?,
+            server
+                .vault()
+                .approve_marketplace_activation(&ask, &owner)?,
         ))
     })
     .await?;

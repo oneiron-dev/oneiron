@@ -45,6 +45,9 @@ pub enum Withhold<'a> {
     /// A proved machine: the worlds whose read settings keep them off it,
     /// judged once per request by the residence read context.
     Worlds(&'a BTreeSet<EntityId>),
+    /// A transport's machine proof, revalidated with the world settings in
+    /// each export or admission transaction.
+    Peer(crate::authority::PeerMachine),
 }
 
 impl Withhold<'_> {
@@ -62,6 +65,9 @@ impl Withhold<'_> {
                 crate::claim::CallerLocality::OffDevice,
             ),
             Self::Worlds(worlds) => Ok(worlds.clone()),
+            Self::Peer(peer) => {
+                crate::authority::WorldPrivacyView::load_in(vault, rtxn)?.withheld_for_peer(peer)
+            }
         }
     }
 
@@ -77,6 +83,10 @@ impl Withhold<'_> {
             Self::Nothing => Ok(false),
             Self::Unknown => window_is_device_only(vault, key),
             Self::Worlds(worlds) => Ok(key.world().is_some_and(|world| worlds.contains(&world))),
+            Self::Peer(_) => {
+                let worlds = self.worlds(vault)?;
+                Ok(key.world().is_some_and(|world| worlds.contains(&world)))
+            }
         }
     }
 }
@@ -196,6 +206,39 @@ fn raw_update_verdict_with(
         tracing::warn!(kind = ?error.kind(), "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
+}
+
+/// Recheck a selector's standalone synthetic update at release. Its closed
+/// subgraph is the exported document, not every row in the canonical window.
+/// Inspect both its state and its history under the destination's current read.
+pub fn selector_update_verdict_for_peer(
+    vault: &Vault,
+    window_key: &str,
+    update: &[u8],
+    peer: crate::authority::PeerMachine,
+) -> UpdateVerdict {
+    (|| -> Result<UpdateVerdict> {
+        let _accepting = vault.device_only_acceptance();
+        let flagged = {
+            let txn = vault.store.env.read_txn()?;
+            crate::authority::WorldPrivacyView::load_in(vault, &txn)?.withheld_for_peer(peer)?
+        };
+        let Some(key) = WindowKey::try_new(window_key) else {
+            return Ok(UpdateVerdict::Uninspectable);
+        };
+        if key.world().is_some_and(|world| flagged.contains(&world)) {
+            return Ok(UpdateVerdict::Withheld);
+        }
+        let alone = LoroDoc::new();
+        if !alone
+            .import(update)
+            .is_ok_and(|status| status.pending.is_none())
+        {
+            return Ok(UpdateVerdict::Uninspectable);
+        }
+        bytes_verdict(vault, &flagged, &key, &alone, update)
+    })()
+    .unwrap_or(UpdateVerdict::Uninspectable)
 }
 
 fn inspect_raw_update(
