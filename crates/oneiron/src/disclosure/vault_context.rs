@@ -335,8 +335,8 @@ impl DisclosureContext {
     /// so the clamp admits a turn only when it admits each of them too: a
     /// withheld message would otherwise reach the assembly through its turn's
     /// vector hit or joined text. An epoch summary's words are its sources',
-    /// so it is admitted only with each of them
-    /// (`compaction::epoch_sources_admitted_in`).
+    /// so it is admitted only with each of them, and only while neither it
+    /// nor any of them is withdrawn (`compaction::epoch_disclosable_in`).
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -357,14 +357,14 @@ impl DisclosureContext {
         let Some(row) = store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
-        let admitted = crate::compaction::epoch_sources_admitted_in(
+        crate::compaction::epoch_disclosable_in(
             store,
             rtxn,
             id,
+            entity_type,
             &row.body,
             |source, source_row| self.admits_row(store, rtxn, source, source_row.entity_type, None),
-        )?;
-        Ok(admitted.unwrap_or(true))
+        )
     }
 
     /// [`Self::admits`] for one record's own row, not what it was written from.

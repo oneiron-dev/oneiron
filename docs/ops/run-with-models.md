@@ -391,6 +391,17 @@ room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` 
 `in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
 `turn_scoped` with the failed `check`, or `sticky` with `why`).
 
+A run whose actor is a saved agent definition compacts by that agent's
+`memory_profile`: its `window_token_budget` is the run's window, its summary
+share sizes the summary, and `compaction = "byoa"` leaves the window to the
+agent's own harness (`sticky` with `why: "harness_compacts"`). Its
+`compaction_backend` names `code-mode-compaction` (the seat above) or a
+reasoning seat by its role's key (`checker`, `local_reasoner`,
+`generative_reasoner`); a key this host does not serve compacts on the seat
+above. Any other run uses the table above. A long run never outgrows one
+summary's sources: each summary stands for the records the calls before it
+were served, so the next one names only the records served since.
+
 ### Type check (shadow mode)
 
 Each generated program can be type-checked before it runs, against the same
