@@ -5600,9 +5600,10 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "BookingDecisions",
       "BookingError",
       "ConstraintObject",
       "ConstraintParseConfig",
@@ -5626,8 +5627,8 @@
       "const": 2,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 7,
-      "struct": 12,
+      "fn": 8,
+      "struct": 13,
       "trait": 1
      }
     },
@@ -25474,7 +25475,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 22,
+      "const": 26,
       "fn": 1,
       "struct": 1
      }
@@ -25490,16 +25491,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GeneratedDecisions",
-      "GeneratedRung"
+      "GeneratedMiss",
+      "GeneratedRung",
+      "GeneratedStep"
      ],
      "path": "src/llm/decision/generated.rs",
-     "purpose": "The generated read: a typed pack answered by one durable generation on the caller's own backend, for a…",
+     "purpose": "The generated read: a typed pack answered by one generation on the caller's own backend, for a caller…",
      "surface": {
-      "enum": 1,
+      "enum": 3,
       "fn": 1,
       "struct": 1
      }
@@ -31545,7 +31548,7 @@
      "path": "src/policy_model/classifier_lease.rs",
      "purpose": "Cancellation-safe ownership of a stateless classifier's private reservation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -31570,31 +31573,31 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "PolicyModelAnswer",
       "PolicyOutputContract"
      ],
      "path": "src/policy_model/contract.rs",
-     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader that turns…",
+     "purpose": "The output contract a substrate owner's policy document asks the model for, and the strict reader of the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PolicyDecisions"
      ],
      "path": "src/policy_model/decide.rs",
-     "purpose": "Registered owner and hosted policy questions through the shared ladder",
+     "purpose": "Registered owner and hosted policy questions through the shared ladder: a host-selected ladder's row…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -31654,6 +31657,16 @@
      "surface": {
       "crate-vis": 3,
       "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/notes.rs",
+     "purpose": "The audit notes a `rationale_json` pass carries beside its decided verdict",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31818,7 +31831,7 @@
      "path": "src/policy_model/prompt.rs",
      "purpose": "The classify request, and how a safeguard model's answer is routed back to a plane's rows",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 1
      }
@@ -35180,6 +35193,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MembershipDecisions"
+     ],
+     "path": "src/saved_query/decisions.rs",
+     "purpose": "The membership question through the host's ladder: does the candidate belong to the saved query its owner's…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CreateSavedQueryRequest",
       "EvalMode",
       "EvalPolicy",
@@ -35211,7 +35238,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 6,
-      "fn": 3,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -35308,7 +35335,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -47047,7 +47074,7 @@
     "booking": {
      "files": 78,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine-generic booking module"
     },
@@ -47871,7 +47898,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48025,7 +48052,7 @@
      "purpose": "Runtime hooks (ARCH-0080), slice 1: fact hooks that run after a write commits, on their own runner"
     },
     "saved_query": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48410,9 +48437,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 90,
+   "over_bar": 91,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2917,
+   "source_files": 2919,
    "test_files": 903
   },
   "oneiron-android": {
