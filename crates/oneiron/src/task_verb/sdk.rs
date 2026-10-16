@@ -494,9 +494,7 @@ fn render_declarations(
 /// One declaration's type: a verb's call signature, the members it holds, or
 /// both at once.
 fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
-    let call = node
-        .verb
-        .map(|verb| format!("(input: {}) => Promise<unknown>", verb_input_type(verb)));
+    let call = node.verb.map(verb_call_signature);
     if node.children.is_empty() {
         return call.unwrap_or_else(|| "{}".to_owned());
     }
@@ -508,6 +506,18 @@ fn declaration_type(node: &DeclarationNode, depth: usize) -> String {
         Some(call) => format!("({call}) & {members}"),
         None => members,
     }
+}
+
+/// A verb's call signature. `self.fold` is the one positional verb
+/// (ARCH-0067 #folds: `self.fold(span, {note?})`, Docs Q25); every other verb
+/// takes one input object.
+fn verb_call_signature(verb: &str) -> String {
+    if verb == "self.fold" {
+        return "(span: readonly [number, number], options?: { note?: string | null }) => \
+                Promise<unknown>"
+            .to_owned();
+    }
+    format!("(input: {}) => Promise<unknown>", verb_input_type(verb))
 }
 
 fn verb_input_type(verb: &str) -> String {

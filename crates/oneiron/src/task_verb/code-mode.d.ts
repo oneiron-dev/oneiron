@@ -45,7 +45,7 @@ declare namespace self {
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
-  const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
+  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<unknown>;
   const folds: (input: object) => Promise<unknown>;
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
