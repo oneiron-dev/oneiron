@@ -117,6 +117,13 @@ pub struct ServeArgs {
     #[arg(long = "keystore-dir")]
     pub keystore_dir: Option<PathBuf>,
 
+    /// Managed mode: the unix socket the vault's artifact origin listens on,
+    /// an absolute path the supervisor chose and routes `<vault>.<domain>` to
+    /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
+    /// serves `/a/` on its API socket alone.
+    #[arg(long = "artifact-http-socket")]
+    pub artifact_http_socket: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -346,6 +353,7 @@ impl fmt::Debug for ServeArgs {
             .field("credentials_fd", &self.credentials_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
+            .field("artifact_http_socket", &self.artifact_http_socket)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

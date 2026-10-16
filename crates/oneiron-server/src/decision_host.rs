@@ -6,9 +6,10 @@
 //! start there. The house model's decision read fills the escalation rung when
 //! `[models.decision_read]` binds it and its recipe names the paired question;
 //! the recipe's person question is the ladder's own. The System One seat fills
-//! its rung when `[models.decisions.system_one]` binds it. The local head and
-//! the big model have no typed provider on this host yet, so their slots stay
-//! empty and the ladder steps past them. The last rung is the vault owner's
+//! its rung when `[models.decisions.system_one]` binds it, and the big model
+//! fills the Big rung when `[models.decisions.big]` names its seat
+//! ([`crate::big_rung`]). The local head has no typed provider on this host
+//! yet, so its slot stays empty and the ladder steps past it. The last rung is the vault owner's
 //! ask queue ([`DecisionAsks`]): durable, answered at `/v1/owner/decisions`.
 //!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
@@ -19,8 +20,8 @@ use oneiron::llm::decision::catalogue::{ASK_UP, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
-    DecisionRung, HeldLadder, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, RuleDecisionProvider, SeatPhase, SeatRequest,
+    DecisionRung, HeldLadder, ModelDecisionProvider, ProviderCapability, ProviderDecision,
+    ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase, SeatRequest,
 };
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
@@ -29,7 +30,7 @@ use oneiron::llm::{
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, HostingPrivacyPosture, Vault};
 
-use crate::config::models::{ModelsConfig, SeatPickSettings, SystemOneSettings};
+use crate::config::models::{BigSettings, ModelsConfig, SeatPickSettings, SystemOneSettings};
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
 
@@ -77,7 +78,10 @@ impl DecisionHost {
     /// The house model's decision read on the escalation rung, read on
     /// `meter`, and its recipe's person question as the ladder's. Without a
     /// paired question in the recipe the rung stays empty.
-    pub(crate) fn with_house_read(mut self, read: Option<&(DecisionReadDoor, BudgetGuard)>) -> Self {
+    pub(crate) fn with_house_read(
+        mut self,
+        read: Option<&(DecisionReadDoor, BudgetGuard)>,
+    ) -> Self {
         self.ladder.escalation = None;
         self.ladder.person = None;
         self.bands = DecisionBandPolicy::default();
@@ -100,7 +104,8 @@ impl DecisionHost {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
                 Ok(person) => {
                     let mut bands = DecisionBandPolicy::default();
-                    match bands.set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
+                    match bands
+                        .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
                     {
                         Ok(()) => {
                             self.ladder.person = Some(person);
@@ -130,6 +135,38 @@ impl DecisionHost {
         match SystemOneRung::bind(settings, default_units, posture, runtime) {
             Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
+        }
+        self
+    }
+
+    /// The big model on its rung (OF-495), through the seat
+    /// `[models.decisions.big]` names; its calls block on `runtime`.
+    fn with_big(
+        mut self,
+        settings: Option<&BigSettings>,
+        models: &Arc<crate::models::ModelRuntime>,
+        vault: &Arc<Vault>,
+        default_units: u64,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        self.ladder.big = None;
+        let Some(settings) = settings else {
+            return self;
+        };
+        let bound = crate::big_rung::BigModel::bind(
+            settings,
+            Arc::clone(models),
+            Arc::clone(vault),
+            default_units,
+            runtime,
+        )
+        .and_then(|model| {
+            let pin = model.pin();
+            ModelDecisionProvider::new(pin, Arc::new(model)).map_err(anyhow::Error::from)
+        });
+        match bound {
+            Ok(rung) => self.ladder.big = Some(Arc::new(rung)),
+            Err(error) => tracing::warn!(%error, "the big model cannot fill its rung"),
         }
         self
     }
@@ -256,6 +293,13 @@ impl SyncServer {
                 models.decisions.system_one.as_ref(),
                 models.raw_budget_units,
                 posture,
+                tokio::runtime::Handle::current(),
+            )
+            .with_big(
+                models.decisions.big.as_ref(),
+                self.ai.models(),
+                &self.vault,
+                models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
             .with_auto_check(models.decisions.auto_check.as_deref(), principal);

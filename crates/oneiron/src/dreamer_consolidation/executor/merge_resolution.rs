@@ -44,13 +44,18 @@ impl ConsolidationExecutor<'_> {
         scope: &crate::llm::Scope,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<ConflictAnswers>> {
-        let mut questions = vec![CONFLICT_RESOLUTION.question(
-            &[b"resolution".as_slice()],
-            self.decisions.resolution_wording.clone(),
-            AnswerContract::Choice {
-                options: RESOLUTIONS.iter().map(|label| (*label).to_owned()).collect(),
-            },
-        )?];
+        let mut questions = vec![
+            CONFLICT_RESOLUTION.question(
+                &[b"resolution".as_slice()],
+                self.decisions.resolution_wording.clone(),
+                AnswerContract::Choice {
+                    options: RESOLUTIONS
+                        .iter()
+                        .map(|label| (*label).to_owned())
+                        .collect(),
+                },
+            )?,
+        ];
         let across = members.iter().any(|member| {
             candidate_facts(&member.candidate)
                 .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
@@ -67,7 +72,9 @@ impl ConsolidationExecutor<'_> {
         let evidence: Vec<EntityId> = prior_heads.iter().map(|prior| prior.claim_id).collect();
         let state = conflict_state(&conflict.identity, members, prior_heads)?;
         let Some(decided) = self
-            .decide(step_ctx, pass, scope, &questions, &evidence, &state, charges)
+            .decide(
+                step_ctx, pass, scope, &questions, &evidence, &state, charges,
+            )
             .await?
         else {
             return Ok(None);

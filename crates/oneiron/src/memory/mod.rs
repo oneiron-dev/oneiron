@@ -30,6 +30,7 @@ mod birth_position;
 mod booking;
 mod claim_conflict;
 mod conflict_settle;
+mod diary_read;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -70,7 +71,9 @@ mod tests_regressions;
 
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_resolve::{
-    AssetConsumer, HydratedAsset, LandedImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
+    LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
+    pull_image,
 };
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
@@ -91,11 +94,18 @@ pub use claims::{
     PendingWrite, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
+pub use diary_read::{
+    DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
+    DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
+    DiaryReadsView, DiaryReviewAnswer, DiaryReviewState,
+};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
-pub use export::{EXPORT_TARGET_ARCHIVE, ExportOptions, ExportReceipt, MemoryExport};
+pub use export::{
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, ExportReceipt, MemoryExport,
+};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
@@ -144,7 +154,8 @@ pub use witness::{
     StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
 pub(crate) use witness::{
-    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+    MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
+    message_stream_finality_in_txn,
 };
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
