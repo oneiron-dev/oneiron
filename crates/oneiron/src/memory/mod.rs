@@ -95,7 +95,9 @@ pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptVi
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
-pub use export::{EXPORT_TARGET_ARCHIVE, ExportOptions, ExportReceipt, MemoryExport};
+pub use export::{
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, ExportReceipt, MemoryExport,
+};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
