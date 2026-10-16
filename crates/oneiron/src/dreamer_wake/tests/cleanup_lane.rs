@@ -53,7 +53,10 @@ fn timer_driver_executes_cleanup_without_a_consolidation_home_node_and_settles()
         &mut executor,
         &WakeCancellation::new(),
     ))?;
-    assert_eq!(report.completed, 1);
+    assert_eq!(
+        report.completed, 2,
+        "cleanup and the Coach's retrieval tune"
+    );
     assert_eq!(
         executor.executed, 0,
         "cleanup is an engine job, not consolidation input"

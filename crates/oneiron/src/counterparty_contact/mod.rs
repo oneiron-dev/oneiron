@@ -4,11 +4,16 @@
 //! counterparty) consent/contact row plus a typed `counterparty_contact.*`
 //! claim family. Provider adapters and multiplayer graph expansion are
 //! intentionally outside this module.
+//!
+//! A [`TrustedContact`] (OF-527) is a person's consented contact for a
+//! crisis notice, fired only by the policy gate's `RouteToHelp`.
 
 mod codec;
 mod doors;
 mod lifecycle;
 mod storage;
+mod trusted_contact;
+mod trusted_contact_notice;
 mod types;
 
 pub use self::codec::{
@@ -28,9 +33,18 @@ pub(crate) use self::lifecycle::{
 pub(crate) use self::storage::{
     counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,
     counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
-    read_counterparty_contact_in_txn,
+    party_has_contact_on_class_in_claims_in_txn, read_counterparty_contact_in_txn,
 };
 pub use self::storage::{counterparty_contact_party_channel_index_key, normalize_channel_class};
+pub(crate) use self::trusted_contact::TrustedContactFire;
+pub use self::trusted_contact::{
+    TrustedContact, TrustedContactAcceptance, TrustedContactAnswer, TrustedContactAsk,
+    TrustedContactAskOutcome, TrustedContactDial, TrustedContactParty, TrustedContactReach,
+    TrustedContactRevocation, TrustedContactTier,
+};
+pub use self::trusted_contact_notice::{
+    TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TRUSTED_CONTACT_NOTICE_CONTENT_REF, TrustedContactNotice,
+};
 pub use self::types::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
     COUNTERPARTY_CONTACT_SCHEMA_VERSION, CounterpartyContactRecord, CounterpartyContactStatus,
@@ -48,6 +62,8 @@ pub(crate) use self::types::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod trusted_contact_tests;
 
 #[cfg(test)]
 use self::lifecycle::comm_fold_error;

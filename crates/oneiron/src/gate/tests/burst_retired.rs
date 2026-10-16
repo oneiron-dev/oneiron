@@ -23,7 +23,7 @@ fn repeated_claim_id_pending_writes_bind_the_last_operation_receipt() -> Result<
     first.predicate = "health.allergy".to_owned();
     first.subject = ClaimSubject::Entity(test_id(0x50));
     first.approval = ClaimApprovalStatus::Proposed;
-    first.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
+    first.evidence = Some(said_evidence(&vault)?);
     let (_, envelope) = dreamer_claim_candidate_write_parts(&vault, &first, actor, "receipt-fifo")?;
     let mut last = first.clone();
     last.value = Value::from("second allergy");
@@ -76,7 +76,7 @@ fn delete_then_pending_write_keeps_the_later_preflight_binding() -> Result<()> {
     body.predicate = "health.allergy".to_owned();
     body.subject = ClaimSubject::Entity(test_id(0x50));
     body.approval = ClaimApprovalStatus::Proposed;
-    body.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
+    body.evidence = Some(said_evidence(&vault)?);
     let (_, envelope) = dreamer_claim_candidate_write_parts(&vault, &body, actor, "erase-order")?;
     let id = test_id(0x30);
     vault
@@ -115,7 +115,7 @@ fn delete_then_allowed_write_keeps_receipt_but_put_then_delete_redacts_it() -> R
     put_policy_manifest_bytes(&vault, test_id(0x70), &auto_manifest(actor))?;
     let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
     body.subject = ClaimSubject::Entity(test_id(0x50));
-    body.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
+    body.evidence = Some(said_evidence(&vault)?);
     let (_, envelope) =
         dreamer_claim_candidate_write_parts(&vault, &body, actor, "erase-order-auto")?;
     let first_id = test_id(0x31);

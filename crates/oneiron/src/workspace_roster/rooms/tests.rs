@@ -391,6 +391,133 @@ fn a_removed_member_loads_no_later_history() -> Result<()> {
     Ok(())
 }
 
+/// The turn past a full page is read from its index key and its own record
+/// first: a damaged body there leaves the page whole and continuable, and the
+/// page that would return it reports it.
+#[test]
+fn room_page_lookahead_row_is_not_decoded() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let record = ProjectRecord::new(project, Some(root), root, owner)?;
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner])?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    vault.bind_room_handle(room, "@owner", owner)?;
+    let mut turns = Vec::new();
+    for n in 0..257 {
+        let id = EntityId::now();
+        memory
+            .rooms_speak(&turn(
+                room,
+                id,
+                WitnessAuthor::User,
+                serde_json::json!({}),
+                2 + n,
+            ))
+            .expect("speak");
+        turns.push(id);
+    }
+    vault.with_write_txn(|txn| {
+        TURNS.put_undecodable(&vault.store, txn, &turns[256], b"not a turn")
+    })?;
+    let page = memory
+        .rooms_messages_page(room, None, 256)
+        .expect("a damaged turn past the page is never decoded");
+    assert_eq!(page.rows.len(), 256);
+    assert_eq!(page.next_after, Some(turns[255].to_hex()));
+    Ok(())
+}
+
+/// A turn past a full page continues it only when the turns it answers are
+/// readable too: a reply to a withheld turn never sets the cursor, so the
+/// page discloses no history the reader's admission drops.
+#[test]
+fn room_page_continues_only_past_an_admitted_turn() -> Result<()> {
+    use crate::authority::{HostSlipIssuer, SlipCaveat};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    vault.put_entity(
+        &leader,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room leader",
+    )?;
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    vault.put_project(project, &spec, 1)?;
+    let room = EntityId::from_hex(&spec.home_room)?;
+    let trunk = EntityId::now();
+    let withheld = EntityId::now();
+    let first = EntityId::now();
+    let second = EntityId::now();
+    let reply = EntityId::now();
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            withheld,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+        (first, serde_json::json!({}), 4),
+        (second, serde_json::json!({}), 5),
+        (
+            reply,
+            serde_json::json!({"room_reply_to": withheld.to_hex()}),
+            6,
+        ),
+    ] {
+        host.rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .expect("speak");
+    }
+    // The reader's credential names every turn but the one the reply answers.
+    let issuer = HostSlipIssuer::from_secret(b"room page continuation")?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(leader.as_bytes()).as_bytes();
+    claims.holder_ref = leader.to_hex();
+    claims.actor_class = Some("human".into());
+    let mut slip = vault.mint_capability_slip(&issuer, claims)?;
+    issuer.attenuate(
+        &mut slip,
+        SlipCaveat {
+            records: Some(
+                [trunk, first, second, reply]
+                    .iter()
+                    .map(EntityId::to_hex)
+                    .collect(),
+            ),
+            ..Default::default()
+        },
+    )?;
+    let binding = issuer.binding_proof(&slip, b"room read")?;
+    let proof =
+        vault.verify_capability_slip(&issuer.public_key(), &slip, b"room read", &binding)?;
+    let reader = vault
+        .memory(leader, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    let page = reader
+        .rooms_messages_page(room, Some(first), 1)
+        .expect("page");
+    let rows: Vec<_> = page.rows.iter().map(|turn| turn.turn_id.clone()).collect();
+    assert_eq!(rows, vec![second.to_hex()]);
+    assert_eq!(page.next_after, None);
+    Ok(())
+}
+
 #[test]
 fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -511,17 +638,17 @@ fn room_projection_reads_task_register_and_reply_without_stored_liveness() -> Re
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let owner = EntityId::now();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let agent = EntityId::from_bytes([0xE1; 16])?;
-    for actor in [owner, agent] {
-        vault.put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"room member",
-        )?;
-    }
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room member",
+    )?;
     let project = EntityId::now();
     let mut record = ProjectRecord::new(
         project,

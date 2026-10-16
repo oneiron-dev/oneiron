@@ -122,18 +122,19 @@ pub(crate) fn verify_actor_binding_in_txn(
 /// binding `{signing key in the live owner-capable roster, actor_ref == actor,
 /// actor_class == "human" EXACTLY, live epoch}`.
 ///
-/// Enforcement scales with declared authority: a vault with no folded genesis
-/// has not declared an authority root, so it keeps the store-truth check only.
-/// The moment a host establishes a root, owner verbs require the binding —
-/// which is exactly the pressure that makes the atomic `[genesis, bind]`
-/// ceremony the natural path. No dual-mode shim, no flag.
+/// A vault with no folded genesis has declared no authority root, so no
+/// binding there can hold. Its own live embedded owner passes: the host that
+/// holds the vault in process can act as it anyway, and an embedded vault has
+/// no root to bind it under. Every other PERSON is refused (H149): store
+/// truth alone would let any PERSON named `human`, an agent's persona
+/// included, act as the owner. A self-hosted host that roots the vault binds
+/// its owner in the same transaction ([`Vault::ensure_host_root_slip`]).
 ///
 /// A missing `vault_id` is NOT one state. The fold also returns `None` when the
 /// log carries several independently rooted vaults, and that collapse clears
-/// `actor_bindings` wholesale — so treating every `None` as "unrooted" would
-/// hand full owner rights to exactly the vault whose authority root is under
-/// attack. Multi-root therefore fails CLOSED and unrooted keeps the spec'd
-/// pass-through.
+/// `actor_bindings` wholesale. Multi-root is refused as INVALID_STATE (the
+/// vault's authority is broken), unrooted as OWNER_BINDING_REQUIRED (the
+/// ceremony has not run).
 ///
 /// An UNCOMPUTABLE fold is a third state, and it is the one this gate must not
 /// paper over. When an AUTHORITY_LOG row has lost its first-seen sidecar after
@@ -161,15 +162,14 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         }
         MemoryError::from(err)
     })?;
-    if let Some(signer) = fold.authority_log_bound_signer() {
+    if let Some(floor) = fold.authority_log_memory_floor() {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             format!(
-                "authority log at its bound for signer {}; owner verbs are suspended",
-                crate::authority::authority_signer_label(signer)
+                "authority log fold passes its memory floor of {floor} bytes; owner verbs are suspended"
             ),
             &[
-                "The log holds more rows than one fold may read; no binding authorizes until it is back inside the bound.",
+                "The log's fold would hold more than the authority_log_fold_memory_floor policy row; no binding authorizes until the row is raised on a machine that holds the fold.",
             ],
         ));
     }
@@ -184,7 +184,22 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         ));
     }
     if fold.vault_id.is_none() {
-        return Ok(());
+        if actor == crate::vault::embedded_owner_actor_id()?
+            && crate::consent::person_is_live_in_txn(vault, txn, &actor)?
+        {
+            return Ok(());
+        }
+        return Err(MemoryError::new(
+            MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            format!(
+                "actor {} holds no owner binding: this vault has no authority root",
+                actor.to_hex()
+            ),
+            &[
+                "Root the vault under its host key: a self-hosted root binds the vault's owner.",
+                "Actor keys assert identity; the authority log decides whether it holds.",
+            ],
+        ));
     }
     if crate::authority::actor_binding_is_active(&fold, &actor, "human") {
         return Ok(());
@@ -400,6 +415,9 @@ pub struct Memory<'v> {
     pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
+    /// The vault owner's authentication, when a host bound the owner's own
+    /// direct request (`with_owner_authorship`).
+    pub(super) owner_authorship: Option<crate::consent::AuthenticatedOwner>,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -449,6 +467,7 @@ impl Vault {
             locality: crate::claim::CallerLocality::OnDevice,
             producers: None,
             birth_position: Default::default(),
+            owner_authorship: None,
         }
     }
 
@@ -479,6 +498,7 @@ impl Vault {
             locality: crate::claim::CallerLocality::OnDevice,
             producers: None,
             birth_position: Default::default(),
+            owner_authorship: None,
         }
     }
 }
@@ -515,6 +535,9 @@ impl<'v> Memory<'v> {
                 locality: self.locality,
                 producers: self.producers,
                 birth_position: self.birth_position,
+                // A room turn writes into the room's talk, not as the owner
+                // in person.
+                owner_authorship: None,
             },
         })
     }
@@ -534,6 +557,48 @@ impl Memory<'_> {
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
         self
+    }
+
+    /// Marks this surface's claim writes as made in person by the vault's
+    /// authenticated owner: owner-authored writes carry their own
+    /// confirmation, so a critical claim they land attaches no confirm.
+    ///
+    /// A host binds it only for a request the owner made directly, through a
+    /// door that authenticated the owner (an unattenuated owner credential or
+    /// the native owner door). An agent's, a room turn's or an import's write
+    /// never carries it. Each claim write revalidates the proof as the vault's
+    /// owner in its own transaction and refuses when it no longer holds; the
+    /// proof's actor must be this surface's actor, as a human.
+    #[must_use]
+    pub fn with_owner_authorship(mut self, owner: &crate::consent::AuthenticatedOwner) -> Self {
+        self.owner_authorship = Some(owner.clone());
+        self
+    }
+
+    /// The owner authorship of a claim write in `txn`, revalidated there.
+    ///
+    /// A surface bound to a host origin or a machine signer writes for
+    /// someone else, so it authors nothing as the owner.
+    pub(super) fn owner_authored_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<Option<crate::consent::OwnerAuthoredWrite>> {
+        let Some(owner) = &self.owner_authorship else {
+            return Ok(None);
+        };
+        if self.host_origin.is_some() || self.machine_signer.is_some() {
+            return Ok(None);
+        }
+        if owner.revalidate_in_txn(self.vault, txn)? != self.actor
+            || self.actor_class != EdgeActorClass::Human
+        {
+            return Err(crate::Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "owner proof does not name this surface's actor",
+                ),
+            ));
+        }
+        owner.owner_authored_write_in_txn(self.vault, txn).map(Some)
     }
 
     /// Binds this surface's claim writes to a host-owned origin: every claim

@@ -38,6 +38,10 @@ pub struct ScopedReadReceipt {
     pub actor_ceiling: ReadScope,
     pub applied: ReadScope,
     pub narrowed_axes: Vec<String>,
+    /// Existing rows the read withheld. A ranked search counts only rows its
+    /// key's own ceiling admits, among the rows its retrieval checked: every
+    /// matching posting of a text search, but only the refused nodes a vector
+    /// walk visited, not every vector the request excludes.
     pub suppressed_count: usize,
     /// Machine-readable re-plan hint: names axes, not prose to parse.
     pub replan_hint: Vec<String>,

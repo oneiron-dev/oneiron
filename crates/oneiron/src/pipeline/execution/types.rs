@@ -39,6 +39,8 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) read_suppressed: usize,
     pub(super) deferred_ppr_cache_writes: Vec<crate::ppr::DeferredPprCacheWrite>,
     pub(super) cosine_ghosts_dampened: usize,
+    /// Scored rows the pack's disclosure clamp withheld before selection.
+    pub(super) disclosure_clamped: Vec<EntityId>,
     pub(super) total_in_scope: usize,
     pub(super) empty_reason: Option<EmptyReason>,
     pub(super) signal_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,

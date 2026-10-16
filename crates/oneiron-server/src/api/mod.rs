@@ -93,6 +93,8 @@ mod sessions;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+mod feedback_inbox;
+pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
 // the serve wire, the door window, and the single-writer landing all live in
 // `oneiron::origin::smart_http`.
@@ -415,6 +417,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Published anonymous booking capabilities validate a live owner publication
         // and scoped tokens; they do not authorize access to private vault routes.
         .merge(self::booking::public_booking_router())
+        // The open feedback inbox: keyless, and mounted only when its
+        // config section turns it on (ARCH-0056 #open-inbox).
+        .merge(self::feedback_inbox::routes(&server))
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The

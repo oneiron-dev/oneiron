@@ -247,6 +247,9 @@ impl ManagedArgs {
                 dir: self.keystore_dir.clone(),
                 service: None,
             },
+            // Our cloud sends feedback to our own inbox unless told otherwise
+            // (ARCH-0056 r6); every send still asks the owner first.
+            feedback: crate::config::FeedbackConfig::cloud_default(),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {

@@ -54,6 +54,15 @@ pub const DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND: &str = "dreamer.skill_optimize";
 /// the TIMER wake (Macro scope) alone — see
 /// [`crate::dreamer_runner::EnqueueDreamerVaultCleanupAttempt`].
 pub const DREAMER_VAULT_CLEANUP_ATTEMPT_KIND: &str = "dreamer.vault_cleanup";
+/// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
+/// failure-ladder case the escalation hands to the Coach. Host-run, like agent
+/// dispatch: the wake driver never admits it; a host Coach leases it with
+/// [`crate::dreamer_runner::DreamerRunnerStore::admit_next_coach_heal`].
+/// Doubles as the payload `job_type`.
+pub const COACH_HEAL_ATTEMPT_KIND: &str = "coach.heal";
+/// The Coach's nightly retrieval-tuning facet on the maintenance lane,
+/// registered beside the cleanup pass on the Timer wake.
+pub const COACH_RETRIEVAL_TUNE_FACET: &str = "coach.retrieval_tune";
 /// Current pinned home-node designation schema version.
 pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for the private home-node designation.

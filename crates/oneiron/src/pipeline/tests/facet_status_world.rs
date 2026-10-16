@@ -344,3 +344,61 @@ fn ppr_reblend_keeps_original_dead_claims_filtered() -> Result<()> {
     );
     Ok(())
 }
+
+/// Sol R1 F3 on F21(b): a stale federated world's claims leave a scope that
+/// never named that world before a bounded channel's cut, not only after
+/// fusion, so they take no slot from a base claim. Main kept them in a
+/// candidate-filtered text scan's top rows and dropped them only after.
+#[test]
+fn a_stale_worlds_claims_take_no_slot_from_a_base_claim() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let world = EntityId::from_bytes_unchecked([0xF5; 16]);
+    for n in 1..=crate::fusion::FUSION_LIST_LENGTH {
+        let mut bytes = [0x5a; 16];
+        bytes[8..].copy_from_slice(&(n as u64).to_be_bytes());
+        put_claim_text(
+            &vault,
+            EntityId::from_bytes(bytes)?,
+            "stalewharf stalewharf",
+            Some(world),
+        )
+        .expect("seed a stale world's claim");
+    }
+    let base = entity_id(0x63);
+    put_claim_text(
+        &vault,
+        base,
+        "stalewharf harbor ledger quay mooring tide berth pier",
+        None,
+    )?;
+    let stamp = crate::federation::encode_world_stale_stamp(crate::federation::WorldStaleStamp {
+        reason: crate::federation::FederationStaleReason::Disconnected,
+        disconnect_epoch: 1,
+        stamped_at_secs: 9,
+    });
+    vault.with_write_txn(|wtxn| {
+        vault.store.sync_state.put(
+            wtxn,
+            &crate::federation::federation_stale_key(world),
+            &stamp,
+        )?;
+        Ok(())
+    })?;
+    let admit_all = |_: &crate::store::StoreRead<'_>,
+                     _: &heed::RoTxn<'_>,
+                     _: &EntityId|
+     -> Result<bool> { Ok(true) };
+
+    let hits = vault
+        .query()
+        .filter_candidates(&admit_all)
+        .search_text("stalewharf", 1)
+        .limit(1)
+        .run()?;
+
+    assert_eq!(
+        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![base]
+    );
+    Ok(())
+}

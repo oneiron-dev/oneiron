@@ -187,7 +187,8 @@ fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK)?, 1);
     assert_eq!(
         vault.count_entities_by_type(crate::registry::ENTITY_TYPE_MACHINE)?,
-        1
+        2,
+        "the Dreamer and the Coach"
     );
     Ok(())
 }

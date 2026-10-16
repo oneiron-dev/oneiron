@@ -24,6 +24,7 @@ pub(crate) mod identity;
 pub mod limit_ask;
 pub(crate) mod limits;
 pub mod maintain;
+pub(crate) mod msgpack_shape;
 pub mod off_record;
 pub(crate) mod overlay_db;
 pub(crate) mod ports;
