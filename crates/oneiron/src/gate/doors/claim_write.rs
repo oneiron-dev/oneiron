@@ -17,13 +17,14 @@ use super::recorded::RecordedClaimGateDecision;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, VerifiedClaimTransition};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, DreamerIsolationClass,
-    claim_sensitivity_band, decode_claim_body, dreamer_isolation_class,
+    claim_sensitivity_band, decode_claim_body, dreamer_isolation_class, encode_claim_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED,
     GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, critical_claim_can_land_auto_with_confirm,
+    pending_row_holds_critical_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -33,7 +34,7 @@ use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
 use crate::ports::EntityStoreRead;
 use crate::store::{
-    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store,
+    GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,
     checker_hold_receipt_reason,
 };
 use crate::write_envelope::{SourceLineage, WriteEnvelope};
@@ -53,21 +54,54 @@ fn closes_stored_value(
     body: &ClaimBody,
     transition: Option<&VerifiedClaimTransition>,
 ) -> bool {
+    closes_in_place(store, txn, id, body, transition)
+        && stored_claim_body(store, txn, id).is_some_and(|stored| stored.value == body.value)
+}
+
+/// Whether this write is the stored row's own close and nothing more: the
+/// stored Active body with only its lifecycle and `valid_to` changed, as the
+/// canonical lifecycle validator admits it. An edit that also moves approval
+/// or any other field is not one.
+fn closes_stored_row_only(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
+    closes_in_place(store, txn, id, body, transition)
+        && stored_claim_body(store, txn, id).is_some_and(|mut stored| {
+            if stored.lifecycle != ClaimLifecycleStatus::Active {
+                return false;
+            }
+            stored.lifecycle = body.lifecycle;
+            stored.valid_to = body.valid_to;
+            match (encode_claim_body(&stored), encode_claim_body(body)) {
+                (Ok(closed), Ok(written)) => closed == written,
+                _ => false,
+            }
+        })
+}
+
+/// A non-Active body under a verified in-place transition of the same row.
+fn closes_in_place(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
     body.lifecycle != ClaimLifecycleStatus::Active
         && transition.is_some_and(|proof| {
             proof.predecessor().is_none()
                 && proof.matches_body(store, txn, id, body).unwrap_or(false)
         })
-        && store
-            .port_entity_record(txn, id)
-            .ok()
-            .flatten()
-            .map(|row| row.encode())
-            .and_then(|raw| {
-                raw.get(ENTITY_METADATA_HEADER_LEN..)
-                    .and_then(|stored| decode_claim_body(stored, true).ok())
-            })
-            .is_some_and(|stored| stored.value == body.value)
+}
+
+/// The stored row's claim body, when it decodes.
+fn stored_claim_body(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Option<ClaimBody> {
+    let raw = store.port_entity_record(txn, id).ok().flatten()?.encode();
+    decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?, true).ok()
 }
 
 /// The claim write door.
@@ -626,13 +660,21 @@ fn check_claim_policy_for_write_with_record_inner(
             )?;
         }
 
-        // A verified close of the stored row (a retract or supersession that
-        // keeps its value) is a narrowing, not the owner's answer: it lands and
-        // leaves a held claim's pending confirm and obligation standing, where
-        // redeeming them would fail on a binding to the body it closes.
-        let resolve_pending = mode.resolve_pending
-            && !attach_critical_confirm
-            && !closes_stored_value(store, &*wtxn, id, body, transition);
+        let resolve_pending = mode.resolve_pending && !attach_critical_confirm;
+        // A held claim's own close (a supersession or retraction that changes
+        // only its lifecycle) narrows it and is not the owner's answer: its
+        // tray row goes silently, as a retraction's does, and the obligation
+        // stays open. Redeeming the confirm instead would fail on a binding to
+        // the body it closes.
+        if resolve_pending
+            && decision.outcome() == GateOutcome::Allow
+            && closes_stored_row_only(store, &*wtxn, id, body, transition)
+            && store
+                .pending_gate_consent_in_txn(&*wtxn, id)?
+                .is_some_and(|row| pending_row_holds_critical_confirm(&row))
+        {
+            store.remove_pending_gate_consent_in_txn(wtxn, id, TrayRemoval::Silent)?;
+        }
         enforce_claim_gate_decision_with_consent(
             store,
             wtxn,

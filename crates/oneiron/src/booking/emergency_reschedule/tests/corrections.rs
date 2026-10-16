@@ -521,14 +521,18 @@ fn an_emergency_cancel_reaches_a_lone_held_confirmed_booking_and_an_update_does_
     )
     .unwrap();
     assert_eq!(live_status(&vault, event), Some(BookingStatus::Cancelled));
-    // Closing the held head is not the owner's answer: its confirm stands.
+    // Closing the held head is not the owner's answer: its tray row goes, as a
+    // retraction's does, and it stays held until the owner answers.
     let rtxn = vault.store.env.read_txn().unwrap();
     assert!(
         vault
             .store
             .pending_gate_consent_in_txn(&rtxn, &held)
             .unwrap()
-            .is_some()
+            .is_none()
+    );
+    assert!(
+        !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &held).unwrap()
     );
 }
 
