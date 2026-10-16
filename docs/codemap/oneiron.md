@@ -2996,7 +2996,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/goal_binding.rs` | src | s | 6 crate-vis | — | Portable, immutable goal identity of an optimizer-born SKILL revision |
 | `src/skill_optimize/job.rs` | src | m | 1 struct · 3 fn · 8 const · 3 crate-vis | SkillOptimizeOutcome | One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated… |
 | `src/skill_optimize/labels.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 crate-vis | JudgeAsk, JudgeAskReason, JudgeLabel | Human-calibrated judge asks and the append-only label anchor |
-| `src/skill_optimize/mod.rs` | src | s | 11 re-export · 6 crate-vis | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
+| `src/skill_optimize/mod.rs` | src | s | 12 re-export · 6 crate-vis | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
+| `src/skill_optimize/offer.rs` | src | m | 10 struct · 4 enum · 7 fn | ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck, OfferCheckInput, OfferCost, OfferEvidence +6 | The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner… |
 | `src/skill_optimize/policy.rs` | src | s | 5 crate-vis | — | Calibration policy row in trusted Gate manifests |
 | `src/skill_optimize/selection.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | SkillOptimizeCandidate | Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it |
 | `src/skill_optimize/tests.rs` | test | XL | — | — | — |
