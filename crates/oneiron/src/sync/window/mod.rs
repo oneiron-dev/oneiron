@@ -40,9 +40,12 @@ pub(in crate::sync) use self::admission::validate_window_update_with_staged_worl
 pub use self::admission::{
     validate_window_update_locality, validate_window_update_residence_with_vault,
 };
-pub use self::device_only::{UpdateVerdict, export_withheld, raw_update_verdict};
+pub use self::device_only::{
+    UpdateVerdict, Withhold, export_withheld, export_withheld_for, raw_update_verdict,
+    raw_update_verdict_for,
+};
 pub(in crate::sync) use self::device_only::{
-    device_only_ids, window_is_device_only, window_withheld,
+    device_only_ids, window_withheld_for,
 };
 pub(crate) use self::egress::export_history_free_window_snapshot;
 use self::egress::window_packing_excludes_entity;
@@ -55,7 +58,8 @@ pub use self::egress::{
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub use self::history_free::{
-    WindowExport, export_promotion_snapshot, export_window_replacement, export_window_since,
+    WindowExport, export_promotion_snapshot, export_window_replacement,
+    export_window_replacement_for, export_window_since, export_window_since_for,
     export_window_updates_since, promotion_baseline, update_reaches_below_root,
 };
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
@@ -99,7 +103,7 @@ pub struct LoadedWindow {
     /// Observer A subscription (persistence + broadcast).
     _observer_a: Subscription,
     /// Observer B subscriptions (entities, edges, tombstones materialization).
-    _observer_b: (Subscription, Subscription, Subscription),
+    _observer_b: (Subscription, Subscription, Subscription, Subscription),
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
