@@ -2,6 +2,10 @@
 //! socket. The steady sync socket keeps sole ownership of its own reader.
 
 mod index;
+mod sealed;
+pub use index::ResidenceIndexWindow;
+pub use sealed::SealedRelay;
+pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -49,6 +53,8 @@ pub enum SearchSource {
 pub struct ResidenceHit {
     pub entity_id: String,
     pub score: f32,
+    /// The canonical window holding the hit, so a first touch can open it.
+    pub window: WindowKey,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +104,20 @@ pub struct ThinItem {
     pub document: Vec<u8>,
 }
 
+/// One item as a host shows it when a person opens it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpenedItem {
+    /// A canonical local row: a sync-all replica's, a promoted window's or
+    /// one this machine wrote.
+    Resident {
+        entity_id: EntityId,
+        window: WindowKey,
+        raw: Vec<u8>,
+    },
+    /// A grant-checked read cache; its window is promoted before any edit.
+    Thin(ThinItem),
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchReply {
@@ -117,6 +137,7 @@ struct PromotionReply {
 struct SearchHit {
     entity_id: String,
     score: f32,
+    window: String,
 }
 
 struct ResidenceRpc {
@@ -138,8 +159,7 @@ impl ResidenceRpc {
         let session = config.note_session.as_ref().ok_or_else(refused)?;
         config.residence_selector.as_ref().ok_or_else(refused)?;
         let mut request = config
-            .server_url
-            .as_str()
+            .residence_url()
             .into_client_request()
             .map_err(|_| refused())?;
         // The upgrade proves the device's transport slip, as the sync
@@ -378,6 +398,7 @@ impl SyncClient {
         // The grant-checked body and text are one atomic READ-ONLY cache
         // entry. Neither reaches the observed Loro window or LMDB entity
         // tables until the canonical window is promoted before a write.
+        let now = self.vault.store.clock.wall_now();
         self.vault
             .with_write_txn_grouped(|txn| {
                 if self
@@ -412,6 +433,7 @@ impl SyncClient {
                     &format!("ro:e:{}", item.to_hex()),
                     window.as_str().as_bytes(),
                 )?;
+                crate::sync::residence::record_item_touch_in_txn(&self.vault, txn, item, now)?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
@@ -501,6 +523,10 @@ impl SyncClient {
                             .store
                             .sync_state
                             .delete(txn, &format!("ri:d:{id}"))?;
+                        self.vault
+                            .store
+                            .sync_state
+                            .delete(txn, &format!("rt:e:{id}"))?;
                     }
                 }
                 self.vault
@@ -512,6 +538,89 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         self.manager.notify_promotion(window);
         Ok(())
+    }
+
+    /// Keep a window this machine already holds in full (it synced all) as
+    /// a promoted opened window. The home grant-checks the whole window
+    /// first, exactly as for a first-edit promotion, and only then is the
+    /// window marked promoted. Its snapshot merges into the held copy: the
+    /// two are the same canonical CRDT, never an independently authored one.
+    /// A refused window stays on disk but no longer syncs.
+    pub async fn retain_window(&mut self, window: &WindowKey) -> Result<bool, TransportError> {
+        if self.config.residence_mode != SyncResidenceMode::Opened {
+            return Err(refused());
+        }
+        if self
+            .vault
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let budgets = residence_budgets(&self.vault)?;
+        let loaded = self.ensure_window(window.as_str())?;
+        // The home admits a promotion through one live row it selects.
+        let mut item = None;
+        crate::sync::loro_support::map_for_each_value_bytes(
+            &loaded.doc.get_map("entities"),
+            |key, value| {
+                if item.is_none() && value.is_some() {
+                    item = EntityId::from_hex(key).ok();
+                }
+            },
+        );
+        let Some(item) = item else {
+            return Ok(false);
+        };
+        let selector = self
+            .config
+            .residence_selector
+            .as_ref()
+            .ok_or_else(refused)?;
+        let selector = base64::engine::general_purpose::STANDARD
+            .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        let reply = match rpc
+            .request(
+                "residence.promote",
+                json!({
+                    "window": window.as_str(), "selector": selector, "entityId": item.to_hex()
+                }),
+            )
+            .await
+        {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let reply: PromotionReply = serde_json::from_value(reply).map_err(|_| refused())?;
+        if reply.window != window.as_str() {
+            return Err(refused());
+        }
+        let snapshot = base64::engine::general_purpose::STANDARD
+            .decode(reply.snapshot)
+            .map_err(|_| refused())?;
+        if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
+            || !import_promotion_snapshot(&loaded.doc, &snapshot)
+        {
+            return Ok(false);
+        }
+        loaded
+            .persist_state(&self.vault)
+            .map_err(|e| TransportError::Storage(e.to_string()))?;
+        self.vault
+            .with_write_txn_grouped(|txn| {
+                self.vault
+                    .store
+                    .sync_state
+                    .put(txn, &format!("rp:w:{window}"), &[1])
+            })
+            .map_err(|e| TransportError::Storage(e.to_string()))?;
+        self.manager.notify_promotion(window);
+        Ok(true)
     }
 
     /// Read a previously fetched thin item. This cache has no writable Loro
@@ -569,6 +678,37 @@ impl SyncClient {
         }))
     }
 
+    /// Open one item: its read cache when this machine opened it before,
+    /// else its local canonical row, else a first touch at the home. Each
+    /// open of a cached item stamps its last touch, which ages the cache.
+    pub async fn open_item(
+        &mut self,
+        window: &WindowKey,
+        item: EntityId,
+    ) -> Result<OpenedItem, TransportError> {
+        let storage = |e: crate::Error| TransportError::Storage(e.to_string());
+        if let Some(cached) = self.thin_item(item)?
+            && &cached.window == window
+        {
+            crate::sync::residence::record_item_touch(&self.vault, item).map_err(storage)?;
+            return Ok(OpenedItem::Thin(cached));
+        }
+        if let Some(raw) = self.vault.get_raw(&item).map_err(storage)? {
+            return Ok(OpenedItem::Resident {
+                entity_id: item,
+                window: window.clone(),
+                raw,
+            });
+        }
+        if self.config.residence_mode != SyncResidenceMode::Opened {
+            return Err(TransportError::InvalidPayload("item not yet synced"));
+        }
+        self.fetch_item(window, item).await?;
+        self.thin_item(item)?
+            .map(OpenedItem::Thin)
+            .ok_or_else(refused)
+    }
+
     /// Home results when reachable; offline results are explicitly local-only.
     pub async fn search_resident(
         &self,
@@ -608,15 +748,21 @@ impl SyncClient {
                 if reply.source != "home" || !reply.complete || reply.hits.len() > limit {
                     return Err(refused());
                 }
+                let hits = reply
+                    .hits
+                    .into_iter()
+                    .map(|hit| {
+                        WindowKey::try_new(&hit.window)
+                            .map(|window| ResidenceHit {
+                                entity_id: hit.entity_id,
+                                score: hit.score,
+                                window,
+                            })
+                            .ok_or_else(refused)
+                    })
+                    .collect::<Result<_, _>>()?;
                 Ok(ResidenceSearch {
-                    hits: reply
-                        .hits
-                        .into_iter()
-                        .map(|hit| ResidenceHit {
-                            entity_id: hit.entity_id,
-                            score: hit.score,
-                        })
-                        .collect(),
+                    hits,
                     source: SearchSource::Home,
                     complete: true,
                 })
@@ -651,6 +797,7 @@ impl SyncClient {
                         hits.push(ResidenceHit {
                             entity_id: id.to_hex(),
                             score: 1.0,
+                            window: item.window.clone(),
                         });
                     }
                 }
@@ -671,10 +818,9 @@ impl SyncClient {
                     else {
                         continue;
                     };
-                    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+                    let Ok(window) = crate::sync::residence::residence_window_for_blob(&raw) else {
                         continue;
                     };
-                    let window = WindowKey::from_timestamp(header.learned_at);
                     if promoted.contains(window.as_str())
                         && !hits
                             .iter()
@@ -683,6 +829,7 @@ impl SyncClient {
                         hits.push(ResidenceHit {
                             entity_id: hit.id.to_hex(),
                             score: hit.score,
+                            window,
                         });
                     }
                 }

@@ -16,6 +16,8 @@ use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, tempora
 /// network lookup never changes an opened vault's skill source.
 const HUB_COMMIT: &str = "e1040cbcc1ca2a1eb8404c8fc80956b0e75ae3e5";
 const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
+/// Library data, deliberately not a fifth build-embedded bootstrap skill.
+pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
 /// The model catalog has no authority of its own. Its rows count once the
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.
@@ -128,6 +130,18 @@ impl Vault {
         self.import_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
     }
 
+    /// Imports the review explainer through the pinned library/scanner path.
+    /// Activation, governance and optimized forks use the ordinary skill doors.
+    /// The returned entity (or an optimized descendant) is supplied to
+    /// `entity_doc::review_explainer::ReviewExplainerExecution` by its host.
+    pub fn import_review_bundle_explainer_skill(
+        &self,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.import_default_hub_skill(REVIEW_BUNDLE_EXPLAINER_SUBTREE, occurred, learned_at)
+    }
+
     /// The model catalog ref's policy: the owner's stored row, else the
     /// released commit.
     pub fn model_catalog_ref(&self) -> Result<TrackedHubRef> {
@@ -214,32 +228,8 @@ impl Vault {
         let tracked = self.model_catalog_ref()?;
         // Each policy names the commit this fetch must resolve. The commit is
         // transport identity only: a followed tag is pinned to what it names now.
-        let (adapter, reference) = match &tracked.hub_ref.pin {
-            HubPin::Commit(commit) => (
-                GitEndpointSkillHubAdapter::new(id, &row.endpoint, commit)?,
-                tracked.hub_ref.clone(),
-            ),
-            HubPin::Tag(tag) | HubPin::Semver(tag) => {
-                let adapter = GitEndpointSkillHubAdapter::at_tag(id, &row.endpoint, tag)?;
-                let commit = HubPin::Commit(adapter.resolved_commit().to_owned());
-                let reference = HubRef::new(id, MODEL_PACK_SUBTREE, commit)?;
-                (adapter, reference)
-            }
-            // A frozen hash hard-fails on drift at the commit last trusted.
-            HubPin::ContentHash(_) => (
-                GitEndpointSkillHubAdapter::new(
-                    id,
-                    &row.endpoint,
-                    tracked.latest_trusted.as_deref().unwrap_or(HUB_COMMIT),
-                )?,
-                tracked.hub_ref.clone(),
-            ),
-            HubPin::None => {
-                return Err(crate::error::Error::InvalidConfig(
-                    "model catalog ref is unpinned".to_owned(),
-                ));
-            }
-        };
+        let (adapter, reference) =
+            super::ref_sync::git_ref_adapter(id, &row.endpoint, &tracked, Some(HUB_COMMIT))?;
         let (source_id, pinned) =
             self.fetch_pack_from_adapter(&adapter, &reference, publisher, occurred, learned_at)?;
         let commit = adapter.resolved_commit().to_owned();

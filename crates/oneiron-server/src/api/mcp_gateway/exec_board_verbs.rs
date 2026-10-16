@@ -31,7 +31,9 @@ pub(crate) async fn execute_mcp_execute_code(
         .code_execution_host()
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
-    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor));
+    let verbs = Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(
+        server, actor, run_id,
+    ));
     let outcome = host
         .execute(crate::mcp::McpCodeExecutionRequest {
             vault: Arc::clone(&server.vault),
@@ -105,6 +107,7 @@ pub(crate) async fn execute_mcp_execute_code(
             "run_id": run_id.to_hex(),
             "terminal": terminal,
         },
+        "session_manifests": verbs.manifests(),
         "steps_run": outcome.steps_run,
         "bridge_calls": outcome.replay_record.bridge_calls.len(),
         "steps": steps,
@@ -427,8 +430,9 @@ fn mcp_board_verb_output_value(output: &oneiron::board_verb::BoardVerbOutput) ->
     }
 }
 
-/// `board.*`: dispatched by the engine's own verb dispatcher, over this
-/// connector's process-local STREAM state and the STATE-fenced board snapshot.
+/// A keyed `describe` and `self.focus.*`: dispatched by the engine's own verb
+/// dispatcher, over this connector's process-local STREAM state and the
+/// STATE-fenced board snapshot.
 pub(super) async fn execute_mcp_board_verb(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -509,7 +513,7 @@ pub(super) async fn execute_mcp_board_verb(
 /// and what the board's own render window truncated.
 ///
 /// ONE-1704 repair: the two are reported on separate axes, and only the section
-/// the omissions are OF carries them. A `board.expand` of `VERBS` is not partial
+/// the omissions are OF carries them. A `describe` of `VERBS` is not partial
 /// because a TASKS row was outside the credential's ceiling, and rows the render
 /// row cap dropped are a window fact rather than a scope one.
 pub(crate) fn mcp_board_verb_page_source(

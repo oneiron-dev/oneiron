@@ -6,10 +6,14 @@ pub(super) mod tests;
 
 use base64::Engine;
 use oneiron::EntityId;
+use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
-    INDEX_PAGE_MAX, IndexPage, WindowIndexEntry, home_search_candidates, index_selection_revision,
-    promotion_snapshot, selected_item_blob, window_index_page, window_index_projection,
+    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, home_search_candidates,
+    index_selection_revision, promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet,
+    selected_item_blob_with, shelve_sealed_window, window_index_page,
+    window_index_projection_with,
 };
+use oneiron::world_keys::SealedContentId;
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
@@ -33,6 +37,9 @@ pub(crate) struct ResidenceIndexCache {
     window_vv: Vec<u8>,
     grant_raw: Vec<u8>,
     authority: oneiron::authority::AuthorityFold,
+    /// The machine the projection was selected for: a proof that stops
+    /// standing, or a new one, never reuses it.
+    destination: Destination,
     selection_revision: ([u8; 32], u64, u64),
     items: Vec<WindowIndexEntry>,
     pages: usize,
@@ -77,9 +84,34 @@ struct SearchRequest {
     selector: String,
 }
 
+/// A sealed packet of one private-world window, for the home to keep
+/// (OF-534 G7).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SealedPutRequest {
+    window: String,
+    packet: String,
+    #[serde(default)]
+    retire_through: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SealedListRequest {
+    #[serde(default)]
+    after: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedGetRequest {
+    id: String,
+}
+
 pub(super) fn run(
     server: &SyncServer,
     auth: &CoreAuth,
+    peer: PeerMachine,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
@@ -90,10 +122,13 @@ pub(super) fn run(
         }
         let budgets = operation_budgets(server)?;
         match request.method.as_str() {
-            "residence.index" => index(server, auth, request.params, index_cache, budgets),
-            "residence.touch" => touch(server, auth, request.params),
-            "residence.promote" => promote(server, auth, request.params),
-            "residence.search" => search(server, auth, request.params, budgets),
+            "residence.index" => index(server, auth, peer, request.params, index_cache, budgets),
+            "residence.touch" => touch(server, auth, peer, request.params),
+            "residence.promote" => promote(server, auth, peer, request.params),
+            "residence.search" => search(server, auth, peer, request.params, budgets),
+            "residence.sealed.put" => sealed_put(server, auth, peer, request.params),
+            "residence.sealed.list" => sealed_list(server, peer, request.params),
+            "residence.sealed.get" => sealed_get(server, peer, request.params),
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),
@@ -143,6 +178,25 @@ fn bound_selector(
     Ok(selector)
 }
 
+/// One request's residence admission for the machine this socket proved
+/// (OF-534 G6). A refused credential, grant or member looks missing.
+fn admitted<'v>(
+    server: &'v SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    selector: &SyncSelector,
+) -> Result<ResidenceAdmission<'v>, AppError> {
+    let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
+    ResidenceAdmission::load(
+        &server.vault,
+        proof,
+        peer,
+        crate::handler::selector_grant_scope(),
+        selector,
+    )
+    .map_err(|_| AppError::not_found("item", None))
+}
+
 fn selected_window(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -164,6 +218,7 @@ fn selected_window(
 fn index(
     server: &SyncServer,
     auth: &CoreAuth,
+    peer: PeerMachine,
     params: Value,
     cache: &mut Option<ResidenceIndexCache>,
     budgets: ResidenceOperationBudgets,
@@ -184,11 +239,8 @@ fn index(
     }
     let page_limit = input.limit.min(budgets.index_page_limit);
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = crate::api::credential_read_key(&server.vault, proof)
-        .map_err(AppError::from)?
-        .at(auth.locality());
-    let scoped = server.vault.scoped_read(actor);
+    let admission = admitted(server, auth, peer, &selector)?;
+    let destination = admission.destination();
     let current_vv = doc.oplog_vv().encode();
     let grant = server
         .vault
@@ -203,14 +255,15 @@ fn index(
         .map_err(|_| AppError::internal_server_error("index selection unavailable"))?;
 
     if after.is_none() {
-        let entries = window_index_projection(
+        let entries = window_index_projection_with(
             &server.vault,
             &doc,
             &window,
             crate::handler::selector_grant_scope(),
             &selector,
+            admission.withhold(),
             budgets.title_max_chars,
-            |id| scoped.is_entity_readable(&id),
+            |id| admission.allows_item(id),
         )
         .map_err(|_| AppError::internal_server_error("index unavailable"))?;
         let bytes = entries
@@ -269,6 +322,7 @@ fn index(
             window_vv: current_vv.clone(),
             grant_raw: grant.clone(),
             authority: authority.clone(),
+            destination,
             selection_revision,
             items: entries,
             pages: 0,
@@ -286,6 +340,7 @@ fn index(
         || retained.window_vv != current_vv
         || retained.grant_raw != grant
         || retained.authority != authority
+        || retained.destination != destination
         || retained.selection_revision != selection_revision
         || retained.budgets != budgets
     {
@@ -320,8 +375,8 @@ fn index(
             let id = EntityId::from_hex(&entry.entity_id)
                 .map_err(|_| AppError::internal_server_error("index entry malformed"))?;
             cursor = Some(id);
-            if scoped
-                .is_entity_readable(&id)
+            if admission
+                .allows_item(id)
                 .map_err(|_| AppError::internal_server_error("index admission unavailable"))?
             {
                 items.push(entry);
@@ -384,31 +439,33 @@ fn index_changed() -> AppError {
     )
 }
 
-fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, AppError> {
+fn touch(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
     let input: TouchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     // A stored grant constrains the selector; the actor's live scoped-read
-    // floor must ALSO admit the exact target. Either denial looks missing.
-    let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = crate::api::credential_read_key(&server.vault, proof)
-        .map_err(AppError::from)?
-        .at(auth.locality());
-    if !server
-        .vault
-        .scoped_read(actor)
-        .is_entity_readable(&id)
+    // floor and the destination machine's world read settings must ALSO
+    // admit the exact target. Either denial looks missing.
+    let admission = admitted(server, auth, peer, &selector)?;
+    if !admission
+        .allows_item(id)
         .map_err(|_| AppError::internal_server_error("item admission unavailable"))?
     {
         return Err(AppError::not_found("item", None));
     }
-    let blob = selected_item_blob(
+    let blob = selected_item_blob_with(
         &server.vault,
         &doc,
         &window,
         crate::handler::selector_grant_scope(),
         &selector,
+        admission.withhold(),
         id,
     )
     .map_err(|_| AppError::internal_server_error("item unavailable"))?
@@ -416,11 +473,12 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, 
     // The export opens the document: past the live-document row it waits its
     // turn off the runtime worker (rule 5).
     let document = crate::server::blocking(|| {
-        server.reassert_manager.export_document_in_window(
+        server.reassert_manager.export_document_in_window_with(
             id,
             &window,
             crate::handler::selector_grant_scope(),
             &selector,
+            admission.withhold(),
             &loro::VersionVector::new().encode(),
         )
     })
@@ -442,25 +500,27 @@ fn touch(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, 
     ))
 }
 
-fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer, AppError> {
+fn promote(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
     let input: PromotionRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
-    let actor = crate::api::credential_read_key(&server.vault, proof)
-        .map_err(AppError::from)?
-        .at(auth.locality());
-    let scoped = server.vault.scoped_read(actor);
-    if !scoped
-        .is_entity_readable(&id)
+    let admission = admitted(server, auth, peer, &selector)?;
+    if !admission
+        .allows_item(id)
         .map_err(|_| AppError::internal_server_error("promotion admission unavailable"))?
-        || selected_item_blob(
+        || selected_item_blob_with(
             &server.vault,
             &doc,
             &window,
             crate::handler::selector_grant_scope(),
             &selector,
+            admission.withhold(),
             id,
         )
         .map_err(|_| AppError::not_found("item", None))?
@@ -471,15 +531,16 @@ fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer
     // Every row of the window a walk admitted this reader: the snapshot
     // carries no other.
     let mut rows = vec![id];
-    let snapshot = promotion_snapshot(
+    let snapshot = promotion_snapshot_with(
         &server.vault,
         &doc,
         &window,
         crate::handler::selector_grant_scope(),
         &selector,
+        admission.withhold(),
         |item| {
             rows.push(item);
-            scoped.is_entity_readable(&item)
+            admission.allows_item(item)
         },
     )
     .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?
@@ -496,6 +557,7 @@ fn promote(server: &SyncServer, auth: &CoreAuth, params: Value) -> Result<Answer
 fn search(
     server: &SyncServer,
     auth: &CoreAuth,
+    peer: PeerMachine,
     params: Value,
     budgets: ResidenceOperationBudgets,
 ) -> Result<Answer, AppError> {
@@ -509,6 +571,7 @@ fn search(
         return Err(AppError::invalid_params());
     }
     let selector = bound_selector(server, auth, &input.selector)?;
+    let admission = admitted(server, auth, peer, &selector)?;
     let grant_before = server
         .vault
         .get_raw(&selector.grant_id)
@@ -536,12 +599,13 @@ fn search(
             // applying the same grant selector used by first touch.
             oneiron::sync::window::reverse_rematerialize(&server.vault, &doc.doc, &window)
                 .map_err(|_| AppError::internal_server_error("search window unavailable"))?;
-            let selected = oneiron::sync::filtered_window_doc(
+            let selected = oneiron::sync::filtered_window_doc_for(
                 &server.vault,
                 &doc.doc,
                 &window,
                 crate::handler::selector_grant_scope(),
                 &selector,
+                admission.withhold(),
             )
             .map_err(|_| AppError::not_found("grant", None))?;
             selected_by_window.insert(window.clone(), selected);
@@ -552,8 +616,11 @@ fn search(
         if matches!(
             selected.get_map("entities").get(&id.to_hex()),
             Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
-        ) {
-            hits.push(json!({"entityId": id.to_hex(), "score": score}));
+        ) && admission
+            .allows_item(id)
+            .map_err(|_| AppError::internal_server_error("search admission unavailable"))?
+        {
+            hits.push(json!({"entityId": id.to_hex(), "score": score, "window": window.as_str()}));
             rows.push(id);
             if hits.len() == input.limit {
                 break;
@@ -575,5 +642,62 @@ fn search(
     Ok((
         json!({"hits": hits, "source": "home", "complete": true}),
         Some(rows),
+    ))
+}
+
+/// Keeps a sealed packet of a private world's window that the sending
+/// machine reads (OF-534 G7). The home opens nothing; a refused sender,
+/// world or packet looks missing.
+fn sealed_put(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: SealedPutRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
+    let packet = base64::engine::general_purpose::STANDARD
+        .decode(input.packet)
+        .map_err(|_| AppError::invalid_params())?;
+    let (id, seq) =
+        shelve_sealed_window(&server.vault, peer, &window, &packet, input.retire_through)
+            .map_err(|_| AppError::not_found("sealed window", None))?;
+    Ok((json!({"id": id.to_hex(), "seq": seq}), Some(Vec::new())))
+}
+
+/// The live sealed packets after one arrival, of the worlds the proved
+/// machine reads.
+fn sealed_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: SealedListRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let entries = sealed_shelf_after(&server.vault, peer, input.after)
+        .map_err(|_| AppError::not_found("sealed shelf", None))?;
+    let entries: Vec<Value> = entries
+        .into_iter()
+        .map(|entry| {
+            json!({"id": entry.id.to_hex(), "window": entry.window.as_str(), "seq": entry.seq})
+        })
+        .collect();
+    Ok((json!({"entries": entries}), Some(Vec::new())))
+}
+
+/// One live or retired sealed packet, for a proved machine that reads its
+/// world.
+fn sealed_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: SealedGetRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let id = SealedContentId::from_hex(&input.id).map_err(|_| AppError::invalid_params())?;
+    let (window, packet) = sealed_shelf_packet(&server.vault, peer, &id)
+        .map_err(|_| AppError::not_found("sealed packet", None))?
+        .ok_or_else(|| AppError::not_found("sealed packet", None))?;
+    Ok((
+        json!({
+            "id": id.to_hex(),
+            "window": window.as_str(),
+            "packet": base64::engine::general_purpose::STANDARD.encode(packet),
+        }),
+        Some(Vec::new()),
     ))
 }

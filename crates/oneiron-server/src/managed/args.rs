@@ -45,6 +45,9 @@ pub enum ManagedError {
     #[error("managed vault {vault:?} rejected its derivation owner: {reason}")]
     DerivationOwnerRejected { vault: String, reason: String },
 
+    #[error("managed vault routing refused: {reason}")]
+    VaultRoutingRejected { reason: String },
+
     #[error("--keystore-dir must be an absolute path")]
     RelativeKeystoreDir,
 
@@ -115,12 +118,18 @@ pub enum ManagedError {
 pub struct ManagedArgs {
     pub vault_name: String,
     pub derivation_owner: DerivationOwner,
+    pub organization_owner: Option<DerivationOwner>,
+    pub member_vault: bool,
     pub data_dir: PathBuf,
     pub http_socket: PathBuf,
     pub ctl_socket: PathBuf,
     pub hypnos_socket: PathBuf,
+    /// [`NO_FD`] in a vault VM, whose boot channel carries the ready byte.
     pub ready_fd: RawFd,
+    /// [`NO_FD`] in a vault VM, whose boot channel carries the frame.
     pub credentials_fd: RawFd,
+    /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
+    pub vsock_guest: bool,
     /// Where this install keeps its this-device-only key slots, a place the
     /// supervisor chose. Without it managed mode installs no keystore.
     pub keystore_dir: Option<PathBuf>,
@@ -135,6 +144,11 @@ impl ManagedArgs {
     /// before touching a descriptor, a socket or the data directory.
     pub fn from_serve_args(args: &ServeArgs) -> Result<Option<Self>, ManagedError> {
         if !args.managed_by_hypnos {
+            if args.organization_owner.is_some() || args.member_vault {
+                return Err(ManagedError::VaultRoutingRejected {
+                    reason: "organization flags require managed mode".into(),
+                });
+            }
             return Ok(None);
         }
 
@@ -157,10 +171,43 @@ impl ManagedArgs {
             return Err(ManagedError::InvalidDerivationOwner);
         }
         let owner = decode_hex(owner_text).ok_or(ManagedError::InvalidDerivationOwner)?;
+        let organization_owner = args
+            .organization_owner
+            .as_deref()
+            .map(|text| {
+                decode_hex(text)
+                    .filter(|_| text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                    .map(DerivationOwner)
+                    .ok_or_else(|| ManagedError::VaultRoutingRejected {
+                        reason: "--organization-owner must be a 32-byte id in hexadecimal".into(),
+                    })
+            })
+            .transpose()?;
 
+        let (ready_fd, credentials_fd) = if args.vsock_guest {
+            for (flag, given) in [
+                ("ready-fd", args.ready_fd.is_some()),
+                ("credentials-fd", args.credentials_fd.is_some()),
+            ] {
+                if given {
+                    return Err(ManagedError::ConflictingFlag {
+                        flag,
+                        reason: VSOCK_BOOT_REASON,
+                    });
+                }
+            }
+            (NO_FD, NO_FD)
+        } else {
+            (
+                require_fd(args.ready_fd, "ready-fd")?,
+                require_fd(args.credentials_fd, "credentials-fd")?,
+            )
+        };
         let managed = Self {
             vault_name,
             derivation_owner: DerivationOwner(owner),
+            organization_owner,
+            member_vault: args.member_vault,
             // `--vault-path` stays the alias for the same directory.
             data_dir: require(
                 args.data_dir.clone().or_else(|| args.vault_path.clone()),
@@ -169,8 +216,9 @@ impl ManagedArgs {
             http_socket: require(args.http_socket.clone(), "http-socket")?,
             ctl_socket: require(args.ctl_socket.clone(), "ctl-socket")?,
             hypnos_socket: require(args.hypnos_socket.clone(), "hypnos-socket")?,
-            ready_fd: require_fd(args.ready_fd, "ready-fd")?,
-            credentials_fd: require_fd(args.credentials_fd, "credentials-fd")?,
+            ready_fd,
+            credentials_fd,
+            vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
         };
         if managed
@@ -187,10 +235,13 @@ impl ManagedArgs {
         // frame's descriptor is closed under the ready write, or the ready byte
         // lands in the number the supervisor is still reading credentials from.
         // Refused here, before either is consumed.
-        refuse_fd_alias(
-            ("--ready-fd", managed.ready_fd),
-            ("--credentials-fd", managed.credentials_fd),
-        )?;
+        if !managed.vsock_guest {
+            refuse_fd_alias(
+                ("--ready-fd", managed.ready_fd),
+                ("--credentials-fd", managed.credentials_fd),
+            )?;
+        }
+        managed.vault_binding()?;
         Ok(Some(managed))
     }
 
@@ -288,6 +339,13 @@ fn refuse_fd_alias(
     Ok(())
 }
 
+/// A vault VM inherits no descriptors: its vsock boot channel carries the
+/// credential frame in and the ready byte out.
+pub const NO_FD: RawFd = -1;
+
+const VSOCK_BOOT_REASON: &str =
+    "a vault VM reads its credentials and signals ready over the vsock boot channel";
+
 const NO_HOST_PORT_REASON: &str =
     "managed mode serves the supervisor's socket, never a host:port bind";
 
@@ -354,6 +412,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.derivation_owner.is_some(),
         ArgvUse::Read,
     ),
+    (
+        "organization-owner",
+        |args| args.organization_owner.is_some(),
+        ArgvUse::Read,
+    ),
+    ("member-vault", |args| args.member_vault, ArgvUse::Read),
     ("data-dir", |args| args.data_dir.is_some(), ArgvUse::Read),
     (
         "http-socket",
@@ -376,6 +440,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
         "keystore-dir",
         |args| args.keystore_dir.is_some(),

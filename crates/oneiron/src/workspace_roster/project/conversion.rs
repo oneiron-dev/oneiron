@@ -74,7 +74,9 @@ fn thread_project_in(
     {
         return Err(Error::CorruptedIndex("project origin target"));
     }
-    Ok(Some(id))
+    // Replicated origin indexes name held rows too. Only a project whose
+    // history currently serves authority can fold a source thread.
+    Ok(vault.visible_project_in_txn(txn, id)?.map(|_| id))
 }
 
 impl Vault {
@@ -92,10 +94,17 @@ impl Vault {
                     .project_conversion_policy()
                     .ok_or_else(invalid)?;
             let mut row = room_thread_in(self, txn, room, thread)?;
+            let turns = rooms::thread_turns_in(self, txn, room, thread)?;
+            let source = rooms::room_in(self, txn, room)?;
+            let members = source.member_ids.into_iter().collect();
+            crate::task_verb::room_thread_task_roster_in(self, txn, task, &members)?;
             if self.get_entity_type_in_txn(txn, &task)? != Some(ENTITY_TYPE_TASK)
                 || !crate::task_verb::thread_task_is_open_in(self, txn, task)?
                 || row.converted_project.is_some()
-                || row.task_ids.len() >= policy.max_tasks
+                || thread_project_in(self, txn, room, thread, self.project_type_byte()?)?.is_some()
+                || (!row.task_ids.contains(&task.to_hex())
+                    && turns.iter().map(|turn| turn.task_ids.len()).sum::<usize>()
+                        >= policy.max_tasks)
             {
                 return Err(invalid());
             }
@@ -122,11 +131,13 @@ impl Vault {
     }
 
     /// Card tap uses host-held placement and revalidates its authenticated
-    /// owner inside the same transaction that mints the project and forks.
+    /// owner inside the same transaction that mints the project and forks;
+    /// the owner-project signer signs the new state for the owner.
     pub(crate) fn convert_thread_with_card(
         &self,
         intent: &crate::genui::ProjectMintIntent,
         owner: &crate::consent::AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         project_id: EntityId,
         now: u64,
     ) -> Result<ProjectRecord> {
@@ -139,7 +150,7 @@ impl Vault {
             message,
             project_id,
             None,
-            Some((intent, owner)),
+            Some((intent, owner, signer)),
             now,
         )
     }
@@ -158,12 +169,14 @@ impl Vault {
         card: Option<(
             &crate::genui::ProjectMintIntent,
             &crate::consent::AuthenticatedOwner,
+            &OwnerProjectSigner<'_>,
         )>,
         now: u64,
     ) -> Result<ProjectRecord> {
         let kind = self.project_type_byte()?;
+        self.backfill_tasks_by_owner()?;
         self.with_write_txn_grouped(|txn| {
-            if let Some((intent, owner)) = card {
+            if let Some((intent, owner, _)) = card {
                 let principal_ref = owner.principal_ref_in_txn(self, txn)?;
                 if intent.principal_ref != principal_ref
                     || intent.source_message_ref != source_message.to_hex()
@@ -178,16 +191,16 @@ impl Vault {
                     .project_conversion_policy()
                     .ok_or_else(invalid)?;
             let mut row = room_thread_in(self, txn, room, thread)?;
-            if row.task_ids.len() > policy.max_tasks {
-                return Err(invalid());
-            }
+            let turns = rooms::thread_turns_in(self, txn, room, thread)?;
             if row.converted_project.is_some()
                 || self.get_entity_type_in_txn(txn, &project_id)?.is_some()
                 || thread_project_in(self, txn, room, thread, kind)?.is_some()
             {
                 return Err(invalid());
             }
-            if !row.message_ids.contains(&source_message.to_hex())
+            if !turns
+                .iter()
+                .any(|turn| turn.message_ids.contains(&source_message.to_hex()))
                 || self.get_entity_type_in_txn(txn, &source_message)? != Some(ENTITY_TYPE_MESSAGE)
             {
                 return Err(invalid());
@@ -196,31 +209,54 @@ impl Vault {
             let source_project_id = EntityId::from_hex(&source.project_id)?;
             // The source's effective leader and claims scope, as its signed
             // history folds them.
-            let (_, source_project) = self
+            let (mut source_record, source_project) = self
                 .effective_project_in_txn(txn, source_project_id)?
                 .ok_or_else(invalid)?;
             // The card's confirmed leader, else the caller's explicit one, is
             // final. Only an unchosen leader falls back to the task holder,
             // then the room host.
             let confirmed = card
-                .map(|(intent, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
+                .map(|(intent, _, _)| EntityId::from_hex(&intent.leader_agent_def_ref))
                 .transpose()?;
+            let roots = turns
+                .iter()
+                .map(|turn| Ok((EntityId::from_hex(&turn.turn_id)?, thread)))
+                .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
+            let bindings = rooms::thread_task_bindings(&turns, &roots)?;
+            let source_members = source.member_ids.iter().cloned().collect();
+            for &task in bindings.keys() {
+                crate::task_verb::room_thread_task_roster_in(self, txn, task, &source_members)?;
+            }
+            let task_ids = crate::task_verb::room_thread_task_ids_in(
+                self,
+                txn,
+                &roots,
+                &bindings,
+                &source_members,
+            )?;
+            if task_ids.len() > policy.max_tasks {
+                return Err(invalid());
+            }
             let mut holder = None;
-            let mut tasks = Vec::new();
-            for raw in &row.task_ids {
-                let id = EntityId::from_hex(raw)?;
-                if self.get_entity_type_in_txn(txn, &id)? != Some(ENTITY_TYPE_TASK) {
-                    return Err(invalid());
-                }
+            let mut tasks = Vec::with_capacity(task_ids.len());
+            for &id in task_ids.keys() {
+                crate::task_verb::room_thread_task_roster_in(self, txn, id, &source_members)?;
                 if confirmed.is_none() && holder.is_none() {
                     holder = crate::task_verb::open_thread_task_holder_in(
                         self,
                         txn,
                         id,
                         policy.task_holder_fallback,
-                    )?;
+                    )?
+                    .filter(|candidate| {
+                        policy.allows_leader_override(
+                            *candidate,
+                            &source.member_ids,
+                            Some(*candidate),
+                        )
+                    });
                 }
-                tasks.push(raw.clone());
+                tasks.push(id.to_hex());
             }
             let fallback = match policy.leader_fallback {
                 LeaderFallback::TaskHolderThenSourceLeader => holder,
@@ -249,6 +285,13 @@ impl Vault {
                 leader,
             )?;
             project.tasks = tasks;
+            project.slice = source_project.slice.clone().ok_or_else(invalid)?;
+            project.depth_limit = source_project.depth_limit;
+            project.depth_remaining = source_project
+                .depth_remaining
+                .min(source_project.depth_limit)
+                .checked_sub(1)
+                .ok_or_else(invalid)?;
             project.roster = match policy.roster_selection {
                 RosterSelection::InheritSource => source.member_ids,
                 RosterSelection::LeaderOnly => vec![leader.to_hex()],
@@ -260,7 +303,7 @@ impl Vault {
             project.origin_room = Some(room.to_hex());
             project.origin_thread = Some(thread.to_hex());
             project.origin_at = Some(row.at);
-            if let Some((intent, _)) = card {
+            if let Some((intent, _, _)) = card {
                 self.apply_card_terms_in_txn(txn, intent, project_id, now, &mut project)?;
                 if policy.roster_selection == RosterSelection::LeaderOnly
                     && project.board.iter().any(|id| id != &project.leader)
@@ -268,19 +311,68 @@ impl Vault {
                     return Err(invalid());
                 }
             }
-            self.batch_in()
-                .put(
-                    &project_id,
-                    kind,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&project)?,
-                )
-                .apply(txn)?;
-            row.task_ids.clear();
+            let destination_members = project.roster.iter().cloned().collect();
+            for &task in task_ids.keys() {
+                crate::task_verb::room_thread_task_roster_in(
+                    self,
+                    txn,
+                    task,
+                    &destination_members,
+                )?;
+            }
+            // A move removes the old placement. A task owned by another
+            // project's list is not silently taken from that project.
+            let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+                .ok_or_else(invalid)?;
+            for (id, record, verdict) in reader.all()? {
+                if id != source_project_id
+                    && verdict == ProjectVerdict::Visible
+                    && record.tasks.iter().any(|task| project.tasks.contains(task))
+                {
+                    return Err(invalid());
+                }
+            }
+            let previous_tasks = source_record.tasks.len();
+            source_record
+                .tasks
+                .retain(|task| !project.tasks.contains(task));
+            let at = TimeRange {
+                start: now,
+                end: now,
+            };
+            match card {
+                // The owner's card: the host signs the new state for the
+                // owner, it lands as history, and only an installed head
+                // commits.
+                Some((_, owner, signer)) => {
+                    let signed_at = owner_signer::owner_signed_at(self, txn)?;
+                    self.sign_owner_project_in_txn(
+                        txn,
+                        owner,
+                        signer,
+                        project_id,
+                        &mut project,
+                        None,
+                        signed_at,
+                    )?;
+                    self.batch_in()
+                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
+                        .apply(txn)?;
+                    self.require_owner_head_in_txn(txn, project_id, &project)?;
+                }
+                None => {
+                    self.batch_in()
+                        .put(&project_id, kind, at, now, &encode(&project)?)
+                        .apply(txn)?;
+                }
+            }
+            if source_record.tasks.len() != previous_tasks {
+                self.batch_in()
+                    .put(&source_project_id, kind, at, now, &encode(&source_record)?)
+                    .apply(txn)?;
+            }
+            // Keep historical thread bindings as references for result
+            // headers. Only PROJECT.tasks determines current placement.
             row.converted_project = Some(project_id.to_hex());
             rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             Ok(project)
@@ -350,6 +442,15 @@ impl Vault {
         thread_project_in(self, &txn, room, thread, kind)
     }
 
+    pub(crate) fn thread_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+        thread: EntityId,
+    ) -> Result<Option<EntityId>> {
+        thread_project_in(self, txn, room, thread, self.project_type_byte()?)
+    }
+
     /// The origin card is the first trunk projection of the new room. Its
     /// position is the original thread's position; no source message is copied.
     pub fn room_origin_card(&self, room: EntityId) -> Result<Option<RoomOriginCard>> {
@@ -396,12 +497,27 @@ impl Vault {
         let mut threads = Vec::new();
         // The containing thread hangs on its own message, even when it has no child.
         if rooms::TURNS.contains(&self.store, &txn, turn)? {
-            let source = rooms::turn_in(self, &txn, *turn)?;
+            let mut source = rooms::turn_in(self, &txn, *turn)?;
             if source.room_id != room.to_hex() || !source.message_ids.contains(&message.to_hex()) {
                 return Err(invalid());
             }
-            if source.thread_of.is_some() {
-                threads.push(*turn);
+            if let Some(anchor) = source.thread_of.clone() {
+                let mut seen = BTreeSet::new();
+                while let Some(parent) = source.reply_to.as_deref() {
+                    if parent == anchor {
+                        break;
+                    }
+                    let parent = EntityId::from_hex(parent)?;
+                    if !seen.insert(parent) {
+                        return Err(invalid());
+                    }
+                    source = rooms::turn_in(self, &txn, parent)?;
+                    if source.room_id != room.to_hex() || source.thread_of.as_ref() != Some(&anchor)
+                    {
+                        return Err(invalid());
+                    }
+                }
+                threads.push(EntityId::from_hex(&source.turn_id)?);
             }
         }
         // Parent → child index scopes this read to matching threads only.

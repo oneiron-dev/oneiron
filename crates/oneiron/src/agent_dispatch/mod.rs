@@ -28,7 +28,19 @@ mod healer_context;
 mod healer_repair;
 pub(crate) use healer_context::validate as validate_healer_case;
 mod kill;
+mod launch;
+mod leader_starter;
+pub use leader_starter::{
+    LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner,
+};
+mod origin;
+pub(crate) use origin::dispatch_origin_conversation;
+mod planner;
 mod resident;
+mod spend_calibration;
+mod spend_lease;
+mod spend_record;
+mod team_shape;
 mod types;
 mod widen;
 mod widen_record;
@@ -44,6 +56,17 @@ mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
 
+pub use self::launch::{
+    LaunchNode, LaunchPlan, LaunchRole, LaunchStatement, SpawnSpend, SpendCapView,
+};
+pub use self::spend_calibration::{
+    AgentSpendCalibration, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, SpendBasis,
+};
+pub use self::spend_record::{
+    ChildSpend, SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal,
+    SpendState,
+};
+
 pub use self::codec::{
     agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
     encode_agent_dispatch_input,
@@ -53,8 +76,18 @@ pub use self::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_COMPAT_DEPTH_CAP, AGENT_DISPATCH_INPUT_KEYS,
     AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,
     AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext,
-    AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot,
-    HealerSlotOutcome, KillOutcome, KillProposal, KillerLease, restrict_agent_ceiling,
+    AttenuatedDispatchTarget, CareLevel, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer,
+    HealerSlot, HealerSlotOutcome, KillOutcome, KillProposal, KillerLease, SpawnNeed,
+    SpawnOverride, restrict_agent_ceiling,
+};
+pub use self::planner::{
+    AvailableModel, CostEnvelope, GracefulStop, PartialResultHold, PlannerDecisions, PlannerRung,
+    PlannerThresholds, ShapeQuote, SpawnPlanReceipt, TeamPlan, plan_spawn, plan_spawn_routed,
+    planner_rung_for, resolve_care, top_shapes,
+};
+pub use self::team_shape::{
+    CoordinationPattern, PayoffRow, PlannerCard, SEEDED_SHAPES, SeededShape,
+    TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, seeded_shape,
 };
 
 #[cfg(test)]

@@ -11,14 +11,16 @@ use super::super::codec::validate_raw_output;
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    MODEL_HEAL_COUNTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output, load_whole_body,
-    next_additive_heal_count, read_body_row_range, replay_generation_matches,
+    MODEL_HEAL_COUNTS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS,
+    finish_output, load_whole_body, next_additive_heal_count, read_body_row_range,
+    replay_generation_matches,
 };
 use super::speech_identity::{
     canonical_witness_executor_turn, executor_speech_message_id_for_run, executor_speech_turn_id,
 };
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::result_memory::ResultShare;
+use crate::secret_rotation::ArtifactTaintState;
 use crate::store::BodySink;
 
 #[cfg(test)]
@@ -202,27 +204,53 @@ impl SessionBinding<'_> {
         sink: BodySink,
         complete: bool,
     ) -> Result<CodeRunRawOutput> {
-        let (output, body) = finish_output(path, sink, complete, self.session.limit_watch())?;
+        let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
+        self.mark_secret(&finished.output, finished.secret)?;
         self.answered(|| {
-            self.session
-                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &body)
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUTS,
+                &finished.output.handle,
+                &finished.body,
+            )
         })?;
-        Ok(output)
+        Ok(finished.output)
+    }
+
+    /// Marks a body the secret scan hit, on the session's route, before its
+    /// row is written. An off-record room files no lift proposal: nothing of
+    /// it reaches the base vault.
+    fn mark_secret(&self, output: &CodeRunRawOutput, secret: Option<&'static str>) -> Result<()> {
+        let Some(reason) = secret else {
+            return Ok(());
+        };
+        self.answered(|| {
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUT_SECRETS,
+                &output.handle,
+                &reason.to_owned(),
+            )
+        })
     }
 
     fn put_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
         let mut sink = self.output_sink()?;
         sink.write(raw)?;
-        let (stored, body) =
-            finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
-        if stored != *output {
+        let finished = finish_output(output.path.clone(), sink, true, self.session.limit_watch())?;
+        if finished.output != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
+        self.mark_secret(output, finished.secret)?;
         self.answered(|| {
-            self.session
-                .side_table_put_routed(&self.route, &RAW_OUTPUTS, &output.handle, &body)
+            self.session.side_table_put_routed(
+                &self.route,
+                &RAW_OUTPUTS,
+                &output.handle,
+                &finished.body,
+            )
         })
     }
 
@@ -248,6 +276,29 @@ impl SessionBinding<'_> {
                 .side_table_read_bytes(&RAW_OUTPUTS, &output.handle, |row| {
                     read_body_row_range(output, row, offset, len, || self.session.body_dirs())
                 })
+        })
+    }
+
+    /// A body's taint from the room's sidecars: a secret-scan mark is live
+    /// taint for good, and so is any taint ref, since a room keeps no view
+    /// of custody rotation.
+    fn result_taint(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<(ArtifactTaintState, Option<String>)> {
+        if let Some(reason) = self.answered(|| {
+            self.session
+                .side_table_get(&RAW_OUTPUT_SECRETS, &output.handle)
+        })? {
+            return Ok((ArtifactTaintState::TaintedLive, Some(reason)));
+        }
+        let refs = self.answered(|| {
+            self.session
+                .side_table_get(&RAW_OUTPUT_TAINTS, &output.handle)
+        })?;
+        Ok(match refs {
+            Some(refs) if !refs.is_empty() => (ArtifactTaintState::TaintedLive, None),
+            _ => (ArtifactTaintState::Clean, None),
         })
     }
 }
@@ -559,6 +610,22 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.read_code_run_raw_output_range(output, offset, len),
             Self::Session(binding) => binding.read_raw_output_range(output, offset, len),
+        }
+    }
+
+    /// The taint of one of this run's result bodies, from its sidecars and
+    /// never its bytes: its read-time state, and the reason the secret scan
+    /// marked it with, if it did.
+    pub(crate) fn code_run_result_taint(
+        &self,
+        output: &CodeRunRawOutput,
+    ) -> Result<(ArtifactTaintState, Option<String>)> {
+        match self {
+            Self::Canonical(vault) => Ok((
+                vault.code_run_raw_output_taint_state(output)?,
+                vault.code_run_raw_output_secret(output)?,
+            )),
+            Self::Session(binding) => binding.result_taint(output),
         }
     }
 

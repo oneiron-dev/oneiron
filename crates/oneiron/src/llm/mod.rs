@@ -35,6 +35,7 @@ pub(crate) use oneiron_model::llm::{
     parse_failure_rules,
 };
 pub mod manifest;
+pub mod model_trials;
 pub mod registry;
 pub mod routing;
 pub mod run_admission;
@@ -79,8 +80,8 @@ pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
-    AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker,
-    auto_check_llm_request,
+    AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
+    AutoCheckSignals, BoundedAutoChecker, auto_check_llm_request,
 };
 pub use self::role_defaults::RoleModelDefaults;
 pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
@@ -95,7 +96,7 @@ pub use oneiron_model::llm::{
     LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
     PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
     ResponseFormat, RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError,
-    SingleRouteBackend, SingleSend, TierPrecedence, UnsupportedCapability,
+    SingleRouteBackend, SingleSend, SpentKind, TierPrecedence, UnsupportedCapability,
 };
 
 #[cfg(test)]

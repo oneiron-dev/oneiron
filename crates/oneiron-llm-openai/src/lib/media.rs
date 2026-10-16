@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
     MediaUsage,
@@ -125,11 +126,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         }
     }
 
-    async fn image(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaResponse> {
+    async fn image(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let references = request
             .reference_images()
@@ -147,7 +144,10 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
                 .map(|(i, reference)| reference_part("image[]", i, reference))
                 .collect::<LlmResult<Vec<_>>>()?;
             let fields = form_fields(&fields);
-            ("/v1/images/edits", OpenAiMediaBody::Multipart { fields, files })
+            (
+                "/v1/images/edits",
+                OpenAiMediaBody::Multipart { fields, files },
+            )
         };
         let reply = self
             .transport
@@ -180,11 +180,7 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         Ok(response)
     }
 
-    async fn speech(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaResponse> {
+    async fn speech(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
         let input = request.text();
         if input.trim().is_empty() || !only_text(&request) {
@@ -297,38 +293,79 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         })
     }
 
-    async fn embed(
-        &self,
-        request: MediaRequest,
-        lease: &BudgetLease,
-    ) -> LlmResult<MediaResponse> {
+    async fn embed(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<MediaResponse> {
         let wire = self.wire_model(&request.model)?;
-        let texts: Vec<&str> = request.texts().collect();
-        if texts.is_empty() || !only_text(&request) {
+        if request.parts.is_empty() || !request.references.is_empty() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        let mut body = with_params(
-            [("model", json!(wire)), ("input", json!(texts))],
-            &request.params,
-        )?;
-        body.entry("encoding_format".into())
-            .or_insert_with(|| json!("float"));
-        let body = OpenAiMediaBody::Json(Value::Object(body.into_iter().collect()));
-        let reply = self
-            .send(OpenAiMediaMethod::Post, "/v1/embeddings".into(), body, lease)
-            .await?;
-        let mut reply = reply.json();
-        let vectors = indexed_vectors(&reply, texts.len()).ok_or(FatalLlmError::EmptyResponse)?;
-        let raw = reply
-            .get_mut("usage")
-            .map(Value::take)
-            .unwrap_or(Value::Null);
-        let tokens = raw
-            .get("prompt_tokens")
-            .or_else(|| raw.get("total_tokens"))
+        // Texts go as one batch. A call with an image or audio sends each part
+        // as its own chat-form document (`messages` in place of `input`, as
+        // vLLM serves multimodal embedding models): one vector each, in order.
+        let documents: Vec<(usize, &'static str, Value)> = if only_text(&request) {
+            let texts: Vec<&str> = request.texts().collect();
+            vec![(texts.len(), "input", json!(texts))]
+        } else {
+            request
+                .parts
+                .iter()
+                .map(|part| -> LlmResult<(usize, &'static str, Value)> {
+                    let content = embed_content(part)?;
+                    Ok((
+                        1,
+                        "messages",
+                        json!([{ "role": "user", "content": [content] }]),
+                    ))
+                })
+                .collect::<LlmResult<_>>()?
+        };
+        let (mut vectors, mut tokens, mut raws, mut served) =
+            (Vec::new(), 0, Vec::new(), Value::Null);
+        for (count, field, input) in documents {
+            let mut body = with_params([("model", json!(wire)), (field, input)], &request.params)?;
+            body.entry("encoding_format".into())
+                .or_insert_with(|| json!("float"));
+            let body = OpenAiMediaBody::Json(Value::Object(body.into_iter().collect()));
+            let reply = self
+                .send(
+                    OpenAiMediaMethod::Post,
+                    "/v1/embeddings".into(),
+                    body,
+                    lease,
+                )
+                .await?;
+            let mut reply = reply.json();
+            vectors.extend(indexed_vectors(&reply, count).ok_or(FatalLlmError::EmptyResponse)?);
+            let raw = reply
+                .get_mut("usage")
+                .map(Value::take)
+                .unwrap_or(Value::Null);
+            tokens += raw
+                .get("prompt_tokens")
+                .or_else(|| raw.get("total_tokens"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            raws.push(raw);
+            served = reply
+                .get_mut("model")
+                .map(Value::take)
+                .unwrap_or(Value::Null);
+        }
+        // One width for every vector: the `dimensions` asked for, else the
+        // first one's.
+        let width = request
+            .params
+            .get("dimensions")
             .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let served = reply.get("model").cloned().unwrap_or(Value::Null);
+            .and_then(|width| usize::try_from(width).ok())
+            .or_else(|| vectors.first().map(Vec::len));
+        if vectors.iter().any(|vector| Some(vector.len()) != width) {
+            return Err(FatalLlmError::EmptyResponse.into());
+        }
+        let raw = if raws.len() == 1 {
+            raws.swap_remove(0)
+        } else {
+            Value::Array(raws)
+        };
         Ok(MediaResponse {
             parts: vectors
                 .into_iter()
@@ -548,6 +585,26 @@ fn only_text(request: &MediaRequest) -> bool {
             .parts
             .iter()
             .all(|part| matches!(part, MediaPart::Text { .. }))
+}
+
+/// One embedding document's part as a chat content part: an image as a data
+/// URL, audio as `input_audio`.
+fn embed_content(part: &MediaPart) -> LlmResult<Value> {
+    Ok(match part {
+        MediaPart::Text { text } => json!({ "type": "text", "text": text }),
+        MediaPart::Image { media_type, bytes } if !bytes.is_empty() => json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{media_type};base64,{}", STANDARD.encode(bytes)) },
+        }),
+        MediaPart::Audio { media_type, bytes } if !bytes.is_empty() => json!({
+            "type": "input_audio",
+            "input_audio": {
+                "data": STANDARD.encode(bytes),
+                "format": audio_extension(media_type),
+            },
+        }),
+        _ => return Err(FatalLlmError::InvalidRequest.into()),
+    })
 }
 
 /// A provider job id is a path segment: letters, digits, `_` and `-` only.

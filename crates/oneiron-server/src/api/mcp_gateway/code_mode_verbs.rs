@@ -1,4 +1,4 @@
-//! Code mode's `self.memory.<verb>`: the SDK verb table through the tool door.
+//! Code mode's verb calls at their SDK paths: the SDK verb table through the tool door.
 //!
 //! A code-mode verb call is the `tools/call` of that verb by the same
 //! connector credential. Its input projects onto the tool's arguments for the
@@ -8,7 +8,7 @@
 //! since the guest receives the verb's whole output. Its writes carry the
 //! run's host-owned origin, not a source the guest's input names.
 //!
-//! A browser row (`self.memory.browser.*`) is no tool. The run's own browser
+//! A browser row (`self.browser.*`) is no tool. The run's own browser
 //! answers it: one guest per run, started on the run's first admitted
 //! browser call and removed when the run's door drops.
 
@@ -45,24 +45,85 @@ pub(crate) struct McpCodeModeVerbs {
 struct RunBrowser {
     guest: BrowserGuest,
     session: Mutex<Option<BrowserSession>>,
+    vault: Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
 }
 
 impl RunBrowser {
     fn call(&self, verb: AgentVerb, input: Value) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
-            let started = BrowserSession::start(&self.guest)?;
-            tracing::info!(manifest = ?started.manifest(), "code run browser guest started");
+            use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
+            use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
+            let unavailable = |e: String| BrowserError::Unavailable(e);
+            let backend = select_backend_for_session(
+                SandboxGuestTier::Untrusted,
+                self.guest.runtime.clone(),
+                &self.guest.image,
+            )
+            .map_err(|e| unavailable(e.to_string()))?;
+            let spec = GuestSpec {
+                image: ImageRef::pinned(&self.guest.image)
+                    .map_err(|e| unavailable(e.to_string()))?,
+                user: (10001, 10001),
+                limits: self.guest.limits,
+                seccomp: GuestSeccomp::EngineFence,
+                read_only_mounts: self
+                    .guest
+                    .fixture
+                    .iter()
+                    .map(|p| (p.clone(), std::path::PathBuf::from("/srv/fixture")))
+                    .collect(),
+            };
+            let relay: Arc<dyn oneiron_container::EgressRelay> = Arc::new(
+                oneiron::code_sandbox::egress::OpenEgressProxy::new(
+                    Arc::clone(&self.vault),
+                    self.run_id,
+                    oneiron::code_sandbox::egress::EgressConfig::from_env()
+                        .map_err(|e| unavailable(e.to_string()))?,
+                )
+                .with_fixture(self.guest.fixture.clone()),
+            );
+            let transport = backend
+                .start_session(
+                    &spec,
+                    &["/usr/local/bin/oneiron-browser-guest".into()],
+                    Arc::clone(&relay),
+                )
+                .map_err(|e| unavailable(e.to_string()))?;
+            self.vault
+                .append_sandbox_manifest_receipt(self.run_id, &transport.manifest)
+                .map_err(|e| unavailable(e.to_string()))?;
+            let started = BrowserSession::attach(&self.guest, transport, relay)?;
             *session = Some(started);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
-        oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input)
+        let result = oneiron::task_verb::sdk::invoke_browser(driver, verb.as_str(), input);
+        if driver.abandoned() {
+            self.vault
+                .append_sandbox_abandon_receipt(self.run_id, driver.manifest())
+                .map_err(|e| BrowserError::Unavailable(e.to_string()))?;
+            return Err(BrowserError::Abandoned);
+        }
+        let mut output = result?;
+        if let Some(output) = output.as_object_mut() {
+            output.insert(
+                "session_manifest".into(),
+                serde_json::to_value(driver.manifest())
+                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+            );
+        }
+        Ok(output)
     }
 }
 
 impl McpCodeModeVerbs {
     /// Binds the door to the server runtime the `execute_code` call arrived on.
-    pub(crate) fn new(server: &Arc<SyncServer>, actor: &McpCallContext) -> Self {
+    pub(crate) fn new(
+        server: &Arc<SyncServer>,
+        actor: &McpCallContext,
+        run_id: oneiron::EntityId,
+    ) -> Self {
         Self {
             server: Arc::clone(server),
             actor: actor.clone(),
@@ -71,6 +132,8 @@ impl McpCodeModeVerbs {
             browser: server.browser_guest().map(|guest| RunBrowser {
                 guest: guest.clone(),
                 session: Mutex::new(None),
+                vault: Arc::clone(&server.vault),
+                run_id,
             }),
         }
     }
@@ -100,6 +163,19 @@ impl McpCodeModeVerbs {
             output,
             rows: Some(Vec::new()),
         })
+    }
+
+    pub(crate) fn manifests(&self) -> Vec<Value> {
+        self.browser
+            .as_ref()
+            .and_then(|b| b.session.lock().ok())
+            .and_then(|session| {
+                session
+                    .as_ref()
+                    .and_then(|s| serde_json::to_value(s.manifest()).ok())
+            })
+            .into_iter()
+            .collect()
     }
 
     /// The rows this run's verb calls listed as served.
@@ -153,7 +229,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
     /// credential `execute_code` was admitted on, still live. A search reads
-    /// under that credential's grants, as `recall` does, from where its
+    /// under that credential's grants, as `vault.recall` does, from where its
     /// caller sits (DEC-0005).
     fn admit_run_call(
         &self,
@@ -194,6 +270,27 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             })?
             .map(|reader| Some(reader.at(self.actor.locality())))
             .ok_or_else(unauthenticated)
+    }
+
+    /// A result the run retained leaves this device again only while every
+    /// row it was served from may leave now. Off this device, a result with
+    /// no row set stays.
+    fn withholds_retained(
+        &self,
+        rows: Option<&[oneiron::EntityId]>,
+    ) -> Result<bool, AgentVerbRefusal> {
+        let locality = self.actor.locality();
+        if locality == oneiron::claim::CallerLocality::OnDevice {
+            return Ok(false);
+        }
+        let Some(rows) = rows else {
+            return Ok(true);
+        };
+        crate::device_local::withholds_retained(&self.server.vault, locality, rows, &[]).map_err(
+            |_| AgentVerbRefusal {
+                code: "engine_error".to_owned(),
+            },
+        )
     }
 }
 

@@ -237,9 +237,15 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .backup
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
+    // A backup opens with this install's keystore, as configured.
+    let keystore = config.keystore.open(&config.vault_path)?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
-        let source = oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+        let mut source =
+            oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
+        if let Some(keystore) = keystore {
+            source = source.with_keystore(keystore);
+        }
         return emit(&backup::rehearse(
             backup,
             vault_config(&config),
@@ -251,6 +257,7 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         backup,
         &config.vault_path,
         vault_config(&config),
+        keystore,
     )?)
 }
 
@@ -403,7 +410,7 @@ struct Exported<'a> {
 
 pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    let vault = open_vault(&config, "POST /v1/core/facade/export")?;
+    let vault = open_vault(&config, "POST /v1/core/facade/vault.export")?;
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;

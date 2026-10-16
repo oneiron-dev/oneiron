@@ -3,8 +3,12 @@
   const abi = globalThis.__oneironAbi;
   delete globalThis.__oneironAbi;
   const sdk = createHostSdk(abi);
-  // The SDK verb table: one `self.memory` method per row the host serves, so a
-  // row added to the table reaches the guest with no component rebuild.
+  // The SDK verb table: each row the host serves at its full path, so a row
+  // added to the table reaches the guest with no component rebuild. A
+  // `self.*` row sits on `self`, a bare row (`describe`, `ask`) is a global,
+  // and every other row sits on its root (`vault.recall`, `tasks.create`).
+  const roots = new Set(), bare = Object.create(null);
+  let guard = (_, object) => object;
   if (sdk.self?.verbs) {
     const {names} = sdk.self.verbs, send = abi["verb-call"];
     delete sdk.self.verbs;
@@ -27,17 +31,63 @@
       if (typeof text !== "string") throw new TypeError("invalid_verb_input");
       return text;
     };
-    const memory = sdk.self.memory ??= Object.create(null);
+    const verb = name => (input = {}) => {
+      const text = verbInput(input);
+      return Promise.resolve(send(name, text)).then(decode);
+    };
+    // A call under a root the SDK does not have (`tools.`, `self.mcp.`,
+    // `memory.`) or of a verb a root does not hold is sent as written: the
+    // host answers the typed WRONG_ROOT correction before any effect, and the
+    // call throws it. Nothing ever runs under the wrong name.
+    // Keys the language itself looks up (`await`, `JSON.stringify`, string
+    // coercion) are never verbs.
+    const plain = new Set(["then", "toJSON", "toString", "valueOf", "constructor", "prototype"]);
+    const refusal = path => new Proxy(function () {}, {
+      get: (_, key) => typeof key === "string" && !plain.has(key) ? refusal(`${path}.${key}`) : undefined,
+      apply: (_, __, [input = {}]) => Promise.resolve(send(path, verbInput(input))).then(text => {
+        throw decode(text)?.error ?? new TypeError("unknown_sdk_verb");
+      }),
+    });
+    // Every namespace answers a verb it does not hold with that refusal.
+    guard = (path, object) => {
+      for (const [key, value] of Object.entries(object))
+        if (value && typeof value === "object") object[key] = guard(`${path}.${key}`, value);
+      return new Proxy(object, {
+        get: (target, key, receiver) => typeof key !== "string" || plain.has(key) || key in target
+          ? Reflect.get(target, key, receiver) : refusal(`${path}.${key}`),
+      });
+    };
+    sdk.self.memory ??= Object.create(null);
     for (const name of names()) {
       const parts = name.split(".");
-      let target = memory;
-      for (const part of parts.slice(0, -1)) target = target[part] ??= Object.create(null);
-      if (Object.hasOwn(target, parts.at(-1))) throw new TypeError("verb row shadows a host import");
-      target[parts.at(-1)] = (input = {}) => {
-        const text = verbInput(input);
-        return Promise.resolve(send(name, text)).then(decode);
-      };
+      if (parts.length === 1) {
+        if (name in bare) throw new TypeError("verb row shadows a host import");
+        bare[name] = verb(name);
+        continue;
+      }
+      roots.add(parts[0]);
+      let target = sdk[parts[0]] ??= Object.create(null);
+      for (const part of parts.slice(1, -1)) target = target[part] ??= Object.create(null);
+      // A segment can be a verb and hold verbs at once (`self.memory.diary`
+      // and `self.memory.diary.query`): the verb carries its children.
+      const leaf = parts.at(-1), held = target[leaf];
+      if (typeof held === "function") throw new TypeError("verb row shadows a host import");
+      target[leaf] = held ? Object.assign(verb(name), held) : verb(name);
     }
+    // `store(value, name?)` streams the value to the host as the result
+    // frames do, then binds it: a string as given, any other value as its
+    // JSON. The host answers the stored result's card.
+    if ("store" in bare) throw new TypeError("verb row shadows a host import");
+    bare.store = (value, name) => {
+      if (name !== undefined && typeof name !== "string") throw new TypeError("store name must be a string");
+      sendFramed("store", text(value), true);
+      return Promise.resolve(send("store", verbInput(name === undefined ? {} : {name}))).then(decode);
+    };
+    for (const root of ["tools", "connectors", "mcp", "memory", "board", "shared", "home", "sdk"])
+      if (!roots.has(root)) bare[root] = refusal(root);
+    for (const root of ["connectors", "mcp"]) sdk.self[root] ??= refusal(`self.${root}`);
+    roots.add("self");
+    for (const root of roots) sdk[root] = guard(root, sdk[root]);
   }
   const {clock, random} = sdk.oneiron;
   // The result streams to the host as it is written (hidden @abi imports),
@@ -104,11 +154,10 @@
   };
   set("oneiron", freeze(sdk.oneiron));
   set("sandbox", freeze(sdk.sandbox));
-  if (sdk.self) {
-    set("self", freeze(sdk.self));
-    set("ask", sdk.ask);
-  }
-  if (sdk.vault) set("vault", freeze(sdk.vault));
+  if (sdk.self) set("self", freeze(sdk.self));
+  if (sdk.vault) roots.add("vault");
+  for (const root of roots) if (root !== "self") set(root, freeze(sdk[root]));
+  for (const [name, call] of Object.entries(bare)) set(name, call);
   const randomDouble = () => {
     const bytes = random.bytes(7);
     let value = bytes[0] & 31;

@@ -47,6 +47,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     );
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
     fork_hash_phonetic_query(&mut hasher, builder.phonetic_search.as_deref());
+    fork_hash_media_queries(&mut hasher, &builder.media_search);
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
     fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
@@ -124,6 +125,15 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_str(&mut hasher, builder.turn_fold.as_str());
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_opt_str(&mut hasher, builder.skill_executor.as_deref());
+    fork_hash_bool(&mut hasher, builder.skill_reliability_query.is_some());
+    if let Some(query) = &builder.skill_reliability_query {
+        fork_hash_str(&mut hasher, &query.type_ref.wire_form());
+        fork_hash_str(&mut hasher, &query.axis);
+        fork_hash_len(&mut hasher, query.type_parents.len());
+        for parent in &query.type_parents {
+            fork_hash_str(&mut hasher, &parent.wire_form());
+        }
+    }
     fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
 
     hasher.finalize().into()
@@ -205,6 +215,27 @@ fn fork_hash_authority_filter(
     fork_hash_bool(hasher, filter.include_stale);
     fork_hash_f32(hasher, filter.min_confidence);
     fork_hash_f32(hasher, filter.min_salience);
+}
+
+/// OF-370 typed media queries, in call order: each is its own list.
+fn fork_hash_media_queries(
+    hasher: &mut Sha256,
+    queries: &[super::super::media_channel::MediaQuery],
+) {
+    fork_hash_len(hasher, queries.len());
+    for query in queries {
+        fork_hash_bytes(hasher, query.space_id.as_bytes());
+        fork_hash_bytes(hasher, format!("{:?}", query.query_kind).as_bytes());
+        fork_hash_len(hasher, query.limit);
+        fork_hash_len(hasher, query.kinds.len());
+        for kind in &query.kinds {
+            fork_hash_bytes(hasher, format!("{kind:?}").as_bytes());
+        }
+        fork_hash_len(hasher, query.vector.len());
+        for value in &query.vector {
+            fork_hash_f32(hasher, *value);
+        }
+    }
 }
 
 fn fork_hash_vector_query(

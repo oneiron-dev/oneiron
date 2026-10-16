@@ -41,15 +41,16 @@ pub use self::replay::{
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
     CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor,
-    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
+    CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint,
     code_run_replay_abi_layout_checks,
 };
-pub use self::storage::CodeRunModelHealCount;
-pub(crate) use self::storage::code_run_body_file_of_row;
+pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
+pub use self::storage::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
+pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
@@ -66,11 +67,12 @@ pub use self::types::{
     SelfEffect, SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
-    SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
+    SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
+    SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
-    MemoryTimeRange,
+    MemoryTimeRange, TaskRefuseDomain, TaskRefuseInput,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

@@ -253,7 +253,7 @@ pub(crate) fn verify_deletion_authority_in_txn(
             ),
             &[
                 "Bind a human-class owner actor key to delete.",
-                "Agents withdraw their own claims via claim_retract.",
+                "Agents withdraw their own claims via vault.claims.retract.",
             ],
         ));
     }
@@ -599,6 +599,16 @@ impl Memory<'_> {
             ));
         }
         owner.owner_authored_write_in_txn(self.vault, txn).map(Some)
+    }
+
+    /// The owner proof a host bound ([`Self::with_owner_authorship`]), for a
+    /// door that revalidates it itself; `None` on a surface that writes for
+    /// someone else.
+    pub(crate) fn owner_authorship(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        if self.host_origin.is_some() || self.machine_signer.is_some() {
+            return None;
+        }
+        self.owner_authorship.as_ref()
     }
 
     /// Binds this surface's claim writes to a host-owned origin: every claim

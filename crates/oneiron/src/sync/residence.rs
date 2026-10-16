@@ -4,8 +4,23 @@
 #[cfg(test)]
 mod tests;
 
+mod admission;
 mod discover;
+mod policy;
+mod prune;
+mod sealed;
+pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use discover::discover_local_window_keys;
+pub use policy::{
+    DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
+    local_is_elected_home, resolve_residence_mode, set_device_sync_preference,
+};
+pub(crate) use prune::record_item_touch_in_txn;
+pub use prune::{prune_thin_items, record_item_touch};
+pub use sealed::{
+    SEALED_SHELF_PAGE_MAX, SealedShelfEntry, sealed_shelf_after, sealed_shelf_packet,
+    shelve_sealed_window,
+};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -24,8 +39,9 @@ use super::loro_support::map_insert_bytes;
 use super::loro_support::{map_for_each_value_bytes, map_get_bytes};
 #[cfg(test)]
 use super::schema::create_window_doc;
-use super::selector::{SyncSelector, filtered_window_doc, granted_window_doc};
+use super::selector::{SyncSelector, filtered_window_doc_for, granted_window_doc};
 use super::types::WindowKey;
+use super::window::Withhold;
 
 /// Collect the actor-readable lexical candidates before applying a
 /// residence grant: the bounded candidate window, so a narrowed residence
@@ -52,15 +68,21 @@ pub fn home_search_candidates(
         let Some(raw) = vault.get_raw(&hit.id)? else {
             continue;
         };
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("home search entity header"))?;
-        results.push((
-            hit.id,
-            hit.score,
-            WindowKey::from_timestamp(header.learned_at),
-        ));
+        results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
     Ok(results)
+}
+
+/// The canonical window that holds one entity: a CLAIM that names a world
+/// lives in that world's month partition, every other row in the base month.
+/// A malformed carrier stays in the base partition, as window admission keeps it.
+pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("residence entity header"))?;
+    Ok(match super::types::entity_world(raw).ok().flatten() {
+        Some(world) => WindowKey::for_world(header.learned_at, world),
+        None => WindowKey::from_timestamp(header.learned_at),
+    })
 }
 
 /// The maximum number of metadata rows returned in one index page.
@@ -109,9 +131,34 @@ pub fn window_index_projection(
     scope: FederationGrantScope,
     selector: &SyncSelector,
     title_max_chars: usize,
+    readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<Vec<WindowIndexEntry>> {
+    window_index_projection_with(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Unknown,
+        title_max_chars,
+        readable,
+    )
+}
+
+/// [`window_index_projection`] for the machine a residence read serves:
+/// `withhold` names the worlds kept off it, at the selector's source.
+#[allow(clippy::too_many_arguments)]
+pub fn window_index_projection_with(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    withhold: Withhold<'_>,
+    title_max_chars: usize,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<WindowIndexEntry>> {
-    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
+    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
     let mut entries = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
@@ -176,7 +223,28 @@ pub fn selected_item_blob(
     selector: &SyncSelector,
     item: EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    let selected = filtered_window_doc(vault, source, window, scope, selector)?;
+    selected_item_blob_with(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Unknown,
+        item,
+    )
+}
+
+/// [`selected_item_blob`] for the machine a residence read serves.
+pub fn selected_item_blob_with(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    withhold: Withhold<'_>,
+    item: EntityId,
+) -> Result<Option<Vec<u8>>> {
+    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
     Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
 }
 
@@ -236,6 +304,7 @@ pub fn admit_promoted_window_update(
         return Err(malformed());
     }
     let entities = ContainerID::new_root("entities", ContainerType::Map);
+    let births = ContainerID::new_root(super::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let txn = vault.store.env.read_txn()?;
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
@@ -245,6 +314,18 @@ pub fn admit_promoted_window_update(
         else {
             return Err(malformed());
         };
+        // A row is born once, never on this lane: a birth write here may
+        // only restate the carrier the home window already holds.
+        if op.container == births {
+            let held = super::loro_support::map_get_bytes(
+                &source.get_map(super::row_birth::ROW_BIRTHS_MAP),
+                &key,
+            );
+            if held.as_deref() != Some(&blob[..]) {
+                return Err(malformed());
+            }
+            continue;
+        }
         if op.container != entities {
             return Err(malformed());
         }
@@ -276,6 +357,28 @@ pub fn promotion_snapshot(
     window: &WindowKey,
     scope: FederationGrantScope,
     selector: &SyncSelector,
+    readable: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<Option<Vec<u8>>> {
+    promotion_snapshot_with(
+        vault,
+        source,
+        window,
+        scope,
+        selector,
+        Withhold::Unknown,
+        readable,
+    )
+}
+
+/// [`promotion_snapshot`] for the machine a residence read serves: a window
+/// is withheld only when it carries a world `withhold` names.
+pub fn promotion_snapshot_with(
+    vault: &Vault,
+    source: &LoroDoc,
+    window: &WindowKey,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    withhold: Withhold<'_>,
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Option<Vec<u8>>> {
     for _ in 0..PROMOTION_WALKS {
@@ -285,7 +388,7 @@ pub fn promotion_snapshot(
             readable(id)
         };
         if !promotion_covers_full_window(vault, source, window, scope, selector, walk)?
-            || super::window::window_withheld(vault, window, source)?
+            || super::window::window_withheld_for(vault, window, source, withhold)?
         {
             return Ok(None);
         }

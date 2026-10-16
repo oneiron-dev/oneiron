@@ -18,6 +18,7 @@ mod ask_soft_confirm_types;
 mod ask_types;
 mod board_task;
 pub(crate) use board_task::board_task_for_id;
+mod brief;
 mod consts;
 mod consult_fanout_admission;
 mod consult_fanout_facade;
@@ -31,9 +32,16 @@ mod consult_result;
 mod create_facade;
 mod create_spec;
 mod create_validation;
+mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
 mod follow_up;
+mod highway;
+mod highway_accept;
+mod highway_post;
+mod highway_report;
+mod highway_status;
+mod highway_types;
 mod lifecycle_facade;
 mod linear_store;
 mod owner_index;
@@ -41,9 +49,11 @@ mod policy_change_followup;
 mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
+mod project_ask;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
+mod refusal;
 mod room_thread;
 mod route_receipts;
 mod scheduling;
@@ -52,7 +62,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
-pub(crate) use wire_decode::{TaskBinding, task_binding};
+pub(crate) use wire_decode::{TaskBinding, leader_task_body_in, task_binding};
 mod wire_encode;
 
 #[cfg(test)]
@@ -79,7 +89,11 @@ pub use dormant_magistrate::{
     record_magistrate_overturn,
 };
 pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
-pub(crate) use room_thread::thread_tasks as room_thread_tasks;
+pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
+pub(crate) use room_thread::{
+    open_thread_tasks_in as room_open_thread_tasks_in, task_ids_in as room_thread_task_ids_in,
+    task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
+};
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
     TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
@@ -90,6 +104,19 @@ pub use terminal_state::{
     TaskTerminalRecord, board_status_for_disposition, merge_task_terminal_register,
 };
 pub use verb_kind::{TaskAssignee, TaskKind, TaskTtl};
+
+pub use brief::{
+    BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion,
+    DoneMeans, EscalationRule, EscalationTrigger, PinnedPack, PinnedRef, QueueTaskBrief, SpawnPins,
+    StoredBrief, TypeRef, brief_digest,
+};
+pub use decision_port::TaskDecisions;
+pub(crate) use highway_post::settle_task_proposal_in_txn;
+pub use highway_types::{
+    AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
+    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
+    TaskStatusQuery, TaskStatusView, TaskVia,
+};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
@@ -105,7 +132,27 @@ pub(crate) fn thread_task_is_open_in(
 ) -> crate::Result<bool> {
     let body =
         wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
-    Ok(body.terminal().is_none())
+    if body.terminal().is_some()
+        || body
+            .ttl
+            .is_some_and(|ttl| ttl.deadline_at <= vault.store.clock.now_recorded_at())
+        || vault
+            .task_authority_state_in(txn, task)?
+            .is_none_or(|state| state.cancelled)
+    {
+        return Ok(false);
+    }
+    if let Some(consult) = &body.consult
+        && let Some(group) = ask_record::read_group(vault, txn, consult.correlation_ref)?
+        && group
+            .members
+            .iter()
+            .any(|member| member.task == task.to_hex())
+        && ask_settlement::read_result(vault, txn, consult.correlation_ref)?.is_some()
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// Stored execution holder of a live typed TASK, if one exists.
@@ -117,7 +164,7 @@ pub(crate) fn open_thread_task_holder_in(
 ) -> crate::Result<Option<crate::EntityId>> {
     let body =
         wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
-    if body.terminal().is_some() {
+    if !thread_task_is_open_in(vault, txn, task)? {
         return Ok(None);
     }
     match body.assignee.and_then(TaskAssignee::entity_ref) {
@@ -158,6 +205,9 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_connector;
+mod sdk_host;
+mod sdk_self;
 
 #[cfg(test)]
 mod ask_outcome_tests;

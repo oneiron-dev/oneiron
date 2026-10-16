@@ -53,15 +53,14 @@ struct AttributionState {
 
 fn scan_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<AttributionState> {
     let mut state = AttributionState::default();
-    for entry in store
-        .type_index
-        .prefix_iter(rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
-    {
-        let (key, _) = entry?;
-        let id = crate::vault::entity_id_from_type_index_key(&key)?;
-        let raw = store
-            .entities
-            .get(rtxn, id.as_bytes())?
+    for entry in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        store,
+        rtxn,
+        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        None,
+    )? {
+        let id = entry?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, &id)?
             .ok_or(Error::CorruptedIndex("identity attribution index"))?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("identity attribution header"))?;
@@ -150,7 +149,8 @@ pub(crate) fn drop_unheld_author_marks_in_txn(
     let mut unheld = Vec::new();
     for row in AUTHORED_HERE.iter_from(store, wtxn, &[])? {
         let (HexId(id), digest) = row?;
-        let held = store.entities.get(wtxn, id.as_bytes())?.is_some_and(|raw| {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?;
+        let held = raw.is_some_and(|raw| {
             EntityMetadataHeader::parse(&raw)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
                 && *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() == digest
@@ -194,7 +194,7 @@ fn author_in_txn(
     target: EntityId,
     own_only: bool,
 ) -> Result<Option<WriteActor>> {
-    let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, rtxn, &target)? else {
         return Ok(None);
     };
     let header = EntityMetadataHeader::parse(&raw)

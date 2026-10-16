@@ -1,6 +1,6 @@
 //! The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order.
 
-use super::{CONTENT, Class, LIVE, ORG_ADMIN_GRANTS, ORIGIN_AUTHORITY};
+use super::{CONTENT, Class, LIVE, ORG_ADMIN_GRANTS, ORIGIN_AUTHORITY, ORIGIN_MIRRORS};
 use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
@@ -31,6 +31,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::NOTE_KIND, LIVE),
     (&t::NOTE_PROPOSAL_BUNDLE, CONTENT),
     (&t::NOTE_RECEIPT, CONTENT),
+    (&t::OFFICE_BODY_COMMIT, CONTENT),
+    (&t::OFFICE_BODY_DOC, CONTENT),
+    (&t::OFFICE_BODY_EXPORT, CONTENT),
+    (&t::OFFICE_BODY_FORK, CONTENT),
+    (&t::OFFICE_BODY_HEAD, CONTENT),
     (&t::OFF_RECORD_COPY_RECEIPT, CONTENT),
     (&t::OFF_RECORD_PROMOTE_RECEIPT, CONTENT),
     (&t::ORG_ADMIN_POLICY, ORG_ADMIN_GRANTS),
@@ -52,6 +57,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ORIGIN_LFS_OWNER_REF, CONTENT),
     (&t::ORIGIN_LFS_REF, CONTENT),
     (&t::ORIGIN_LFS_UPLOAD_JOURNAL, CONTENT),
+    (&t::ORIGIN_MIRROR_TARGET, ORIGIN_MIRRORS),
     (&t::ORIGIN_PUBLICATION_RECORD, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_EVIDENCE, CONTENT),
     (&t::ORIGIN_RECEIVE_PACK_INTENT, CONTENT),

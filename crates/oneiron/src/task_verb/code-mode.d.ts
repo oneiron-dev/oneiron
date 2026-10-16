@@ -1,78 +1,151 @@
-declare namespace self {
-  const memory: {
-    admit_imported_claim(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
-    append_blob_version(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
-    board: {
-      expand(input: { frame_epoch?: number | null; key: string }): Promise<unknown>;
-      refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
-      subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
-      unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
-    };
-    browser: {
-      click(input: { ref: string }): Promise<unknown>;
-      expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
-      find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
-      observe(input: { since?: number | null }): Promise<unknown>;
-      open(input: { url: string }): Promise<unknown>;
-      screenshot(input: object): Promise<unknown>;
-      select(input: { option: string; ref: string }): Promise<unknown>;
-      type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
-      wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
-    };
-    can(input: { ask: object }): Promise<unknown>;
-    cancel(input: { task_ref: string }): Promise<unknown>;
-    claim_history(input: { claim_ref: string }): Promise<unknown>;
-    claim_list(input: { lifecycle?: string | null; limit: number; predicate?: string | null; subject_ref?: string | null }): Promise<unknown>;
-    claim_retract(input: { claim_ref: string }): Promise<unknown>;
-    claim_upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
-    commit(input: { claims: object[] }): Promise<unknown>;
-    create_note(input: { kind: string; markdown: string }): Promise<unknown>;
-    create_note_from_entity(input: { kind: string; source_ref: string }): Promise<unknown>;
-    describe(input: { self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
-    edit_note(input: { edit: object; note_ref: string }): Promise<unknown>;
-    export(input: { format?: string | null }): Promise<unknown>;
-    forget(input: object): Promise<unknown>;
-    get_entity(input: { entity_ref: string }): Promise<unknown>;
-    hydrate(input: { refs: string[] }): Promise<unknown>;
-    key_value_delete(input: { key: string; namespace: string[] }): Promise<unknown>;
-    key_value_get(input: { key: string; namespace: string[] }): Promise<unknown>;
-    key_value_namespaces(input: { limit?: number; max_depth?: number | null; offset?: number; prefix?: string[]; suffix?: string[] }): Promise<unknown>;
-    key_value_put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
-    key_value_search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
-    neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
-    peek(input: { group_ref: string }): Promise<unknown>;
-    pending_writes(input: { limit?: number | null }): Promise<unknown>;
-    put_blob_artifact(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
-    put_claim(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
-    put_edge(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
-    put_habit_checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
-    put_structural(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
-    query_bm25(input: { limit: number; query: string }): Promise<unknown>;
-    read_blob_version(input: { artifact_ref: string; version: number }): Promise<unknown>;
-    recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
-    receipts(input: { limit?: number | null }): Promise<unknown>;
-    remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
-    rooms: {
-      claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
-      find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
-      get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
-      list(input: object): Promise<unknown>;
-      messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
-      render(input: { room_ref: string }): Promise<unknown>;
-      speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
-      trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
-    };
-    safe_delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
-    search(input: { limit?: number | null; query: string }): Promise<unknown>;
-    supersede_claim(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
-    tasks: {
-      answer(input: { handle: object; word: object }): Promise<unknown>;
-      ask(input: object): Promise<unknown>;
-      create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
-      outcomes(input: { group_ref: string }): Promise<unknown>;
-      update(input: { task_ref: string }): Promise<unknown>;
-      wait(input: { handle: object; step_key: string }): Promise<unknown>;
-    };
-    witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+declare const ai: {
+  embed(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  image(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  options(input: { inputs?: string[]; operation?: string | null }): Promise<unknown>;
+  speech(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  transcribe(input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }): Promise<unknown>;
+  video: ((input: { input?: object[]; model?: string | null; params?: object; prompt?: string | null; references?: object[] }) => Promise<unknown>) & {
+    cancel(input: { job: string }): Promise<unknown>;
+    poll(input: { job: string }): Promise<unknown>;
   };
+};
+declare function ask(input: object): Promise<unknown>;
+declare function can(input: { ask: object }): Promise<unknown>;
+declare function cancel(input: { task_ref: string }): Promise<unknown>;
+declare const connector: {
+  list(input: { query?: string | null }): Promise<unknown>;
+  outbound: {
+    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
+  };
+  status(input: { name: string }): Promise<unknown>;
+};
+declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
+declare function peek(input: { group_ref: string }): Promise<unknown>;
+declare namespace self {
+  const browser: {
+    click(input: { ref: string }): Promise<unknown>;
+    expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
+    find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
+    observe(input: { since?: number | null }): Promise<unknown>;
+    open(input: { url: string }): Promise<unknown>;
+    screenshot(input: object): Promise<unknown>;
+    select(input: { option: string; ref: string }): Promise<unknown>;
+    type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
+    wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
+  };
+  const compact: (input: { note?: string | null }) => Promise<unknown>;
+  const focus: {
+    refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
+    subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
+    unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
+  };
+  const fold: (input: { from: number; note?: string | null; through: number }) => Promise<unknown>;
+  const folds: (input: object) => Promise<unknown>;
+  const memory: {
+    diary(input: { content: string; kind?: string | null }): Promise<unknown>;
+  };
+  const skills: {
+    callables(input: object): Promise<unknown>;
+    fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
+    save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
+  };
+  const unfold: (input: { fold: string }) => Promise<unknown>;
 }
+declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
+declare const tasks: {
+  answer(input: { handle: object; word: object }): Promise<unknown>;
+  create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
+  outcomes(input: { group_ref: string }): Promise<unknown>;
+  refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
+  update(input: { task_ref: string }): Promise<unknown>;
+};
+declare const vault: {
+  artifacts: {
+    append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
+    born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
+    discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    proposals(input: { artifact_ref: string }): Promise<unknown>;
+    propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;
+    propose_output(input: { artifact_ref: string; content_base64: string; made_by?: unknown; media_type: string; name: string; report?: unknown; run_ref: string }): Promise<unknown>;
+    put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
+    read(input: { artifact_ref: string; version: number }): Promise<unknown>;
+    undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
+    view(input: { artifact_ref: string }): Promise<unknown>;
+  };
+  claims: {
+    admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
+    history(input: { claim_ref: string }): Promise<unknown>;
+    list(input: { lifecycle?: string | null; limit: number; predicate?: string | null; subject_ref?: string | null }): Promise<unknown>;
+    put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
+    retract(input: { claim_ref: string }): Promise<unknown>;
+    supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
+    upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
+  };
+  commit(input: { claims: object[] }): Promise<unknown>;
+  companions: {
+    sharing: {
+      get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
+    };
+  };
+  delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
+  edges: {
+    put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
+  };
+  export(input: { format?: string | null }): Promise<unknown>;
+  forget(input: object): Promise<unknown>;
+  get(input: { entity_ref: string }): Promise<unknown>;
+  habits: {
+    checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
+  };
+  hydrate(input: { refs: string[] }): Promise<unknown>;
+  kv: {
+    delete(input: { key: string; namespace: string[] }): Promise<unknown>;
+    get(input: { key: string; namespace: string[] }): Promise<unknown>;
+    namespaces(input: { limit?: number; max_depth?: number | null; offset?: number; prefix?: string[]; suffix?: string[] }): Promise<unknown>;
+    put(input: { key: string; namespace: string[]; request_id: string; source?: string; value: unknown }): Promise<unknown>;
+    search(input: { filter?: object | null; limit?: number; namespace_prefix?: string[]; offset?: number }): Promise<unknown>;
+  };
+  neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
+  notes: {
+    create(input: { kind: string; markdown: string }): Promise<unknown>;
+    edit(input: { edit: object; note_ref: string }): Promise<unknown>;
+    from_entity(input: { kind: string; source_ref: string }): Promise<unknown>;
+  };
+  packs: {
+    put(input: { files: object[] }): Promise<unknown>;
+  };
+  recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
+  receipts(input: { limit?: number | null }): Promise<unknown>;
+  remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
+  rooms: {
+    claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
+    find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
+    host(input: { room_ref: string; session_ref?: string | null }): Promise<unknown>;
+    list(input: object): Promise<unknown>;
+    messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    render(input: { room_ref: string }): Promise<unknown>;
+    sharing(input: { room_ref: string }): Promise<unknown>;
+    speak(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+    trunk(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
+  };
+  search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
+    bm25(input: { limit: number; query: string }): Promise<unknown>;
+  };
+  structural: {
+    put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
+  };
+  witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
+  workspace: {
+    work_companion: {
+      get(input: { workspace_ref: string }): Promise<unknown>;
+      set(input: { policy: "choose" | "suggest" | "require"; workspace_ref: string }): Promise<unknown>;
+    };
+  };
+  writes: {
+    pending(input: { limit?: number | null }): Promise<unknown>;
+  };
+};
+declare function wait(input: { handle: object; step_key: string }): Promise<unknown>;

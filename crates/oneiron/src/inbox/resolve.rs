@@ -523,6 +523,13 @@ fn accept_member_with_amendment_in_txn(
     }
 
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
+    crate::task_verb::settle_task_proposal_in_txn(
+        vault,
+        wtxn,
+        *id,
+        learning.map(|(actor, _)| actor),
+        now,
+    )?;
 
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.

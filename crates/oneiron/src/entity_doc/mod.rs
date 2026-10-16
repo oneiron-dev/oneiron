@@ -8,9 +8,11 @@ mod citation_floor;
 mod document;
 mod forks;
 mod message_stream;
+pub mod office;
 mod pins;
 mod recovery;
 mod registry;
+pub mod review_explainer;
 mod side_keys;
 mod storage;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
@@ -28,6 +30,7 @@ pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
 };
+pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::RegistryStatus;

@@ -34,6 +34,21 @@ export type RoomClaimRequest = {
   room_ref: string
   turn_ref: string
 }
+export type RoomHostRequest = {
+  room_ref: string
+  session_ref?: string | null
+}
+export type CompanionSharingRequest = {
+  companion_ref: string
+  contact_ref: string
+}
+export type WorkspaceRefRequest = {
+  workspace_ref: string
+}
+export type WorkCompanionSetRequest = {
+  workspace_ref: string
+  policy: unknown
+}
 export type TaskRequest = {
   task_ref: string
 }
@@ -41,14 +56,13 @@ export type DescribeRequest = {
   task_ref?: string | null
   self?: boolean
   session_id?: string | null
+  key?: string | null
+  frame_epoch?: number | null
+  fold?: string | null
 }
 export type TaskCreateRequest = {
   spec: unknown
   label?: string | null
-}
-export type BoardExpandRequest = {
-  key: string
-  frame_epoch?: number | null
 }
 export type BoardRefreshRequest = {
   frame_epoch?: number | null
@@ -71,6 +85,14 @@ export type RecallRequest = {
 }
 export type ReceiptsRequest = {
   limit?: number | null
+}
+export type InboxListRequest = {
+  after?: string | null
+  limit?: number | null
+}
+export type InboxMarkRequest = {
+  notification_ref: string
+  mark: unknown
 }
 export type CommitRequest = {
   claims: (ClaimInput)[]

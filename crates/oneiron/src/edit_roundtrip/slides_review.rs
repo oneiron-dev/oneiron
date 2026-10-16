@@ -82,6 +82,15 @@ impl SlideReviewLabels {
             DecisionAnswer::Noul(false) => self.no.clone(),
             DecisionAnswer::Choice(value) => value.clone(),
             DecisionAnswer::Score(value) => value.to_string(),
+            DecisionAnswer::Box(found) => found.map_or_else(
+                || "absent".to_owned(),
+                |found| {
+                    format!(
+                        "top {} bottom {} left {} right {}",
+                        found.top, found.bottom, found.left, found.right
+                    )
+                },
+            ),
             DecisionAnswer::Abstain => unreachable!("abstentions never create comments"),
         };
         format!("{severity}: {text}")
@@ -334,8 +343,7 @@ pub fn review_slides(
         });
         let state_bytes =
             serde_json::to_vec(&state).map_err(|_| invalid("slide review unit state"))?;
-        if read.text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES
-        {
+        if read.text.len() > limits.max_text_bytes || state_bytes.len() > MAX_DECISION_STATE_BYTES {
             refused.push(refusal(target, SlideUnitRefusalReason::EvidenceBudget));
             continue;
         }
@@ -612,7 +620,10 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
             || row.labels.validate().is_err()
             || row.answer_contract.validate().is_err()
             || !row.answer_contract.accepts(&decision.answer)
-            || row.comment != row.labels.comment(&decision.answer, probability, receipt.band)
+            || row.comment
+                != row
+                    .labels
+                    .comment(&decision.answer, probability, receipt.band)
             || (row.band_mode == BandMode::Enforce && receipt.band_version == 0)
             || !ladder_route(row, probability)
             || !PairedReading::readings_valid(
@@ -650,7 +661,9 @@ fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
     };
     let enforced_margin = decision.in_band && row.band_mode == BandMode::Enforce;
     if receipt.providers.iter().any(|pin| {
-        pin.model.trim().is_empty() || pin.version.trim().is_empty() || pin.rung == DecisionRung::Human
+        pin.model.trim().is_empty()
+            || pin.version.trim().is_empty()
+            || pin.rung == DecisionRung::Human
     }) || time.answered != receipt.providers.last().map(|pin| pin.rung)
     {
         return false;

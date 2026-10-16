@@ -71,21 +71,31 @@ budget: each streams to the host as it is written, through the hidden
 message (text cut at a UTF-16 boundary, a lone surrogate sent as U+FFFD). The
 host keeps each body in the vault's result store and gives the model a handle
 and a preview.
+First-party code also gets `store(value, name?)`, which streams a value the
+same way (a string as given, anything else as its JSON) through the `store`
+target and binds it under `name` or the next free `r<n>`; it answers the
+result's card. `describe(r)`, given a name, a handle or a card, answers that
+card again from the manifest: name, size, lines, completion, taint and a
+preview a tainted body withholds. The names live in the run's replay record,
+so they survive steps, compaction and restart. An unknown name throws
+`unknown_handle` with the live names.
 Foreign guests have no `self` object. Their `propose.file(...)` and
 `propose.claim(...)` produce typed proposal deltas, not committed writes.
 Only workspace/output file paths are proposal targets; upload and skill files
 remain read-only. Native globals (`process`, `require`, `fetch`, `std`, `os`)
 are absent. No import loader can reintroduce them.
 
-First-party `self.memory` carries one async method per SDK verb-table row the
-host serves (`self.memory.recall(input)`, `self.memory.tasks.create(input)`).
+First-party code gets one async method per SDK verb-table row the host
+serves, at the row's full path (`vault.recall(input)`, `tasks.create(input)`,
+`self.focus.refresh(input)`, a bare `describe(input)`).
 Bootstrap builds them from the hidden `self.verbs` imports and then deletes
 `self.verbs`, so a row added to `scripts/sdk/agent-verbs.json` reaches the guest
 with no component rebuild. The memory reads and writes the run answers itself
-(`search`, `put_claim`, `supersede_claim`, `put_edge`) are rows of the same table,
-so they arrive the same way. A verb input is encoded once and the call sends
-that text. One holding a non-finite number, boxed or not, is refused before the
-call (`non_finite_verb_input`), since JSON would carry it as null; one JSON
+(`vault.search`, `vault.claims.put`, `vault.claims.supersede`,
+`vault.edges.put`) are rows of the same table, so they arrive the same way. A
+verb input is encoded once and the call sends that text. One holding a
+non-finite number, boxed or not, is refused before the call
+(`non_finite_verb_input`), since JSON would carry it as null; one JSON
 cannot carry at all is `invalid_verb_input`. A refused call throws a stable
 code, never prose, and so does the bridge's own argument check
 (`invalid_host_argument`).

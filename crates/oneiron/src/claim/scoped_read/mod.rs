@@ -53,9 +53,9 @@ mod actor_key;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
+pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
 #[cfg(feature = "sync")]
 pub use residence::ResidenceReadContext;
-pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
 
 /// Actor-keyed read lane for the core read surface.
 ///
@@ -87,6 +87,7 @@ pub struct ScopedRead<'a> {
 mod admission;
 mod edge_admission;
 pub(crate) use admission::ScopedDiaryCandidates;
+mod retrieval_loop;
 mod search;
 mod visibility;
 

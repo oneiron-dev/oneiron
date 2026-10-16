@@ -39,16 +39,16 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
-pub use self::peer_confidence::{DEFAULT_FEDERATED_CONFIDENCE_SCALE, PeerConfidence};
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
     SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
-    encode_selector_vv_request, encode_sync_selector, filtered_window_doc, guest_share_envelope,
-    guest_share_envelope_body,
+    encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
+    guest_share_envelope, guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;
+pub use self::peer_confidence::{DEFAULT_FEDERATED_CONFIDENCE_SCALE, PeerConfidence};
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};

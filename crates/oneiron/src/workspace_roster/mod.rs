@@ -89,11 +89,14 @@ mod codec;
 mod intent;
 mod records;
 mod runner;
+mod sharing;
 mod steps;
+mod work_companion;
 
 use codec::*;
 use steps::*;
 
+pub use self::intent::CompanionChoice;
 pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
     WorkspaceRosterPreset,
@@ -106,6 +109,11 @@ pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
 };
+pub use self::sharing::{
+    CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
+    RoomSharingView,
+};
+pub use self::work_companion::{WORK_COMPANION_REQUIRED, WorkCompanionPolicy};
 
 #[cfg(test)]
 mod tests;
@@ -116,10 +124,11 @@ pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
-    DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
-    ProjectDisposition, ProjectEffective, ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier,
-    ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectRank, ProjectResolution,
-    ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, ProjectSeal, ProjectWitness,
+    DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, OwnerProjectSigner,
+    ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkEvidence,
+    ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget, ProjectHistoryPolicy,
+    ProjectHistoryQuestion, ProjectParentWitness, ProjectRank, ProjectResolution, ProjectRevision,
+    ProjectRevisionHash, ProjectRevisionProof, ProjectSeal, ProjectWitness, ProjectWriteOutcome,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
@@ -155,12 +164,13 @@ pub(crate) use project::{
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub use rooms::{
-    RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomThread, RoomThreadList, RoomThreadPage,
-    RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem,
-    RoomTurn, RoomWaitKind,
+    RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomPage, RoomSpeakingRole, RoomStanding,
+    RoomThread, RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads,
+    RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::project_room_audience_in;
 

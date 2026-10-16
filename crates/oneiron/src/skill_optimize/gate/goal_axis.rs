@@ -33,6 +33,19 @@ pub(super) struct GoalDefinition {
     pub(super) goal_id: EntityId,
     pub(super) revision: String,
     pub(super) axes: Vec<GoalAxisSpec>,
+    /// The project goal record this goal is joined to, if any.
+    pub(super) project: Option<super::project_goal::ProjectGoalJoin>,
+}
+
+/// A skill's effective goal, for a host scorer to declare the axes the gate
+/// will ask it about ([`HeldOutReplayScorer::goal_axes`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillEditGoal {
+    pub goal_id: EntityId,
+    pub revision: String,
+    pub axes: Vec<GoalAxisSpec>,
+    /// The joined project and the goal claim in force, if any.
+    pub project: Option<(EntityId, EntityId)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,10 +90,7 @@ fn read_current_goal_skill(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<SkillRecord> {
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("skill goal entity header"))?;
@@ -117,14 +127,37 @@ fn manifest_axes_in_txn(
     Ok((axes, policies))
 }
 
+/// The portable goal identity of `skill`, without resolving its axes.
+pub(super) fn goal_id_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<EntityId> {
+    let record = read_current_goal_skill(vault, txn, skill)?;
+    Ok(SkillGoalId::of(skill, &record)?.entity())
+}
+
 pub(super) fn goal_definition_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<GoalDefinition> {
     let (mut axes, policies) = manifest_axes_in_txn(vault, txn)?;
-    let record = read_current_goal_skill(vault, txn, skill)?;
-    let goal_id = SkillGoalId::of(skill, &record)?.entity();
+    let goal_id = goal_id_in_txn(vault, txn, skill)?;
+    // The project's goal record joins the vault's axes. A kind that disagrees
+    // with policy is a conflict to resolve, not an axis to pick a side on.
+    let project = super::project_goal::project_goal_in_txn(vault, txn, &goal_id)?;
+    if let Some(join) = &project {
+        for axis in super::project_goal::project_axes(&join.record) {
+            if let Some(existing) = axes.iter().find(|existing| existing.name == axis.name) {
+                if existing.kind != axis.kind {
+                    return Err(invalid("project goal axis conflicts with vault policy"));
+                }
+            } else {
+                axes.push(axis);
+            }
+        }
+    }
     let override_row = vault
         .store
         .vault_meta
@@ -159,6 +192,14 @@ pub(super) fn goal_definition_in_txn(
     if let Some(row) = override_row {
         hash.update(row.revision.as_bytes());
     }
+    // A new goal claim, or a rebind, is a new goal: the interview's revision
+    // re-rules every pending ask and standing acceptance.
+    if let Some(join) = &project {
+        hash.update(b"\0project_goal\0");
+        hash.update(join.project.as_bytes());
+        hash.update(join.goal_claim.as_bytes());
+        hash.update(join.binding_revision.as_bytes());
+    }
     // The goal record holds its learned preferences (ARCH-0053 §10a): a new
     // rule, band or pick is a new goal revision.
     if let Some(preferences) = super::tradeoff::preferences_bytes_in_txn(vault, txn, &goal_id)? {
@@ -169,6 +210,24 @@ pub(super) fn goal_definition_in_txn(
         goal_id,
         revision: bytes_to_hex_lower(&hash.finalize()),
         axes,
+        project,
+    })
+}
+
+/// The effective goal the gate rules `skill` under.
+/// # Errors
+/// No trusted goal policy, an unreadable skill, override or project goal,
+/// conflicting axes, or storage errors.
+pub fn skill_edit_goal(vault: &Vault, skill: &EntityId) -> Result<SkillEditGoal> {
+    let txn = vault.store.env.read_txn()?;
+    let definition = goal_definition_in_txn(vault, &txn, skill)?;
+    Ok(SkillEditGoal {
+        goal_id: definition.goal_id,
+        revision: definition.revision,
+        axes: definition.axes,
+        project: definition
+            .project
+            .map(|join| (join.project, join.goal_claim)),
     })
 }
 
@@ -191,8 +250,7 @@ pub fn set_skill_edit_goal_axes(
                 "holder goal override cannot widen or remove vault goal axes",
             ));
         }
-        let record = read_current_goal_skill(vault, txn, skill)?;
-        let goal_id = SkillGoalId::of(skill, &record)?.entity();
+        let goal_id = goal_id_in_txn(vault, txn, skill)?;
         let definition = GoalOverride {
             revision: vault.store.clock.entity_id()?.to_hex(),
             axes,

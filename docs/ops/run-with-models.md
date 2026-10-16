@@ -273,8 +273,27 @@ Beside sittings, the Dreamer's wake policy (ARCH-0026) wakes its three
 recipes from the vault's wake-policy row: Continuous after landed turns,
 Weave on accumulation, a quiet window or the longest wait, and Nightly on its
 cadence. Continuous reads new turns through the sieve. Nightly queues the
-vault cleanup pass and the Coach's retrieval tune. Weave's input waits in the
-policy outbox for its recipe body. Each wake waits for no running chat turn,
+vault cleanup pass, the Coach's nightly jobs, and the Dreamer's curator and
+harness audit. Weave's input waits in the policy outbox for its recipe body.
+
+The curator grades the Dreamer's own aged consolidations and files the next
+demotion rung for each as a proposal; the harness audit scores the Dreamer's
+recorded tuning config (its role models, prompt hash and pass dials, plus the
+Coach's retrieval weights) by how often you accepted its reviewed proposals,
+and files a retune proposal naming the surfaces a backbone change or a score
+drop implicates. Both land in the owner run tray (`/v1/owner/runs`), one
+run per night. Approve a curator run and its next pass applies each demotion
+whose target is unchanged since grading; a retune proposal is advice only and
+changes nothing.
+
+The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
+detectors (refused Dreamer consolidations, consent storms and denials,
+per-actor write drift) over the last day of Gate receipts, and the read-side
+pass runs the retrieval-miss detector. Each run is signed by the scheduled
+detector instance, and a run that does not verify stores nothing. A retrieval
+miss files a proposed reindex and a refused consolidation a proposed retry,
+through the production healer host (`Vault::healer_proposal`); nothing applies
+them. Each wake waits for no running chat turn,
 no running workflow and `idle_secs` of quiet since the last turn. A peer's sync apply wakes the
 Dreamer too, so turns another host wrote are read without waiting for a local
 one.
@@ -331,7 +350,8 @@ off.
 
 `execute_code` runs a task as generated JavaScript: each step's program comes
 from the `generative_reasoner` seat and runs in the checked-in QuickJS
-component, calling the vault through `self.memory.<verb>` under the
+component, calling the vault through each verb at its SDK path
+(`vault.recall(...)`, `self.focus.refresh(...)`) under the
 connector's own grants. It is listed on `tools/list` only when the seat has a
 rung and a prompt package for the executor is named:
 
@@ -390,8 +410,10 @@ tries = 3
 
 The summary prompt is `blocks/engine-executor-compaction.md` in the same
 prompt package as the wire prompt. Its user message is one JSON object
-(`from`, `through`, `max_summary_tokens`, `pins`, `retry`, `steps`) and the
-reply is `{"from", "through", "summary"}`; the test package's block,
+(`from`, `through`, `max_summary_tokens`, `pins`, `note`, `retry`, `steps`)
+and the reply is `{"from", "through", "summary"}`. `note` is what the agent
+asked the summary to keep, as free text, or null; unlike a pin it need not
+occur in the steps, and the gate does not check it. The test package's block,
 `crates/oneiron/tests/fixtures/prompts/blocks/engine-executor-compaction.md`,
 is a working example. Passes are metered on `budget_units`. Without the
 block, a seat for the role, or `[models]`, compaction is off and never calls
@@ -413,6 +435,35 @@ reasoning seat by its role's key (`checker`, `local_reasoner`,
 above. Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
+
+A run in an off-record room compacts the same way, inside the room: the pass
+reads the room's view, and the summary, its sources and its step coverage
+stay in the room's overlay. Nothing reaches the vault, no summary is embedded
+or exported, and closing the room drops them with the rest of it. A room
+closed or flipped on record while a pass runs refuses its summary, and the
+run keeps its raw window. An anonymous room keeps no summary, and a room
+already on record when the run started does not compact yet: both report
+`sticky` with `why: "off_record_run"`.
+
+The run can also fold spans of its own log (ARCH-0067 §2.2).
+`self.fold({from, through, note?})` marks steps `from`–`through` and returns
+the fold's handle (`f1`); the log does not change yet. `self.compact({note?})`
+asks for a pass at the next step boundary. It is the same seat, backend,
+single flight and gate as a crossing, it compacts the settled steps (the hot
+steps stay raw), and it folds every pending mark in one batch. A crossing
+folds the pending marks too. Each fold leaves one stub where its span was:
+`⟨f1 · t5–t8⟩`, the summary, the ids its steps name that the summary does
+not, and a read handle to each step's output and each stored result the span
+names. The stub is written once and kept byte for byte.
+`self.unfold({fold})` appends the fold's raw steps after the step that
+called it, labelled `unfolded from t5–t8`, and they stay there.
+`self.folds()` lists the folds and the pending marks, and
+`describe({fold: "f1"})` returns one fold's span, stub, ids and handles. The
+log's tail carries one line naming the folds and pending marks, never a
+summary. A mark that fails its pass keeps why and waits for the next
+`self.compact`. A run whose compaction is off answers its marks with
+`compaction is off for this run`. The ledger is node-local and follows the
+run's route, so an off-record room's folds stay in its overlay.
 
 ### Type check (shadow mode)
 
@@ -638,6 +689,21 @@ The owner can probe the read at `POST /v1/llm/decision_read`
 nothing. Each probe is a paid call on `models.raw_budget_units`, and past
 `[limits] decision_reads` probes wait their turn.
 
+The decision read takes yes/no and choice questions over text. A Box question
+("where is `mug` in `camera`?"), and any question over images, goes only to a
+rung that reads images: a host `DecisionModel` whose `reads_images` is true,
+or the opt-in System One seat (`decide_at_remote_seat`). The ladder skips
+every other rung (`DecisionLadder::run_images`, `run_pack_images`). A Box
+answer is `{top, bottom, left, right}` in 0–1 fractions of the image from its
+top-left corner, edges in order, with its confidence; it is `null` when the
+target is absent. The box centre is the point answer. A call carries at most
+8 named PNG or JPEG images, 10 MiB each and 20 MiB in all. Each fills the
+state field of its name, and each receipt keeps every image's evidence ref
+and body version, never its pixels. The System One seat sends each image as an
+asset, downscaled to a 1,568-pixel long edge (a box in fractions reads the
+same on the smaller copy), with the `TypeSafe-Danger-Zone-Images: true`
+header that Jev 1.14 needs for images and boxes.
+
 ## 10. Media calls (`ai.image`, `ai.video`, `ai.speech`, `ai.transcribe`, `ai.embed`)
 
 Image, video, speech, transcription and embedding calls have their own seats,
@@ -676,6 +742,16 @@ seconds or characters is charged its row's `rates` (defaults: an image 4000
 tokens, an audio second 50, a video second 10000, four characters of speech
 one). `inputs = ["text", "image"]` narrows or widens what a row takes.
 
+An embed row takes text only until its `inputs` widen it (`inputs = ["text",
+"image", "audio"]` for a multimodal model). Texts go as one `input` batch. A
+call with an image or audio sends each part as its own document in the chat
+form (`messages` in place of `input`, an image as a `data:` URL, audio as
+`input_audio`), as vLLM serves multimodal embedding models, and gets one vector
+per part, in order. Every vector of one answer has one width, the `dimensions`
+param's when the call names one. The stored-media backfill and the context
+pack's `media` query embed through this row, and each refuses a vector whose
+width is not its space's declared width.
+
 The verbs, each the owner's and checked against the vault's inference policy:
 
 - `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
@@ -692,3 +768,64 @@ The verbs, each the owner's and checked against the vault's inference policy:
   when it ends.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
+
+## 11. When a provider refuses for a limit
+
+A rung refused for a limit hands the call to the next rung of its ladder, and
+its offer (adapter, origin, key and model) rests in the vault, so a restart
+keeps it:
+
+- **A rate limit** (a 429 that names no long wait) rests for the wait it
+  names, or, naming none, for a backoff that doubles with each refusal in a
+  row from the vault's default rest, with jitter, up to the longest rest.
+- **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
+  wait of 15 minutes or more) is parked until the reset it names.
+- **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
+  "billing") is parked until the owner tops up or clears it.
+
+While only rests stop a call, it waits for the first offer back and tries the
+chain again, until its waits pass the vault's longest wait in all (a caller
+with its own deadline passes its own budget). A call whose every offer is
+parked on credit fails `quota_spent`; one that ran out of wait fails
+`rate_limited` with the earliest reset.
+
+A spent window or spent credit leaves the owner a question in
+`GET /v1/ai/status` (`quota_questions`: the provider, model, route, what was
+spent, the reset if any, and the choices). Answer it with
+`POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
+`top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
+`add_account` close the question and leave the offer parked until its reset.
+
+## 12. Batch GPU pods (`[gpu]`)
+
+Re-embeds and backfills are retry-tolerant, so they may run on rented GPU
+pods, spot capacity included (ARCH-0019 §5). Queries never do: they stay on
+the configured `[embedder]` endpoint. Name one region's pods:
+
+```toml
+[gpu]
+region = "tokyo"
+# Optional: the pods' bearer key. The endpoint's own key never goes to a pod.
+api_key_env = "ONEIRON_GPU_POD_KEY"
+# Defaults: health_path = "/health", ready_path = "/v1/models", poll_seconds = 15.
+
+[[gpu.pods]]
+id = "pod-a"
+url = "https://pod-a.example:8000/v1"
+capacity = 4
+```
+
+`serve` polls each pod at start and then every `poll_seconds`. A pod is
+healthy when it answers at all (transport), answers `health_path` with a 2xx
+(app), and answers `ready_path` with a 2xx (inference). Both paths resolve
+against the pod's origin, so `/health` on `https://pod-a.example:8000/v1` is
+`https://pod-a.example:8000/health`. Each document batch
+of the endpoint embedder takes a lease on one healthy pod, picked from two at
+random by load. The lease renews every 60 s and ends when the batch does. A
+lease that lapses mid-batch (the pod was preempted or failed a poll) drops
+that batch's answer, and the worker sends it again. With no healthy pod, the
+batch goes to the `[embedder]` endpoint. Pods must serve the endpoint's model:
+an answer that names another model, or makes vectors another way, is refused
+as the endpoint's would be. On a vault bound to an account, each pod's answer
+is sealed to that account before it is read. Pod URLs follow the endpoint's
+rules: HTTPS unless loopback, and no credential or query in the URL.

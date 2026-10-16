@@ -48,10 +48,11 @@ pub(super) fn plan_short_id_update(
 ) -> Result<ShortIdPlan> {
     let content_hash = short_id_content_hash(data);
 
-    if let Some(existing) = store.short_ids_reverse().get(txn, id.as_bytes())? {
-        let (short_id, old_content_hash) = parse_short_id_value(&existing)?;
+    if let Some((short_id, old_content_hash)) =
+        crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)?
+    {
         return Ok(ShortIdPlan::UpdateExisting {
-            short_id: short_id.to_owned(),
+            short_id,
             old_content_hash,
             content_hash,
         });
@@ -112,18 +113,13 @@ pub(super) fn apply_short_id_plan(
     Ok(())
 }
 
-pub(super) fn delete_short_id_rows_for_id(
+pub(crate) fn delete_short_id_rows_for_id(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let forward_key = match store.short_ids_reverse().get(wtxn, id.as_bytes())? {
-        Some(value) => {
-            let (short_id, content_hash) = parse_short_id_value(&value)?;
-            Some(encode_short_id_forward_key(short_id, content_hash))
-        }
-        None => None,
-    };
+    let forward_key = crate::ports::ShortIdStoreRead::port_short_id_reference(store, wtxn, id)?
+        .map(|(short_id, content_hash)| encode_short_id_forward_key(&short_id, content_hash));
     if let Some(forward_key) = forward_key {
         store.short_ids().delete(wtxn, &forward_key)?;
         store.short_ids_reverse().delete(wtxn, id.as_bytes())?;

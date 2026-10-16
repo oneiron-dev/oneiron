@@ -40,6 +40,9 @@ side_tables! {
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
     /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
     AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
+    /// Cached minted host-held project.write slip token ("v2.slip."+hex(JSON)) the owner's project
+    /// signer uses, for one host signing key. Key: hex64.
+    AUTHORITY_OWNER_PROJECT_SLIP_CACHE: SyncState b"authority:owner-project-slip:v1:" Raw;
     /// The facet a paired credential's writes are born in, as the owner named it on the link
     /// (raw id). Key: hex64 (the slip id).
     AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw;
@@ -264,6 +267,23 @@ side_tables! {
     SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw;
     /// A window promoted from thin to canonical residence; reconnect replays it. Key: window key.
     SYNC_RESIDENCE_PROMOTED_WINDOW: SyncState b"rp:w:" Raw;
+    /// This machine's residence choice (sync all or sync what it opened) and when it was made;
+    /// node-local, never synced. Key: ().
+    SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw;
+    /// The home's label beside a shelved sealed packet (OF-534 G7): u64be arrival ‖ the window
+    /// label its sender named. Key: hex64 (tag) ":" hex64 (packet digest).
+    SYNC_RESIDENCE_SEALED_LABEL: SyncState b"rsh:" Raw;
+    /// The home's next sealed-packet arrival number (u64be). Key: ().
+    SYNC_RESIDENCE_SEALED_NEXT: SyncState b"rsn" Raw;
+    /// The encoded Loro version vector of the last sealed packet this machine put on its home
+    /// for one window. Key: window key.
+    SYNC_RESIDENCE_SEALED_PUT: SyncState b"rsp:" Raw;
+    /// The last home arrival number this machine took sealed packets in through (u64be).
+    /// Key: ().
+    SYNC_RESIDENCE_SEALED_TAKEN: SyncState b"rst" Raw;
+    /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
+    /// cache for pruning. Key: hex32 (entity id).
+    SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;
     /// Deferred SpawnedBy anchor, keyed by window, session and turn. Key: yyyy-mm ":" hex32 ":" hex32.
     DEFERRED_SPAWNED_BY: SyncState b"sa:w:" Raw;
     /// Endpoint index for a deferred SpawnedBy anchor. Key: hex32 ":" full sa:w: key.

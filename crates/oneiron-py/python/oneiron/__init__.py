@@ -1,9 +1,10 @@
 """oneiron — memory for agents.
 
-Four calls are the whole quickstart: witness a turn, claim a fact, recall it,
-read the receipts. ``Oneiron.open()`` gives you an embedded vault bound to a
-local owner actor; ``Oneiron.connect(url, key)`` gives you the same handle
-against a running ``oneiron-server``, where ``key`` is the credential
+Four calls are the whole quickstart: witness a turn (``vault.witness``), claim
+a fact (``vault.claims.upsert``), recall it (``vault.recall``), read the
+receipts (``vault.receipts``). ``Oneiron.open()`` gives you an embedded vault
+bound to a local owner actor; ``Oneiron.connect(url, key)`` gives you the same
+handle against a running ``oneiron-server``, where ``key`` is the credential
 ``Oneiron.pair(link)`` returned once. The two differ by one line.
 
 Every method below is a one-line delegate to the private native client. There
@@ -24,7 +25,6 @@ import os
 from typing import Any, Callable, TypeVar
 
 from ._native import NativeClient as _NativeClient
-from .agent_verbs import TasksVerbs as _TasksVerbs, RoomsVerbs as _RoomsVerbs
 
 __all__ = ["Oneiron", "OneironError"]
 
@@ -123,8 +123,6 @@ class Oneiron:
     def __init__(self, client: _NativeClient) -> None:
         """Internal-only wrapper seam; use :meth:`open` or :meth:`connect`."""
         self._client = client
-        self.tasks = _TasksVerbs(self._agent_verb)
-        self.rooms = _RoomsVerbs(self._agent_verb)
 
     @classmethod
     def open(
@@ -193,106 +191,345 @@ class Oneiron:
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
     # BEGIN GENERATED FACADE VERBS
+    @property
+    def self(self) -> "Oneiron._SelfVerbs":
+        return Oneiron._SelfVerbs(self._client)
     def cancel(self, task_ref: str) -> dict[str, Any]:
         """Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."""
         return json.loads(_translate(lambda: self._client.cancel(json.dumps({"task_ref": task_ref}))))
+    def steer(self, spec):
+        return json.loads(_translate(lambda: self._client.steer(json.dumps(spec))))
     def describe(self, task_ref: str | None = None) -> dict[str, Any]:
         """Describes one task's card, or the whole TASKS section when no task is named."""
         return json.loads(_translate(lambda: self._client.describe(json.dumps({"task_ref": task_ref}))))
-    def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
-        """Witnesses one conversational turn.
-
-        Omitting ``occurred_at`` stamps the current wall clock, in Unix
-        seconds, at the call boundary.
-        """
-        return json.loads(_translate(lambda: self._client.witness(json.dumps(turn))))
-    def claim_upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
-        """Upserts one claim. The consent gate, not this call, decides approval."""
-        return json.loads(_translate(lambda: self._client.claim_upsert(json.dumps(claim))))
-    def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> dict[str, Any]:
-        """Recalls a memory pack.
-
-        ``effort="high"`` needs a lease this package never mints: an embedded
-        client raises ``LEASE_REQUIRED``; a remote one gets what the server
-        serves (reranked on its ``[models]`` reranker, or unreranked and
-        saying so). ``effort="call"`` is call mode for live calls:
-        light effort under a hard deadline (``deadline_ms``, or the vault's
-        call-mode deadline), answering with the best results ready, marked
-        ``partial``. ``format`` takes the engine's exact tokens:
-        ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
-        """
-        return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms)))
-    def export(self, format: str | None = None) -> dict[str, Any]:
-        """Exports the live vault through the five-format serializer."""
-        return json.loads(_translate(lambda: self._client.export(json.dumps({"format": format}))))
-    def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Governance receipts, newest first."""
-        return json.loads(_translate(lambda: self._client.receipts(limit)))
-    def key_value_get(self, request: dict[str, Any]) -> dict[str, Any] | None:
-        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
-        return json.loads(_translate(lambda: self._client.key_value_get(json.dumps(request, allow_nan=False))))
-    def key_value_put(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
-        return json.loads(_translate(lambda: self._client.key_value_put(json.dumps(request, allow_nan=False))))
-    def key_value_delete(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
-        return json.loads(_translate(lambda: self._client.key_value_delete(json.dumps(request, allow_nan=False))))
-    def key_value_search(self, request: dict[str, Any]) -> list[dict[str, Any]]:
-        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
-        return json.loads(_translate(lambda: self._client.key_value_search(json.dumps(request, allow_nan=False))))
-    def key_value_namespaces(self, request: dict[str, Any]) -> list[list[str]]:
-        """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
-        return json.loads(_translate(lambda: self._client.key_value_namespaces(json.dumps(request, allow_nan=False))))
+    @property
+    def tasks(self) -> "Oneiron._TasksVerbs":
+        return Oneiron._TasksVerbs(self._client)
+    @property
+    def vault(self) -> "Oneiron._VaultVerbs":
+        return Oneiron._VaultVerbs(self._client)
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
     def peek(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.peek(json.dumps(request, allow_nan=False))))
-    def commit(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.commit(json.dumps(input, allow_nan=False))))
-    def remember(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.remember(json.dumps(input, allow_nan=False))))
-    def claim_retract(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.claim_retract(json.dumps(input, allow_nan=False))))
-    def forget(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.forget(json.dumps(input, allow_nan=False))))
-    def claim_list(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.claim_list(json.dumps(input, allow_nan=False))))
-    def claim_history(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.claim_history(json.dumps(input, allow_nan=False))))
-    def safe_delete(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.safe_delete(json.dumps(input, allow_nan=False))))
-    def pending_writes(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.pending_writes(json.dumps(input, allow_nan=False))))
-    def hydrate(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.hydrate(json.dumps(input, allow_nan=False))))
-    def get_entity(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.get_entity(json.dumps(input, allow_nan=False))))
-    def query_bm25(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.query_bm25(json.dumps(input, allow_nan=False))))
-    def neighbors(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.neighbors(json.dumps(input, allow_nan=False))))
-    def put_structural(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.put_structural(json.dumps(input, allow_nan=False))))
-    def put_habit_checkin(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.put_habit_checkin(json.dumps(input, allow_nan=False))))
-    def admit_imported_claim(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.admit_imported_claim(json.dumps(input, allow_nan=False))))
-    def put_blob_artifact(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.put_blob_artifact(json.dumps(input, allow_nan=False))))
-    def append_blob_version(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.append_blob_version(json.dumps(input, allow_nan=False))))
-    def read_blob_version(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.read_blob_version(json.dumps(input, allow_nan=False))))
-    def create_note(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.create_note(json.dumps(input, allow_nan=False))))
-    def create_note_from_entity(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.create_note_from_entity(json.dumps(input, allow_nan=False))))
-    def edit_note(self, input: dict[str, Any]) -> Any:
-        return json.loads(_translate(lambda: self._client.edit_note(json.dumps(input, allow_nan=False))))
+    def ask(self, spec_or_who, what=None, until=None, default="ask_me"):
+        if what is None:
+            input = spec_or_who
+        else:
+            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who
+            input = {"who": who, "what": what, "until": until, "default": default}
+        return json.loads(_translate(lambda: self._client.ask(json.dumps(input))))
+    def wait(self, handle, step_key="sdk.wait"):
+        return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
+    @property
+    def ai(self) -> "Oneiron._AiVerbs":
+        return Oneiron._AiVerbs(self._client)
+    @property
+    def connector(self) -> "Oneiron._ConnectorVerbs":
+        return Oneiron._ConnectorVerbs(self._client)
+    class _SelfVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def memory(self) -> "Oneiron._SelfMemoryVerbs":
+            return Oneiron._SelfMemoryVerbs(self._client)
+        @property
+        def skills(self) -> "Oneiron._SelfSkillsVerbs":
+            return Oneiron._SelfSkillsVerbs(self._client)
+    class _SelfMemoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def diary(self, spec):
+            return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
+    class _SelfSkillsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_save(json.dumps(spec))))
+        def fork(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_fork(json.dumps(spec))))
+        def callables(self, spec):
+            return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps(spec))))
+    class _TasksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            return json.loads(_translate(lambda: self._client.tasks_create(json.dumps(spec))))
+        def update(self, spec):
+            return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
+        def answer(self, handle, word):
+            return json.loads(_translate(lambda: self._client.tasks_answer(json.dumps({"handle": handle, "word": word}))))
+        def outcomes(self, handle):
+            return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+    class _VaultVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
+            """Witnesses one conversational turn.
+
+            Omitting ``occurred_at`` stamps the current wall clock, in Unix
+            seconds, at the call boundary.
+            """
+            return json.loads(_translate(lambda: self._client.vault_witness(json.dumps(turn))))
+        @property
+        def claims(self) -> "Oneiron._VaultClaimsVerbs":
+            return Oneiron._VaultClaimsVerbs(self._client)
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> dict[str, Any]:
+            """Recalls a memory pack.
+
+            ``effort="high"`` needs a lease this package never mints: an embedded
+            client raises ``LEASE_REQUIRED``; a remote one gets what the server
+            serves (reranked on its ``[models]`` reranker, or unreranked and
+            saying so). ``effort="call"`` is call mode for live calls:
+            light effort under a hard deadline (``deadline_ms``, or the vault's
+            call-mode deadline), answering with the best results ready, marked
+            ``partial``. ``format`` takes the engine's exact tokens:
+            ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
+            """
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms)))
+        def export(self, format: str | None = None) -> dict[str, Any]:
+            """Exports the live vault through the five-format serializer."""
+            return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
+        def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
+            """Governance receipts, newest first."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        @property
+        def kv(self) -> "Oneiron._VaultKvVerbs":
+            return Oneiron._VaultKvVerbs(self._client)
+        @property
+        def packs(self) -> "Oneiron._VaultPacksVerbs":
+            return Oneiron._VaultPacksVerbs(self._client)
+        @property
+        def artifacts(self) -> "Oneiron._VaultArtifactsVerbs":
+            return Oneiron._VaultArtifactsVerbs(self._client)
+        @property
+        def rooms(self) -> "Oneiron._VaultRoomsVerbs":
+            return Oneiron._VaultRoomsVerbs(self._client)
+        @property
+        def companions(self) -> "Oneiron._VaultCompanionsVerbs":
+            return Oneiron._VaultCompanionsVerbs(self._client)
+        @property
+        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
+            return Oneiron._VaultWorkspaceVerbs(self._client)
+        def commit(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
+        def remember(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_remember(json.dumps(input, allow_nan=False))))
+        def forget(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_forget(json.dumps(input, allow_nan=False))))
+        def delete(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_delete(json.dumps(input, allow_nan=False))))
+        @property
+        def writes(self) -> "Oneiron._VaultWritesVerbs":
+            return Oneiron._VaultWritesVerbs(self._client)
+        def hydrate(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_hydrate(json.dumps(input, allow_nan=False))))
+        def get(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_get(json.dumps(input, allow_nan=False))))
+        @property
+        def search(self) -> "Oneiron._VaultSearchVerbs":
+            return Oneiron._VaultSearchVerbs(self._client)
+        def neighbors(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_neighbors(json.dumps(input, allow_nan=False))))
+        @property
+        def structural(self) -> "Oneiron._VaultStructuralVerbs":
+            return Oneiron._VaultStructuralVerbs(self._client)
+        @property
+        def habits(self) -> "Oneiron._VaultHabitsVerbs":
+            return Oneiron._VaultHabitsVerbs(self._client)
+        @property
+        def notes(self) -> "Oneiron._VaultNotesVerbs":
+            return Oneiron._VaultNotesVerbs(self._client)
+    class _VaultClaimsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
+            """Upserts one claim. The consent gate, not this call, decides approval."""
+            return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(claim))))
+        def retract(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_claims_retract(json.dumps(input, allow_nan=False))))
+        def list(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_claims_list(json.dumps(input, allow_nan=False))))
+        def history(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_claims_history(json.dumps(input, allow_nan=False))))
+        def admit(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
+    class _VaultKvVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+            return json.loads(_translate(lambda: self._client.vault_kv_get(json.dumps(request, allow_nan=False))))
+        def put(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+            return json.loads(_translate(lambda: self._client.vault_kv_put(json.dumps(request, allow_nan=False))))
+        def delete(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+            return json.loads(_translate(lambda: self._client.vault_kv_delete(json.dumps(request, allow_nan=False))))
+        def search(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+            return json.loads(_translate(lambda: self._client.vault_kv_search(json.dumps(request, allow_nan=False))))
+        def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
+            """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
+            return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultPacksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+    class _VaultArtifactsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def view(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One artifact's kind, head and versions, each with its made_by and born-from."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_view(json.dumps(request, allow_nan=False))))
+        def export(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One version's export file (base64), with its pinned name and media type."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_export(json.dumps(request, allow_nan=False))))
+        def born_from(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The artifacts and versions a task, ask, run, skill or agent run produced."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_born_from(json.dumps(request, allow_nan=False))))
+        def proposals(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """The proposals waiting beside one artifact for Keep or Discard."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_proposals(json.dumps(request, allow_nan=False))))
+        def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Runs one native deck transaction over the head and holds the proposal for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
+        def propose_output(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Offers one native organ result as the artifact's next version, held for Keep."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_propose_output(json.dumps(request, allow_nan=False))))
+        def keep(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Keeps one waiting proposal as a new version, once, with its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_keep(json.dumps(request, allow_nan=False))))
+        def discard(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Discards one waiting proposal, once, with its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_discard(json.dumps(request, allow_nan=False))))
+        def undo(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Undoes one Keep with a new version; the settle stays consumed."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_undo(json.dumps(request, allow_nan=False))))
+        def put(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_artifacts_put(json.dumps(input, allow_nan=False))))
+        def append(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_artifacts_append(json.dumps(input, allow_nan=False))))
+        def read(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultRoomsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self):
+            return json.loads(_translate(lambda: self._client.vault_rooms_list(json.dumps({}))))
+        def messages(self, room_ref, after=None, limit=None):
+            return json.loads(_translate(lambda: self._client.vault_rooms_messages(json.dumps({"room_ref": room_ref, "after": after, "limit": limit}))))
+        def render(self, room_ref):
+            return json.loads(_translate(lambda: self._client.vault_rooms_render(json.dumps({"room_ref": room_ref}))))
+        def find(self, room_ref, after=None, limit=None):
+            return json.loads(_translate(lambda: self._client.vault_rooms_find(json.dumps({"room_ref": room_ref, "after": after, "limit": limit}))))
+        def get(self, room_ref, turn_ref):
+            return json.loads(_translate(lambda: self._client.vault_rooms_get(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
+        def trunk(self, room_ref, turn_ref):
+            return json.loads(_translate(lambda: self._client.vault_rooms_trunk(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
+        def claim(self, room_ref, turn_ref):
+            return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
+        def speak(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        def host(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
+        def sharing(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultCompanionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs":
+            return Oneiron._VaultCompanionsSharingVerbs(self._client)
+    class _VaultCompanionsSharingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_companions_sharing_get(json.dumps(spec))))
+    class _VaultWorkspaceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs":
+            return Oneiron._VaultWorkspaceWorkCompanionVerbs(self._client)
+    class _VaultWorkspaceWorkCompanionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_get(json.dumps(spec))))
+        def set(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
+    class _VaultWritesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pending(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_writes_pending(json.dumps(input, allow_nan=False))))
+    class _VaultSearchVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bm25(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
+    class _VaultStructuralVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_structural_put(json.dumps(input, allow_nan=False))))
+    class _VaultHabitsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def checkin(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_habits_checkin(json.dumps(input, allow_nan=False))))
+    class _VaultNotesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_notes_create(json.dumps(input, allow_nan=False))))
+        def from_entity(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_notes_from_entity(json.dumps(input, allow_nan=False))))
+        def edit(self, input: dict[str, Any]) -> Any:
+            return json.loads(_translate(lambda: self._client.vault_notes_edit(json.dumps(input, allow_nan=False))))
+    class _AiVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def options(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
+        def image(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_image(json.dumps(spec))))
+        def speech(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_speech(json.dumps(spec))))
+        def transcribe(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_transcribe(json.dumps(spec))))
+        def embed(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_embed(json.dumps(spec))))
+        @property
+        def video(self) -> "Oneiron._AiVideoVerbs":
+            return Oneiron._AiVideoVerbs(self._client)
+    class _AiVideoVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
+        def poll(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_video_poll(json.dumps(spec))))
+        def cancel(self, spec):
+            return json.loads(_translate(lambda: self._client.ai_video_cancel(json.dumps(spec))))
+    class _ConnectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.connector_list(json.dumps(spec))))
+        def status(self, spec):
+            return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
+        @property
+        def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
+            return Oneiron._ConnectorOutboundVerbs(self._client)
+    class _ConnectorOutboundVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def schedule(self, spec):
+            return json.loads(_translate(lambda: self._client.connector_outbound_schedule(json.dumps(spec))))
 
 # END GENERATED FACADE VERBS
-
-    def _agent_verb(self, method: str, value: object) -> Any:
-        return json.loads(_translate(lambda: getattr(self._client, method)(json.dumps(value))))

@@ -1,6 +1,6 @@
 //! Asserts the PyPI major still equals the engine's `MEMORY_PACK_VERSION`.
 //!
-//! Same contract as `oneiron-napi/build.rs`, from the other side: `recall`
+//! Same contract as `oneiron-napi/build.rs`, from the other side: `vault.recall`
 //! returns the engine `MemoryPack`, and this distribution's semver MAJOR is
 //! the only thing telling an installer which pack shape they get.
 //!

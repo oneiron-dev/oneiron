@@ -2,8 +2,13 @@
 
 pub mod catalogue;
 mod codec;
+mod held;
+pub use held::HeldLadder;
+pub(crate) use held::{cut_text, fit_state};
 mod ladder;
 mod local;
+mod media;
+pub use media::*;
 mod policy;
 pub use local::{
     DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression,

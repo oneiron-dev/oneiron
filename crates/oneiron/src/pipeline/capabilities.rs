@@ -70,6 +70,7 @@ pub(super) fn partition_capabilities(
     txn: &RoTxn<'_>,
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     executor: Option<&str>,
+    reliability: Option<&crate::skill_reliability::SkillReliabilityQuery>,
 ) -> Result<Vec<ScoredEntity>> {
     let mut memory = Vec::with_capacity(scores.len());
     let mut eligible = Vec::new();
@@ -100,10 +101,15 @@ pub(super) fn partition_capabilities(
     let mut total_pulls = 0_u32;
     let mut posteriors = HashMap::with_capacity(skill_ids.len());
     for id in &skill_ids {
-        let posterior =
-            crate::skill_reliability::selection_posterior_in_txn(vault, txn, id, executor)?;
-        // Observations are positive integer-valued Beta weights. Saturation
-        // keeps an extremely large candidate set from wrapping the horizon.
+        let posterior = crate::skill_reliability::selection_posterior_for_query_in_txn(
+            vault,
+            txn,
+            id,
+            executor,
+            reliability,
+        )?;
+        // Fractional own runs and weighted priors share the UCB horizon.
+        // Saturation keeps an extremely large set from wrapping it.
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -214,6 +220,7 @@ fn semantic_signal(signal: RetrievalSignal) -> bool {
             | RetrievalSignal::Vector
             | RetrievalSignal::Hyde
             | RetrievalSignal::HydeRetry
+            | RetrievalSignal::MediaVector
     )
 }
 

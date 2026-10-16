@@ -7856,6 +7856,7 @@ dependencies = [
  "oneiron-authority",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-container",
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
@@ -8019,8 +8020,11 @@ name = "oneiron-container"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "libc",
  "oneiron-spawn",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "uuid",
 ]
@@ -8117,6 +8121,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "libc",
+ "oneiron-container",
  "oneiron-sandbox-contract",
  "serde",
  "serde_json",
@@ -8334,6 +8339,7 @@ dependencies = [
  "libc",
  "oneiron",
  "oneiron-organ-protocol",
+ "oneiron-sandbox-contract",
  "oneiron-spawn",
  "reqwest 0.12.28",
  "rmp-serde",
@@ -8483,6 +8489,7 @@ dependencies = [
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
+ "oneiron-container",
  "oneiron-driver",
  "oneiron-keystore",
  "oneiron-llm-anthropic",
@@ -8542,6 +8549,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "libc",
  "serde",
  "serde_json",
  "subtle",

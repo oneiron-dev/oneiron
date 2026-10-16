@@ -77,7 +77,10 @@ impl Anchor {
             ),
             LearningPredicate::RetestNoise => matches!(self, Self::Retest),
             LearningPredicate::Setting => {
-                matches!(self, Self::FittingCheck | Self::Audit { .. } | Self::HeldOut)
+                matches!(
+                    self,
+                    Self::FittingCheck | Self::Audit { .. } | Self::HeldOut
+                )
             }
         }
     }
@@ -185,12 +188,20 @@ pub struct LearningEvidence {
     pub on_judge_model: bool,
     /// The outcome category a mean edit-cost observation also keeps.
     pub outcome_label: Option<String>,
+    /// Frozen pack execution/use context; judge and team metadata are evidence,
+    /// not reliability key qualifiers.
+    pub pack_attribution: Option<crate::receipt::PackLearningContext>,
 }
 
 impl LearningEvidence {
     /// A whole-run anchored observation with no judge.
     #[must_use]
-    pub fn anchored(receipt: impl Into<String>, at: u64, anchor: Anchor, observation: Observation) -> Self {
+    pub fn anchored(
+        receipt: impl Into<String>,
+        at: u64,
+        anchor: Anchor,
+        observation: Observation,
+    ) -> Self {
         Self {
             receipt: receipt.into(),
             at,
@@ -200,6 +211,7 @@ impl LearningEvidence {
             judge: None,
             on_judge_model: false,
             outcome_label: None,
+            pack_attribution: None,
         }
     }
 }
@@ -217,6 +229,8 @@ pub struct EvidenceRow {
     pub on_judge_model: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_attribution: Option<crate::receipt::PackLearningContext>,
 }
 
 fn bounded_ref(text: &str, what: &'static str) -> Result<()> {
@@ -265,7 +279,10 @@ pub(crate) fn record_evidence_in_txn(
             "this anchor does not feed this learning member",
         ));
     }
-    bounded_ref(&evidence.receipt, "an evidence receipt is 1..=256 bytes without NUL")?;
+    bounded_ref(
+        &evidence.receipt,
+        "an evidence receipt is 1..=256 bytes without NUL",
+    )?;
     if let Some(judge) = &evidence.judge {
         bounded_ref(judge, "a judge revision is 1..=256 bytes without NUL")?;
     }
@@ -287,8 +304,14 @@ pub(crate) fn record_evidence_in_txn(
         judge: evidence.judge.clone(),
         on_judge_model: evidence.on_judge_model,
         outcome_label: evidence.outcome_label.clone(),
+        pack_attribution: evidence.pack_attribution.clone(),
     };
-    EVIDENCE.put(&vault.store, wtxn, &(digest, evidence.receipt.clone()), &row)?;
+    EVIDENCE.put(
+        &vault.store,
+        wtxn,
+        &(digest, evidence.receipt.clone()),
+        &row,
+    )?;
     project_cell_in_txn(vault, wtxn, &digest, now)
 }
 

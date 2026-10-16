@@ -302,6 +302,16 @@ pub(crate) fn publish_room_revision(
             != live.get(ENTITY_METADATA_HEADER_LEN..);
     current.indexed = current.live;
     put_state(store, txn, id, &current)?;
+    let codes = super::phonetic::take_phonetic(
+        store,
+        txn,
+        id,
+        current.indexed,
+        live[0],
+        &live[ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    crate::batch::delete_from_phonetic_postings(store, txn, id)?;
+    crate::batch::apply_phonetic(store, txn, *id, &codes)?;
     Ok(changed)
 }
 
@@ -458,7 +468,9 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
         return Err(crate::secret_custody::reject_secret_custody_byte());
     }
     if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
-        return Err(crate::world_keys::refused("a world key's pad has no revisions"));
+        return Err(crate::world_keys::refused(
+            "a world key's pad has no revisions",
+        ));
     }
     if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&vault.store, txn, id, header.entity_type)?
         || vault.archive_tombstone_in_txn(txn, id)?.is_some()

@@ -72,6 +72,19 @@ side_tables! {
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;
     /// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
     NOTE_RECEIPT: VaultMeta b"note_receipt:v1:" Named;
+    /// One live office body commit's receipt: peer, operation span and MadeBy. Key: id16 (artifact
+    /// or fork) + u64be (sequence).
+    OFFICE_BODY_COMMIT: VaultMeta b"office_body:commit:v1:" Named;
+    /// A live office body's or fork's Loro snapshot. Key: id16 (artifact or fork).
+    OFFICE_BODY_DOC: VaultMeta b"office_body:doc:v1:" Raw;
+    /// The body frontier an office body export version projects. Key: id16 (artifact) + u64be
+    /// (version).
+    OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named;
+    /// Machine work on a live office body: opener, base frontier and state. Key: id16 (fork).
+    OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named;
+    /// A live office body's head: kind, imported source version and frontiers. Key: id16
+    /// (artifact).
+    OFFICE_BODY_HEAD: VaultMeta b"office_body:head:v1:" Named;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
     OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;
@@ -133,6 +146,9 @@ side_tables! {
     /// Crash-recoverable heartbeat journal (oid32+timestamp8, 40 bytes) for one in-progress streamed
     /// LFS upload. Key: id16.
     ORIGIN_LFS_UPLOAD_JOURNAL: VaultMeta b"origin:lfs:upload:v1:" Raw;
+    /// The owner's outbound mirror of one served repository: its https URL, the custody record of
+    /// its push token, the cadence and the last push. Key: id16 (repo id).
+    ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;
     /// Durable journal row for one origin ref-publication attempt, across its
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
     ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named;

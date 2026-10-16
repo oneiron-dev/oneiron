@@ -63,6 +63,16 @@ pub struct ServeArgs {
     #[arg(long = "derivation-owner")]
     pub derivation_owner: Option<String>,
 
+    /// Trusted organization hosting id (32 bytes in hexadecimal). With no
+    /// --member-vault, this is also the shared vault's derivation owner.
+    #[arg(long = "organization-owner", requires = "managed_by_hypnos")]
+    pub organization_owner: Option<String>,
+
+    /// This organization's member vault, sealed to --derivation-owner rather
+    /// than to the organization. The personal vault can leave with its member.
+    #[arg(long = "member-vault", requires = "organization_owner")]
+    pub member_vault: bool,
+
     /// Vault data directory. Managed mode's spelling of `--vault-path`, which
     /// stays available as the alias; unmanaged serve keeps using either.
     #[arg(long = "data-dir")]
@@ -92,6 +102,13 @@ pub struct ServeArgs {
     /// credential frame. Rides argv, never a hardcoded constant.
     #[arg(long = "credentials-fd")]
     pub credentials_fd: Option<i32>,
+
+    /// Managed mode as a Firecracker vault VM's only process. The credential
+    /// frame and the ready byte ride the vsock boot channel instead of
+    /// `--credentials-fd` and `--ready-fd`, and the host reaches the HTTP and
+    /// ctl sockets through vsock ports (`oneiron_vault_contract::vm`).
+    #[arg(long = "vsock-guest")]
+    pub vsock_guest: bool,
 
     /// This install's key directory, an absolute path outside the vault: where
     /// the this-device-only keystore keeps the machine encryption seed. Managed
@@ -314,12 +331,15 @@ impl fmt::Debug for ServeArgs {
             .field("managed_by_hypnos", &self.managed_by_hypnos)
             .field("contract_version", &self.contract_version)
             .field("vault_name", &self.vault_name)
+            .field("organization_owner", &self.organization_owner)
+            .field("member_vault", &self.member_vault)
             .field("data_dir", &self.data_dir)
             .field("http_socket", &self.http_socket)
             .field("ctl_socket", &self.ctl_socket)
             .field("hypnos_socket", &self.hypnos_socket)
             .field("ready_fd", &self.ready_fd)
             .field("credentials_fd", &self.credentials_fd)
+            .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
             .field("host", &self.host)
             .field("port", &self.port)

@@ -669,6 +669,16 @@ impl crate::Vault {
                 .total_cmp(&a_salience)
                 .then_with(|| a.id.cmp(&b.id))
         });
+        crate::context_pack::source_ranking::rank(
+            &mut candidates,
+            &Default::default(),
+            |candidate| {
+                (
+                    candidate.body.salience.unwrap_or(-1.0),
+                    Some(&candidate.body),
+                )
+            },
+        )?;
         Ok(candidates)
     }
 }

@@ -24,11 +24,15 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
+mod born_from;
+mod family;
 mod holders;
 mod lifecycle;
+mod made_by;
 mod provenance;
 mod references;
 mod store_keys;
+mod verbs;
 mod version_codec;
 mod versions;
 
@@ -38,11 +42,15 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
+pub use self::born_from::{BornFromArtifact, BornFromSource};
+pub(crate) use self::family::hash_hex;
+pub use self::family::{ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView};
 pub(crate) use self::holders::{
     artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
     held_content_hashes_in_txn,
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
+pub use self::made_by::BLOB_VERSION_MADE_BY_MAX_INPUTS;
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
@@ -51,6 +59,11 @@ pub(crate) use self::references::{
 pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
+pub use self::verbs::{
+    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
+    DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, KeptProposal, NativeOutputRequest,
+    ProposalSettleRequest, UndoneKeep,
+};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
 pub use self::versions::{
     BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, BlobBytes, CalcEngineStamp,

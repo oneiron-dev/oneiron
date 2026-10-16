@@ -32,7 +32,7 @@ use crate::{Error, Result};
 const BODIES_DIR: &str = "bodies";
 const SPILL_ROOT: &str = "off-record-bodies";
 const TEMP_PREFIX: &str = ".tmp-";
-const LINE_INDEX_SUFFIX: &str = ".lines";
+pub(crate) const LINE_INDEX_SUFFIX: &str = ".lines";
 
 /// Bytes per block of a body's sparse line index.
 const LINE_INDEX_BLOCK_BYTES: u64 = 64 * 1024;
@@ -51,7 +51,7 @@ pub(crate) fn body_file_name(digest: &[u8; 32]) -> String {
 
 /// One directory of body files, held open by descriptor.
 pub(crate) struct BodyDir {
-    dir: File,
+    pub(crate) dir: File,
 }
 
 impl BodyDir {
@@ -247,6 +247,7 @@ pub(crate) struct BodyMeter {
     carry_len: usize,
     head: Vec<u8>,
     line_index: Vec<u64>,
+    secrets: SecretScan,
 }
 
 /// A measured body's facts, for its manifest.
@@ -258,6 +259,9 @@ pub(crate) struct BodyFacts {
     pub(crate) lines: u64,
     pub(crate) preview: String,
     pub(crate) preview_truncated: bool,
+    /// The reason of the secret scan's first hit in the body (ARCH-0069
+    /// S5): the body is kept whole and marked, never refused.
+    pub(crate) secret: Option<&'static str>,
     line_index: Vec<u64>,
 }
 
@@ -273,11 +277,13 @@ impl BodyMeter {
             carry_len: 0,
             head: Vec::new(),
             line_index: Vec::new(),
+            secrets: SecretScan::default(),
         }
     }
 
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
         self.hasher.update(bytes);
+        self.secrets.feed(bytes);
         let room = PREVIEW_HEAD_BYTES.saturating_sub(self.head.len());
         self.head.extend_from_slice(&bytes[..room.min(bytes.len())]);
         self.feed_utf8(bytes);
@@ -330,7 +336,8 @@ impl BodyMeter {
         }
     }
 
-    pub(crate) fn finish(self, preview_chars: usize) -> BodyFacts {
+    pub(crate) fn finish(mut self, preview_chars: usize) -> BodyFacts {
+        let secret = self.secrets.finish();
         let (preview, cut) =
             crate::serialize::compressed_code_run_output_preview(&self.head, preview_chars);
         BodyFacts {
@@ -340,8 +347,71 @@ impl BodyMeter {
             lines: self.newlines + u64::from(self.last.is_some_and(|byte| byte != b'\n')),
             preview,
             preview_truncated: cut || self.len > self.head.len() as u64,
+            secret,
             line_index: self.line_index,
         }
+    }
+}
+
+/// The recovery-phrase scan of one body as it streams (#1433): its text is
+/// read in order, a character split between two frames carried, and bytes
+/// that are no UTF-8 read as one replacement character each, so a binary
+/// body is scanned too. It keeps the first hit.
+#[derive(Default)]
+struct SecretScan {
+    phrases: crate::batch::secret_scan::PhraseStream,
+    carry: Vec<u8>,
+    hit: Option<&'static str>,
+}
+
+impl SecretScan {
+    fn feed(&mut self, mut bytes: &[u8]) {
+        while !self.carry.is_empty() && self.hit.is_none() {
+            let Some((first, after)) = bytes.split_first() else {
+                return;
+            };
+            self.carry.push(*first);
+            bytes = after;
+            let carried = std::mem::take(&mut self.carry);
+            match std::str::from_utf8(&carried) {
+                Ok(text) => self.read(text),
+                Err(error) if error.error_len().is_some() || carried.len() == 4 => {
+                    self.read(char::REPLACEMENT_CHARACTER.encode_utf8(&mut [0; 4]));
+                }
+                Err(_) => self.carry = carried,
+            }
+        }
+        while self.hit.is_none() {
+            match std::str::from_utf8(bytes) {
+                Ok(text) => return self.read(text),
+                Err(error) => {
+                    let (valid, rest) = bytes.split_at(error.valid_up_to());
+                    self.read(std::str::from_utf8(valid).unwrap_or_default());
+                    let Some(bad) = error.error_len() else {
+                        self.carry.extend_from_slice(rest);
+                        return;
+                    };
+                    self.read(char::REPLACEMENT_CHARACTER.encode_utf8(&mut [0; 4]));
+                    bytes = &rest[bad..];
+                }
+            }
+        }
+    }
+
+    fn read(&mut self, text: &str) {
+        if self.hit.is_none() {
+            self.hit = self.phrases.find(text);
+        }
+    }
+
+    fn finish(&mut self) -> Option<&'static str> {
+        if !std::mem::take(&mut self.carry).is_empty() {
+            self.read(char::REPLACEMENT_CHARACTER.encode_utf8(&mut [0; 4]));
+        }
+        if self.hit.is_none() {
+            self.hit = self.phrases.find_at_end();
+        }
+        self.hit
     }
 }
 
@@ -400,6 +470,15 @@ impl BodySink {
         self.inline = Vec::new();
         self.spill = Some((file, temp));
         Ok(())
+    }
+
+    /// The digest of the bytes written so far, the body's own once it is
+    /// finished: a body's name can depend on it before it is published.
+    pub(crate) fn digest(&self) -> Result<[u8; 32]> {
+        self.meter
+            .as_ref()
+            .map(|meter| *meter.hasher.finalize().as_bytes())
+            .ok_or(Error::InvariantViolation("result body sink finished twice"))
     }
 
     /// Finishes the body: a spilled one is published under its digest.

@@ -139,11 +139,11 @@ pub struct CommitReceipt {
     pub approval: String,
     /// Short ref of the superseded prior claim, if any.
     pub superseded_short_id: Option<String>,
-    /// Gate decision ref, resolvable through `receipts`.
+    /// Gate decision ref, resolvable through `vault.receipts`.
     pub receipt_ref: String,
 }
 
-/// Selector for `forget`: a claim ref, or a subject/predicate pair.
+/// Selector for `vault.forget`: a claim ref, or a subject/predicate pair.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ForgetSelector {
     /// Claim short ref (or 32-hex id).
@@ -154,7 +154,7 @@ pub struct ForgetSelector {
     pub predicate: Option<String>,
 }
 
-/// Bounded filter for `claim_list`.
+/// Bounded filter for `vault.claims.list`.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ClaimListFilter {
     /// Restrict to this subject.
@@ -349,7 +349,7 @@ pub struct LexicalHit {
     pub snippet: Option<String>,
 }
 
-/// Options for `neighbors`.
+/// Options for `vault.neighbors`.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct NeighborOpts {
     /// Restrict to this snake_case edge kind name.
@@ -412,7 +412,7 @@ pub struct ReadReceipt {
     pub replan_hint: Vec<String>,
 }
 
-/// `getEntity` result: the view, or none, with the read's receipt.
+/// `vault.get` result: the view, or none, with the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityRead {
     /// The entity view; absent when missing or withheld.
@@ -421,7 +421,7 @@ pub struct EntityRead {
     pub narrowing: ReadReceipt,
 }
 
-/// `hydrate` result: every view, with the read's receipt.
+/// `vault.hydrate` result: every view, with the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityViews {
     /// Views, in request order.
@@ -430,7 +430,7 @@ pub struct EntityViews {
     pub narrowing: ReadReceipt,
 }
 
-/// `claimList` / `claimHistory` result, with the read's receipt.
+/// `vault.claims.list` / `vault.claims.history` result, with the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct ClaimViews {
     /// Claim views.
@@ -439,7 +439,7 @@ pub struct ClaimViews {
     pub narrowing: ReadReceipt,
 }
 
-/// `queryBm25` result, with the read's receipt.
+/// `vault.search.bm25` result, with the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct LexicalHits {
     /// Hits, in engine score order.
@@ -448,7 +448,7 @@ pub struct LexicalHits {
     pub narrowing: ReadReceipt,
 }
 
-/// `neighbors` result, with the read's receipt.
+/// `vault.neighbors` result, with the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct NeighborHits {
     /// Neighbors, outbound first.
@@ -569,7 +569,7 @@ pub struct MemoryProvenance {
 /// One memory pack item.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MemoryItem {
-    /// Short ref, hydratable through `hydrate`; never revision-qualified.
+    /// Short ref, hydratable through `vault.hydrate`; never revision-qualified.
     pub short_id: String,
     /// The revision the item was read at; `short_id@source_revision_ref` hydrates it.
     pub source_revision_ref: Option<String>,
@@ -678,7 +678,7 @@ pub struct TemporalHint {
     pub end: Option<u64>,
 }
 
-/// The versioned memory pack returned by `recall`.
+/// The versioned memory pack returned by `vault.recall`.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MemoryPack {
     /// Ranked items.
@@ -784,7 +784,7 @@ pub struct OutboundIntentReceipt {
     pub outcome: String,
     /// Gate outcome, absent on dedupe with a missing binding.
     pub gate_outcome: Option<String>,
-    /// Persisted gate decision ref, queryable through `receipts`.
+    /// Persisted gate decision ref, queryable through `vault.receipts`.
     pub gate_decision_ref: Option<String>,
     /// Gate reason codes.
     pub gate_reason_codes: Vec<String>,

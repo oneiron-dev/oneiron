@@ -45,6 +45,7 @@ mod ladder;
 mod media;
 mod offer;
 mod openai;
+pub(crate) mod outbound_wait;
 mod output_cap;
 mod raw;
 mod receipts;
@@ -60,7 +61,7 @@ mod tests;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
-pub use cooldown::OfferCooldowns;
+pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
@@ -113,6 +114,9 @@ pub struct ModelRuntime {
     stays_on_device: BTreeSet<ModelRole>,
     /// The `ai.*` media seats (`[models.media]`).
     media: MediaRuntime,
+    /// Where offers refused for a limit rest, and the owner's quota
+    /// questions about the parked ones.
+    rests: Arc<OfferCooldowns>,
 }
 
 impl ModelRuntime {
@@ -127,6 +131,7 @@ impl ModelRuntime {
             decision_read: None,
             stays_on_device: BTreeSet::new(),
             media: MediaRuntime::empty(),
+            rests: OfferCooldowns::unkept(),
         }
     }
 
@@ -337,6 +342,7 @@ impl ModelRuntime {
             decision_read,
             stays_on_device: config.stays_on_device.clone(),
             media,
+            rests,
         }
     }
 
@@ -352,6 +358,20 @@ impl ModelRuntime {
     #[must_use]
     pub fn media(&self) -> &MediaRuntime {
         &self.media
+    }
+
+    /// The owner's open quota questions (OF-305): each offer parked on a
+    /// spent usage window or spent credit, and the choices it offers.
+    #[must_use]
+    pub fn quota_questions(&self) -> Vec<QuotaQuestion> {
+        self.rests.questions()
+    }
+
+    /// The owner's answer to quota question `id`; a top-up or pay-as-you-go
+    /// puts its offer back in rotation now. `false` when no such question is
+    /// open or it offers no such choice.
+    pub fn answer_quota(&self, id: &str, choice: QuotaChoice) -> oneiron::Result<bool> {
+        self.rests.answer(id, choice)
     }
 
     /// The seat for `role`, when at least one of its rungs can serve.

@@ -15,6 +15,7 @@ use crate::write_envelope::WriteActor;
 
 use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage, WindowLog};
 use super::stored_epoch::{StoredEpoch, stored_epoch_in};
+use super::withdrawn::WithdrawnKeyframe;
 use crate::error::OffRecordError;
 
 /// Pinned body keys for an epoch summary, in encode order.
@@ -316,7 +317,7 @@ impl EpochPlacement {
 /// nothing). The fence never exports those sources along with it. Every
 /// other row passes.
 pub(crate) fn epoch_exportable_in(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -346,7 +347,7 @@ pub(crate) fn epoch_exportable_in(
 /// withdrawn, and the reader may see each of those records. Every other row
 /// passes.
 pub(crate) fn epoch_disclosable_in(
-    store: &Store,
+    store: &impl ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -469,12 +470,14 @@ pub(super) fn validate_epoch_boundary(prior: Option<PriorEpoch>, turn_start: u64
 /// ordinary witness SUMMARY is a different kind of row that happens to share
 /// the type byte, and it carries no epoch to compare. An identifiable malformed
 /// epoch candidate for this session is refused rather than losing its lineage.
+/// A withdrawn epoch counts by the keyframe it keeps, so numbering never
+/// restarts under a scrubbed one.
 pub(super) fn prior_epoch_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     session_ref: &EntityId,
 ) -> Result<Option<PriorEpoch>> {
-    let mut best: Option<EpochSummaryBody> = None;
+    let mut best: Option<(WithdrawnKeyframe, Option<String>)> = None;
     let mut conflicting = false;
     for row in store.port_entity_records(rtxn)? {
         let (_, row) = row?;
@@ -482,29 +485,28 @@ pub(super) fn prior_epoch_in_txn(
             continue;
         }
         let bytes = &row.body;
-        let body = match decode_epoch_summary_body(bytes) {
-            Ok(body) => body,
-            Err(error) if is_epoch_candidate_for_session(bytes, session_ref) => return Err(error),
-            Err(_) => continue,
+        let (keyframe, text) = match decode_epoch_summary_body(bytes) {
+            Ok(body) => (WithdrawnKeyframe::of_body(&body)?, Some(body.text)),
+            Err(error) => match WithdrawnKeyframe::decode(bytes) {
+                Ok(keyframe) => (keyframe, None),
+                Err(_) if is_epoch_candidate_for_session(bytes, session_ref) => return Err(error),
+                Err(_) => continue,
+            },
         };
-        if EntityId::from_hex(&body.session)? != *session_ref {
+        if keyframe.session != *session_ref {
             continue;
         }
         match best.as_ref() {
-            Some(prior) if body.epoch < prior.epoch => {}
-            Some(prior) if body.epoch == prior.epoch => {
-                // Session IDs and epoch numbers already match. Compare actor
-                // IDs semantically too, without changing the codec's spelling.
-                // Different keyframes at the highest epoch remain conflicts.
-                conflicting |= body.v != prior.v
-                    || body.turn_start != prior.turn_start
-                    || body.turn_end != prior.turn_end
-                    || body.level != prior.level
-                    || body.text != prior.text
-                    || EntityId::from_hex(&body.actor)? != EntityId::from_hex(&prior.actor)?;
+            Some((prior, _)) if keyframe.epoch < prior.epoch => {}
+            Some((prior, prior_text)) if keyframe.epoch == prior.epoch => {
+                // Session IDs and epoch numbers already match; actor IDs
+                // compare as IDs, not as the codec spells them. Different
+                // keyframes at the highest epoch remain conflicts, and so do
+                // words beside none: a withdrawn one keeps nothing to compare.
+                conflicting |= keyframe != *prior || text != *prior_text;
             }
             _ => {
-                best = Some(body);
+                best = Some((keyframe, text));
                 conflicting = false;
             }
         }
@@ -516,9 +518,9 @@ pub(super) fn prior_epoch_in_txn(
             "conflicting summaries at the highest compaction epoch",
         ));
     }
-    Ok(best.map(|body| PriorEpoch {
-        epoch: body.epoch,
-        turn_end: body.turn_end,
+    Ok(best.map(|(keyframe, _)| PriorEpoch {
+        epoch: keyframe.epoch,
+        turn_end: keyframe.turn_end,
     }))
 }
 
@@ -576,39 +578,7 @@ pub(super) fn mint_epoch_summary_with(
     product: &CompactionProduct,
     extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
-    if request.session_ref != *session_ref {
-        return Err(Error::InvariantViolation(
-            "request session_ref does not match the integrated session",
-        ));
-    }
-    let (turn_start, turn_end) = validate_window_span(&request.window)?;
-    if request.turn_start != turn_start {
-        return Err(Error::InvariantViolation(
-            "compaction request turn_start does not match its window",
-        ));
-    }
-
-    // An empty or whitespace-only product is a FAILED compaction wearing a
-    // success's clothes: minting it would swap a real message-log prefix out
-    // for a keyframe that carries none of it, and the row is byte-stable with
-    // no update path, so the loss would be permanent. Refusing BEFORE the
-    // write transaction opens means `integrate` returns `Err` before it
-    // mutates state: the driver stays `Compacting`, and the host takes the
-    // documented backend-failure exit (`CompactionDriver::abandon`), whose
-    // next threshold crossing emits `Begin` again.
-    if product.summary_text.trim().is_empty() {
-        return Err(Error::InvariantViolation(
-            "compaction product summary_text is empty",
-        ));
-    }
-
-    // Use the same tokenizer as context-pack accounting. Reject, never trim:
-    // the backend owns the prose, but cannot exceed the sealed allocation.
-    if count_context_pack_tokens(&product.summary_text) as u64 > request.summary_token_budget {
-        return Err(Error::InvariantViolation(
-            "compaction product summary_text exceeds summary_token_budget",
-        ));
-    }
+    let (turn_start, turn_end) = check_mint(session_ref, request, product)?;
 
     // `DerivedFrom` targets are the sealed request's sources: a conversation
     // window's turns (deduplicated, hard-capped; the body's turn range stays
@@ -637,12 +607,7 @@ pub(super) fn mint_epoch_summary_with(
             WindowLog::Host { prior, .. } => prior,
         };
         validate_epoch_boundary(prior, turn_start)?;
-        let epoch = match prior {
-            Some(prior) => prior.epoch.checked_add(1).ok_or(Error::InvariantViolation(
-                "compaction epoch counter is exhausted",
-            ))?,
-            None => 1,
-        };
+        let epoch = next_epoch(prior)?;
         let body = encode_epoch_summary_body(&EpochSummaryBody {
             v: EPOCH_SUMMARY_BODY_VERSION,
             session: session_ref.to_hex(),
@@ -662,9 +627,10 @@ pub(super) fn mint_epoch_summary_with(
         );
         // A source erased or withdrawn before this mint has already run its
         // invalidation, so the summary is born withdrawn, as it would be had
-        // the erasure come after it: never indexed, never embedded. Such a
-        // source takes no new dependency row; the summary is stale for good,
-        // withdrawn for where that source's words sat.
+        // the erasure come after it: never indexed, never embedded, its row
+        // left with only its keyframe. Such a source takes no new dependency
+        // row; the summary is stale for good, withdrawn for where that
+        // source's words sat.
         let mut born_withdrawn = None::<crate::settings::CarriedWorlds>;
         for target in derived {
             let state =
@@ -712,8 +678,184 @@ pub(super) fn mint_epoch_summary_with(
         if let Some(worlds) = &born_withdrawn {
             crate::ports::record_withdrawn_in_txn(&vault.store, wtxn, &summary_id, worlds)?;
             crate::ports::RetrievalIndex::port_retrieval_mark_stale(vault, wtxn, &summary_id)?;
+            super::withdrawn::scrub_withdrawn_epoch_in_txn(&vault.store, wtxn, &summary_id)?;
         }
         Ok(epoch)
+    })?;
+    Ok((epoch, summary_id))
+}
+
+/// The shape checks a mint makes before any transaction opens: the session
+/// match, a window and its span, and a product that is nonblank prose
+/// inside its sealed budget. Returns the window's first and last turns.
+fn check_mint(
+    session_ref: &EntityId,
+    request: &CompactionRequest,
+    product: &CompactionProduct,
+) -> Result<(u64, u64)> {
+    if request.session_ref != *session_ref {
+        return Err(Error::InvariantViolation(
+            "request session_ref does not match the integrated session",
+        ));
+    }
+    let (turn_start, turn_end) = validate_window_span(&request.window)?;
+    if request.turn_start != turn_start {
+        return Err(Error::InvariantViolation(
+            "compaction request turn_start does not match its window",
+        ));
+    }
+
+    // An empty or whitespace-only product is a FAILED compaction wearing a
+    // success's clothes: minting it would swap a real message-log prefix out
+    // for a keyframe that carries none of it, and the row is byte-stable with
+    // no update path, so the loss would be permanent. Refusing BEFORE the
+    // write transaction opens means `integrate` returns `Err` before it
+    // mutates state: the driver stays `Compacting`, and the host takes the
+    // documented backend-failure exit (`CompactionDriver::abandon`), whose
+    // next threshold crossing emits `Begin` again.
+    if product.summary_text.trim().is_empty() {
+        return Err(Error::InvariantViolation(
+            "compaction product summary_text is empty",
+        ));
+    }
+
+    // Use the same tokenizer as context-pack accounting. Reject, never trim:
+    // the backend owns the prose, but cannot exceed the sealed allocation.
+    if count_context_pack_tokens(&product.summary_text) as u64 > request.summary_token_budget {
+        return Err(Error::InvariantViolation(
+            "compaction product summary_text exceeds summary_token_budget",
+        ));
+    }
+
+    Ok((turn_start, turn_end))
+}
+
+/// The epoch after `prior`, or the first.
+fn next_epoch(prior: Option<PriorEpoch>) -> Result<u64> {
+    match prior {
+        Some(prior) => prior.epoch.checked_add(1).ok_or(Error::InvariantViolation(
+            "compaction epoch counter is exhausted",
+        )),
+        None => Ok(1),
+    }
+}
+
+/// [`mint_epoch_summary_with`] for a run in an off-record room
+/// (agent-runtime-v1 §d7): the compactor read the room's overlay over base,
+/// and the summary lands through the run's own session handle, on the route
+/// the run captured at entry. The SUMMARY, its `DerivedFrom` lineage, its
+/// text and `extra`'s rows stage in one overlay segment and drop with the
+/// overlay at close; a room closed or flipped since the pass began refuses
+/// the landing.
+///
+/// Nothing reaches base: no pending embedding (a room has no `pe:`
+/// keyspace), no withdrawal marker and no birth stamp (overlay rows carry no
+/// record scope, and export and sync stay base-only). Each op is journaled
+/// under the run's compaction session and the summary itself, a turn no
+/// promotion names, so promoting the room's turns never carries it.
+///
+/// A source withdrawn before the mint keeps its edge: base erasure cannot
+/// mark an overlay summary, so the room's render walks the lineage and the
+/// summary reads as withdrawn there.
+pub(super) fn mint_epoch_summary_in_overlay(
+    session: &crate::off_record::OffRecordSession<'_>,
+    route: &crate::session_overlay::SessionWriteRoute,
+    session_ref: &EntityId,
+    byline: WriteActor,
+    request: &CompactionRequest,
+    product: &CompactionProduct,
+    extra: impl FnOnce(
+        &crate::store::SessionStoreView<'_>,
+        &mut heed::RwTxn<'_>,
+        &EpochMint,
+    ) -> Result<()>,
+) -> Result<(u64, EntityId)> {
+    use crate::batch::BatchOp;
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let (turn_start, turn_end) = check_mint(session_ref, request, product)?;
+    let WindowLog::Host { prior, .. } = request.log else {
+        return Err(Error::InvariantViolation(
+            "an off-record mint takes a host-numbered log",
+        ));
+    };
+    // The host's own rows re-check this position in `extra`.
+    validate_epoch_boundary(prior, turn_start)?;
+    let epoch = next_epoch(prior)?;
+    let at = request.watermark.learned_at;
+    let occurred = TimeRange { start: at, end: at };
+    let summary_id = session.read_view()?.clock().entity_id()?;
+    let body = encode_epoch_summary_body(&EpochSummaryBody {
+        v: EPOCH_SUMMARY_BODY_VERSION,
+        session: session_ref.to_hex(),
+        epoch,
+        turn_start,
+        turn_end,
+        level: EPOCH_SUMMARY_LEVEL,
+        text: product.summary_text.clone(),
+        actor: byline.entity_ref().to_hex(),
+    })?;
+    let scope = JournalScope::new(*session_ref, summary_id);
+    let entry = |role, op| JournalEntry {
+        scope,
+        role,
+        learned_at: at,
+        occurred,
+        op,
+    };
+    session.overlay_write_routed(route, |wtxn, apply| {
+        apply(
+            wtxn,
+            entry(
+                JournalRole::SummaryDerivedFrom,
+                BatchOp::Put {
+                    id: summary_id,
+                    entity_type: ENTITY_TYPE_SUMMARY,
+                    occurred,
+                    learned_at: at,
+                    data: body,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                },
+            ),
+        )?;
+        for target in &request.sources {
+            apply(
+                wtxn,
+                entry(
+                    JournalRole::SummaryDerivedFrom,
+                    BatchOp::Edge {
+                        src: summary_id,
+                        kind: EdgeKind::DerivedFrom,
+                        tgt: *target,
+                        weight: 1.0,
+                        vad: crate::affect::Vad::NEUTRAL,
+                    },
+                ),
+            )?;
+        }
+        apply(
+            wtxn,
+            entry(
+                JournalRole::TurnOwnedArtifact,
+                BatchOp::Text {
+                    id: summary_id,
+                    fields: vec![("content".to_owned(), product.summary_text.clone())],
+                },
+            ),
+        )?;
+        extra(
+            &session.read_view()?,
+            wtxn,
+            &EpochMint {
+                summary_id,
+                session_ref: *session_ref,
+                epoch,
+                turn_start,
+                turn_end,
+            },
+        )
     })?;
     Ok((epoch, summary_id))
 }
