@@ -65,6 +65,10 @@ impl AgentDispatcher<'_> {
                     now,
                 },
             )?;
+            // OF-532: the stopped leaf and the workflow settle their leases;
+            // the leaves already settled keep their saved results.
+            self.settle_child_in_txn(&mut txn, &active.id, now)?;
+            self.settle_child_in_txn(&mut txn, &root, now)?;
             RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
@@ -87,6 +91,8 @@ impl AgentDispatcher<'_> {
             attempt_id: active.id,
             result_ref: result.as_str().to_owned(),
         });
+        // OF-532: the completed leaf's settlement is its calibration receipt.
+        self.settle_child_in_txn(&mut txn, &active.id, now)?;
         let progress = if record.results.len() == record.steps.len() {
             let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
             queue.set_result_in_txn(
@@ -112,6 +118,7 @@ impl AgentDispatcher<'_> {
                     now,
                 },
             )?;
+            self.settle_child_in_txn(&mut txn, &root, now)?;
             WorkflowProgress::Completed
         } else {
             record.active = self.enqueue_workflow_step(&mut txn, &record, ordinal + 1, now)?;
