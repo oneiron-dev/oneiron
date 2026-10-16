@@ -2215,7 +2215,7 @@
      "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
      "surface": {
       "const": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -38844,6 +38844,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SyncDialer",
+      "SyncIo",
+      "SyncStream"
+     ],
+     "path": "src/sync/carrier.rs",
+     "purpose": "What a sync socket rides on (OF-535): TCP to the home's URL, or a stream a [`SyncDialer`] opens, such as a…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "trait": 2,
+      "type": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -39444,8 +39461,8 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 6,
-      "mod": 20,
-      "re-export": 15
+      "mod": 21,
+      "re-export": 16
      }
     },
     {
@@ -46720,7 +46737,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46897,7 +46914,7 @@
    },
    "over_bar": 75,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2821,
+   "source_files": 2822,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53591,7 +53608,7 @@
      "path": "src/iroh_transport.rs",
      "purpose": "Private iroh data plane",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -53603,22 +53620,39 @@
       "MachineGrants",
       "MachineRoster",
       "MeshConnection",
+      "MeshDuplex",
       "MeshError",
+      "MeshService",
       "MeshStream",
       "MeshTransport",
+      "PairedMachineGrants",
       "VaultMachineGrants",
       "VaultMachineRoster"
      ],
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
      "surface": {
+      "const": 1,
       "enum": 1,
       "fn": 2,
-      "mod": 2,
+      "mod": 3,
       "re-export": 1,
-      "struct": 3,
-      "trait": 5,
+      "struct": 4,
+      "trait": 7,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MeshSyncDialer"
+     ],
+     "path": "src/sync_dialer.rs",
+     "purpose": "The sync client's carrier to its home machine over the mesh (OF-535)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -53631,7 +53665,7 @@
      "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -53660,6 +53694,13 @@
      "layout": "file",
      "purpose": "Private iroh data plane"
     },
+    "sync_dialer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The sync client's carrier to its home machine over the mesh (OF-535)"
+    },
     "transport_key": {
      "files": 1,
      "impl_vault": false,
@@ -53670,7 +53711,7 @@
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 2
   },
   "oneiron-model": {
@@ -60212,6 +60253,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh.rs",
+     "purpose": "The paired-machine mesh listener (OF-535)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/handler/message_stream_tests.rs",
@@ -60225,7 +60276,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -62831,7 +62882,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62987,7 +63038,7 @@
    },
    "over_bar": 20,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 409,
+   "source_files": 410,
    "test_files": 182
   },
   "oneiron-spawn": {
