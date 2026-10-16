@@ -418,20 +418,21 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         .memory(owner, oneiron::edge::EdgeActorClass::Human)
         .export(&oneiron::memory::ExportOptions {
             format: Some(args.format),
+            include_secrets: Some(args.include_secrets),
         })
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let Some(out) = args.out else {
-        io::stdout().lock().write_all(export.rendered.as_bytes())?;
+        io::stdout().lock().write_all(&export.archive)?;
         return Ok(());
     };
     write_new_file(&out, |file| {
-        file.write_all(export.rendered.as_bytes())?;
+        file.write_all(&export.archive)?;
         file.sync_all()
     })?;
     emit(&Exported {
         file: &out,
         format: export.format,
-        bytes: export.rendered.len(),
+        bytes: export.archive.len(),
     })
 }
 
@@ -605,6 +606,46 @@ fn read_batch(source: &str) -> anyhow::Result<Batch> {
     read.map_err(|error| anyhow::anyhow!("batch JSON: {error}"))
 }
 
+#[derive(Serialize)]
+struct ImportedArchive {
+    inserted_entities: usize,
+    unchanged_entities: usize,
+    omitted_entities: usize,
+    archived_receipt_sources: usize,
+    imported_results: usize,
+    withheld_results: usize,
+    restored_secrets: usize,
+    unchanged_secrets: usize,
+    /// Secrets the archive carried as handles only: re-enter each one.
+    missing_secrets: Vec<String>,
+}
+
+/// Re-imports a whole-vault archive through the vault's import doors.
+fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
+    let bytes = std::fs::read(&args.path)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
+    let receipt = vault
+        .import_whole_vault_archive(&bytes)
+        .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
+    emit(&ImportedArchive {
+        inserted_entities: receipt.inserted_entities,
+        unchanged_entities: receipt.unchanged_entities,
+        omitted_entities: receipt.omitted_entities,
+        archived_receipt_sources: receipt.archived_receipt_sources,
+        imported_results: receipt.imported_results,
+        withheld_results: receipt.withheld_results,
+        restored_secrets: receipt.restored_secrets,
+        unchanged_secrets: receipt.unchanged_secrets,
+        missing_secrets: receipt
+            .missing_secrets
+            .into_iter()
+            .map(|secret| secret.name)
+            .collect(),
+    })
+}
+
 pub fn import(command: ImportCommand) -> anyhow::Result<()> {
     use oneiron::ingest::history::HistorySource;
     // A batch decision: preview, or approve / decline with the digest.
@@ -625,6 +666,7 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
             return super::history_import::import_history(HistorySource::HookTranscript, *args);
         }
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
+        ImportCommand::Archive(args) => return import_archive(*args),
         ImportCommand::Preview(args) => (args.batch, None, args.serve),
         ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
         ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),
