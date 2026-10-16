@@ -351,6 +351,8 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
         Some(DreamerConsolidationScope::Meso)
     } else if kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
     {
         // Cleanup admits only on a Timer pass at Macro scope, so its
         // deadline arms one, on the elected home alone.

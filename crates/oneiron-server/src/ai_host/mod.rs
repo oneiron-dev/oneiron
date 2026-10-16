@@ -669,6 +669,7 @@ async fn start_dreamer(
         egress,
         status: Arc::clone(status),
         idle,
+        windows: dreamer::dream_windows(models),
     })
     .await
     .map_err(|error| {
