@@ -595,3 +595,33 @@ fn a_stop_on_the_first_link_of_a_64_merge_chain_projects() -> CommResult<()> {
     )?);
     Ok(())
 }
+
+/// R4-F1: the refresh rebuilt the contacts of every link a STOP's chain walks,
+/// and a merged link's own key has no active party, so the rebuild folded no
+/// STOP and dropped the one that link said before its merge. A delayed STOP on
+/// the first link released the middle link's held sends.
+#[test]
+fn a_stop_on_a_chain_keeps_a_merged_links_own_stop() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+    put_email_identity(&vault, entity(0x91), "owner@example.com")?;
+    let first = mint_comm_person(&vault, "first@example.com")?;
+    let middle = mint_comm_person(&vault, "middle@example.com")?;
+    let last = mint_comm_person(&vault, "last@example.com")?;
+    point_party_index(&vault, "middle@example.com", middle)?;
+    email_contact(&vault, entity(0x91), entity(0xA1), "middle@example.com")?;
+    put_stop_naming(&vault, entity(0x70), middle, "email", 0, 30)?;
+    run_comm_projector(&vault)?;
+    assert!(contact_cache_opted_out(&vault, entity(0xA1))?);
+    merge_read_through(&vault, first, middle)?;
+    merge_read_through(&vault, middle, last)?;
+
+    put_stop_naming(&vault, entity(0x71), first, "email", 1, 40)?;
+    run_comm_projector(&vault)?;
+    assert!(comm_event_is_projected(&vault, entity(0x71))?);
+    assert!(
+        contact_cache_opted_out(&vault, entity(0xA1))?,
+        "the middle link's contact keeps the STOP it said before its merge"
+    );
+    Ok(())
+}
