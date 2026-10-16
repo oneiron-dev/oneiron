@@ -479,7 +479,7 @@ pub(crate) fn companion_profile_access_grant(
     txn: &heed::RoTxn<'_>,
     principal_ref: &EntityId,
     person_ref: &EntityId,
-    persona_ref: &EntityId,
+    facet_ref: Option<&EntityId>,
     now: u64,
 ) -> Result<Option<EntityId>> {
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)? {
@@ -511,8 +511,7 @@ pub(crate) fn companion_profile_access_grant(
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now)
-            && live()?
+        if grant.allows_companion_profile_read(principal_ref, person_ref, facet_ref, now) && live()?
         {
             return Ok(Some(id));
         }

@@ -228,32 +228,8 @@ impl Vault {
         let tracked = self.model_catalog_ref()?;
         // Each policy names the commit this fetch must resolve. The commit is
         // transport identity only: a followed tag is pinned to what it names now.
-        let (adapter, reference) = match &tracked.hub_ref.pin {
-            HubPin::Commit(commit) => (
-                GitEndpointSkillHubAdapter::new(id, &row.endpoint, commit)?,
-                tracked.hub_ref.clone(),
-            ),
-            HubPin::Tag(tag) | HubPin::Semver(tag) => {
-                let adapter = GitEndpointSkillHubAdapter::at_tag(id, &row.endpoint, tag)?;
-                let commit = HubPin::Commit(adapter.resolved_commit().to_owned());
-                let reference = HubRef::new(id, MODEL_PACK_SUBTREE, commit)?;
-                (adapter, reference)
-            }
-            // A frozen hash hard-fails on drift at the commit last trusted.
-            HubPin::ContentHash(_) => (
-                GitEndpointSkillHubAdapter::new(
-                    id,
-                    &row.endpoint,
-                    tracked.latest_trusted.as_deref().unwrap_or(HUB_COMMIT),
-                )?,
-                tracked.hub_ref.clone(),
-            ),
-            HubPin::None => {
-                return Err(crate::error::Error::InvalidConfig(
-                    "model catalog ref is unpinned".to_owned(),
-                ));
-            }
-        };
+        let (adapter, reference) =
+            super::ref_sync::git_ref_adapter(id, &row.endpoint, &tracked, Some(HUB_COMMIT))?;
         let (source_id, pinned) =
             self.fetch_pack_from_adapter(&adapter, &reference, publisher, occurred, learned_at)?;
         let commit = adapter.resolved_commit().to_owned();

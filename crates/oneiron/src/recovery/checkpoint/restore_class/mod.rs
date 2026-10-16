@@ -151,6 +151,7 @@ const SHARE_ADMISSIONS: Class = refuse("share admissions");
 const PUBLIC_BOOKING_PAGES: Class = refuse("public booking pages");
 const PUBLISHED_ARTIFACTS: Class = refuse("published artifacts");
 const ORIGIN_AUTHORITY: Class = refuse("repository origin authority");
+const ORIGIN_MIRRORS: Class = refuse("repository mirror targets");
 const ROOMS: Class = Class::Refuse {
     what: "room roles and membership",
     scope: Scope::ImageEntities,
