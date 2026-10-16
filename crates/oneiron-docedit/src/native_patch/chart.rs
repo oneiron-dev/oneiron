@@ -2,7 +2,7 @@
 //! `c:ser`, point-wise cache rebuilds, and the re-import that compares a
 //! cache with the workbook cells its reference names.
 use super::table::graphic_frame;
-use super::workbook::{CellKey, Range, Workbook, header, number};
+use super::workbook::{CellKey, DATE_FORMAT, Range, Workbook, header, number, serial};
 use super::{ChartFamily, Frame, NativeRefusal, REL, Target, WorkbookReport};
 use crate::design_plan::{Cell, ColumnKind, Dataset};
 use crate::ooxml::{XmlTree, escape_text};
@@ -62,6 +62,8 @@ struct Model {
     tree: XmlTree,
     series: Vec<Series>,
     data_link: Option<String>,
+    /// Serial days count from 1904-01-01 rather than 1900-01-01.
+    date1904: bool,
 }
 
 impl Model {
@@ -75,6 +77,11 @@ impl Model {
         if tree.child(0, C, "pivotSource")?.is_some() {
             return Err(NativeRefusal::UnsupportedChartFamily("pivot chart"));
         }
+        // `val` defaults to true on a chart boolean.
+        let date1904 = tree.child(0, C, "date1904")?.is_some_and(|(_, node)| {
+            node.attr("val")
+                .is_none_or(|val| matches!(val.trim(), "1" | "true"))
+        });
         let data_link = tree
             .child(0, C, "externalData")?
             .and_then(|(_, node)| node.attr_ns(REL, "id").map(str::to_owned));
@@ -124,6 +131,7 @@ impl Model {
             tree,
             series,
             data_link,
+            date1904,
         })
     }
 
@@ -314,16 +322,29 @@ pub(super) fn set_series(
             want: values.len(),
         });
     }
-    if seq.kind == Kind::Number
-        && values
-            .iter()
-            .any(|value| matches!(value, Cell::Text(_) | Cell::Date(_)))
-    {
+    if seq.kind == Kind::Number && values.iter().any(|value| matches!(value, Cell::Text(_))) {
         return Err(NativeRefusal::Invalid("text in a number sequence"));
     }
     let book = workbook_part(package, chart, &model)?;
-    let writes: Vec<(CellKey, Cell)> = cells.iter().cloned().zip(values.iter().cloned()).collect();
-    let (bytes, report) = open_workbook(package, &book)?.write(&book, &writes)?;
+    let workbook = open_workbook(package, &book)?;
+    // A date is a serial in a number sequence and text in a text one, in the
+    // cells and the caches alike.
+    let values = values
+        .iter()
+        .cloned()
+        .map(|value| match (seq.kind, value) {
+            (Kind::Number, Cell::Date(_)) if workbook.date1904 != model.date1904 => {
+                Err(NativeRefusal::AmbiguousChartData(
+                    "the chart and its workbook count dates differently",
+                ))
+            }
+            (Kind::Number, Cell::Date(date)) => serial(&date, model.date1904).map(Cell::Number),
+            (Kind::Text, Cell::Date(date)) => Ok(Cell::Text(date)),
+            (_, value) => Ok(value),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let writes: Vec<(CellKey, Cell)> = cells.iter().cloned().zip(values).collect();
+    let (bytes, report) = workbook.write(&book, &writes)?;
     let written: BTreeMap<CellKey, Cell> = writes.into_iter().collect();
     let mut edits = Vec::new();
     for seq in model.sequences() {
@@ -448,7 +469,8 @@ pub fn chart_data(package: &Package, chart: &str) -> Result<ChartData, NativeRef
 }
 
 /// A classic chart part for a dataset whose first column is the categories
-/// and whose later columns are number series.
+/// and whose later columns are number series. Date categories are 1900-system
+/// serials in the date format.
 pub(super) fn create(
     family: ChartFamily,
     dataset: &Dataset,
@@ -483,11 +505,28 @@ pub(super) fn create(
             .map(|row| row.get(at).cloned().unwrap_or(Cell::Missing))
             .collect()
     };
+    let dated = first.kind == ColumnKind::Date;
     let categories = Range::column(sheet, 1, (2, last));
-    let category_cache: Vec<Cell> = column(0)
+    let category_cache = column(0)
         .into_iter()
-        .map(|cell| as_kind(Kind::Text, cell))
-        .collect();
+        .map(|cell| match cell {
+            Cell::Date(date) => serial(&date, false).map(Cell::Number),
+            cell => Ok(as_kind(Kind::Text, cell)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let category = if dated {
+        format!(
+            "<c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>{DATE_FORMAT}</c:formatCode>{}</c:numCache></c:numRef>",
+            escape_text(&categories.formula()),
+            points("c:", &category_cache),
+        )
+    } else {
+        format!(
+            "<c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef>",
+            escape_text(&categories.formula()),
+            points("c:", &category_cache),
+        )
+    };
     // PowerPoint smooths a line series that does not say otherwise, which
     // draws a shape between points the data does not have.
     let smooth = if family == ChartFamily::Line {
@@ -502,11 +541,9 @@ pub(super) fn create(
         let name = Range::column(sheet, letter, (1, 1));
         let values = Range::column(sheet, letter, (2, last));
         sers.push_str(&format!(
-            "<c:ser><c:idx val=\"{at}\"/><c:order val=\"{at}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode>{}</c:numCache></c:numRef></c:val>{smooth}</c:ser>",
+            "<c:ser><c:idx val=\"{at}\"/><c:order val=\"{at}\"/><c:tx><c:strRef><c:f>{}</c:f><c:strCache>{}</c:strCache></c:strRef></c:tx><c:cat>{category}</c:cat><c:val><c:numRef><c:f>{}</c:f><c:numCache><c:formatCode>General</c:formatCode>{}</c:numCache></c:numRef></c:val>{smooth}</c:ser>",
             escape_text(&name.formula()),
             points("c:", &[Cell::Text(header(col))]),
-            escape_text(&categories.formula()),
-            points("c:", &category_cache),
             escape_text(&values.formula()),
             points("c:", &column(at + 1)),
         ));
@@ -524,9 +561,19 @@ pub(super) fn create(
         ),
     };
     let axes = if family == ChartFamily::Pie {
-        ""
+        String::new()
     } else {
-        "<c:catAx><c:axId val=\"1\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"2\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx><c:valAx><c:axId val=\"2\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"1\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx>"
+        // A date axis would bucket the points by month and label each
+        // bucket's first day: a date category axis is pinned to categories,
+        // so every point keeps its own date as its label.
+        let (format, auto) = if dated {
+            (DATE_FORMAT, 0)
+        } else {
+            ("General", 1)
+        };
+        format!(
+            "<c:catAx><c:axId val=\"1\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"{format}\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"2\"/><c:crosses val=\"autoZero\"/><c:auto val=\"{auto}\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/></c:catAx><c:valAx><c:axId val=\"2\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"1\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx>"
+        )
     };
     let legend = if family == ChartFamily::Pie || series.len() > 1 {
         "<c:legend><c:legendPos val=\"r\"/><c:overlay val=\"0\"/></c:legend>"
@@ -534,7 +581,7 @@ pub(super) fn create(
         ""
     };
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<c:chartSpace xmlns:c=\"{C}\" xmlns:a=\"{DML}\" xmlns:r=\"{REL}\"><c:roundedCorners val=\"0\"/><c:chart><c:autoTitleDeleted val=\"1\"/><c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart><c:externalData r:id=\"{}\"><c:autoUpdate val=\"0\"/></c:externalData></c:chartSpace>",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<c:chartSpace xmlns:c=\"{C}\" xmlns:a=\"{DML}\" xmlns:r=\"{REL}\"><c:date1904 val=\"0\"/><c:roundedCorners val=\"0\"/><c:chart><c:autoTitleDeleted val=\"1\"/><c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart><c:externalData r:id=\"{}\"><c:autoUpdate val=\"0\"/></c:externalData></c:chartSpace>",
         escape_text(link)
     )
     .into_bytes())

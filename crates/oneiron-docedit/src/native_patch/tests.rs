@@ -91,6 +91,54 @@ fn with_chart() -> Package {
     reopen(&package)
 }
 
+fn months() -> Dataset {
+    use Cell::*;
+    dataset(
+        &[
+            ("Month", ColumnKind::Date, None),
+            ("Cost", ColumnKind::Number, Some("EUR")),
+        ],
+        vec![
+            vec![Date("2026-01-31".into()), Number(2.0)],
+            vec![Missing, Number(1.9)],
+            vec![Date("2026-03-31".into()), Number(1.7)],
+        ],
+    )
+}
+
+fn with_date_chart() -> Package {
+    let mut package = deck();
+    let data = months();
+    native_patch(
+        &mut package,
+        &NativeEdit::CreateChart {
+            frame: frame(2),
+            family: ChartFamily::Line,
+            dataset: &data,
+            chart: CHART,
+            workbook: BOOK,
+            sheet: "Data",
+        },
+    )
+    .unwrap();
+    reopen(&package)
+}
+
+/// One part of the embedded workbook, as text.
+fn book_part(package: &Package, part: &str) -> String {
+    let book = Package::open(&package.part(BOOK).unwrap().unwrap(), limits()).unwrap();
+    String::from_utf8(book.part(part).unwrap().unwrap()).unwrap()
+}
+
+fn set_dates<'a>(values: &'a [Cell]) -> NativeEdit<'a> {
+    NativeEdit::SetSeries {
+        chart: CHART,
+        series: 0,
+        target: Target::Categories,
+        values,
+    }
+}
+
 fn values(data: &ChartData, series: usize) -> &Sequence {
     data.series[series].values.as_ref().unwrap()
 }
@@ -402,6 +450,148 @@ fn same_length_updates_write_caches_and_cells_together() {
 }
 
 #[test]
+fn dates_are_serial_days_of_their_date_system() {
+    for (date, day) in [
+        ("1900-01-01", 1.0),
+        ("1900-02-28", 59.0),
+        ("1900-03-01", 61.0),
+        ("2026-01-31", 46_053.0),
+        ("9999-12-31", 2_958_465.0),
+    ] {
+        assert_eq!(serial(date, false), Ok(day), "{date}");
+    }
+    assert_eq!(serial("1904-01-01", true), Ok(0.0));
+    assert_eq!(serial("2026-01-31", true), Ok(46_053.0 - 1_462.0));
+    for (date, date1904) in [("1899-12-31", false), ("1903-12-31", true)] {
+        assert_eq!(
+            serial(date, date1904),
+            Err(NativeRefusal::Invalid("a date before its date system")),
+            "{date}"
+        );
+    }
+    assert_eq!(
+        serial("2026-02-30", false),
+        Err(NativeRefusal::Invalid("a date that is not YYYY-MM-DD"))
+    );
+}
+
+#[test]
+fn date_categories_are_serials_with_a_date_format_on_both_sides() {
+    let mut package = with_date_chart();
+    let serials = [
+        Cell::Number(46_053.0),
+        Cell::Missing,
+        Cell::Number(46_112.0),
+    ];
+    let data = chart_data(&package, CHART).unwrap();
+    let months = data.series[0].categories.as_ref().unwrap();
+    assert_eq!(months.cache, serials);
+    assert_eq!(months.workbook, serials);
+    // Chart and workbook pin the 1900 system; the category cache and its
+    // axis carry the date format, the value axis stays General.
+    let chart = String::from_utf8(package.part(CHART).unwrap().unwrap()).unwrap();
+    assert!(chart.contains(r#"<c:date1904 val="0"/>"#));
+    assert!(chart.contains(r#"<c:cat><c:numRef><c:f>&apos;Data&apos;!$A$2:$A$4</c:f><c:numCache><c:formatCode>yyyy-mm-dd</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>46053</c:v></c:pt>"#));
+    assert!(
+        chart.contains(r#"<c:axPos val="b"/><c:numFmt formatCode="yyyy-mm-dd" sourceLinked="1"/>"#)
+    );
+    assert!(chart.contains(r#"<c:crosses val="autoZero"/><c:auto val="0"/>"#));
+    assert!(
+        chart.contains(r#"<c:majorGridlines/><c:numFmt formatCode="General" sourceLinked="1"/>"#)
+    );
+    assert!(book_part(&package, "xl/workbook.xml").contains(r#"<workbookPr date1904="0"/>"#));
+    // Date cells, a missing one included, carry the date style; numbers keep
+    // the default one.
+    let sheet = book_part(&package, "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains(r#"<c r="A2" s="1"><v>46053</v></c>"#),
+        "{sheet}"
+    );
+    assert!(sheet.contains(r#"<c r="A3" s="1"/>"#), "{sheet}");
+    assert!(sheet.contains(r#"<c r="B2"><v>2</v></c>"#), "{sheet}");
+    let styles = book_part(&package, "xl/styles.xml");
+    assert!(styles.contains(
+        r#"<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts>"#
+    ));
+    assert!(styles.contains(r#"<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>"#));
+
+    // An edit writes serials into the cells and the cache; the cells keep
+    // their date style and the cache its format.
+    let new = [
+        Cell::Date("2026-02-28".into()),
+        Cell::Date("2026-04-30".into()),
+        Cell::Missing,
+    ];
+    native_patch(&mut package, &set_dates(&new)).unwrap();
+    let package = reopen(&package);
+    let data = chart_data(&package, CHART).unwrap();
+    let months = data.series[0].categories.as_ref().unwrap();
+    let serials = [
+        Cell::Number(46_081.0),
+        Cell::Number(46_142.0),
+        Cell::Missing,
+    ];
+    assert_eq!(months.cache, serials);
+    assert_eq!(months.workbook, serials);
+    let sheet = book_part(&package, "xl/worksheets/sheet1.xml");
+    assert!(
+        sheet.contains(r#"<c r="A3" s="1"><v>46142</v></c>"#),
+        "{sheet}"
+    );
+    let chart = String::from_utf8(package.part(CHART).unwrap().unwrap()).unwrap();
+    assert!(chart.contains(r#"<c:numCache><c:formatCode>yyyy-mm-dd</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>46081</c:v></c:pt>"#));
+}
+
+#[test]
+fn date_edits_count_in_the_date_system_chart_and_workbook_share() {
+    let mut package = with_date_chart();
+    let new = [
+        Cell::Date("2026-02-28".into()),
+        Cell::Missing,
+        Cell::Missing,
+    ];
+    // A chart boolean without `val` is true; an xsd:boolean may be padded.
+    edit_chart(&mut package, r#"<c:date1904 val="0"/>"#, r#"<c:date1904/>"#);
+    refuses(
+        &mut package,
+        &set_dates(&new),
+        &NativeRefusal::AmbiguousChartData("the chart and its workbook count dates differently"),
+    );
+    edit_workbook(&mut package, "xl/workbook.xml", |xml| {
+        xml.replace(
+            r#"<workbookPr date1904="0"/>"#,
+            r#"<workbookPr date1904=" true "/>"#,
+        )
+    });
+    let early = [
+        Cell::Date("1903-12-31".into()),
+        Cell::Missing,
+        Cell::Missing,
+    ];
+    refuses(
+        &mut package,
+        &set_dates(&early),
+        &NativeRefusal::Invalid("a date before its date system"),
+    );
+    native_patch(&mut package, &set_dates(&new)).unwrap();
+    let data = chart_data(&reopen(&package), CHART).unwrap();
+    let months = data.series[0].categories.as_ref().unwrap();
+    let serials = [
+        Cell::Number(46_081.0 - 1_462.0),
+        Cell::Missing,
+        Cell::Missing,
+    ];
+    assert_eq!(months.cache, serials);
+    assert_eq!(months.workbook, serials);
+    let text = [Cell::Text("x".into()), Cell::Missing, Cell::Missing];
+    refuses(
+        &mut package,
+        &set_dates(&text),
+        &NativeRefusal::Invalid("text in a number sequence"),
+    );
+}
+
+#[test]
 fn length_changes_and_mistyped_values_refuse() {
     let mut package = with_chart();
     let short = [Cell::Number(1.0), Cell::Number(2.0)];
@@ -560,6 +750,20 @@ fn creation_refuses_charts_the_dataset_cannot_carry() {
         &mut package,
         &edit(ChartFamily::Line, "Da:ta"),
         &NativeRefusal::Invalid("sheet name"),
+    );
+    let mut early = months();
+    early.rows[0][0] = Cell::Date("1899-12-31".into());
+    refuses(
+        &mut package,
+        &NativeEdit::CreateChart {
+            frame: frame(2),
+            family: ChartFamily::Line,
+            dataset: &early,
+            chart: CHART,
+            workbook: BOOK,
+            sheet: "Data",
+        },
+        &NativeRefusal::Invalid("a date before its date system"),
     );
     let edit = NativeEdit::CreateChart {
         frame: frame(1),

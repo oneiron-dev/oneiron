@@ -366,6 +366,8 @@ fn every_planned_block_is_placed_traced_and_read_back() {
         .collect();
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains(r#"<c:smooth val="0"/>"#));
+    // Its months are 1900-system serials shown as dates.
+    assert!(lines[0].contains(r#"<c:numCache><c:formatCode>yyyy-mm-dd</c:formatCode><c:ptCount val="4"/><c:pt idx="0"><c:v>46053</c:v></c:pt><c:pt idx="1"><c:v>46081</c:v></c:pt><c:pt idx="2"><c:v>46112</c:v></c:pt><c:pt idx="3"><c:v>46142</c:v></c:pt></c:numCache>"#));
     let (slide, table) = unit(report, "d-table");
     assert_eq!(
         shape(&view, &slide.part, table.shape).kind,

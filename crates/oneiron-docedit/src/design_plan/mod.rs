@@ -11,6 +11,7 @@ mod brief;
 mod capability;
 mod ladder;
 
+pub(crate) use brief::calendar_date;
 pub use brief::{
     Asset, AssetKind, Block, BlockContent, Brief, BriefError, Carrier, Cell, Column, ColumnKind,
     Communication, Dataset, Division, Page, Pin, Priority,

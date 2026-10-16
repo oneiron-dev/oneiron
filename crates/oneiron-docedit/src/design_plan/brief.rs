@@ -668,7 +668,7 @@ fn cell(value: &Value, kind: ColumnKind, path: String, meaning: bool) -> Result<
         (_, Value::Null) => return Err(BriefError::MissingMeaning { path }),
         (ColumnKind::Number, Value::Number(number)) => number.as_f64().map(Cell::Number),
         (ColumnKind::Text, Value::String(text)) => Some(Cell::Text(text.clone())),
-        (ColumnKind::Date, Value::String(date)) if calendar_date(date) => {
+        (ColumnKind::Date, Value::String(date)) if calendar_date(date).is_some() => {
             Some(Cell::Date(date.clone()))
         }
         _ => None,
@@ -676,11 +676,12 @@ fn cell(value: &Value, kind: ColumnKind, path: String, meaning: bool) -> Result<
     cell.ok_or(BriefError::Cell { path })
 }
 
-/// `YYYY-MM-DD` naming a real proleptic Gregorian day.
-fn calendar_date(date: &str) -> bool {
+/// `YYYY-MM-DD` naming a real proleptic Gregorian day: its year, month and
+/// day.
+pub(crate) fn calendar_date(date: &str) -> Option<(u32, u32, u32)> {
     let bytes = date.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return false;
+        return None;
     }
     let number = |range: std::ops::Range<usize>| {
         date.get(range)
@@ -688,7 +689,7 @@ fn calendar_date(date: &str) -> bool {
             .and_then(|digits| digits.parse::<u32>().ok())
     };
     let (Some(year), Some(month), Some(day)) = (number(0..4), number(5..7), number(8..10)) else {
-        return false;
+        return None;
     };
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
     let days = match month {
@@ -696,7 +697,7 @@ fn calendar_date(date: &str) -> bool {
         4 | 6 | 9 | 11 => 30,
         2 if leap => 29,
         2 => 28,
-        _ => return false,
+        _ => return None,
     };
-    (1..=days).contains(&day)
+    (1..=days).contains(&day).then_some((year, month, day))
 }
