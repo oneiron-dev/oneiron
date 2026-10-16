@@ -1,4 +1,4 @@
-# Connect Claude Code or Codex to your vault
+# Connect Claude Code, Codex or Hermes to your vault
 
 An agent that runs MCP servers as commands (Claude Code, Codex) reaches a
 running `oneiron serve` through `oneiron mcp`. That command speaks MCP on stdio
@@ -77,6 +77,14 @@ args = ["mcp", "--surface", "tool-first",
 ```
 
 Codex does not expand `~` in `args`; write the full path.
+
+**Hermes Agent** takes Oneiron in its memory slot instead of as MCP tools: the
+`oneiron-hermes` package (`packages/oneiron-hermes`) is a Hermes memory
+provider. Mint a credential named `hermes`, then `pip install oneiron
+oneiron-hermes`, set `memory.provider: oneiron` and point `credential_file` at
+the file (`hermes memory setup`). With Hermes's built-in memory on, Oneiron
+runs beside it; with it off, Oneiron is the agent's memory. The package's
+README has the rest.
 
 `oneiron mcp` needs the host's `curl` 7.76 or newer on `PATH`, the same as
 `oneiron api`. Instead of `--credential-file` it also reads the slip from

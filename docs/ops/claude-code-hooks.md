@@ -105,6 +105,11 @@ credential where they point.
 Starting a server never creates a vault: the hook starts one only when the
 config's `vault_path` holds an initialized vault.
 
+`oneiron hook --host hermes bind [--url <origin>]` binds in the same order and
+prints the result as one JSON line, `{"url": <origin or null>, "lines": [...]}`.
+Hermes's memory provider (`packages/oneiron-hermes`) runs inside Hermes's own
+process and asks there, so the order has one home.
+
 ### Runtime files
 
 Each `serve` writes one file once its listener is bound and it is ready, and

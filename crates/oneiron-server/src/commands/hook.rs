@@ -7,6 +7,8 @@
 //!   and recalls a short block for the project ([`recall`]).
 //! - `prompt` recalls a short block for the prompt from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import.
+//! - `bind` binds a vault as `session-start` does and prints it as JSON, for
+//!   a plugin that runs inside its host (Hermes's memory provider).
 //!
 //! A hook never blocks the host: whatever fails, it exits 0. It never reads
 //! a credential itself; `oneiron mcp` reads the agent's credential file.
@@ -21,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
-use crate::cli::{HookArgs, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs};
+use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookRecallArgs};
 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
@@ -29,7 +31,7 @@ const MAX_EVENT_BYTES: u64 = 1 << 20;
 const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn hook(args: HookArgs) {
-    let HookHost::ClaudeCode = args.host;
+    // Every host's events read the same fields; the host names whose they are.
     let said = match args.event {
         HookEvent::SessionStart(args) => session_start(&args),
         HookEvent::Prompt(args) => prompt(&args),
@@ -37,6 +39,7 @@ pub fn hook(args: HookArgs) {
             hand_over(&args);
             Vec::new()
         }
+        HookEvent::Bind(args) => vec![bind_json(&args)],
     };
     if !said.is_empty() {
         let _ = writeln!(std::io::stdout().lock(), "{}", said.join("\n"));
@@ -79,6 +82,15 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
         )));
     }
     said
+}
+
+/// The vault a session binds, as `{"url", "lines"}`: `url` is null when none
+/// answers, and `lines` are what the session is told, the first naming it.
+fn bind_json(args: &HookBindArgs) -> String {
+    let deadline = deadline(args.common.timeout);
+    let oneiron = oneiron(args.common.oneiron.as_deref());
+    let bound = bind::session(args.url.as_deref(), &oneiron, deadline);
+    serde_json::json!({ "url": bound.url, "lines": bound.lines }).to_string()
 }
 
 fn prompt(args: &HookRecallArgs) -> Vec<String> {
