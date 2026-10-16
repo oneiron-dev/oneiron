@@ -1,6 +1,7 @@
 //! The host doors of the verb-table rows only a server's own state answers:
-//! the owner's `vault.packs.put` and `vault.hooks.replay`, the `ai.*` model
-//! calls past text, and `ai.verdict` through the host's decision ladder. The
+//! the owner's `vault.packs.put`, `vault.hooks.replay` and
+//! `vault.authority.audit`, the `ai.*` model calls past text, and
+//! `ai.verdict` through the host's decision ladder. The
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
@@ -88,6 +89,31 @@ pub(crate) async fn vault_artifacts_review_slides(
     })
     .await
     .map_err(|_| internal("vault.artifacts.review_slides"))?
+}
+
+/// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
+/// owner's view under the proof `/v1/owner` takes from the request.
+pub(crate) async fn vault_authority_audit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::receipt::AuthorityAuditQuery,
+) -> MemoryResult<oneiron::receipt::AuthorityAuditPage> {
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.authority.audit is the vault owner's",
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        server
+            .vault()
+            .authority_audit(&owner, &input)
+            .map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal("vault.authority.audit"))?
 }
 
 /// `ai.options`: the rows a call could use, where each runs, what it takes,
@@ -287,7 +313,28 @@ pub(crate) async fn ai_verdict(
     tokio::task::spawn_blocking(move || {
         let reader = crate::api::credential_memory(&server.vault, Some(&auth), principal, class)
             .at(auth.locality());
-        crate::decision_verdict::run_verdict(&server, principal, &reader, &input)
+        // An image is pulled through the caller's own lane before any model
+        // reads it.
+        let lane = match input.image {
+            Some(_) => Some(
+                crate::api::scoped_read_for_core_auth(&server.vault, &auth).map_err(|_| {
+                    MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "ai.verdict reads an image under the caller's scoped read",
+                        &["Present a credential that can read the image."],
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        crate::decision_verdict::run_verdict(
+            &server,
+            principal,
+            class,
+            &reader,
+            lane.as_ref(),
+            &input,
+        )
     })
     .await
     .map_err(|_| internal("ai.verdict"))?

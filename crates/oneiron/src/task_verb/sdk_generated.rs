@@ -126,6 +126,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.authority.audit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::AuthorityAuditQuery>(
+                ),
+            ),
+            (
+                "vault.inspection.resolve",
+                crate::code_run::vault_read::request_schema::<crate::lens::InspectionResolveRequest>(
+                ),
+            ),
+            (
                 "vault.shared.propose_delete",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedVaultRequest,
@@ -363,6 +373,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.rooms.speak",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
+            ),
+            (
+                "vault.projects.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ProjectProposalRequest,
+                >(),
+            ),
+            (
+                "vault.projects.proposals",
+                crate::code_run::vault_read::request_schema::<ProjectConversationRequest>(),
+            ),
+            (
+                "vault.projects.dismiss_card",
+                crate::code_run::vault_read::request_schema::<ProjectCardRequest>(),
+            ),
+            (
+                "vault.projects.confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ProjectCardConfirmRequest,
+                >(),
+            ),
+            (
+                "vault.projects.goal.intake",
+                crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
             ),
             (
                 "vault.rooms.join",
@@ -890,6 +924,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.authority.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inspection.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.shared.propose_delete" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1217,6 +1265,41 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/conversation_ref")?.clone(),
             );
             &["spec", "room_ref"]
+        }
+        "vault.projects.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.dismiss_card" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.projects.goal.intake" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "vault.rooms.join" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -1668,6 +1751,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.authority.audit" => {
+            let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
+        }
+        "vault.inspection.resolve" => {
+            let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
+        }
         "vault.shared.propose_delete" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
         }
@@ -1806,6 +1895,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
+        }
+        "vault.projects.propose" => {
+            let _input: crate::workspace_roster::ProjectProposalRequest = decode(value.clone())?;
+        }
+        "vault.projects.proposals" => {
+            let _input: ProjectConversationRequest = decode(value.clone())?;
+        }
+        "vault.projects.dismiss_card" => {
+            let _input: ProjectCardRequest = decode(value.clone())?;
+        }
+        "vault.projects.confirm" => {
+            let _input: crate::workspace_roster::ProjectCardConfirmRequest = decode(value.clone())?;
+        }
+        "vault.projects.goal.intake" => {
+            let _input: ProjectRefRequest = decode(value.clone())?;
         }
         "vault.rooms.join" => {
             let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
@@ -2053,6 +2157,8 @@ pub fn invoke(
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
         }
@@ -2117,6 +2223,13 @@ pub fn invoke(
         "vault.rooms.reply_strips" => encode(vault_rooms_reply_strips(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "vault.projects.propose" => encode(vault_projects_propose(memory, decode(value)?)?),
+        "vault.projects.proposals" => encode(vault_projects_proposals(memory, decode(value)?)?),
+        "vault.projects.dismiss_card" => {
+            encode(vault_projects_dismiss_card(memory, decode(value)?)?)
+        }
+        "vault.projects.confirm" => encode(vault_projects_confirm(memory, decode(value)?)?),
+        "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.projects.goal.revisions" => {
@@ -2495,6 +2608,18 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_authority_audit(
+    memory: &Memory<'_>,
+    input: crate::receipt::AuthorityAuditQuery,
+) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
+    crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_inspection_resolve(
+    memory: &Memory<'_>,
+    input: crate::lens::InspectionResolveRequest,
+) -> MemoryResult<crate::lens::InspectionResolved> {
+    memory.inspection_resolve(&input)
 }
 pub fn vault_shared_propose_delete(
     memory: &Memory<'_>,
@@ -2899,6 +3024,39 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn vault_projects_propose(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ProjectProposalRequest,
+) -> MemoryResult<crate::genui::ProjectProposalCard> {
+    memory.projects_propose(&input)
+}
+pub fn vault_projects_proposals(
+    memory: &Memory<'_>,
+    input: ProjectConversationRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::ProjectCardRecord>> {
+    memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)
+}
+pub fn vault_projects_dismiss_card(
+    memory: &Memory<'_>,
+    input: ProjectCardRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProjectCardDismissal> {
+    Ok(ProjectCardDismissal {
+        dismissed: memory.projects_dismiss_card(&input.card_id)?,
+        card_id: input.card_id,
+    })
+}
+pub fn vault_projects_confirm(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ProjectCardConfirmRequest,
+) -> MemoryResult<crate::workspace_roster::ProjectMintReceipt> {
+    memory.projects_confirm(&input)
+}
+pub fn vault_projects_goal_intake(
+    memory: &Memory<'_>,
+    input: ProjectRefRequest,
+) -> MemoryResult<crate::workspace_roster::ProjectGoalInterviewContext> {
+    memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)
 }
 pub fn vault_rooms_join(
     memory: &Memory<'_>,

@@ -53,9 +53,10 @@ struct LiveSeat {
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
     last_feed: Option<(Instant, u64)>,
-    /// The run's rows live in an off-record room's overlay, where its epochs
-    /// land too.
-    overlay: bool,
+    /// The run writes through a room it is bound to on a recording route:
+    /// an off-record room's overlay, or a room on record at entry, under its
+    /// saver. Its epochs land along that same route.
+    session_bound: bool,
 }
 
 enum PassOutcome {
@@ -168,7 +169,7 @@ impl RunCompaction {
                 flight: None,
                 held: None,
                 last_feed: None,
-                overlay: false,
+                session_bound: false,
             })),
             report,
         }
@@ -184,6 +185,15 @@ impl RunCompaction {
         matches!(self.seat, Seat::Live(_))
     }
 
+    /// The agent profile's output decay (Docs Q13, agent-runtime-v1 #d7),
+    /// when the seat is live and its profile names one.
+    pub(super) fn output_decay(&self) -> Option<crate::compaction::output::OutputDecayPolicy> {
+        match &self.seat {
+            Seat::Live(seat) => seat.driver.memory_profile().output_decay,
+            Seat::Off => None,
+        }
+    }
+
     /// The run credential's world and facet: its epoch summaries are born
     /// there, as its other records are. `None` (a vault-wide run) is base
     /// reality and the vault's default facet.
@@ -195,18 +205,19 @@ impl RunCompaction {
 
     /// Binds the seat to the room a session-bound run writes along `target`,
     /// the route it captured at entry. An off-record room's run compacts into
-    /// the room's overlay (agent-runtime-v1 §d7). An anonymous room keeps
-    /// nothing to land a summary in, and a room already on record at entry
-    /// writes through its saver, which no epoch mint reaches: both stay raw.
+    /// the room's overlay (agent-runtime-v1 §d7); a room already on record at
+    /// entry compacts into base under its saver, as its other writes land
+    /// (Docs Q17). An anonymous room keeps nothing to land a summary in, so it
+    /// stays raw.
     pub(super) fn bind_room(&mut self, target: crate::session_overlay::RouteTarget) {
         use crate::session_overlay::RouteTarget;
         match target {
-            RouteTarget::Overlay => {
+            RouteTarget::Overlay | RouteTarget::Base => {
                 if let Seat::Live(seat) = &mut self.seat {
-                    seat.overlay = true;
+                    seat.session_bound = true;
                 }
             }
-            RouteTarget::Discard | RouteTarget::Base => {
+            RouteTarget::Discard => {
                 *self = Self::off(CompactionOff::OffRecordRun);
             }
         }
@@ -214,9 +225,9 @@ impl RunCompaction {
 
     /// A new `run` call is a new turn: a turn-scoped hold ends. A run off
     /// canonical storage compacts only when [`Self::bind_room`] bound it to
-    /// an off-record room's overlay.
+    /// its room's recording route.
     pub(super) fn begin_turn(&mut self, on_record: bool) {
-        if !on_record && !matches!(&self.seat, Seat::Live(seat) if seat.overlay) {
+        if !on_record && !matches!(&self.seat, Seat::Live(seat) if seat.session_bound) {
             *self = Self::off(CompactionOff::OffRecordRun);
             return;
         }
@@ -604,6 +615,32 @@ pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage])
         }
     }
     pins
+}
+
+/// Docs Q13 (agent-runtime-v1 #d7 verbatim pins): adds the agent profile's
+/// literal pins that occur in `window`, after its failure pins, each once.
+/// A profile pin is kept only while `fits` still holds with it, so it never
+/// displaces a failure pin or cuts the window; the failure pins stay the
+/// mandatory ones.
+pub(super) fn add_profile_pins(
+    pins: &mut Vec<String>,
+    window: &[crate::compaction::CompactionWindowMessage],
+    literals: &[String],
+    fits: impl Fn(&[String]) -> bool,
+) {
+    for literal in literals {
+        if pins.contains(literal)
+            || !window
+                .iter()
+                .any(|message| message.content.contains(literal.as_str()))
+        {
+            continue;
+        }
+        pins.push(literal.clone());
+        if !fits(pins) {
+            pins.pop();
+        }
+    }
 }
 
 /// The bridge positions `calls` spoke at: each call that emitted a bubble.

@@ -29,6 +29,8 @@ pub enum AgentVerb {
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultPacksPut,
+    VaultAuthorityAudit,
+    VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
     VaultSharedProposeRemoveOwner,
@@ -75,6 +77,11 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultProjectsPropose,
+    VaultProjectsProposals,
+    VaultProjectsDismissCard,
+    VaultProjectsConfirm,
+    VaultProjectsGoalIntake,
     VaultRoomsJoin,
     VaultRoomsConsent,
     VaultProjectsGoalRevisions,
@@ -168,6 +175,8 @@ impl AgentVerb {
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultPacksPut,
+        Self::VaultAuthorityAudit,
+        Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
         Self::VaultSharedProposeRemoveOwner,
@@ -214,6 +223,11 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultProjectsPropose,
+        Self::VaultProjectsProposals,
+        Self::VaultProjectsDismissCard,
+        Self::VaultProjectsConfirm,
+        Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
         Self::VaultRoomsConsent,
         Self::VaultProjectsGoalRevisions,
@@ -310,6 +324,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
             Self::VaultSharedProposeRemoveOwner => "vault.shared.propose_remove_owner",
@@ -358,6 +374,11 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultProjectsPropose => "vault.projects.propose",
+            Self::VaultProjectsProposals => "vault.projects.proposals",
+            Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
+            Self::VaultProjectsConfirm => "vault.projects.confirm",
+            Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
@@ -450,6 +471,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -496,6 +519,11 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
@@ -596,6 +624,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -642,6 +672,11 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
@@ -728,6 +763,7 @@ impl AgentVerb {
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
+                | Self::VaultProjectsProposals
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
@@ -776,6 +812,8 @@ impl AgentVerb {
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultPacksPut
+                | Self::VaultAuthorityAudit
+                | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -822,6 +860,11 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsProposals
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
+                | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalRevisions
@@ -920,6 +963,9 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultProjectsPropose
+                | Self::VaultProjectsDismissCard
+                | Self::VaultProjectsConfirm
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
                 | Self::VaultProjectsGoalDismiss
@@ -998,6 +1044,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
@@ -1044,6 +1092,11 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsPropose => &["spec"],
+            Self::VaultProjectsProposals => &["spec"],
+            Self::VaultProjectsDismissCard => &["spec"],
+            Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
@@ -1138,6 +1191,8 @@ impl AgentVerb {
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
             Self::VaultSharedProposeRemoveOwner => &["spec"],
@@ -1184,6 +1239,11 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultProjectsPropose => &["spec"],
+            Self::VaultProjectsProposals => &["spec"],
+            Self::VaultProjectsDismissCard => &["spec"],
+            Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultProjectsGoalRevisions => &["spec"],
