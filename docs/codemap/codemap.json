@@ -54984,8 +54984,28 @@
      "surface": {
       "enum": 8,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookArgs",
+      "HookCommonArgs",
+      "HookEffort",
+      "HookEvent",
+      "HookHandOverArgs",
+      "HookHost",
+      "HookRecallArgs"
+     ],
+     "path": "src/cli/hook_args.rs",
+     "purpose": "`oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -55034,8 +55054,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 11,
-      "re-export": 10,
+      "fn": 12,
+      "re-export": 11,
       "struct": 1
      }
     },
@@ -55057,7 +55077,7 @@
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -55150,6 +55170,36 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/hook.rs",
+     "purpose": "`oneiron hook --host <host> <event>`: an agent harness's hooks, run by the binary",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook/bind.rs",
+     "purpose": "Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook/recall.rs",
+     "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/host_init.rs",
      "purpose": "Reference deployment scaffolding and explicit encryption provisioning",
      "surface": {
@@ -55174,6 +55224,16 @@
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/local_servers.rs",
+     "purpose": "The local servers running for this user, one runtime file each, so a client such as `oneiron hook` finds any…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -58229,6 +58289,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/hook.rs",
+     "purpose": "`oneiron hook --host claude-code`, through the shipped binary",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/host_re_root.rs",
      "purpose": "A self-host owner moves the vault's root off a leaked host secret (OF-455; ARCH-0028 #host-key-warning)",
      "surface": {}
@@ -58425,14 +58493,14 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 26,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -58637,8 +58705,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 366,
-   "test_files": 178
+   "source_files": 371,
+   "test_files": 179
   },
   "oneiron-spawn": {
    "files": [
