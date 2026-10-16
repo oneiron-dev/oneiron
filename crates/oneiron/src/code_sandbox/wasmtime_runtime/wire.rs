@@ -11,9 +11,11 @@ use crate::code_run::{
 use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
 };
+#[cfg(test)]
+use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
-    JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef, JsResultTarget,
-    SelfDispatchResponse,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef,
+    JsResultTarget, RESULT_REPLY_INLINE_BYTES,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
@@ -254,7 +256,9 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 return Ok(json!({ "error": refusal }).to_string());
             }
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
-            response(state.host.dispatch_self(call)?)
+            let answered = state.host.dispatch_self(call)?;
+            let body = fit_reply(state.host, reply_body(&answered.outcome)?)?;
+            Ok(answered.guest_json(body).to_string())
         }
     }
 }
@@ -506,8 +510,58 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
     })
 }
 
+/// Bytes `value` takes as JSON, holding none of them.
+fn encoded_len(value: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    match serde_json::to_writer(&mut count, value) {
+        Ok(()) => count.0,
+        Err(_) => usize::MAX,
+    }
+}
+
+/// A reply as the guest gets it: one whose JSON is past
+/// `RESULT_REPLY_INLINE_BYTES` is stored as a result of the run, and its
+/// card stands under `output` in place of what was stored (the output, or
+/// the whole reply when it has none). No answer is refused for its size; a
+/// host with no result store sends it as it is, for the message bound to
+/// judge.
+fn fit_reply(host: &mut dyn JsCodeModeHost, mut body: Value) -> Result<Value> {
+    if encoded_len(&body) <= RESULT_REPLY_INLINE_BYTES {
+        return Ok(body);
+    }
+    let has_output = body.get("output").is_some();
+    let stored = if has_output { &body["output"] } else { &body };
+    if let Some(card) = host.store_reply(stored)? {
+        if has_output {
+            body["output"] = card;
+        } else {
+            body = json!({ "output": card });
+        }
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
 fn response(response: SelfDispatchResponse) -> Result<String> {
-    let body = match &response.outcome {
+    Ok(response
+        .guest_json(reply_body(&response.outcome)?)
+        .to_string())
+}
+
+/// One dispatched call's reply body, before its budget envelope.
+fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
+    Ok(match outcome {
         // A run row's answer is its output, framed as every verb's is.
         SelfDispatchOutcome::MemoryWrite(value) => json!({"output":{"id":value.id.to_hex()}}),
         SelfDispatchOutcome::MemoryEdgeWrite(value) => {
@@ -571,8 +625,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
                 "owner policy actions are not linked component imports",
             ));
         }
-    };
-    Ok(response.guest_json(body).to_string())
+    })
 }
 
 fn json_value(value: Value) -> rmpv::Value {

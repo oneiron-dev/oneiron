@@ -301,6 +301,14 @@ pub trait JsCodeModeHost {
         Ok(None)
     }
 
+    /// Stores a reply too large for one message (its JSON past
+    /// `RESULT_REPLY_INLINE_BYTES`) as a result of the run, bound to the next
+    /// free name, and answers the card the guest gets in its place. A host
+    /// with no result store answers `None`.
+    fn store_reply(&mut self, _reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
     /// Answers one call a program makes of its run's own results with the
     /// reply the guest gets: `{"output": card}` (or a facet's reply), or a
     /// `denied` refusal. A host with no result store refuses it.

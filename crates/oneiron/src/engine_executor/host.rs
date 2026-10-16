@@ -520,6 +520,15 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         ))
     }
 
+    fn store_reply(&mut self, reply: &serde_json::Value) -> Result<Option<serde_json::Value>> {
+        let Some(storage) = self.storage else {
+            return Ok(None);
+        };
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, reply)?;
+        self.bind_stored(storage, sink, None).map(Some)
+    }
+
     fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {
         match call {
             JsResultCall::Store { name } => self.store_result(name),
