@@ -25034,7 +25034,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 2
      }
     },
@@ -25187,7 +25187,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
