@@ -92,6 +92,7 @@ declare const vault: {
     handoff_alarms: ((input: object) => Promise<unknown>) & {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
+    audit(input: { after?: string | null; kinds?: ("grant" | "revoke" | "confirm" | "other")[]; limit?: number | null }): Promise<unknown>;
   };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
@@ -130,6 +131,9 @@ declare const vault: {
   hydrate(input: { refs: string[] }): Promise<unknown>;
   images: {
     view(input: { edge?: number | null; handle: string; region?: { height: number; width: number; x: number; y: number } | null }): Promise<unknown>;
+  };
+  inspection: {
+    resolve(input: { handle: string }): Promise<unknown>;
   };
   kv: {
     delete(input: { key: string; namespace: string[] }): Promise<unknown>;

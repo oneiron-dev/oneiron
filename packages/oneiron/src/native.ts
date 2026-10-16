@@ -52,6 +52,8 @@ vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultAuthorityAudit(input: unknown): unknown
+vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
 vaultSharedProposeRemoveOwner(input: unknown): unknown
