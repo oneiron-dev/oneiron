@@ -13087,7 +13087,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 62,
+      "fn": 63,
       "struct": 1
      }
     },
@@ -17896,10 +17896,10 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 8,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 4,
       "trait": 2
      }
@@ -17951,6 +17951,40 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaEmbedReport",
+      "MediaEmbedder",
+      "MediaEmbeddingInput"
+     ],
+     "path": "src/embed/media.rs",
+     "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
+     "surface": {
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddingSpace",
+      "InputKind",
+      "KindSlotBindings"
+     ],
+     "path": "src/embed/space.rs",
+     "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 12,
+      "struct": 2
      }
     },
     {
@@ -28842,7 +28876,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15,
-      "fn": 41,
+      "fn": 42,
       "struct": 1
      }
     },
@@ -29090,6 +29124,16 @@
      "purpose": "Unranked, explicitly addressed L2 subject evidence through the retrieval gates",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/media_channel.rs",
+     "purpose": "Typed media retrieval over declared embedding spaces (OF-370; ARCH-0004 `#embedding-spaces`)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -43513,7 +43557,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 11,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -43891,7 +43935,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 56,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44390,7 +44434,7 @@
    },
    "over_bar": 57,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2662,
+   "source_files": 2665,
    "test_files": 903
   },
   "oneiron-android": {
