@@ -27,6 +27,19 @@ mod tests;
 #[cfg(test)]
 const TRACE_LOG_CAPACITY: usize = 1024;
 
+/// A vault whose model manifest binds another extraction encoder than the
+/// one this slot serves. Typed, so the worker stops by name and the markers
+/// wait for the bound tagger. The refusal names the binding the vault holds
+/// and the checkpoint this server was configured with, never anything the
+/// tagger reported.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub(crate) enum EncoderNotSelected {
+    #[error(
+        "the vault binds extraction_encoder {bound}; this tagger serves checkpoint {serving}, which is not its revision"
+    )]
+    OtherEncoder { bound: String, serving: String },
+}
+
 /// Native and HTTP providers share the marker, worker and persistence path.
 pub(crate) enum ProviderTagger {
     Endpoint(endpoint::HttpTagger),
@@ -93,6 +106,33 @@ impl TaggerSlot {
 
     pub(crate) fn tagger(&self) -> &Arc<ProviderTagger> {
         &self.tagger
+    }
+
+    /// Whether `vault` selects the tagger this slot serves. Its manifest's
+    /// `extraction_encoder` binding at the vault's Oneironer route names the
+    /// encoder by `name@checkpoint`; the slot serves it when that revision is
+    /// the configured checkpoint, whichever provider and engine run it. A
+    /// vault with no manifest takes the host's `[oneironer]` section as its
+    /// selection. The binding is the vault's: the slot never picks a
+    /// generative seat to tag with, and a manifest cannot bind one
+    /// (`ModelManifest::validate`).
+    pub(crate) fn selected_by(&self, vault: &oneiron::Vault) -> anyhow::Result<()> {
+        let Some(manifest) = vault.model_manifest()? else {
+            return Ok(());
+        };
+        let route = vault
+            .model_route(oneiron::llm::manifest::ModelSlot::Oneironer)?
+            .ok_or_else(|| anyhow::anyhow!("the vault's manifest names no oneironer route"))?;
+        let bound = manifest.extraction_encoder(route)?;
+        let serving = self.config.checkpoint_sha16.as_deref().unwrap_or_default();
+        if bound.revision() != serving {
+            return Err(EncoderNotSelected::OtherEncoder {
+                bound: bound.as_str().to_owned(),
+                serving: serving.to_owned(),
+            }
+            .into());
+        }
+        Ok(())
     }
 
     /// The engine a local tagger serves on; `None` for an endpoint.

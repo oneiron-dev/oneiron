@@ -66,6 +66,10 @@ pub enum TaggingOutcome {
         /// Speaker links that name no one person: each is kept unresolved.
         #[serde(default)]
         unresolved_speaker_links: usize,
+        /// The saved set's surprise beside the set it replaced, by the
+        /// model families' gate; absent for a turn's first set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        surprise: Option<f32>,
     },
     /// The answer passed every check and the marker completed. In shadow
     /// nothing else is written.

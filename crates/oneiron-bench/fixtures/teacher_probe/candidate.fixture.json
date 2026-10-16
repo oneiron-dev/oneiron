@@ -13,7 +13,7 @@
     },
     "extraction_encoder": {
       "model": "fixture/extraction_encoder@v1",
-      "slot": "llm",
+      "slot": "oneironer",
       "tier": "configured"
     },
     "extraction_teacher": {

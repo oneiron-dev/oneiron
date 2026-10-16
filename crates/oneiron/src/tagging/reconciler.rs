@@ -676,6 +676,7 @@ impl TaggingReconciler {
                                 speaker_links: output.speaker_links.len(),
                                 unresolved_context_links: saved.unresolved_context_links,
                                 unresolved_speaker_links: saved.unresolved_speaker_links,
+                                surprise: saved.surprise,
                             }
                         }
                     };

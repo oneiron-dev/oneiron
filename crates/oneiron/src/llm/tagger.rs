@@ -1,4 +1,8 @@
-//! Host-injected retrieval tags and a write-free shadow comparison. Tags never author claims.
+//! Host-injected retrieval tags, a write-free shadow comparison, and the
+//! deterministic surprise gate between the two model families. Tags never
+//! author claims, and the tagger is never a render: a generative call reads a
+//! tag delta only when the gate admits it (ARCH-0036, ARCH-0035 "tagging is
+//! never a render").
 use super::{
     BudgetGuard, DurableStepContext, DurableStepResult, LlmBackend, LlmRequest, ModelId,
     StepOutcome,
@@ -141,6 +145,23 @@ pub struct GatedRender {
     pub receipt: RenderReceipt,
     pub step: Option<StepOutcome>,
 }
+/// The deterministic surprise of a tag delta, in `[0, 1]`: 1 when the
+/// retrieval identities or the coreference changed, else the largest move of
+/// one affect coordinate over half its span. No model is called to decide
+/// this; the saved-tag path and [`render_on_delta`] read the same gate.
+#[must_use]
+pub fn delta_surprise(identity_changed: bool, before: [f32; 3], after: [f32; 3]) -> f32 {
+    if identity_changed {
+        return 1.0;
+    }
+    before
+        .iter()
+        .zip(after)
+        .map(|(a, b)| (a - b).abs() / 2.0)
+        .fold(0.0_f32, f32::max)
+        .min(1.0)
+}
+
 /// Changed retrieval identities, changed coreference, or a changed affect state
 /// are the deterministic surprise signal. No model is called to decide this.
 pub async fn render_on_delta(
@@ -158,14 +179,7 @@ pub async fn render_on_delta(
     let before = delta.before.read_refs();
     let reads = delta.after.read_refs();
     let identity_change = before != reads || delta.before.coreference != delta.after.coreference;
-    let affect_change = delta
-        .before
-        .affect
-        .iter()
-        .zip(delta.after.affect)
-        .map(|(a, b)| (a - b).abs() / 2.0)
-        .fold(0.0_f32, f32::max);
-    let surprise = if identity_change { 1.0 } else { affect_change };
+    let surprise = delta_surprise(identity_change, delta.before.affect, delta.after.affect);
     let admitted = surprise > 0.0 && surprise >= delta.threshold;
     let input_hash = blake3::hash(&serde_json::to_vec(delta)?)
         .to_hex()
