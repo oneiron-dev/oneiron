@@ -53,7 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/doors.rs` | src | m | 1 enum · 7 fn · 5 crate-vis | AgentDefinitionPutDisposition | Vault CRUD doors over the generic entity/batch machinery |
 | `src/agent_def/id_pin.rs` | src | m | 14 crate-vis | — | The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was… |
 | `src/agent_def/manifest.rs` | src | m | 10 crate-vis | — | Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation |
-| `src/agent_def/mod.rs` | src | s | 1 mod · 4 re-export · 15 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `src/agent_def/mod.rs` | src | s | 1 mod · 4 re-export · 16 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
 | `src/agent_def/optional_memory.rs` | src | m | 1 struct · 1 enum · 4 fn · 2 const · 2 crate-vis | OptionalMemory, OptionalMemoryProfile | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
 | `src/agent_def/portable.rs` | src | s | 7 crate-vis | — | Canonical, inert AGENT_PACK facets derived from real definitions and selected rows |
 | `src/agent_def/portable_binding.rs` | src | s | 3 crate-vis | — | Frozen source tree identity at genuine local birth |
@@ -62,6 +62,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
 | `src/agent_def/tests.rs` | test | XL | — | — | AGENT_DEF (ONE-1443) tests |
 | `src/agent_def/types.rs` | src | m | 4 struct · 5 enum · 20 fn · 13 const · 48 crate-vis | AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef +1 | AgentDefinition domain types, key/limit consts, and constructors |
+| `src/agent_def/widening.rs` | src | s | 1 crate-vis | — | Which puts hand an agent definition back authority it gave up |
 | `src/agent_def/workflow.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | WorkflowDefinition | Saved ordered agent compositions |
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/attenuation.rs` | src | s | 4 crate-vis | — | Live-ceiling attenuation and deterministic attenuated-fork registration |
@@ -287,7 +288,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/base_apply/validation.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/builder/apply.rs` | src | s | 1 fn · 3 crate-vis | — | Caller-transaction terminal: stages the batch into a transaction the caller owns and commits |
 | `src/batch/builder/claims.rs` | src | s | 5 fn · 1 crate-vis | — | Claim-candidate builder doors plus the gap-decay op constructor |
-| `src/batch/builder/commit.rs` | src | s | 1 fn · 3 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
+| `src/batch/builder/commit.rs` | src | m | 2 fn · 3 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
 | `src/batch/builder/edges.rs` | src | m | 14 fn · 1 crate-vis | — | Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers |
 | `src/batch/builder/mod.rs` | src | s | 1 struct · 5 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/ops.rs` | src | s | 3 crate-vis | — | Batch op vocabulary and shared op constructors |
@@ -732,7 +733,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/reactions.rs` | src | s | 6 fn · 2 crate-vis | — | Reactions riding along with the conversation records a scoped read admits |
 | `src/claim/scoped_read/receipt.rs` | src | s | 1 struct · 3 fn · 1 re-export · 2 crate-vis | ScopedReadResult | Mandatory read receipts |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 3 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
-| `src/claim/scoped_read/search.rs` | src | s | 6 fn · 8 crate-vis | — | — |
+| `src/claim/scoped_read/search.rs` | src | m | 6 fn · 12 crate-vis | — | — |
 | `src/claim/scoped_read/slip_tests.rs` | test | m | — | — | Root provisioning and fail-closed read admission land together |
 | `src/claim/scoped_read/tests.rs` | test | m | — | — | The one point-read entry and the read-grant holes it keeps closed |
 | `src/claim/scoped_read/versions.rs` | src | s | 8 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
@@ -1711,14 +1712,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/hnsw/entry_point.rs` | src | m | 2 crate-vis | — | Tarjan-SCC entry-point selection |
 | `src/hnsw/insert.rs` | src | m | 8 crate-vis | — | Insert, localized refresh, and backlink attachment |
 | `src/hnsw/keys.rs` | src | s | 31 crate-vis | — | HNSW metadata key/counter literals, error strings, and the one-way prefix |
-| `src/hnsw/mod.rs` | src | s | 12 crate-vis | — | HNSW graph index over the persisted neighbor graph |
+| `src/hnsw/mod.rs` | src | s | 13 crate-vis | — | HNSW graph index over the persisted neighbor graph |
 | `src/hnsw/one_way.rs` | src | s | 6 crate-vis | — | Orphan-protection one-way exception index |
 | `src/hnsw/rebuild.rs` | src | s | 6 crate-vis | — | Snapshot graph build, persist, and SLIM rehydrate |
 | `src/hnsw/search.rs` | src | m | 8 crate-vis | — | Search, MRL rescore, and beam traversal |
 | `src/hnsw/slim_drop.rs` | src | s | 2 crate-vis | — | SLIM derived-shape drop producer |
 | `src/hnsw/storage.rs` | src | m | 20 crate-vis | — | Metadata/counter reads and neighbor/vector codec |
 | `src/hnsw/tests.rs` | test | m | — | — | — |
-| `src/hnsw/types.rs` | src | s | 7 crate-vis | — | Shared graph, heap, and beam option types |
+| `src/hnsw/types.rs` | src | s | 8 crate-vis | — | Shared graph, heap, and beam option types |
 | `src/housekeeping/mod.rs` | src | m | 4 struct · 4 enum · 13 fn · 1 const · 2 crate-vis | HardEraseWork, HostOnlyReason, HousekeepingBudget, HousekeepingReport, HousekeepingSweep, SweepOutcome, SweepReport, SweepWork | The engine's housekeeping pass: every sweep the engine relies on, run when due |
 | `src/housekeeping/schedule.rs` | src | s | 10 crate-vis | — | The housekeeping schedule: one LIVE row per engine sweep |
 | `src/housekeeping/sweeps.rs` | src | m | 2 crate-vis | — | Each engine sweep, called through its own door, within its own bound |
@@ -1971,7 +1972,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/booking.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | EmergencyInstructionInput | Owner-authenticated booking operations on the existing Memory surface |
 | `src/memory/booking_publication.rs` | src | s | 1 fn · 5 crate-vis | — | Owner checks for the ordinary booking publication claim write/read seam |
 | `src/memory/campaign.rs` | src | s | 10 fn | — | Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`… |
-| `src/memory/caps.rs` | src | m | 13 fn · 13 const | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
+| `src/memory/caps.rs` | src | m | 13 fn · 13 const · 1 crate-vis | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
 | `src/memory/caps/tests.rs` | test | s | — | — | — |
 | `src/memory/chat.rs` | src | m | 3 struct · 3 enum · 1 trait · 3 fn · 1 type | ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatOptions, ChatResponse, ChatScope, ComposedChatAnswer | The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with… |
 | `src/memory/chat/tests.rs` | test | L | — | — | `.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed… |
@@ -2300,10 +2301,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/authority_corpus_tests.rs` | test | s | 1 crate-vis | — | Current-main corpus channels and ONE-1388 authority must narrow together |
 | `src/pipeline/authority_tests.rs` | test | m | 1 crate-vis | — | ONE-1388 adapter tests |
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
-| `src/pipeline/budget.rs` | src | m | 4 crate-vis | — | — |
+| `src/pipeline/budget.rs` | src | m | 8 crate-vis | — | — |
 | `src/pipeline/builder/mod.rs` | src | m | 1 struct · 39 fn · 15 crate-vis | PipelineBuilder | — |
 | `src/pipeline/builder/terminal.rs` | src | s | 5 fn | — | — |
-| `src/pipeline/builder_capture.rs` | src | s | 5 fn · 5 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
+| `src/pipeline/builder_capture.rs` | src | s | 5 fn · 7 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
 | `src/pipeline/builder_effort.rs` | src | s | 2 fn · 2 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
 | `src/pipeline/capabilities.rs` | src | s | 9 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
 | `src/pipeline/channels.rs` | src | L | 16 crate-vis | — | — |
@@ -2328,7 +2329,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/filters.rs` | src | L | 8 crate-vis | — | — |
 | `src/pipeline/l2_evidence.rs` | src | s | 1 crate-vis | — | Unranked, explicitly addressed L2 subject evidence through the retrieval gates |
 | `src/pipeline/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | — |
-| `src/pipeline/population.rs` | src | s | 2 crate-vis | — | How many rows a read's text and vector indexes can return: the populations a scoped channel widens to, for a… |
 | `src/pipeline/scoped_channels.rs` | src | s | 4 crate-vis | — | — |
 | `src/pipeline/support.rs` | src | s | 12 crate-vis | — | — |
 | `src/pipeline/temporal_bound.rs` | src | m | 18 crate-vis | — | The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the… |
@@ -3025,7 +3025,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/documents/tests.rs` | test | m | — | — | — |
 | `src/sync/federation_burst/mod.rs` | src | s | 1 struct · 1 enum · 1 fn · 2 re-export · 7 crate-vis | FederationBurstDecision, FederationPeer | Peer-relative federation admission with durable, automatically replayable work |
 | `src/sync/federation_burst/observations.rs` | src | s | 3 crate-vis | — | Transactional per-principal/grant observations, independent of connections |
-| `src/sync/federation_burst/queue.rs` | src | s | 1 struct · 1 fn · 9 crate-vis | FederationBurstReviewBundle | Actual deferred payloads and their identity-bound, idempotent completion |
+| `src/sync/federation_burst/queue.rs` | src | m | 1 struct · 1 fn · 10 crate-vis | FederationBurstReviewBundle | Actual deferred payloads and their identity-bound, idempotent completion |
 | `src/sync/federation_burst/selector.rs` | src | s | 1 struct · 3 fn | PreparedSelectorFetch | Decode and authorize before deferral; retry only with current authentication |
 | `src/sync/federation_burst/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/sync/ingest/birth_watch.rs` | src | s | 3 crate-vis | — | The rows a federated import watches for their births |
@@ -3072,7 +3072,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/tests.rs` | test | m | — | — | — |
 | `src/sync/residence_operation_budgets.rs` | src | s | 1 struct · 1 fn · 1 const | ResidenceOperationBudgets | Resolved holder-side residence operation budgets |
 | `src/sync/schema.rs` | src | s | 6 fn · 2 crate-vis | — | CRDT Doc schema creation for the sync layer |
-| `src/sync/selector/admission.rs` | src | m | 1 enum · 2 fn · 18 crate-vis | FederationAdmissionRole | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
+| `src/sync/selector/admission.rs` | src | L | 1 enum · 2 fn · 18 crate-vis | FederationAdmissionRole | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
 | `src/sync/selector/authorize.rs` | src | m | 1 fn · 8 crate-vis | — | Grant and pact authorization resolving the requested position under the grant ceiling, guest-share… |
 | `src/sync/selector/codec.rs` | src | m | 2 struct · 2 enum · 12 fn · 1 const · 13 crate-vis | RequestedAxis, SelectorVvRequest, SyncSelector, SyncSelectorWorld | Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope… |
 | `src/sync/selector/document_admission.rs` | src | m | 5 crate-vis | — | Transaction-bound peer document admission from stored ledger truth |
@@ -3247,7 +3247,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/thread_passport/tests.rs` | test | m | — | — | — |
 | `src/thread_passport/vault_doors.rs` | src | s | 6 fn · 1 crate-vis | — | — |
 | `src/tokenizer.rs` | src | s | 1 enum · 1 trait · 3 fn · 2 const | ContextPackTokenizer, PackTokenizer | — |
-| `src/vault/actors_memory.rs` | src | m | 1 struct · 23 fn · 2 crate-vis | ActorBound | Vault actor binding, structural kinds and code-memory attachment |
+| `src/vault/actors_memory.rs` | src | m | 1 struct · 23 fn · 1 crate-vis | ActorBound | Vault actor binding, structural kinds and code-memory attachment |
 | `src/vault/database_digests.rs` | src | s | 1 fn · 3 crate-vis | — | One BLAKE3 digest per named database: the comparison two vaults given the same writes can be held to… |
 | `src/vault/doctor_manifest.rs` | src | m | 4 struct · 1 enum · 2 fn · 11 crate-vis | TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport | Vault doctor report and text-index manifest handshake |
 | `src/vault/edges.rs` | src | m | 1 struct · 13 fn · 8 crate-vis | IdScanPage | Vault edge writes, adjacency queries and graph traversal |
@@ -3476,6 +3476,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/snapshot_custody_binding.rs` | test | s | — | — | ONE-1534 (OPS-SERVE): the custody contract for the scoped Wasabi snapshot credential, pinned through the… |
 | `tests/it/world_month_recovery.rs` | test | s | — | — | Featureless canonical world-month carry and retained-shell round trip |
 | `tests/it_project_conversion.rs` | test | m | — | — | — |
+| `tests/it_sync/agent_definition_peer_reenable.rs` | test | s | — | — | A federation peer turns no agent definition back on |
 | `tests/it_sync/ask_option_link_replication.rs` | test | m | — | — | A real Loro exchange preserves issuer-verified foreign-stated ask evidence |
 | `tests/it_sync/main.rs` | test | s | — | — | Consolidated integration-test binary for the `sync`-feature cluster |
 | `tests/it_sync/rung0_cold_start_conformance.rs` | test | s | — | — | ONE-1346 — rung-0 cold-start conformance contract |
