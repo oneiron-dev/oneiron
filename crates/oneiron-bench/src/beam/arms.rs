@@ -3,7 +3,7 @@
 use super::community::run_community_beam;
 use super::model::{ArmKind, FixtureCase, FixtureClass};
 use super::ppr_vad::PprVadSweepArm;
-use super::report::{context_pack_report, serialized_context_pack_ids};
+use super::report::{context_pack_report, no_memory_context_report, serialized_context_pack_ids};
 use super::report_model::{ArmOutcome, ArmReport, LoadedDataset};
 use super::runner::{print_help, run_builtin_smoke, run_manifest_path};
 use super::scorer::BeamArmAdapter;
@@ -17,6 +17,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
+
+/// The pack view the engine retrieval arms serve, with its HTTP `view` name.
+pub(super) const BEAM_PACK_VIEW: (FieldProfile, &str) = (FieldProfile::Standard, "standard");
 
 pub(super) struct DeterministicContextPackArm;
 impl BeamArmAdapter for DeterministicContextPackArm {
@@ -96,6 +99,28 @@ impl BeamArmAdapter for VanillaRagArm {
             arm: self.kind(),
             outcome: ArmOutcome::Completed {
                 context_pack: Box::new(report),
+            },
+        })
+    }
+}
+/// The same reader with no optional memory: it hands the reader an empty
+/// context and never opens the vault.
+pub(super) struct BackboneSoloArm;
+impl BeamArmAdapter for BackboneSoloArm {
+    fn kind(&self) -> ArmKind {
+        ArmKind::BackboneSolo
+    }
+
+    fn run(
+        &self,
+        _vault: &Vault,
+        _loaded: &LoadedDataset,
+        case: &FixtureCase,
+    ) -> BeamResult<ArmReport> {
+        Ok(ArmReport {
+            arm: self.kind(),
+            outcome: ArmOutcome::Completed {
+                context_pack: Box::new(no_memory_context_report(case)),
             },
         })
     }
@@ -206,7 +231,11 @@ pub(super) fn adapter_for(kind: ArmKind) -> Box<dyn BeamArmAdapter> {
         ArmKind::Deterministic => Box::new(DeterministicContextPackArm),
         ArmKind::VanillaRag => Box::new(VanillaRagArm),
         ArmKind::PprVadSweep => Box::new(PprVadSweepArm),
-        ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => Box::new(NotReadyArm { kind }),
+        ArmKind::BackboneSolo => Box::new(BackboneSoloArm),
+        // These need a reader model; the retrieval-only fixture harness has none.
+        ArmKind::TrajectoryOnly | ArmKind::Agentic | ArmKind::Chat => {
+            Box::new(NotReadyArm { kind })
+        }
     }
 }
 pub(super) fn configured_context_pack_builder<'a>(
@@ -222,7 +251,7 @@ pub(super) fn configured_context_pack_builder<'a>(
     let builder = vault
         .context_pack()
         .search_text(&case.query, text_search_limit)
-        .field_profile(FieldProfile::Standard)
+        .field_profile(BEAM_PACK_VIEW.0)
         .format(BEAM_CONTEXT_PACK_FORMAT)
         .merge_neighbors(false)
         .include_stats(true)
@@ -279,7 +308,7 @@ pub(super) fn configured_vanilla_rag_context_pack_builder<'a>(
         .context_pack()
         .search_text(&case.query, retrieval_limit)
         .search_vector(query_vector, retrieval_limit)
-        .field_profile(FieldProfile::Standard)
+        .field_profile(BEAM_PACK_VIEW.0)
         .format(BEAM_CONTEXT_PACK_FORMAT)
         .merge_neighbors(false)
         .include_stats(true)

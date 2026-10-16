@@ -238,7 +238,7 @@ impl Vault {
     ///
     /// `None` includes every repository. The list is whole: the scan never
     /// refuses for its length, and past its threshold row it raises an
-    /// [`OriginScanCheck`](crate::origin::scan_check::OriginScanCheck).
+    /// [`ScanCheck`](crate::scan_check::ScanCheck).
     /// Use [`Vault::origin_publication`] to inspect a record. This list is not
     /// advertisement authority; only [`Vault::published_origin_refs`] proves
     /// that a ref may be served.

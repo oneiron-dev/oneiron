@@ -223,6 +223,50 @@ fn a_recreation_needing_less_than_its_owner_certified_lands() {
     assert_eq!(vault.receive_pack_intent_rows_for_test(&repo_dir), 0);
 }
 
+/// A deleted name keeps no visible slot, and nothing else of its publication
+/// goes with it: a re-drive of the original publication recreates the ref,
+/// and the recreated ref is advertised at once.
+#[test]
+fn a_deleted_ref_retires_its_slot_and_its_redriven_publication_is_advertised() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo_dir, first, _second) = served_repo(&vault);
+    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let url = origin.url();
+    let (handle, request) = engine_request(&vault, &repo_dir, &first, &first);
+    let wire = GitWire::new(&vault).expect("git wire");
+    let owner = vault
+        .publish_origin_ref(&wire, request.clone())
+        .expect("the engine publishes topic");
+    let topic = GitRefName::parse_full(TOPIC.to_owned()).expect("ref name");
+    assert!(
+        vault
+            .origin_publication_manages_ref(request.repo_id, &topic)
+            .expect("slot")
+    );
+    git(source.path(), &["push", &url, &format!(":{TOPIC}")]);
+    assert!(
+        !vault
+            .origin_publication_manages_ref(request.repo_id, &topic)
+            .expect("slot"),
+        "a deleted name kept its visible slot"
+    );
+    assert_eq!(publications_of(&vault, TOPIC), vec![owner.record.clone()]);
+
+    vault
+        .publish_origin_ref(&wire, request)
+        .expect("re-drive the original publication");
+    assert_eq!(
+        wire.read_ref(&handle, &topic).expect("ref"),
+        Some(first.clone())
+    );
+    assert_eq!(
+        advertised(&vault, "git-upload-pack", TOPIC),
+        vec![first.as_str().to_owned()],
+        "the re-driven ref is hidden"
+    );
+    assert_eq!(publications_of(&vault, TOPIC), vec![owner.record]);
+}
+
 /// A push whose move a `Prepared` publication owns, bringing a large file
 /// that publication does not certify, is refused while the hook still
 /// blocks the backend: the ref never moves, and the owner stays undecided.

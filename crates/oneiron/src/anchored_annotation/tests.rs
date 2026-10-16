@@ -3,6 +3,8 @@ use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::embedding_test_config;
 
+mod anchor_scenarios;
+
 fn test_time(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
