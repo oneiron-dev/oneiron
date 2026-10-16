@@ -3,6 +3,7 @@
 //! (ruling F2 condition 2, decision 10). Both write a signed envelope beside
 //! the PROJECT row it settles, in one transaction.
 use super::fold::{ProjectDisposition, ProjectFrontier, ProjectRank, reason};
+use super::owner_signer::{OwnerProjectSigner, owner_signed_at};
 use super::read::{ProjectReader, ProjectVerdict, stored};
 use super::resolution::{ProjectResolution, ProjectSeal};
 use super::revision::{
@@ -10,7 +11,6 @@ use super::revision::{
     project_revision_type, revision_entity_id,
 };
 use super::*;
-use crate::authority::CapabilitySlip;
 use crate::consent::AuthenticatedOwner;
 
 fn unresolved(project: EntityId, reason: &'static str) -> Error {
@@ -143,42 +143,25 @@ impl Vault {
     /// The owner's seal (ruling F2 condition 2, decision 10). The door builds
     /// `next` with `authority` over the held revision `over`, stores it as the
     /// PROJECT row (content kept), and seals it with `supersedes` = the
-    /// current seal tips. `signer` returns the host slip `slip_wire`'s binding
-    /// proof over each challenge; PR 4 replaces it with the owner-project signer
-    /// capability (decision 3). A snapshot already held is never published
+    /// current seal tips. The owner-project signer signs both the state and
+    /// the seal (decision 3). A snapshot already held is never published
     /// again, and seals move strictly forward in time.
-    pub fn seal_project<S>(
+    pub fn seal_project(
         &self,
         owner: &AuthenticatedOwner,
+        signer: &OwnerProjectSigner<'_>,
         id: EntityId,
         authority: ProjectAuthority,
         over: ProjectRevisionHash,
-        slip_wire: String,
-        signer: S,
-    ) -> Result<ProjectRevisionHash>
-    where
-        S: Fn(&[u8]) -> Result<Vec<u8>>,
-    {
+    ) -> Result<ProjectRevisionHash> {
         let kind = self.project_type_byte()?;
         let revision_kind = project_revision_type(&self.store).ok_or_else(invalid)?;
-        let slip = CapabilitySlip::from_token(&slip_wire)?;
-        if slip.claims.holder_ref != "host" || authority.roster.is_none() {
+        if authority.roster.is_none() {
             return Err(unresolved(id, "a seal is a host-signed v3 state"));
         }
         self.with_write_txn(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let floor = crate::authority::AUTHORITY_FIRST_SEEN
-                .get_lenient(
-                    &self.store,
-                    txn,
-                    &crate::authority::authority_first_seen_clock_key(),
-                )?
-                .unwrap_or(0);
-            let signed_at = crate::authority::authority_observation_secs(
-                &self.store,
-                floor,
-                self.store.clock.now_recorded_at(),
-            );
+            let signed_at = owner_signed_at(self, txn)?;
             let (record, anchor, supersedes) = {
                 let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                     .ok_or_else(invalid)?;
@@ -204,6 +187,7 @@ impl Vault {
             };
             let mut next = record;
             next.parents = authority.parents.clone();
+            next.parent_heads = authority.parent_heads.clone();
             next.claims_scope_ref = authority.claims_scope_ref.clone();
             next.slice = authority.slice.clone();
             next.depth_limit = authority.depth_limit;
@@ -211,19 +195,15 @@ impl Vault {
             next.leader = authority.leader.clone();
             next.board = authority.board.clone();
             next.roster = authority.roster.iter().flatten().cloned().collect();
-            let challenge = next.authority_at(ProjectProofVersion::V3).write_challenge(
+            self.sign_owner_project_in_txn(
+                txn,
+                owner,
+                signer,
                 id,
-                ProjectProofVersion::V3,
+                &mut next,
+                Some(anchor),
                 signed_at,
-                Some(&anchor),
             )?;
-            next.write_proof = Some(ProjectWriteProof {
-                slip_wire: slip_wire.clone(),
-                holder_signature: signer(&challenge)?,
-                signed_at,
-                anchor: Some(Box::new(anchor)),
-                version: ProjectProofVersion::V3,
-            });
             let chain = revision::revisions_of_row(id, &next)?;
             let Some(next_hash) = chain.last().map(|(hash, _)| *hash) else {
                 return Err(invalid());
@@ -234,11 +214,11 @@ impl Vault {
             let mut seal = ProjectSeal {
                 next: next_hash,
                 supersedes: supersedes.into_iter().collect(),
-                slip_wire: slip_wire.clone(),
+                slip_wire: signer.wire().to_owned(),
                 holder_signature: Vec::new(),
                 signed_at,
             };
-            seal.holder_signature = signer(&seal.challenge(id)?)?;
+            seal.holder_signature = signer.sign(&seal.challenge(id)?)?;
             let envelope = ProjectRevision::Seal { project: id, seal };
             let envelope_hash = envelope.hash()?;
             let at = TimeRange {

@@ -41,6 +41,7 @@ mod policy_change_followup;
 mod presence_diagnostics;
 mod presence_pages;
 mod presence_scan;
+mod project_ask;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;

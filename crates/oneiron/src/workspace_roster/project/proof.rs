@@ -53,10 +53,12 @@ pub(crate) fn validate_transition(
             }
         };
     };
-    if prior
+    // A fresh proof is verified live here; only such a revision may be held
+    // past the history budget, as a replicated one is.
+    let fresh = prior
         .as_ref()
-        .is_none_or(|old| old.write_proof.as_ref() != Some(proof))
-    {
+        .is_none_or(|old| old.write_proof.as_ref() != Some(proof));
+    if fresh {
         verify_live(store, txn, id, &next, proof, posture)?;
     }
     if prior.is_none() && proof.anchor.is_some() {
@@ -140,15 +142,18 @@ pub(crate) fn validate_transition(
                 });
             }
             ProjectDisposition::OverBudget { state, .. } => {
-                // Ruling F2 condition 1: past the budget only a valid
-                // descendant of the frozen head lands, as a narrowing meet.
+                // Ruling F2 condition 1: past the budget a valid descendant
+                // of the frozen head lands, as a narrowing meet. Any other
+                // authenticated revision is held beside the frozen frontier,
+                // as a replicated one is, and the owner is asked (OF-520):
+                // the wire never refuses for count.
                 let descends = parent.is_some_and(|parent| {
                     Some(parent) == state.frozen_head
                         || PROJECT_FROZEN_APPLIED
                             .contains(store, txn, &(id, parent))
                             .unwrap_or(false)
                 });
-                if !descends || cx.verdict(candidate)? != ProjectVerdict::Visible {
+                if !fresh && (!descends || cx.verdict(candidate)? != ProjectVerdict::Visible) {
                     return Err(RecordError::ProjectHistoryOverBudget {
                         project: id,
                         held: state.held,
@@ -161,6 +166,11 @@ pub(crate) fn validate_transition(
         }
     }
     let frontier = trial.frontier(id)?.ok_or_else(invalid)?;
+    if fresh && matches!(frontier.disposition, ProjectDisposition::OverBudget { .. }) {
+        // This write crosses the budget: it is held, and the batch-end
+        // refresh freezes the project and opens the owner's question.
+        return Ok(());
+    }
     let installed = matches!(frontier.disposition, ProjectDisposition::Settled)
         && frontier.witness.as_ref().map(|witness| witness.head) == Some(candidate);
     let Some(effective) = frontier.effective.clone().filter(|_| installed) else {
