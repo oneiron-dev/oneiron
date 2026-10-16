@@ -12,6 +12,8 @@ mod l2_base;
 mod mcp_ref;
 mod psych_mirror;
 mod quarantine;
+#[cfg(test)]
+pub(crate) use self::quarantine::quarantined_entity_count_for_test;
 pub mod source_ranking;
 mod telemetry;
 mod types;

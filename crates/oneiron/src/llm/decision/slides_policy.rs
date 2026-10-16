@@ -116,6 +116,7 @@ impl SlideReviewRoute {
             "rule" => Some(DecisionRung::Rule),
             "local" => Some(DecisionRung::Local),
             "system_one" => Some(DecisionRung::SystemOne),
+            "escalation" => Some(DecisionRung::Escalation),
             "big" => Some(DecisionRung::Big),
             _ => None,
         }

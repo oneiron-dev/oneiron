@@ -199,7 +199,11 @@ pub(super) fn classify_status(status: u16, body: &Value) -> LlmError {
     match status {
         401 | 403 => FatalLlmError::Auth.into(),
         408 | 504 => RetryableLlmError::Timeout.into(),
-        429 => RetryableLlmError::RateLimited { retry_after: None }.into(),
+        429 => RetryableLlmError::RateLimited {
+            retry_after: None,
+            resets_at: Vec::new(),
+        }
+        .into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
     }

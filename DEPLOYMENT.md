@@ -136,7 +136,7 @@ projection_body_bytes = 4194304   # body bytes one multi-row read decodes
 git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
 git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
-disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
+disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads and held pushes stop at it (507)
 keyed_filter_json_bytes = 67108864 # one keyed-memory search filter; past it the search runs whole and the row asks
 ```
 
@@ -178,7 +178,10 @@ arrive from its one address. A push to a repository another push holds waits
 its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
 set) lands and the row asks; an upload that would take the vault's disk below
 `disk_reserve_bytes` is refused with 507, by its declared size before any byte
-is read.
+is read. A push holds its command section and status report on that disk past
+memory, and is answered 507 when a write of them would take it below the
+reserve. Each such write asks first and claims nothing, so writes at the same
+moment can each pass the reserve by their own bytes.
 
 The two retrieval rows bound one request's shape, not how much a caller may
 read. A query past `retrieval_query_bytes` is refused with a 413 that names

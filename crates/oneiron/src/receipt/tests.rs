@@ -930,6 +930,41 @@ fn counterparty_projection_preserves_latest_contact_flags() {
 }
 
 #[test]
+fn counterparty_projection_lists_its_newest_receipts_and_totals_them_all() {
+    // F13 H104: the projection lists each counterparty's newest `limit`
+    // receipts, and its totals still count every one.
+    let receipts = (1..=3_u64)
+        .map(|n| {
+            let id = format!("outbound:send-{n}");
+            let debit = n.to_string();
+            projected_receipt(
+                &id,
+                ReceiptKind::Outbound,
+                10 * n,
+                "delivered_to_channel",
+                Some("brief:party"),
+                Some(&format!("intent:send-{n}")),
+                &[
+                    ("counterparty_ref", "kenji@example.com"),
+                    ("budget_debit", &debit),
+                ],
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let projections = project_receipts_by_counterparty_with_contacts(receipts, &BTreeMap::new(), 1);
+
+    assert_eq!(projections.len(), 1);
+    let listed = projections[0]
+        .receipts
+        .iter()
+        .map(|receipt| receipt.receipt_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(listed, ["outbound:send-3"]);
+    assert_eq!(projections[0].budget_debit_total, 6);
+}
+
+#[test]
 fn counterparty_projection_joins_contact_records() -> Result<()> {
     let (_tmp, vault) = temp_vault()?;
     let identity_ref = entity(0x91);
@@ -954,7 +989,8 @@ fn counterparty_projection_joins_contact_records() -> Result<()> {
     )];
 
     let contacts = counterparty_contact_records_for_receipts(&vault, &receipts)?;
-    let projections = project_receipts_by_counterparty_with_contacts(receipts, &contacts);
+    let projections =
+        project_receipts_by_counterparty_with_contacts(receipts, &contacts, usize::MAX);
 
     assert_eq!(projections.len(), 1);
     assert_eq!(
@@ -1009,7 +1045,8 @@ fn counterparty_projection_combines_multi_identity_contacts_conservatively() -> 
     ];
 
     let contacts = counterparty_contact_records_for_receipts(&vault, &receipts)?;
-    let projections = project_receipts_by_counterparty_with_contacts(receipts, &contacts);
+    let projections =
+        project_receipts_by_counterparty_with_contacts(receipts, &contacts, usize::MAX);
 
     assert_eq!(projections.len(), 1);
     assert_eq!(projections[0].first_touch.as_deref(), Some("inbound_first"));
