@@ -358,6 +358,7 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
             new_oid: Some(tip),
         }],
         lfs_pointers: vec![pointer],
+        ref_lfs_pointers: Vec::new(),
         quarantine_path: None,
     };
     vault

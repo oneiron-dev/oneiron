@@ -6,7 +6,7 @@ use std::path::Path;
 use super::cgi_finish::realized_updates;
 use super::door::DoorAdmissionStamp;
 use super::door_window::{
-    DoorWindowReport, DoorWindowVerdict, printable_ref_name, unlandable_ref_reasons,
+    DoorWindowReport, DoorWindowVerdict, held_by_ref, printable_ref_name, unlandable_ref_reasons,
 };
 use super::evidence::{
     PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, RefUpdate, receive_pack_field,
@@ -148,6 +148,10 @@ pub(super) struct ReceivePackIntentRef {
     pub(super) outcome_id: String,
     pub(super) observed: bool,
     pub(super) status: ReceivePackRefStatus,
+    // The positions in the intent's pointers this ref is held to. A row from
+    // before refs were held to their own has none: it held each to all.
+    #[serde(default)]
+    pointers: Option<Vec<usize>>,
 }
 
 impl ReceivePackIntentRef {
@@ -249,14 +253,14 @@ impl Vault {
     /// end [uncertified](ReceivePackRefStatus::Uncertified). A `Prepared`
     /// owner's obligations are fixed, so it is held to them before it is
     /// decided; if it is refused, its move is free and the push can be sent
-    /// again. The large files a push brings count against each of its
-    /// advancing refs, so a push that also brings another ref new large
-    /// files is refused whole.
+    /// again. A ref is held to the large files its own move brings
+    /// (`ref_pointers`), never to another ref's.
     pub(super) fn receive_pack_owner_shortfalls(
         &self,
         repo: &RepoRef,
         updates: &[RefUpdate],
         pointers: &[LfsPushedPointer],
+        ref_pointers: &[Vec<usize>],
     ) -> Result<Vec<String>> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
@@ -266,14 +270,14 @@ impl Vault {
         let mut lfs_objects = Vec::new();
         for pointer in pointers {
             let intent = pointer.intent(repo_id);
-            if self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?
-                == LfsAdmission::StoreInLfs
-            {
-                lfs_objects.push((intent.oid, intent.size_bytes));
-            }
+            let admission =
+                self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?;
+            lfs_objects.push(
+                (admission == LfsAdmission::StoreInLfs).then_some((intent.oid, intent.size_bytes)),
+            );
         }
         let mut reasons = Vec::new();
-        for update in updates {
+        for (index, update) in updates.iter().enumerate() {
             let Some(next) = update.new_oid.as_ref() else {
                 continue;
             };
@@ -289,9 +293,10 @@ impl Vault {
             ) {
                 continue;
             }
-            if let Some(refusal) =
-                obligations_beyond_owner(&owner, std::iter::once(next), lfs_objects.iter())
-            {
+            let held = held_by_ref(&lfs_objects, ref_pointers.get(index).map(Vec::as_slice))
+                .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
+            let held = held.into_iter().flatten();
+            if let Some(refusal) = obligations_beyond_owner(&owner, std::iter::once(next), held) {
                 reasons.push(format!("{}: {refusal}", printable_ref_name(&update.name)));
             }
         }
@@ -343,7 +348,11 @@ impl Vault {
             refs: door
                 .ref_updates
                 .iter()
-                .map(|update| {
+                .enumerate()
+                .map(|(index, update)| {
+                    let pointers = door.ref_lfs_pointers.get(index).cloned();
+                    held_by_ref(&door.lfs_pointers, pointers.as_deref())
+                        .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
                     Ok(ReceivePackIntentRef {
                         name: update.name.clone(),
                         old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
@@ -351,6 +360,7 @@ impl Vault {
                         outcome_id: self.store.clock.entity_id()?.to_hex(),
                         observed: false,
                         status: ReceivePackRefStatus::Pending,
+                        pointers,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -698,10 +708,13 @@ impl Vault {
             }
             let mut settled_any = false;
             for (index, update) in realized {
+                let held = held_by_ref(&pointers, intent.refs[index].pointers.as_deref())
+                    .ok_or(Error::CorruptedIndex("receive-pack pointer position"))?;
+                let held: Vec<_> = held.into_iter().cloned().collect();
                 let outcome = ReceivePackOutcome {
                     repo_root: root.to_path_buf(),
                     ref_updates: vec![update.clone()],
-                    lfs_pointers: pointers.clone(),
+                    lfs_pointers: held.clone(),
                     staged_objects_dir: root.join("objects"),
                     // These are whole-exchange totals, not a per-ref allocation.
                     // Only a crash before the checkpoint leaves them unmeasured:
@@ -715,7 +728,8 @@ impl Vault {
                 let door = DoorWindowReport {
                     verdict: DoorWindowVerdict::Clean,
                     ref_updates: vec![update],
-                    lfs_pointers: pointers.clone(),
+                    lfs_pointers: held,
+                    ref_lfs_pointers: Vec::new(),
                     quarantine_path: None,
                 };
                 let result = (|| {
