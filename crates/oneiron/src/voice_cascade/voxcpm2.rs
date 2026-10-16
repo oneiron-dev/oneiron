@@ -33,7 +33,9 @@ pub struct WarmTarget {
 }
 
 impl WarmTarget {
-    fn validate(&self) -> Result<()> {
+    /// Whether the worker reported a pinned, ready VoxCPM2 with a valid
+    /// serving policy.
+    pub fn validate(&self) -> Result<()> {
         if !self.limits.valid()
             || self.model != MODEL
             || self.checkpoint.trim().is_empty()
