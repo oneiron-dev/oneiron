@@ -45,6 +45,11 @@ pub struct DreamerWakePolicy {
     /// Cleanup and maintenance retain their protected priority; consolidation
     /// stays after these two lanes so its home-node stop cannot starve them.
     pub weave_recipe_priority: WeaveRecipePriority,
+    /// The surprise floor, in thousandths (OF-138, ARCH-0036): a turn whose
+    /// re-tag moved at least this far beside the set it replaced is a
+    /// surprise signal for a resident's wake. The tagger measures the delta;
+    /// a role's trigger table decides whether surprise may wake it.
+    pub surprise_permille: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +153,7 @@ impl DreamerWakePolicy {
             || self.nightly_secs == 0
             || self.idle_secs == 0
             || self.quiet_weave_secs < self.idle_secs
+            || self.surprise_permille > 1000
         {
             return Err(invalid());
         }

@@ -272,6 +272,13 @@ impl AiHandle {
         self.hints.as_ref()?;
         let (vault, handle) = (Arc::clone(vault), self.clone());
         Some(tokio::task::spawn_blocking(move || {
+            // An agent waking under a dial its owner moved notes the move in
+            // its own diary before it acts again (OF-533).
+            if let WakeTurnSubject::Agent { id, .. } = subject
+                && let Err(error) = vault.note_refusal_dial_change(id)
+            {
+                tracing::warn!(%error, agent = %id.to_hex(), "refusal dial note not written");
+            }
             // Queued or not, the turn is news to the wake policy: the pass
             // the hint takes re-reads its rows and re-arms its quiet timer.
             match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
