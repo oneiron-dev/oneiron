@@ -137,12 +137,14 @@ pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
 pub use witness::{
-    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageStreamError,
-    MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy, MessageStreamPump,
-    MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence, StreamCancelReason,
-    StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
+    MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
+    MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
 };
-pub(crate) use witness::{MessageStreamRuntime, message_stream_finality_in_txn};
+pub(crate) use witness::{
+    MessageStreamRuntime, message_completion_in_txn, message_stream_finality_in_txn,
+};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;

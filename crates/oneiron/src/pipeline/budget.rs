@@ -1,8 +1,9 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use heed::RoTxn;
 
 use crate::context_pack::ContextPackRetrievalBudget;
+use crate::embed::EmbeddingSpace;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{
@@ -362,16 +363,42 @@ pub(super) struct VectorEvidence<'a> {
     pub(super) score: f32,
 }
 
+/// The floor a raw cosine in declared space `space` is judged by (OF-370):
+/// the pair a host set for that kind there, then the space's own declared
+/// floors, then the vault's, the same pair the text index's scores fall back
+/// to.
+pub(super) fn media_space_floor(
+    floors: &NoMatchFloors,
+    space: &EmbeddingSpace,
+    kind: Option<u8>,
+) -> f32 {
+    kind.and_then(|kind| floors.keyed.get(&space.id)?.get(&kind))
+        .copied()
+        .or(space.evidence)
+        .unwrap_or(floors.pair)
+        .floor
+}
+
 /// Returns whether a context pack must withhold every candidate before
 /// hydration. The predicate intentionally reads raw per-channel evidence,
 /// rather than the blended score: blend dimensions can be incomparable or
 /// flat, while cosine scores have a stable similarity meaning in their own
-/// space. Every vector score here was scored in `space` (a vault has one);
-/// `kind_of` reads an item's entity type when that space keys its floors by
-/// kind. A folded MESSAGE's evidence is its TURN's.
+/// space. Every vector score here was scored in `space`, the vault's own
+/// index; `kind_of` reads an item's entity type when that space keys its
+/// floors by kind. A folded MESSAGE's evidence is its TURN's.
+///
+/// A declared space's hits are judged in their own space when the run reads
+/// them ([`media_space_floor`]): `media_evidence` holds every one at or above
+/// its floor, and a candidate among them is evidence that keeps the pack,
+/// whatever the text and vault-index lists hold (OF-370).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "RET-01 reads each channel's raw evidence beside the run's query shape and floors"
+)]
 pub(super) fn context_pack_evidence_abstains(
     scores: &[ScoredEntity],
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    media_evidence: &HashSet<EntityId>,
     text_query: Option<&str>,
     has_vector_query: bool,
     space: &str,
@@ -382,6 +409,12 @@ pub(super) fn context_pack_evidence_abstains(
         return Ok(true);
     }
     if scores.is_empty() {
+        return Ok(false);
+    }
+    if scores
+        .iter()
+        .any(|scored| media_evidence.contains(&scored.id))
+    {
         return Ok(false);
     }
 

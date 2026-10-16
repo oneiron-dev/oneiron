@@ -57,6 +57,8 @@ side_tables! {
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
+    /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
+    SELF_HEAL_ATTEMPT_SEAL: VaultMeta b"self_heal:seal:v1:" Named;
     /// (diagnostic event id).
     SELF_HEAL_SIGNED_EVENT: VaultMeta b"self_heal:signed:v2:event:" Raw;
     /// A host-signed scheduled detector run receipt, keyed by its content digest. Key: bytes32
@@ -106,6 +108,8 @@ side_tables! {
     DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson;
     /// Owner-set continuous sieve policy. Key: ().
     DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson;
+    /// Owner-set relationship-stewardship rules. Key: ().
+    DREAMER_STEWARDSHIP_RULES: VaultMeta b"settings:dreamer:stewardship:rules:v1" LegacyJson;
     /// Owner on/off dial for proactive Dreamer plugin suggestions. Key: ().
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().

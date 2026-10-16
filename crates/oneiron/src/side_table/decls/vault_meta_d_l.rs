@@ -181,6 +181,9 @@ side_tables! {
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
     DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw;
+    /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
+    /// value: u64be.
+    DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
     /// Per-round branch tournament evidence row (verdict, synthesis/critique/veto artifact ids) for
     /// one candidate. Key: u16be+string(run_id) + id16 + u16be + u8 + u16be+string(candidate_ref).
     DREAMER_TOURNAMENT_EVIDENCE: VaultMeta b"dreamer:tournament:v1:" Named;
