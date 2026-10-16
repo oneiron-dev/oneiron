@@ -139,6 +139,14 @@ impl dyn HeldOutReplayScorer + '_ {
         case: &HeldOutReplayCase<'_>,
         axis: &super::GoalAxisSpec,
     ) -> Result<f32> {
+        if axis.name == "coverage" {
+            if let Some(comparison) = self.coverage_floor() {
+                if axis.kind != super::GoalAxisKind::Floor {
+                    return Err(invalid("coverage is a floor axis"));
+                }
+                return comparison.score_case(case);
+            }
+        }
         self.score_named_axis(case, &axis.name)
     }
 

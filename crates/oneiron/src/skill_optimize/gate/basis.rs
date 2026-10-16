@@ -305,6 +305,15 @@ pub trait HeldOutReplayScorer {
         state: &serde_json::Value,
     ) -> Result<()>;
 
+    /// Pinned output coverage is measured by the engine, not judged by a model.
+    /// Only an archive-projected comparison can supply this floor; hosts cannot
+    /// override arbitrary axis scores with scalar callbacks.
+    fn coverage_floor(
+        &self,
+    ) -> Option<&crate::autoreason_campaign::coverage::CoverageFloorComparison> {
+        None
+    }
+
     /// Declarations only; the authenticated goal still owns the axis set.
     fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
         Ok(Vec::new())
