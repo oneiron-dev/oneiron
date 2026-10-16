@@ -86,7 +86,7 @@ pub struct CommitReceipt {
 
 /// Named deletion reasons (S7). There is deliberately NO bare bool delete on
 /// this surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SafeDeleteReason {
     /// Tombstone delete: local body scrubbed to a shell, no receipt.

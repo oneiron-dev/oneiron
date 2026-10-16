@@ -5,13 +5,14 @@ use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
     DREAMER_NARRATIVE_ROLE, RoleBackends, RoleCall, ScopeSummaryExecutor,
 };
+use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::{
-    BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationExecutor,
-    ConsolidationSink, DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, LlmBackend, ModelId,
-    Result, WriteActor,
+    BudgetGuard, CommitmentWakeExecutor, CommitmentWakeProposalPlanner, ConsolidationDecisions,
+    ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor,
+    DreamerClaimAuthoringStrategy, LlmBackend, ModelId, Result, WriteActor,
 };
 use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
@@ -108,12 +109,19 @@ pub struct ConsolidationExecutorFactory {
     /// factory must not offer.
     commitment_wake_planner: Option<Box<dyn CommitmentWakeProposalPlanner>>,
     weave_recipe_runtime: Option<Box<dyn WeaveRecipeRuntime>>,
+    /// OF-218. `None` by default, and the connector-event wrapper is
+    /// installed either way: with no responder a wake is delivered and
+    /// settled, never fed to the partition decoder.
+    connector_event_responder: Option<Box<dyn ConnectorEventResponder>>,
     /// The host's instruction for declared scope summaries. `None` leaves a
     /// declaration unable to run; the host refuses declarations up front.
     summary_instruction: Option<String>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     attachment: Option<Box<dyn PassAttachmentSource>>,
+    /// The host's ladder for the Dreamer's typed questions. `None` asks them
+    /// with the shipped wording, the verdict role's read the only rung.
+    decisions: Option<ConsolidationDecisions>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -140,11 +148,22 @@ impl ConsolidationExecutorFactory {
             parallel_sinks: Vec::new(),
             commitment_wake_planner: None,
             weave_recipe_runtime: None,
+            connector_event_responder: None,
             summary_instruction: None,
             wave_planner: None,
             wave_dispatch: None,
             attachment: None,
+            decisions: None,
         }
+    }
+
+    /// The host's ladder, dial, bands and wording for the Dreamer's typed
+    /// questions: how a conflict resolves, and which listed claim a candidate
+    /// corrects.
+    #[must_use]
+    pub fn with_decisions(mut self, decisions: ConsolidationDecisions) -> Self {
+        self.decisions = Some(decisions);
+        self
     }
 
     /// Opts into a pass-scoped host attachment (the server's voice host is
@@ -212,6 +231,17 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_weave_recipe_runtime(mut self, runtime: Box<dyn WeaveRecipeRuntime>) -> Self {
         self.weave_recipe_runtime = Some(runtime);
+        self
+    }
+
+    /// Runs the target agent on each connector wake and sends its reply
+    /// through the ordinary outbound pipeline (OF-218).
+    #[must_use]
+    pub fn with_connector_event_responder(
+        mut self,
+        responder: Box<dyn ConnectorEventResponder>,
+    ) -> Self {
+        self.connector_event_responder = Some(responder);
         self
     }
 
@@ -283,6 +313,10 @@ impl ConsolidationExecutorFactory {
             let runtime: &mut dyn WeaveRecipeRuntime = runtime.as_mut();
             runtime
         });
+        let mut responder = self.connector_event_responder.as_mut().map(|responder| {
+            let responder: &mut dyn ConnectorEventResponder = responder.as_mut();
+            responder
+        });
         let narrative = RoleCall::resolve(
             &self.roles,
             DREAMER_NARRATIVE_ROLE,
@@ -291,6 +325,10 @@ impl ConsolidationExecutorFactory {
             &self.binding,
             self.extraction_egress.as_deref(),
         );
+        let decisions = match &self.decisions {
+            Some(decisions) => decisions.clone(),
+            None => ConsolidationDecisions::shipped()?,
+        };
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {
@@ -306,6 +344,7 @@ impl ConsolidationExecutorFactory {
                 roles: self.roles.clone(),
                 sink: sink.as_mut(),
                 scope: None,
+                decisions: decisions.clone(),
             };
             // Only the first worker admits non-consolidation priority work.
             let inner = CommitmentWakeExecutor::new(inner, planner.take(), self.actor)?;
@@ -321,19 +360,23 @@ impl ConsolidationExecutorFactory {
                 },
                 self.summary_instruction.as_deref(),
             );
-            executors.push(WeaveRecipeExecutor {
+            let inner = WeaveRecipeExecutor {
                 inner,
                 runtime: runtime.take(),
-            });
+            };
+            executors.push(ConnectorEventExecutor::new(inner, responder.take()));
         }
         Ok(executors)
     }
 }
 
 impl PassExecutorFactory for ConsolidationExecutorFactory {
-    type Exec<'p> = WeaveRecipeExecutor<
-        ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
-        Option<&'p mut dyn WeaveRecipeRuntime>,
+    type Exec<'p> = ConnectorEventExecutor<
+        'p,
+        WeaveRecipeExecutor<
+            ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
+            Option<&'p mut dyn WeaveRecipeRuntime>,
+        >,
     >;
 
     fn executor<'p>(&'p mut self, guard: &'p BudgetGuard) -> Result<Self::Exec<'p>> {

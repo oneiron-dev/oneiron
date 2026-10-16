@@ -1,32 +1,22 @@
-//! Whole-vault export uses the ContextPack format writers without retrieval
-//! projection, timestamp normalization, truncation, or token budgets.
-use serde_json::Value;
-
+//! Whole-vault export: the snapshot becomes the typed document, the document
+//! passes the credential-nulling transform, and the nulled value is cut into
+//! the archive (OF-222). No retrieval projection, truncation or token budget.
 use super::credential_nulling::null_document_credentials;
 use super::export_value::{ExportBody, ExportValue};
-use super::markdown_plaintext_format::{write_markdown_groups, write_plaintext_groups};
-use super::pack_entry::{PreparedEntity, PreparedEntitySource};
-use super::toon_format::encode_toon_section;
-use super::types::GroupKey;
-use super::yaml_format::write_yaml_groups;
 use crate::batch::export::ExportSnapshot;
 use crate::batch::export::{
     ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportResultBody, ExportRun,
-    ExportRunOutput, ExportRunResults, ExportSourceVault, WHOLE_VAULT_DOCUMENT_VERSION,
-    WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
+    ExportRunOutput, ExportRunResults, ExportSourceVault, VAULT_ARCHIVE_FORMAT,
+    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
 };
-use crate::context_pack::PackFormat;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 
-pub(crate) fn serialize_vault_snapshot(
-    mut snapshot: ExportSnapshot,
-    format: PackFormat,
-) -> Result<WholeVaultExport> {
+pub(crate) fn serialize_vault_snapshot(mut snapshot: ExportSnapshot) -> Result<WholeVaultExport> {
     let storage = snapshot.storage.with_serializer_nulling();
     let manifest = WholeVaultDocumentManifest {
         manifest_version: WHOLE_VAULT_DOCUMENT_VERSION,
-        format: format_name(format).to_owned(),
+        format: VAULT_ARCHIVE_FORMAT.to_owned(),
         serializer: storage.serializer().clone(),
         secrets_nulled: true,
         source_vault: ExportSourceVault {
@@ -40,6 +30,10 @@ pub(crate) fn serialize_vault_snapshot(
         source_boundaries: vec![
             crate::batch::export::ExportSourceBoundary::BuiltinAdapterCodeNotStored,
         ],
+        records: Vec::new(),
+        files: Vec::new(),
+        diary_holds: snapshot.diary_holds,
+        secrets_included: snapshot.secrets_included,
     };
     let mut document = WholeVaultDocument {
         manifest,
@@ -144,10 +138,18 @@ pub(crate) fn serialize_vault_snapshot(
         crate::agent_def::KnowledgeFormat::CURRENT,
     )?;
     document.refresh_omissions()?;
-    let bytes = encode_document(&document, format)?;
+    let value = serde_json::to_value(&document)
+        .map_err(|_| Error::InvariantViolation("whole-vault document serialization failed"))?;
+    // This second pass covers descriptors and manifest strings too. Body keys
+    // and binary values were already inspected before the typed-tree encoding.
+    let (bytes, manifest) = super::vault_archive::write_vault_archive(
+        null_document_credentials(&value),
+        &snapshot.secrets,
+    )?;
     Ok(WholeVaultExport {
         bytes,
-        manifest: document.manifest,
+        manifest,
+        diary_reads: snapshot.diary_reads,
     })
 }
 
@@ -207,78 +209,4 @@ fn export_run_results(
             })
             .collect(),
     }
-}
-
-fn format_name(format: PackFormat) -> &'static str {
-    match format {
-        PackFormat::Json => "json",
-        PackFormat::Yaml => "yaml",
-        PackFormat::Toon => "toon",
-        PackFormat::Markdown => "markdown",
-        PackFormat::Plaintext => "plaintext",
-        PackFormat::OpenaiCompat => "openai-compat",
-        PackFormat::AnthropicMessages => "anthropic-messages",
-        PackFormat::Gemini => "gemini",
-    }
-}
-
-fn encode_document(document: &WholeVaultDocument, format: PackFormat) -> Result<Vec<u8>> {
-    let value = serde_json::to_value(document)
-        .map_err(|_| Error::InvariantViolation("whole-vault document serialization failed"))?;
-    // This second pass covers descriptors and manifest strings too. Body keys
-    // and binary values were already inspected before the typed-tree encoding.
-    let value = null_document_credentials(&value);
-    if format == PackFormat::Json {
-        return serde_json::to_vec(&value)
-            .map_err(|_| Error::InvariantViolation("whole-vault JSON serialization failed"));
-    }
-    let mut groups = Vec::new();
-    for name in [
-        "manifest",
-        "evidence_ledger",
-        "claims",
-        "packs",
-        "skills",
-        "agent_packs",
-        "derivation_envelopes",
-        "run_results",
-    ] {
-        let content = value.get(name).cloned().unwrap_or(Value::Null);
-        // One document-section row preserves empty sections in every format.
-        // Nested values go through the same established writers as ContextPack.
-        let row = PreparedEntity {
-            entity_type: 0,
-            score: 0.0,
-            critical: false,
-            source: PreparedEntitySource::Result,
-            source_id: [0; 16],
-            id: name.to_owned(),
-            fields: vec![("entries".to_owned(), content)],
-        };
-        groups.push((GroupKey::ExportSection(name), vec![row]));
-    }
-    // Provider wire formats have no whole-vault document shape; the export
-    // manifest pins one of the five document formats above.
-    if matches!(
-        format,
-        PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini
-    ) {
-        return Err(Error::InvalidConfig(
-            "whole-vault export does not support provider wire formats".to_owned(),
-        ));
-    }
-    let mut out = String::new();
-    match format {
-        PackFormat::Json => unreachable!(),
-        PackFormat::Yaml => write_yaml_groups(&mut out, &groups, 0),
-        PackFormat::Toon => {
-            out = encode_toon_section(&groups, &mut super::handles::Handles::default());
-        }
-        PackFormat::Markdown => write_markdown_groups(&mut out, &groups, "##"),
-        PackFormat::Plaintext => write_plaintext_groups(&mut out, &groups),
-        PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini => {
-            unreachable!("provider formats refused above");
-        }
-    }
-    Ok(out.into_bytes())
 }

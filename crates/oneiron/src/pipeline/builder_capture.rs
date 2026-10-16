@@ -59,6 +59,16 @@ impl PipelineBuilder<'_> {
         self.retrieval_state = Some(state);
         self
     }
+    /// Enables the bounded OF-092 policy for this run. Set `bandit_enabled`
+    /// false for deterministic replay. Learned tiers never change read authority.
+    pub fn retrieval_policy(
+        mut self,
+        options: crate::pipeline::retrieval_policy::RetrievalPolicyOptions,
+    ) -> Self {
+        self.retrieval_policy = Some(options);
+        self
+    }
+
     pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
         self.retrieval_turn = Some(turn);
         self

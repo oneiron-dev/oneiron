@@ -17,6 +17,9 @@ use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 
+/// The most WORLDS rows one keyframe renders, as the HTTP board's.
+const MCP_BOARD_WORLDS_CAP: usize = 16;
+
 /// How one result relates to this connector's queued STREAM state.
 #[derive(Debug)]
 pub(super) enum McpCarrierPolicy {
@@ -336,11 +339,21 @@ fn mcp_board_sections(
             .overflow
             .is_none_or(|overflow| overflow.source_exhausted),
     };
-    let agents = oneiron::context_board::render_agents_section(&[], &[]);
-    let [tasks_section, agents_section] =
-        oneiron::context_board::assemble_task_agent_sections(&tasks, &agents)
-            .map_err(mcp_board_frame_error)?;
-    let mut sections = vec![verb_section, tasks_section, agents_section];
+    let worlds_section = mcp_worlds_section(server, actor, served)?;
+    let tasks_section = oneiron::context_board::assemble_tasks_section(&tasks, Vec::new())
+        .map_err(mcp_board_frame_error)?;
+    // AGENTS: the actor's own live spawns. They are actor-wide, bound to no
+    // world or facet, so a narrowed connector reads none of them.
+    let children = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
+        Vec::new()
+    } else {
+        oneiron::context_board::child_presence_for_actor(&server.vault, actor.actor_ref, None)
+            .map_err(|error| mcp_engine_error("board agents failed", error))?
+    };
+    let agents = oneiron::context_board::render_agents_section(&children, &[]);
+    let agents_section =
+        oneiron::context_board::assemble_agents_section(&agents).map_err(mcp_board_frame_error)?;
+    let mut sections = vec![verb_section, worlds_section, tasks_section, agents_section];
     let packs = mcp_visible_pack_inventory(server, actor)?;
     let rows: Vec<String> = packs
         .iter()
@@ -367,6 +380,34 @@ fn mcp_board_sections(
     );
     sections.extend(mcp_pack_sections(server, actor, served)?);
     Ok((sections, omissions))
+}
+
+/// The board's WORLDS: the tiers the actor's planner reads, over the WORLD
+/// bodies this credential's read admits; a world-narrowed connector sees its
+/// own world alone.
+fn mcp_worlds_section(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<oneiron::context_board::BoardSection, McpGatewayError> {
+    let read = mcp_scoped_read(&server.vault, actor)?;
+    let authority = server
+        .vault
+        .board_world_authority(Some(actor.actor_ref), None)
+        .map_err(|error| mcp_engine_error("board world authority failed", error))?;
+    let allowed: Vec<oneiron::EntityId> = authority
+        .allowed_set
+        .worlds()
+        .iter()
+        .copied()
+        .filter(|world| actor.scope.world_ref.is_none_or(|scoped| scoped == *world))
+        .collect();
+    let presences = oneiron::context_board::WorldPresence::read_admitted(&read, &allowed)
+        .map_err(|error| mcp_engine_error("board worlds failed", error))?;
+    served.extend(presences.iter().map(|world| world.id));
+    oneiron::context_board::WorldsSection::project(&presences, &authority, MCP_BOARD_WORLDS_CAP)
+        .board_section()
+        .map_err(mcp_board_frame_error)
 }
 
 /// Only the implemented, read-only claim family can enter this host's board.

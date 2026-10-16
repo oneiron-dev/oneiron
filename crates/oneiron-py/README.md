@@ -99,7 +99,7 @@ created for the actor you want to act as instead.
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, ...)` | `MemoryPack` |
 | `handle.vault.receipts(limit=100)` | `list[FacadeReceipt]` |
-| `handle.vault.export(format=None)` | the live vault, serialized in one of the pack formats |
+| `handle.vault.export(format=None)` | the whole vault as one re-importable archive: a ZIP (JSONL per record kind, files by BLAKE3, manifest), base64 in `archive` |
 | `handle.cancel(task_ref)` | `TaskCancelReceipt` |
 | `handle.describe(task_ref=None)` | `TaskDescription`: one task card, or the whole TASKS section |
 | `handle.can(request)` | `TaskAskPreflight` |

@@ -809,7 +809,9 @@ keeps it:
 - **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
   wait of 15 minutes or more) is parked until the reset it names.
 - **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
-  "billing") is parked until the owner tops up or clears it.
+  "billing", Anthropic's `billing_error`) is parked until the owner tops up
+  or clears it. The same words in an error inside an open stream read the
+  same way.
 
 While only rests stop a call, it waits for the first offer back and tries the
 chain again, until its waits pass the vault's longest wait in all (a caller
@@ -817,12 +819,28 @@ with its own deadline passes its own budget). A call whose every offer is
 parked on credit fails `quota_spent`; one that ran out of wait fails
 `rate_limited` with the earliest reset.
 
-A spent window or spent credit leaves the owner a question in
-`GET /v1/ai/status` (`quota_questions`: the provider, model, route, what was
-spent, the reset if any, and the choices). Answer it with
-`POST /v1/ai/quota/{id}` `{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait"}`:
-`top_up` and `pay_as_you_go` put the offer back in rotation now; `wait` and
-`add_account` close the question and leave the offer parked until its reset.
+Once every rung of a call has parked, each offer parked on a spent window or
+spent credit leaves the owner a question in `GET /v1/ai/status`
+(`quota_questions`: the provider, model, route, what was spent, the reset if
+any, the choices, and `fallbacks`). A call that a later rung serves asks
+nothing. `fallbacks` lists the chat models on other providers that still have
+usage left, and while it is non-empty the choices include `use_fallback`.
+Answer with `POST /v1/ai/quota/{id}`
+`{"choice": "top_up" | "pay_as_you_go" | "add_account" | "wait" | "use_fallback", "fallback": "<model>"}`:
+
+- `top_up` and `pay_as_you_go` put the offer back in rotation now.
+- `wait` and `add_account` close the question and leave the offer parked
+  until its reset.
+- `use_fallback` names one of `fallbacks` (its engine id). While the offer is
+  parked, a call whose every rung has parked goes to that model instead,
+  whenever the model's own offer is in rotation and the call's world may go
+  where it runs. Setting it is the permission, paid models included. Once the
+  offer is back, calls use it again.
+
+On raw `/v1/llm/stream`, a stream that fails after it has started ends with
+one last line carrying the same typed body as a refusal before it:
+`{"error": {"code": "quota_spent", "llm": …, "quota": {…}}}` when credit or a
+window runs out mid-stream.
 
 ## 12. Batch GPU pods (`[gpu]`)
 
@@ -872,8 +890,10 @@ bind:
 - **Escalation**: the house model's decision read (section 9), when its
   recipe names the paired question. The recipe's person question becomes the
   ladder's "ask up?" question, and `person_threshold` becomes its row.
-- **The local head and the big model**: no typed provider fills these yet,
-  so the ladder steps past them.
+- **Big**: the big model, through the seat `[models.decisions.big]` names
+  (below).
+- **The local head**: no typed provider fills it yet, so the ladder steps
+  past it.
 - **The owner**: the last rung is a durable queue. Each ask waits in the
   vault until you answer it (owner-actions.md, "Answer the decision
   ladder's asks").
@@ -902,7 +922,23 @@ model = "systemone-head"
 version = "2026-10-01"
 remote_opt_in = false   # a vault that is not hosted sends unit state only with this set
 budget_units = 100000   # its own meter; models.raw_budget_units when unset
+
+[models.decisions.big]
+role = "generative_reasoner"   # the seat whose model answers (the default)
+version = "2026-10"            # the revision the rung's pin names
+wording = "You answer one typed question about the state you are given."
+reply = "json"                 # or "lines"
+budget_units = 50000           # its own meter; models.raw_budget_units when unset
 ```
+
+The Big rung asks each question as one model call on that seat. The call is
+routed against the vault's live model policy, like a chat turn, and sent under
+its own run on the rung's meter. `wording` is the system message. The question,
+what it takes and the state follow as the user message, with the reply format:
+one JSON object `{"answer", "probability"}`, or two lines `answer:` and
+`probability:`. A reply that names nothing the question takes, or no
+probability from 0 to 1, abstains, and the ladder moves on. The rung takes
+noul, choice and score questions, not boxes.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The

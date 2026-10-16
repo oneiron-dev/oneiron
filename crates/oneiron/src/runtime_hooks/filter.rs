@@ -17,15 +17,20 @@ pub(super) fn fact_matches(
     claim: Option<&ClaimBody>,
     actor: HookActorClass,
 ) -> bool {
-    verbs_match(&selector.verbs, kind, claim.map(|body| body.predicate.as_str()))
-        && (selector.actors.is_empty() || selector.actors.contains(&actor))
+    verbs_match(
+        &selector.verbs,
+        kind,
+        claim.map(|body| body.predicate.as_str()),
+    ) && (selector.actors.is_empty() || selector.actors.contains(&actor))
         && scope_matches(selector.scope.as_deref(), claim)
 }
 
 /// Whether any selector entry could take a fact of `kind`, before anything
 /// is read.
 pub(super) fn verbs_admit_kind(verbs: &[String], kind: FactKind) -> bool {
-    verbs.iter().any(|verb| kind_admits(entry_parts(verb).0, kind))
+    verbs
+        .iter()
+        .any(|verb| kind_admits(entry_parts(verb).0, kind))
 }
 
 /// A selector entry is `<fact kind>:<predicate glob>`, or a bare predicate
@@ -105,7 +110,9 @@ pub(super) fn glob_match(pattern: &str, text: &str) -> bool {
             return false;
         }
     }
-    pattern.get(p..).is_some_and(|rest| rest.iter().all(|byte| *byte == b'*'))
+    pattern
+        .get(p..)
+        .is_some_and(|rest| rest.iter().all(|byte| *byte == b'*'))
 }
 
 /// The class of the actor a changelog row or a settlement names: the vault
