@@ -547,6 +547,31 @@ same version applies none, and no rewrite lands on a predicate the update drops.
 `GET /v1/owner/pack-drift` lists what the ladder did, query by query;
 a paused query shows its error on the query itself.
 
+## The model catalog
+
+The model catalog comes from the first-party hub as the knowledge pack `oneiron.models`
+(`packs/model-catalog` in oneiron-hub). Installing it puts its models in the vault's model
+registry. From then on `/v1/llm/generate` and `/v1/llm/stream` admit a call that names one of
+them. A model in `[models]` needs no catalog row.
+
+- `GET /v1/owner/model-catalog` shows the catalog ref's sync policy and pin, the last revision
+  fetched (`latest_seen`), the last one installed (`latest_trusted`), and the installed pack's
+  receipt.
+- `PUT /v1/owner/model-catalog` with `{"sync_policy": "...", "pin": "..."}` moves the policy.
+  `pinned-commit` takes a full commit id. `pinned-ref` takes a tag, and each sync follows the
+  tag to the commit it names then. `content-hash-frozen` takes one content hash. A sync whose
+  bytes hash otherwise fails, and an installed catalog with another hash stops counting.
+  Nothing is fetched until the next sync. Until you set a policy, the ref is pinned to the
+  engine's released hub commit.
+- `POST /v1/owner/model-catalog/sync` fetches the pack at that policy, scans the bytes, and
+  installs them as a knowledge-only pack: nothing runs and nothing is granted. The reply's
+  `outcome` is `installed`, `candidate` or `blocked` (with its `reason`). On install, a model
+  the previous pack shipped and nobody edited takes the new row and keeps its scores. A row the
+  host edited stays as it is.
+
+A catalog's authority is its content hash and that hash's scan evidence. The commit only says
+where the bytes come from.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of
