@@ -65,6 +65,7 @@ mod machine_write;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod owner_project_slip;
 mod owner_roots;
 mod pinned_root;
 mod readonly_fold;
