@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 15] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 16] = [
     "schema_version",
     "target",
     "agent_def",
@@ -43,6 +43,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 15] = [
     "spawn_intent",
     "scope",
     "healer_case",
+    "task_type_ref",
     "budget",
     "launch",
     "origin_conversation",
@@ -67,10 +68,11 @@ pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
 pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
 pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
-pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[12];
-pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_TASK_TYPE_REF: &str = AGENT_DISPATCH_INPUT_KEYS[12];
+pub(super) const KEY_BUDGET: &str = AGENT_DISPATCH_INPUT_KEYS[13];
+pub(super) const KEY_LAUNCH: &str = AGENT_DISPATCH_INPUT_KEYS[14];
 /// OF-221: the conversation a root dispatch's host stamped as its origin.
-pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[14];
+pub(super) const KEY_ORIGIN_CONVERSATION: &str = AGENT_DISPATCH_INPUT_KEYS[15];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -136,6 +138,10 @@ pub struct AgentDispatchInput {
     /// Exact branch-resource restriction, never a replacement for live authority.
     /// An absent value grants no branch-resource access.
     pub scope: Option<crate::llm::Scope>,
+    /// OF-543 ONE TASK TYPE stamp, placed once at spawn. Required: every
+    /// spawn carries a `typeRef`, and an unsure placement is the root —
+    /// never an absent/untyped spawn.
+    pub type_ref: crate::task_type::TaskTypeRef,
     /// The spawn's requested `budget` (OF-532): a hard carve under the parent's
     /// cap, in the parent scope's unit.
     pub budget: Option<u64>,
@@ -148,7 +154,7 @@ pub struct AgentDispatchInput {
 impl AgentDispatchInput {
     /// The pre-ONE-1709 payload shape: no spawn context, no depth budget.
     #[must_use]
-    pub const fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
+    pub fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
         Self {
             target,
             definition,
@@ -159,6 +165,7 @@ impl AgentDispatchInput {
             project_ref: None,
             spawn_intent: None,
             scope: None,
+            type_ref: crate::task_type::TaskTypeRef::seeded_root(),
             budget: None,
             launch: None,
         }
@@ -182,6 +189,10 @@ pub struct AgentSpawnContext {
     /// None inherits the stored parent's resource restriction. A root with
     /// None has deny-all resource scope; ordinary non-resource calls still run.
     pub scope: Option<crate::llm::Scope>,
+    /// OF-543: the placed task type, when the spawner (or the placement
+    /// skill it routed) already placed this spawn. None means dispatch
+    /// places it as the root — the unsure answer — never untyped.
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The canon spawn table's `budget` (optional; set = pin): a hard carve
     /// under the parent's cap the child can never pass. Unset, the child holds
     /// its calibrated expected spend and may top up to the ancestor's cap.
@@ -217,6 +228,12 @@ impl AgentSpawnContext {
 
     pub const fn with_depth_remaining(mut self, depth_remaining: u8) -> Self {
         self.depth_remaining = Some(depth_remaining);
+        self
+    }
+
+    #[must_use]
+    pub fn with_type_ref(mut self, type_ref: crate::task_type::TaskTypeRef) -> Self {
+        self.type_ref = Some(type_ref);
         self
     }
 
@@ -538,7 +555,9 @@ impl SpawnNeed {
         if let Some(width) = &self.width
             && *width.value() == 0
         {
-            return Err(super::widen_record::invalid("spawn width must be at least 1"));
+            return Err(super::widen_record::invalid(
+                "spawn width must be at least 1",
+            ));
         }
         let weights = [
             self.model.as_ref().map(SpawnOverride::weight_runs),

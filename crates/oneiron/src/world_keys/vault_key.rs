@@ -245,7 +245,9 @@ impl CarriedVaultKey {
                         &UnlockSecret::Kek(Kek::from_bytes(*seed)),
                     );
                 }
-                Err(refused("this keystore holds no device wrap of the vault key"))
+                Err(refused(
+                    "this keystore holds no device wrap of the vault key",
+                ))
             }
             VaultKeyUnlock::Password(password) => {
                 let passphrase = Passphrase::new(password)
