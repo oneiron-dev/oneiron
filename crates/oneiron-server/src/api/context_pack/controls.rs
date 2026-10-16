@@ -2,7 +2,11 @@
 
 use super::super::default_limit;
 use super::resolve::{default_context_neighbors, default_true, resolved_context_pack_depth};
+use crate::error::ApiError;
 use crate::projection::View;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use oneiron::embed::InputKind;
 use serde::Deserialize;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -237,6 +241,85 @@ pub(crate) struct ContextPackReaderControls {
     pub(super) task_family: Option<String>,
 }
 
+/// A context pack's media query (OF-370): bytes the server embeds into one
+/// declared space through the `ai.embed` rung that space's id names.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "space": "local/clip-vit-b32@2024-01@own-server",
+    "mime": "image/png",
+    "bytes_b64": "iVBORw0KGgo="
+}))]
+pub(crate) struct ContextPackMediaQuery {
+    /// Declared embedding space id: an `ai.embed` rung id from
+    /// `GET /v1/ai/options`, then `@where`.
+    #[schema(example = "local/clip-vit-b32@2024-01@own-server")]
+    pub(super) space: String,
+    /// Media type of the bytes; it picks the space's query tower: `image/*`,
+    /// `audio/*`, or `text/*` (UTF-8).
+    #[schema(example = "image/png")]
+    pub(super) mime: String,
+    /// The bytes, standard base64, at most `[limits].retrieval_query_bytes`
+    /// as sent.
+    #[serde(alias = "bytesB64")]
+    #[schema(example = "iVBORw0KGgo=")]
+    pub(super) bytes_b64: String,
+}
+
+/// A media query as the pack embeds it: its space, the tower its MIME picks,
+/// and its decoded bytes.
+pub(crate) struct DecodedMediaQuery {
+    pub(super) space: String,
+    pub(super) kind: InputKind,
+    pub(super) mime: String,
+    pub(super) bytes: Vec<u8>,
+}
+
+impl ContextPackMediaQuery {
+    /// Decodes the query, refusing base64 past `max_bytes` before decoding it.
+    pub(super) fn decode(&self, max_bytes: usize) -> Result<DecodedMediaQuery, ApiError> {
+        if self.space.trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "media.space names a declared embedding space",
+                Some("media.space"),
+            ));
+        }
+        let mime = self.mime.trim().to_ascii_lowercase();
+        let Some(kind) = InputKind::for_media_type(&mime)
+            .or_else(|| mime.starts_with("text/").then_some(InputKind::Text))
+        else {
+            return Err(ApiError::bad_request(
+                "media.mime is image/*, audio/* or text/*",
+                Some("media.mime"),
+            ));
+        };
+        if self.bytes_b64.len() > max_bytes {
+            return Err(ApiError::bad_request(
+                format!(
+                    "media.bytes_b64 is {} bytes, past the {max_bytes} byte [limits].retrieval_query_bytes bound",
+                    self.bytes_b64.len()
+                ),
+                Some("media.bytes_b64"),
+            ));
+        }
+        let Some(bytes) = STANDARD
+            .decode(&self.bytes_b64)
+            .ok()
+            .filter(|bytes| !bytes.is_empty())
+        else {
+            return Err(ApiError::bad_request(
+                "media.bytes_b64 is nonempty standard base64",
+                Some("media.bytes_b64"),
+            ));
+        };
+        Ok(DecodedMediaQuery {
+            space: self.space.clone(),
+            kind,
+            mime,
+            bytes,
+        })
+    }
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -280,6 +363,11 @@ pub(crate) struct CoreContextPackRequest {
     #[serde(default, rename = "query_vector", alias = "queryVector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     pub(super) query_vector: Option<Vec<f32>>,
+    /// Optional media query (OF-370), embedded by the server into one
+    /// declared space and searched as one more ranked list beside `query`
+    /// and `query_vector`.
+    #[serde(default)]
+    pub(super) media: Option<ContextPackMediaQuery>,
     /// Maximum primary candidates to retrieve. A limit past 1,000 is served
     /// at 1,000 and the response's `limit_clamped` says so.
     #[serde(default = "default_limit")]
