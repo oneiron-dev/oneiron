@@ -8,7 +8,9 @@ use super::capabilities::CapabilityLane;
 use super::channels::{
     execute_temporal, scoped_vector_channel_limit, truncate_widened_channel_results_to_scope,
 };
-use super::filters::import_claim_gate_decisions_for_scores;
+use super::filters::{
+    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
+};
 use super::temporal_bound::{
     ReadableRows, execute_temporal_for_reader, scoped_temporal_channel_limit,
 };
@@ -39,26 +41,35 @@ impl PipelineBuilder<'_> {
         if let Some(error) = Error::invalid_vector_component(query) {
             return Err(error);
         }
-        let codebase_scope_active = self.has_codebase_scope_filter();
-        let corpus_scope_active = filters.corpus_scope != &CorpusScope::All;
-        // Fetch the indexed population, not a fixed overfetch factor: arbitrarily
-        // many excluded top hits must not hide an eligible lower hit.
-        let channel_limit = scoped_vector_channel_limit(
-            &self.read,
-            rtxn,
-            requested,
-            codebase_scope_active
-                || corpus_scope_active
-                || filters.candidate_filter.is_some()
-                || self.memory_category,
-        )?;
+        let narrowed = self.has_codebase_scope_filter()
+            || self.has_strict_text_scope_filter()
+            || filters.corpus_scope != &CorpusScope::All
+            || filters.candidate_filter.is_some()
+            || filters.device_local.is_some()
+            || self.memory_category;
+        // A narrowed run's scope decides inside the walk, so however many
+        // excluded rows rank above an eligible one, none takes its place; the
+        // walk is one bounded window, and a short page is the answer. Its
+        // caches are its own: a row the walk passes leaves no decision behind.
+        let memory = self.memory_category;
+        let probe = std::cell::RefCell::new((
+            EntityMetadataCache::default(),
+            claim_gate.fresh(filters.authority_filter.include_stale),
+        ));
+        let admits = |txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
+            let (metadata, gate) = &mut *probe.borrow_mut();
+            Ok(pipeline_candidate_matches_filters_and_gate(
+                &self.read, txn, id, filters, metadata, gate,
+            )? && (!memory || CapabilityLane::Memory.admits(&self.read, txn, id)?))
+        };
+        let admission: Option<&crate::hnsw::Admission<'_>> = narrowed.then_some(&admits);
         let mut scores = self.vault.scoped_vector_search_quality_in_txn(
             &self.read,
             rtxn,
             query,
-            channel_limit,
+            scoped_vector_channel_limit(requested, narrowed),
             self.skip_vector_rescore,
-            claim_gate.private_note_ids.as_deref(),
+            (claim_gate.private_note_ids.as_deref(), admission),
         )?;
         self.truncate_corpus_channel(
             &mut scores,
@@ -68,6 +79,7 @@ impl PipelineBuilder<'_> {
             false,
             (metadata_cache, claim_gate),
         )?;
+        scores.truncate(requested);
         Ok(scores)
     }
 

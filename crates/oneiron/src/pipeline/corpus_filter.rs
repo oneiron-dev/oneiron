@@ -40,6 +40,7 @@ impl CorpusFilter {
             relationship_filter: builder.relationship_filter,
             world_scope: &builder.world_scope,
             world_active_set: None,
+            stale_worlds: None,
             corpus_scope: &self.0,
             device_local: None,
             deadline: builder.deadline,

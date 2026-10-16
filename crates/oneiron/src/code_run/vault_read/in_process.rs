@@ -165,7 +165,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let (limit, limit_clamped) = crate::memory::caps::clamp_search_limit(request.limit);
         let candidate_limit = self
             .scoped_read
-            .search_candidate_limit(limit, query.is_some(), vector.is_some())
+            .search_candidate_limit(limit)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let mut builder = self
             .scoped_read

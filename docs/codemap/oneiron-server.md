@@ -95,16 +95,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/core/query.rs` | src | m | 15 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
 | `src/api/core/widen.rs` | src | s | 3 crate-vis | — | Host-only landing of a frozen widen proposal |
-| `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
+| `src/api/core/write_shape.rs` | src | m | 20 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
 | `src/api/esign.rs` | src | m | 2 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
-| `src/api/facade.rs` | src | m | 4 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 5 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
-| `src/api/facade/tests.rs` | test | XL | — | — | — |
+| `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
 | `src/api/feedback_inbox.rs` | src | s | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
 | `src/api/feedback_inbox/flood.rs` | src | s | 4 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
@@ -165,6 +165,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/search/deadline.rs` | src | s | 5 crate-vis | — | Raw search under a request's hard deadline (`deadlineMs`): the page reads on the blocking pool, and the door… |
 | `src/api/sessions.rs` | src | s | 4 crate-vis | — | Minimal session mode and ephemeral presence routes |
 | `src/api/surface_events.rs` | src | m | 15 crate-vis | — | Inbound SurfaceEvent handoff over `/v1/core` (OF-247 CID-6) |
+| `src/api/tests/agent_definition_doors.rs` | test | s | — | — | A `core:write` credential below owner grade turns no agent definition back on: over `POST /v1/core/batch` or… |
 | `src/api/tests/ai_chat.rs` | test | m | — | — | `/v1/ai`: a chat turn streams through the bus and the socket fanout and saves its terminal once; status and… |
 | `src/api/tests/asset_forms.rs` | test | s | — | — | OF-329's hydrate doors: a text-only agent that hydrates a generated image, on `/v1` core hydrate and on… |
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
@@ -279,7 +280,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/feedback.rs` | src | s | 2 struct · 2 fn · 1 const · 5 crate-vis | FeedbackConfig, FeedbackInboxConfig | The `[feedback]` section: where the owner's feedback goes (OF-420) |
 | `src/config/import.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | ImportConfig, ImportConfigOverride | The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import… |
 | `src/config/keystore.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 4 crate-vis | KeystoreBackend, KeystoreConfig | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b) |
-| `src/config/limits.rs` | src | s | 1 struct · 6 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
+| `src/config/limits.rs` | src | m | 1 struct · 6 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
 | `src/config/limits_tests.rs` | test | s | — | — | Resolution rows for the `[limits]` section |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 2 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
@@ -403,7 +404,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 6 crate-vis | — | MCP connector actor registry |
 | `src/mcp/oauth_client.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | AuthorizationResponse, ClientApplication, OAuthClientError, OAuthTokenCache, TokenCacheKey | Issuer-bound OAuth client state and pinned client metadata (ARCH-0028) |
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
-| `src/mcp/paging.rs` | src | m | 2 struct · 3 enum · 19 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
+| `src/mcp/paging.rs` | src | m | 3 struct · 3 enum · 22 fn · 1 const · 4 crate-vis | McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource, McpResultEnd, McpRetrievalHealth | MCP page budgets, cursors, snapshots, and canonical-JSON digests |
 | `src/mcp/qualification.rs` | src | s | 1 re-export | — | Public MCP qualification API, implemented at the vault boundary |
 | `src/mcp/quickjs_provider.rs` | src | s | 1 struct · 6 fn · 2 crate-vis | McpQuickJsProvider | Production MCP provider over the hash-pinned engine QuickJS component |
 | `src/mcp/registry.rs` | src | m | 1 struct · 21 fn · 3 crate-vis | McpConnectorActorRegistry | MCP connector actor registry: cursors, board epochs, and stream proxy |
