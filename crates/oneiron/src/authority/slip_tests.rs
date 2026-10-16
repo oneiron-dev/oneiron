@@ -467,13 +467,15 @@ fn consuming_child_spends_single_use_ancestor_and_siblings() {
 #[test]
 fn same_sequence_parent_revoke_invalidates_descendant_slip_without_quarantine() {
     let (_dir, vault, issuer, root) = fixture();
-    let root_mint_hash =
-        vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
     let mut claims = root.claims.clone();
     claims.slip_id = [71; 32];
     claims.parent_id = Some(root.claims.slip_id);
     let child = vault.mint_capability_slip(&issuer, claims).unwrap();
     let child_hash = vault.authority_fold().unwrap().slips.mints[&child.claims.slip_id].entry_hash;
+    let child_entry = vault
+        .get_authority_log_entry(&authority_log_entity_id_from_hash(&child_hash).unwrap())
+        .unwrap()
+        .unwrap();
     assert!(verify(&vault, &issuer, &child).is_ok());
 
     // This revocation and the child mint share a parent, signer, and sequence.
@@ -487,8 +489,8 @@ fn same_sequence_parent_revoke_invalidates_descendant_slip_without_quarantine() 
     let revoke = issuer
         .sign_entry(
             Some(root.claims.vault_id),
-            2,
-            vec![root_mint_hash],
+            child_entry.seq,
+            child_entry.parent_hashes,
             AuthorityOp::SlipRevoke {
                 slip_id: root.claims.slip_id,
             },
@@ -1350,7 +1352,9 @@ fn offline_one_shot_and_floor_caveats_are_checked_at_verification() {
 #[test]
 fn rejected_mint_transaction_leaves_append_frontier_unchanged_after_reopen() {
     let (dir, vault, issuer, root) = fixture();
-    let parent = vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
+    let before = vault.authority_fold().unwrap();
+    let parent = *before.append_heads.iter().next().unwrap();
+    assert_eq!(before.append_heads.len(), 1);
     let mut rejected = root.claims.clone();
     rejected.slip_id = [80; 32];
     rejected.parent_id = Some([81; 32]);
@@ -1366,7 +1370,7 @@ fn rejected_mint_transaction_leaves_append_frontier_unchanged_after_reopen() {
         .get_authority_log_entry(&authority_log_entity_id_from_hash(&hash).unwrap())
         .unwrap()
         .unwrap();
-    assert_eq!(entry.seq, 2);
+    assert_eq!(entry.seq, before.append_sequences[&issuer.public_key()] + 1);
     assert_eq!(entry.parent_hashes, vec![parent]);
     assert!(verify(&vault, &issuer, &slip).is_ok());
 }

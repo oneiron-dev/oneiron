@@ -6,8 +6,16 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
     seed(&source, writer().entity_ref(), ENTITY_TYPE_PERSON);
     let actor = seed(&source, EntityId::now(), ENTITY_TYPE_AGENT_DEF);
     let person = seed(&source, EntityId::now(), ENTITY_TYPE_PERSON);
-    let anchor = anchor_actor_subject(&source, actor, person, writer(), 100)?;
-    let substrate = set_person_substrate(&source, person, PersonSubstrate::Model, writer(), 100)?;
+    // The source has no authority root, so its owner is its embedded owner
+    // (H149).
+    let author = WriteActor::new(
+        source
+            .ensure_embedded_owner_actor()
+            .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?,
+        EdgeActorClass::Human,
+    );
+    let anchor = anchor_actor_subject(&source, actor, person, author, 100)?;
+    let substrate = set_person_substrate(&source, person, PersonSubstrate::Model, author, 100)?;
     let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     let (_target_dir, target) = test_vault();
     let imported = target.import_whole_vault_json(export.bytes())?;
