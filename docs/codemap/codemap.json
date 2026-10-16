@@ -38615,7 +38615,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -38653,7 +38653,7 @@
      "path": "src/sync/window/reverse.rs",
      "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -42186,6 +42186,36 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpenedSealedContent",
+      "SealedContentBinding",
+      "SealedContentId",
+      "SealedContentKind",
+      "SealedResidenceContent"
+     ],
+     "path": "src/world_keys/content.rs",
+     "purpose": "Sealed world content (OF-570 (d), world privacy fix 8): one window of a private world, sealed under a key…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 14,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/content_window.rs",
+     "purpose": "The window side of sealed world content: what a reader seals from a private world's window, and how a reader…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -42222,7 +42252,7 @@
      "surface": {
       "crate-vis": 8,
       "fn": 3,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 2
      }
     },
@@ -42236,7 +42266,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -44677,7 +44707,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 16,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -44693,7 +44723,7 @@
    },
    "over_bar": 63,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2681,
+   "source_files": 2683,
    "test_files": 903
   },
   "oneiron-android": {
