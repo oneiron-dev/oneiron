@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::super::erase::sweep_extras;
+use super::super::erase::{stage_sweep_refs_in_txn, sweep_extras};
 use super::super::gate::{
     GatedDeletion, reverify_deletion_authority_before_publication,
     reverify_deletion_authority_when_unpublished,
@@ -537,6 +537,7 @@ impl Vault {
                     id,
                     &captured.subject,
                 )?);
+                stage_sweep_refs_in_txn(self, &mut wtxn, id, captured)?;
             }
             // fix-leg 9 P1: on the NON-PUBLISHING path this txn's re-fold made
             // it the linearization point, so the deletion's propagation intent

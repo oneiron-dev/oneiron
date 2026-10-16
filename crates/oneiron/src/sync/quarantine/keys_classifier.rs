@@ -155,6 +155,10 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
+        // F25 H32: artifact bodies are validated on every replicated put, so a
+        // malformed one is peer bytes; left unclassified it aborted the replay.
+        | ErrorKind::InvalidCodeArtifactBody
+        | ErrorKind::InvalidBlobArtifactBody
         // CONNECTOR_KEY authority is local to the host: a peer cannot
         // introduce, replace or clear its approved manifest through replay.
         | ErrorKind::InvalidConnectorKeyBody
