@@ -52296,7 +52296,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -52310,7 +52310,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/client_address_tests.rs",
@@ -52384,7 +52384,7 @@
      "path": "src/api/booking/public.rs",
      "purpose": "Anonymous, published-capability-only booking transport",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -52447,6 +52447,26 @@
      "notable": [],
      "path": "src/api/booking/transport.rs",
      "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/booking/turn.rs",
+     "purpose": "Rule five at the owner's booking windows: authenticated work past one waits for it to open and is never…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/booking/turn_tests.rs",
+     "purpose": "Rule five at the owner's booking windows: an authenticated caller past one waits for it to open and is…",
      "surface": {
       "crate-vis": 1
      }
@@ -57528,7 +57548,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 195,
+     "files": 197,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57768,8 +57788,8 @@
    },
    "over_bar": 13,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 354,
-   "test_files": 168
+   "source_files": 355,
+   "test_files": 169
   },
   "oneiron-spawn": {
    "files": [
