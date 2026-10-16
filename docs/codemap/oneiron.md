@@ -104,8 +104,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/tests/anchor_scenarios.rs` | test | L | — | — | Comment-anchor scenarios across the three office locators (owner ask 2026-10-16; the cases come from tdoc's… |
 | `src/anchored_annotation/threads.rs` | src | m | 8 fn · 7 crate-vis | — | Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort |
 | `src/artifact_hosting/access.rs` | src | m | 1 struct · 1 enum · 2 fn | ArtifactLinkCapability, ArtifactServeTier | Serve-time authority for live artifact pointers |
-| `src/artifact_hosting/mod.rs` | src | L | 5 struct · 4 enum · 18 fn · 1 const · 1 re-export · 3 crate-vis | ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef +1 | Local artifact hosting over pinned code snapshots and blob exports |
+| `src/artifact_hosting/mod.rs` | src | L | 5 struct · 4 enum · 18 fn · 1 const · 2 re-export · 3 crate-vis | ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef +1 | Local artifact hosting over pinned code snapshots and blob exports |
 | `src/artifact_hosting/pointer_rows.rs` | src | s | 7 crate-vis | — | — |
+| `src/artifact_hosting/publication_sync.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 crate-vis | ArtifactPublicationFrame, ArtifactPublicationOutcome | Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync… |
 | `src/artifact_hosting/publish.rs` | src | m | 5 crate-vis | — | The OF-327 artifact-publish dispatch door and its share-style receipt projection |
 | `src/artifact_hosting/tests.rs` | test | L | — | — | — |
 | `src/attempt_queue/cancel/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | ONE-1896 two-rung graceful-cancel and LANDING protocol |
@@ -423,7 +424,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/store_keys.rs` | src | s | 2 const · 10 crate-vis | — | Blob vault_meta key builders and shared MessagePack scalar helpers |
 | `src/blob_artifact/tests.rs` | test | m | — | — | — |
 | `src/blob_artifact/version_codec.rs` | src | s | 2 crate-vis | — | Strict MessagePack framing for blob version records |
-| `src/blob_artifact/versions.rs` | src | m | 3 struct · 15 fn · 1 const · 22 crate-vis | BlobArtifactVersion, BlobBytes, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
+| `src/blob_artifact/versions.rs` | src | m | 3 struct · 15 fn · 1 const · 24 crate-vis | BlobArtifactVersion, BlobBytes, CalcEngineStamp | Blob version chain: version record codec and the Vault version-chain API |
 | `src/bm25/codec.rs` | src | m | 19 crate-vis | — | Binary codecs, stat/total-docs accessors, corruption constructors, key validation |
 | `src/bm25/config.rs` | src | s | 1 enum · 9 crate-vis | Bm25Formula | Rank-profile config: field/channel params, formula, recency, defaults |
 | `src/bm25/diagnostics.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot | Per-vault BM25 integrity diagnostics (counters, snapshot, record) |
@@ -881,7 +882,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codebase/serve_lookup.rs` | src | s | 2 crate-vis | — | Transaction-composable lookup of the exact snapshot behind a served fork |
 | `src/codebase/snapshot.rs` | src | m | 3 struct · 9 fn · 2 type · 8 const · 3 crate-vis | CodebaseFileEntry, CodebaseSnapshot, CodebaseSnapshotMount | Codebase snapshot value type, MessagePack codec, fork/scope hashing, and manifest validation |
 | `src/codebase/store/index_rows.rs` | src | s | 5 crate-vis | — | — |
-| `src/codebase/store/mod.rs` | src | m | 9 fn · 11 crate-vis | — | Vault persistence for codebase snapshots: ingest methods, transactions, and index keys |
+| `src/codebase/store/mod.rs` | src | m | 9 fn · 12 crate-vis | — | Vault persistence for codebase snapshots: ingest methods, transactions, and index keys |
 | `src/codebase/tests.rs` | test | XL | — | — | — |
 | `src/comm/claims.rs` | src | m | 2 struct · 5 enum · 8 fn · 1 type · 7 const · 10 crate-vis | ClaimClassDescriptorRow, CommClaim, CommClaimValue, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Claim family predicates, key vocabulary, typed values, body build/parse/validate |
 | `src/comm/consent.rs` | src | m | 12 fn · 14 crate-vis | — | Human consent gates, send overrides and standing opt-out folds |
@@ -3009,6 +3010,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/chunks.rs` | src | m | 1 struct · 1 enum · 6 fn · 3 const · 1 re-export · 2 crate-vis | ChunkSyncRequest, ChunkSyncResponse | Authenticated manifest-scoped have/want exchange |
 | `src/sync/chunks/download.rs` | src | s | 1 struct · 4 fn | ChunkDownload | One bounded in-flight have/want transfer, driven by real socket replies |
 | `src/sync/chunks/tests.rs` | test | m | — | — | Real binary have/want exchanges between independent vaults |
+| `src/sync/client/artifacts.rs` | src | s | 2 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out once the NOTE session binds, and… |
 | `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 7 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/documents.rs` | src | s | 2 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/federated.rs` | src | m | 1 enum · 5 fn · 3 crate-vis | ImportTier | Federated admission and staged vault-import confirmation |
@@ -3099,7 +3101,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/sweep_fence.rs` | src | s | 5 crate-vis | — | Windows a sweep holds closed while it rewrites their persisted state |
 | `src/sync/tests.rs` | test | m | — | — | Observer B and forward rematerialization admit through one entity-ingest entry and one tombstone… |
 | `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 27 fn · 40 const · 1 mod · 1 re-export | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
-| `src/sync/transport/documents.rs` | src | s | 1 struct · 4 fn · 8 const · 1 mod | DocumentFrame | Entity-key frames and bounded, non-nesting document batches |
+| `src/sync/transport/documents.rs` | src | s | 1 struct · 4 fn · 10 const · 1 mod | DocumentFrame | Entity-key frames and bounded, non-nesting document batches |
 | `src/sync/transport/tests.rs` | test | m | — | — | — |
 | `src/sync/types.rs` | src | m | 3 struct · 12 fn · 10 crate-vis | LocalUpdate, SyncConfig, WindowKey | Sync-specific types for the CRDT sync layer |
 | `src/sync/window/admission.rs` | src | m | 2 fn · 2 crate-vis | — | Full-window UPDATE locality admission without live document side effects |

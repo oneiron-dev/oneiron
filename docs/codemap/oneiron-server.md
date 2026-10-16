@@ -29,8 +29,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/workflows.rs` | src | s | 4 crate-vis | — | The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it… |
 | `src/api/ai/chat.rs` | src | m | 2 crate-vis | — | `POST /v1/ai/chat`: one chat turn on the generative seat, streamed |
 | `src/api/ai/mod.rs` | src | s | 2 crate-vis | — | `/v1/ai`: the server's model-backed surfaces — status, chat turns and the session hints the Dreamer's… |
-| `src/api/artifacts.rs` | src | m | 15 crate-vis | — | — |
-| `src/api/artifacts/route.rs` | src | s | 6 crate-vis | — | One typed codec for artifact bundle entry and canonical file URLs |
+| `src/api/artifacts.rs` | src | m | 16 crate-vis | — | — |
+| `src/api/artifacts/host.rs` | src | s | 5 crate-vis | — | Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…` |
+| `src/api/artifacts/route.rs` | src | s | 7 crate-vis | — | One typed codec for artifact bundle entry and canonical file URLs |
 | `src/api/booking.rs` | src | m | 14 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/client_address_tests.rs` | test | m | — | — | Booking admission charges the client the connection proves (C7): its own peer, or the client a configured… |
@@ -147,7 +148,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
-| `src/api/mod.rs` | src | m | 31 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/mod.rs` | src | m | 32 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/off_record_rooms.rs` | src | m | 1 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |

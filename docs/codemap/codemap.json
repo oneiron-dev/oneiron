@@ -1097,7 +1097,7 @@
       "crate-vis": 3,
       "enum": 4,
       "fn": 18,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -1109,6 +1109,22 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactPublicationFrame",
+      "ArtifactPublicationOutcome"
+     ],
+     "path": "src/artifact_hosting/publication_sync.rs",
+     "purpose": "Publication sync: a pinned channel pointer, with the rows that make its export servable, reaches the sync…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -4633,7 +4649,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 15,
       "struct": 3
      }
@@ -10593,7 +10609,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 9
      }
     },
@@ -36467,6 +36483,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/artifacts.rs",
+     "purpose": "Pinned artifact publications on the owner lane: each owed one goes out once the NOTE session binds, and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -37497,7 +37523,7 @@
      "path": "src/sync/transport/documents.rs",
      "purpose": "Entity-key frames and bounded, non-nesting document batches",
      "surface": {
-      "const": 8,
+      "const": 10,
       "fn": 4,
       "mod": 1,
       "struct": 1
@@ -42316,7 +42342,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43513,7 +43539,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43669,7 +43695,7 @@
    },
    "over_bar": 52,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2619,
+   "source_files": 2621,
    "test_files": 902
   },
   "oneiron-android": {
@@ -53022,7 +53048,17 @@
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/artifacts/host.rs",
+     "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -53032,7 +53068,7 @@
      "path": "src/api/artifacts/route.rs",
      "purpose": "One typed codec for artifact bundle entry and canonical file URLs",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -54180,7 +54216,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -58648,7 +58684,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 209,
+     "files": 210,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58888,7 +58924,7 @@
    },
    "over_bar": 14,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 375,
+   "source_files": 376,
    "test_files": 182
   },
   "oneiron-spawn": {
