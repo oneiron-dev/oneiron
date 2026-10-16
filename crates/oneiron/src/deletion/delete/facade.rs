@@ -59,6 +59,8 @@ impl Vault {
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
@@ -79,6 +81,8 @@ impl Vault {
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
@@ -97,6 +101,8 @@ impl Vault {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }

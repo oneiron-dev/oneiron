@@ -46,6 +46,8 @@ impl Vault {
         let (outcome, _changed) = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
         wtxn.commit()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        #[cfg(unix)]
+        self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }

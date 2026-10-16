@@ -751,6 +751,11 @@ impl OffRecordSession<'_> {
         }
     }
 
+    /// Pins the result body `digest` in this session's vault (OF-597).
+    pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> crate::result_body::ResultBodyPin {
+        self.vault.pin_result_body(digest)
+    }
+
     /// Where a result body this session reads may be: its own body
     /// directory, then the vault's.
     pub(crate) fn body_dirs(&self) -> Result<Vec<crate::store::BodyDir>> {
