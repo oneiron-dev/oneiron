@@ -82,7 +82,6 @@ pub(crate) fn imported_evidence_in_txn(
                     id,
                     EdgeKind::PartOf,
                     Some(ENTITY_TYPE_TURN),
-                    "imported message review scan",
                 )? {
                     let Some((parent_header, parent_body)) = row(vault, txn, &parent)? else {
                         continue;
@@ -122,7 +121,6 @@ pub(crate) fn imported_evidence_in_txn(
             id,
             EdgeKind::PartOf,
             Some(ENTITY_TYPE_MESSAGE),
-            "imported turn review scan",
         )?;
         let named: Vec<_> = messages
             .iter()

@@ -1,10 +1,11 @@
 //! One-off graph judgment: scoped context, injected answerer, and proposed claims.
 
+use super::super::types::paired_valid;
 use super::{records::AnswerRecord, store::encode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::llm::decision::{
     DecisionAnswer, DecisionBand, DecisionQuestion, DecisionReceipt, DecisionRung, EvidenceVersion,
-    ProviderPin, TypedDecision,
+    PairedAnswer, ProviderPin, TypedDecision,
 };
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -40,6 +41,8 @@ pub struct GraphPrediction {
     pub probability: f64,
     pub provider: ProviderPin,
     pub cost_per_thousand: f64,
+    /// The paired reading from the same measurement, when the provider takes one.
+    pub paired: Option<PairedAnswer>,
 }
 
 /// Host-injected answerer. The agent/provider layer chooses the rung and enforces
@@ -389,7 +392,11 @@ fn answer_unit(
                         })
                         .collect(),
                     cost_per_thousand: Some(prediction.cost_per_thousand),
-                    paired: Vec::new(),
+                    paired: prediction
+                        .paired
+                        .map(|reading| reading.bind(prediction.provider.clone()))
+                        .into_iter()
+                        .collect(),
                 },
                 human_ask: None,
             },
@@ -472,6 +479,14 @@ fn validate_prediction(question: &DecisionQuestion, prediction: &GraphPrediction
         .is_err()
         || !prediction.cost_per_thousand.is_finite()
         || prediction.cost_per_thousand < 0.0
+        || prediction.paired.is_some_and(|reading| {
+            !paired_valid(
+                question.id,
+                reading.question,
+                reading.question_version,
+                reading.probability,
+            )
+        })
     {
         return Err(Error::InvalidConfig("invalid graph ask prediction".into()));
     }

@@ -7,7 +7,9 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     ScopedReadActorKey,
 };
-use crate::llm::decision::{DecisionAnswer, DecisionReceipt, ProviderPin, TypedDecision};
+use crate::llm::decision::{
+    DecisionAnswer, DecisionReceipt, PairedReading, ProviderPin, TypedDecision,
+};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -54,6 +56,8 @@ pub struct StandingAnswer {
     pub probability: Option<f64>,
     pub evidence: Vec<EntityId>,
     pub providers: Vec<ProviderPin>,
+    /// Paired readings the providers measured with this answer; none means none was taken.
+    pub paired: Vec<PairedReading>,
     pub source_frontier: [u8; 32],
 }
 
@@ -276,6 +280,7 @@ pub fn backfill_standing_answer(
                     || pin.rung < record.definition.dial.first
                     || pin.rung > record.definition.dial.ceiling
             })
+            || !PairedReading::rows_valid(&input.paired, question, &input.providers)
         {
             return Err(invalid("invalid standing answer"));
         }
@@ -367,7 +372,7 @@ pub fn backfill_standing_answer(
                     band_version: 0,
                     evidence_versions: Vec::new(),
                     cost_per_thousand: None,
-                    paired: Vec::new(),
+                    paired: input.paired,
                 },
                 human_ask: None,
             },
