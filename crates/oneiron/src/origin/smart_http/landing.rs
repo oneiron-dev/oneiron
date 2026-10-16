@@ -10,7 +10,7 @@ use super::evidence::{
 use super::landing_lfs::{
     admit_landing_lfs_pointers, attach_landing_lfs_pointers, ref_required_lfs_oids,
 };
-use super::paths::{now_secs, serve_failed};
+use super::paths::{ORIGIN_REF_UPDATE_BATCH, now_secs, serve_failed};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
@@ -80,7 +80,10 @@ pub fn refs_already_applied(
         .iter()
         .map(|entry| GitRefName::parse_full(entry.name.clone()))
         .collect::<Result<Vec<_>>>()?;
-    let observed = wire.read_refs(&handle, &names)?;
+    let mut observed = Vec::with_capacity(names.len());
+    for batch in names.chunks(ORIGIN_REF_UPDATE_BATCH) {
+        observed.extend(wire.read_refs(&handle, batch)?);
+    }
     Ok(refs
         .iter()
         .zip(observed)

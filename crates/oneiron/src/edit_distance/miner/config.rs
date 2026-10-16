@@ -68,15 +68,6 @@ pub(super) const MINER_K_ROW_LABEL: &str = "substitution miner k dial";
 /// the mint-marks hash over.
 pub(super) const MAX_SUBSTITUTION_TOKENS: usize = 8;
 
-/// Bound on the artifact rows one pass reads.
-///
-/// A bound on WORK, matching the receipt family's own scan cap: the pass runs
-/// at session close, and a vault with a very long artifact history must not
-/// turn a close into an unbounded walk. Past it the pass mines the oldest rows
-/// it can reach, which is the same direction ED-01's projection pass degrades
-/// in — less evidence, never wrong evidence.
-pub(super) const MAX_ARTIFACT_SCAN: usize = 100_000;
-
 /// Confidence stamped on a mined preference claim.
 ///
 /// Deliberately NOT derived from the recurrence count. The miner has no

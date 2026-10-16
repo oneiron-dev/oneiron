@@ -5,7 +5,8 @@ use crate::claim::{
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, ProviderPin,
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, PairedAnswer,
+    ProviderPin,
 };
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
@@ -106,6 +107,7 @@ fn prediction() -> GraphPrediction {
             version: "r1".into(),
         },
         cost_per_thousand: 0.25,
+        paired: None,
     }
 }
 
@@ -340,6 +342,50 @@ fn invalid_provider_output_fails_before_any_claim_is_written() -> crate::Result<
     assert!(matches!(*error.error, crate::Error::InvalidConfig(_)));
     assert_eq!(error.failed_unit, Some(unit));
     assert!(error.completed.answers.is_empty());
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_CLAIM)?, claims_before);
+    Ok(())
+}
+
+/// PR B2: the paired reading the provider measured lands on the receipt, bound to its
+/// pin. A pair that reads the asked question is refused before any claim.
+#[test]
+fn paired_reading_lands_on_the_receipt_bound_to_the_provider() -> crate::Result<()> {
+    let (_temp, vault) = open_vault();
+    let (principal, actor) = identities(&vault)?;
+    let unit = EntityId::now();
+    put_entity(&vault, unit, ENTITY_TYPE_PERSON, b"paired source")?;
+    let pair = PairedAnswer {
+        question: EntityId::now(),
+        question_version: 1,
+        probability: 0.4,
+    };
+    let mut paired = prediction();
+    paired.paired = Some(pair);
+    let mut answerer = FixedAnswerer::returning(Some(paired));
+    let result = run_graph_ask(
+        &vault,
+        principal,
+        actor,
+        question(),
+        &[unit],
+        &mut answerer,
+        14,
+    )
+    .map_err(|failure| *failure.error)?;
+    assert_eq!(
+        result.answers[0].decision.receipt.paired,
+        vec![pair.bind(prediction().provider)]
+    );
+
+    let asked = question();
+    let mut self_paired = prediction();
+    self_paired.paired = Some(PairedAnswer {
+        question: asked.id,
+        ..pair
+    });
+    let claims_before = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
+    let mut answerer = FixedAnswerer::returning(Some(self_paired));
+    assert!(run_graph_ask(&vault, principal, actor, asked, &[unit], &mut answerer, 15).is_err());
     assert_eq!(vault.entities_by_type(ENTITY_TYPE_CLAIM)?, claims_before);
     Ok(())
 }

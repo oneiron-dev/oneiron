@@ -145,7 +145,11 @@ fn cue_of(op: &str) -> &'static str {
             "Crop, float position, or text wrap on an existing drawing; direct \
              property edit, position and wrap require an anchored drawing."
         }
-        "comment_create" => "Create an anchored comment; comments are annotations, not revisions.",
+        "comment_create" => {
+            "Create an anchored comment; comments are annotations, not revisions. \
+             When expect repeats, occurrence (1-based) picks the copy; without it \
+             the first copy is anchored."
+        }
         "comment_reply" => "Reply to an existing comment thread by its parent comment id.",
         "comment_resolve" => "Mark a comment thread resolved or unresolved (w15:done).",
         "comment_delete" => "Delete a comment and its anchor range markers.",
@@ -306,6 +310,7 @@ fn shapes_of(op: &str) -> &'static [&'static str] {
         ],
         "comment_create" => &[
             r#"{"op":"comment_create","target":"<block_id>","expect":"<anchor text>","body":"<comment text>","author":"Reviewer"}"#,
+            r#"{"op":"comment_create","target":"<block_id>","expect":"<repeated text>","occurrence":2,"body":"<comment text>"}"#,
         ],
         "comment_reply" => &[
             r#"{"op":"comment_reply","parent_comment_id":"<comment_id>","body":"<reply text>","author":"Reviewer"}"#,
