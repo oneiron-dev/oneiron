@@ -8,8 +8,10 @@ use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
     DecisionLadder, DecisionQuestion, DecisionReceipt, DecisionRung, Reversibility,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use rmpv::Value;
+use std::time::{Duration, Instant};
 
 /// The registered question every detector asks: does this telemetry show the anomaly?
 const QUESTION: &str = "self_heal.telemetry_anomaly";
@@ -116,14 +118,17 @@ impl DetectorPolicy {
 }
 
 /// The shared decision path a detector's questions go through: the host's ladder, the
-/// principal the answers are for, and the dial and learned bands they run under. Telemetry
-/// reaches a provider only as evidence ids, as untrusted data, never as instructions; an
-/// answer cannot choose its own detector id, event class or tier.
+/// principal the answers are for, the dial and learned bands they run under, and each
+/// question's anytime budget. Telemetry reaches a provider only as evidence ids, as untrusted
+/// data, never as instructions; an answer cannot choose its own detector id, event class or
+/// tier.
 pub struct DetectorDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
+    /// Each question's one clock, from when it is asked.
+    pub budget: Duration,
 }
 
 impl DetectorDecisions<'_> {
@@ -141,6 +146,7 @@ impl DetectorDecisions<'_> {
             self.dial,
             &self.bands,
             Reversibility::ReversibleRead,
+            &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
         match decision.answer {
             DecisionAnswer::Noul(raised) => Ok((raised, decision.receipt)),
