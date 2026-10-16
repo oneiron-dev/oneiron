@@ -49,6 +49,14 @@ impl ServeRequest {
         self.path_info.ends_with("/git-receive-pack")
     }
 
+    /// Whether this request is part of a push: the receive-pack exchange or
+    /// the advertisement a push starts with.
+    #[must_use]
+    pub fn is_push(&self) -> bool {
+        self.is_receive_pack()
+            || (self.is_ref_advertisement() && self.advertised_service() == Some("git-receive-pack"))
+    }
+
     /// Whether this request is the smart-HTTP ref advertisement.
     ///
     /// This is the ONE response that carries a ref list, and therefore the one

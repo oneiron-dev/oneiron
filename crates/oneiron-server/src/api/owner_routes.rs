@@ -77,6 +77,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(history_routes::routes())
+        .merge(super::owner_origin::routes())
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
@@ -204,7 +205,7 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
 }
 
 /// Runs blocking vault work (snapshots, restores) off the runtime.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(work)

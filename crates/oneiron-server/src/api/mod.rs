@@ -114,6 +114,7 @@ mod openapi;
 mod openapi_registry;
 // OF-559/OF-202/OF-211/OF-296: the owner's own actions — backups, the secret
 // scan switch, whole-batch import consent and whole-run agent consent.
+mod owner_origin;
 mod owner_routes;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design

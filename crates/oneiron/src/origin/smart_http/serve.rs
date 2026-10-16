@@ -144,9 +144,29 @@ pub fn serve_bounded(
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
+    serve_bounded_with_authority(vault, repo_name, request, seam, bounds, None, body, sink)
+}
+
+/// [`serve_bounded`] under the lease its host holds, when the repository has
+/// an origin authority: the transport's form of [`serve_with_authority`]. The
+/// host reads its lease from trusted configuration
+/// ([`Vault::origin_host_authority`](crate::Vault::origin_host_authority)),
+/// never from the request; `None` is an origin with no authority configured,
+/// which refuses every push once one is.
+#[expect(clippy::too_many_arguments)]
+pub fn serve_bounded_with_authority(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    bounds: ExchangeBounds,
+    authority: Option<&OriginAuthorityLease>,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
     let terms = ServeTerms {
         seam,
-        authority: None,
+        authority,
         idle: bounds.idle,
         scan: bounds.scan,
         spill_floor: bounds.spill_floor,

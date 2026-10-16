@@ -16,6 +16,7 @@ use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
+use oneiron::origin::residence::{OriginAuthority, OriginHostAuthority, OriginResidence};
 use oneiron::origin::smart_http;
 use oneiron::origin::smart_http::{AtDiskFloor, HeldBytes, SpillFloor};
 use std::io::{self, Read, Write};
@@ -51,6 +52,23 @@ pub(super) async fn run_serve(
     request: smart_http::ServeRequest,
     body: Body,
 ) -> Response {
+    // A push runs under the lease this host holds over the repository, read
+    // from the vault's own authority row and this install's machine, never
+    // from the request. A mirror, or a repository another host writes, is
+    // told so before it queues; a repository that does not resolve leaves the
+    // answer to the exchange.
+    let authority = if request.is_push() {
+        let vault = Arc::clone(server.vault());
+        let name = repo.clone();
+        match tokio::task::spawn_blocking(move || vault.origin_host_authority(&name)).await {
+            Ok(Ok(OriginHostAuthority::Held(lease))) => Some(lease),
+            Ok(Ok(OriginHostAuthority::Mirror(row))) => return not_the_writer(&row, true),
+            Ok(Ok(OriginHostAuthority::Elsewhere(row))) => return not_the_writer(&row, false),
+            Ok(Ok(OriginHostAuthority::Unconfigured) | Err(_)) | Err(_) => None,
+        }
+    } else {
+        None
+    };
     let principal = request.remote_user.as_deref();
     // A repository that does not resolve has no line; the exchange says why.
     let turn = match request
@@ -108,12 +126,13 @@ pub(super) async fn run_serve(
         // serve path persists landed admission and observed outcome evidence;
         // this bridge supplies neither a claim id nor an alternate credential.
         let Some(status_memory) = held else {
-            return Some(smart_http::serve_bounded(
+            return Some(smart_http::serve_bounded_with_authority(
                 vault,
                 &repo,
                 &request,
                 smart_http::DoorSeam::Landed,
                 bounds,
+                authority.as_ref(),
                 &mut reader,
                 &mut sink,
             ));
@@ -124,12 +143,13 @@ pub(super) async fn run_serve(
                 .with_floor(Some(floor)),
             failed: None,
         };
-        let served = smart_http::serve_bounded(
+        let served = smart_http::serve_bounded_with_authority(
             vault,
             &repo,
             &request,
             smart_http::DoorSeam::Landed,
             bounds,
+            authority.as_ref(),
             &mut reader,
             &mut holding,
         );
@@ -318,6 +338,27 @@ pub(super) fn landed_response(
 }
 
 pub(super) type ResponseHead = (u16, Vec<(String, String)>);
+
+/// A push to a repository this host does not write: a read-only mirror, or
+/// one whose current epoch another host holds. Reads still serve here.
+fn not_the_writer(row: &OriginAuthority, mirror: bool) -> Response {
+    let message = if mirror {
+        format!(
+            "this origin is a read-only mirror at authority epoch {}; push to the authoritative origin",
+            row.epoch
+        )
+    } else {
+        format!(
+            "another host writes this repository at authority epoch {} ({}); push to that origin",
+            row.epoch,
+            match row.residence {
+                OriginResidence::LocalVault => "local-vault",
+                OriginResidence::CloudVault => "cloud-vault",
+            }
+        )
+    };
+    text_response(StatusCode::FORBIDDEN, &message)
+}
 
 /// The exchange waited its whole deadline for its turn. Nothing was started.
 fn waited_out() -> Response {
