@@ -1,7 +1,7 @@
 //! `rmpv::Value` decoding for every authority type.
 //!
 //! LOCKSTEP PAIR WITH [`super::wire_encode`]. This is the exact inverse of
-//! `op_value_with_genesis_delay`: any field or variant change must edit BOTH
+//! `op_value`: any field or variant change must edit BOTH
 //! files (and the golden vectors in `authority/tests.rs`) or the wire format
 //! silently drifts.
 
@@ -62,31 +62,10 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             })
         }
         OP_KIND_GENESIS => {
-            let pending_widen_delay = optional(entries, "pending_widen_delay_secs");
-            if pending_widen_delay.is_some() {
-                validate_keys(
-                    entries,
-                    &[
-                        OP_KEY_KIND,
-                        "device",
-                        "genesis_nonce",
-                        "recovery_secret_step",
-                        "tier_floor",
-                        "pending_widen_delay_secs",
-                    ],
-                )?;
-            } else {
-                validate_keys(
-                    entries,
-                    &[
-                        OP_KEY_KIND,
-                        "device",
-                        "genesis_nonce",
-                        "recovery_secret_step",
-                        "tier_floor",
-                    ],
-                )?;
-            }
+            validate_keys(
+                entries,
+                &[OP_KEY_KIND, "device", "genesis_nonce", "recovery_secret_step"],
+            )?;
             let recovery = map_entries(required(entries, "recovery_secret_step")?)?;
             validate_keys(recovery, &["commitment", "outcome"])?;
             let commitment = decode_hash(required(recovery, "commitment")?)?;
@@ -100,11 +79,6 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 recovery,
                 device: decode_device(required(entries, "device")?)?,
                 genesis_nonce: decode_hash(required(entries, "genesis_nonce")?)?,
-                tier_floor: decode_tier(required(entries, "tier_floor")?)?,
-                pending_widen_delay_secs: pending_widen_delay
-                    .map(|value| value.as_u64().ok_or_else(invalid_authority))
-                    .transpose()?
-                    .unwrap_or(DEFAULT_PENDING_WIDEN_DELAY_SECS),
             })
         }
         OP_KIND_ENROLL_DEVICE => {
@@ -124,12 +98,6 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             Ok(AuthorityOp::RotateKey {
                 old_key: decode_key(required(entries, "old_key")?)?,
                 new_device: decode_device(required(entries, "new_device")?)?,
-            })
-        }
-        OP_KIND_SET_TIER_FLOOR => {
-            validate_keys(entries, &[OP_KEY_KIND, "tier_floor"])?;
-            Ok(AuthorityOp::SetTierFloor {
-                tier_floor: decode_tier(required(entries, "tier_floor")?)?,
             })
         }
         OP_KIND_RE_ROOT => {
@@ -206,12 +174,6 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
                     .ok_or_else(invalid_authority)?,
                 nonce: decode_16(required(entries, "nonce")?)?,
             }))
-        }
-        OP_KIND_VETO_PENDING_WIDEN => {
-            validate_keys(entries, &[OP_KEY_KIND, "pending_widen_hash"])?;
-            Ok(AuthorityOp::VetoPendingWiden {
-                pending_widen_hash: decode_hash(required(entries, "pending_widen_hash")?)?,
-            })
         }
         OP_KIND_FEDERATION_LIFECYCLE => decode_federation_lifecycle_op(entries),
         OP_KIND_BIND_ACTOR | OP_KIND_REBIND_ACTOR => {

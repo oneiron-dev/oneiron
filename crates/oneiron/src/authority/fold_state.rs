@@ -17,8 +17,6 @@ use super::*;
 pub enum AuthorityFoldIssue {
     /// Entry failed shape or signature verification.
     InvalidEntry(AuthorityEntryHash),
-    /// A valid signer does not meet the folded vault assurance floor.
-    SignerBelowTierFloor(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
     /// Entry is signed by a key a handoff retired, outside that handoff's
@@ -121,8 +119,6 @@ pub struct AuthorityFold {
     pub retired_keys: BTreeSet<AuthorityKey>,
     /// The handoffs whose fences stand: settled, or in conflict.
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
-    /// Most-restrictive tier floor.
-    pub tier_floor: Option<AuthorityTier>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
     pub genesis_fragile: bool,
     /// Fold-derived federation pact states keyed by pact id.
@@ -285,11 +281,8 @@ pub(super) struct FoldState {
     pub(super) slips: SlipAuthorityState,
     pub(super) vault_id: AuthorityVaultId,
     pub(super) roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    pub(super) tier_floor: AuthorityTier,
     pub(super) genesis_recovery_dismissed: bool,
     pub(super) recovery_redundancy_established: bool,
-    pub(super) tier_floor_events:
-        BTreeMap<AuthorityEntryHash, (AuthorityTier, BTreeSet<AuthorityEntryHash>)>,
     pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
@@ -489,11 +482,6 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .federation_confirms
         .extend(right.federation_confirms.clone());
-    merged
-        .tier_floor_events
-        .extend(right.tier_floor_events.clone());
-    merged.tier_floor = effective_tier_floor(&merged.tier_floor_events)
-        .unwrap_or_else(|| most_restrictive_tier_floor(left.tier_floor, right.tier_floor));
     for (pact_id, right_pact) in &right.federation_pacts {
         match merged.federation_pacts.get_mut(pact_id) {
             Some(left_pact) => {
@@ -627,11 +615,4 @@ pub(super) fn most_restrictive_device_tier(
     right: AuthorityTier,
 ) -> AuthorityTier {
     left.min(right)
-}
-
-pub(super) fn most_restrictive_tier_floor(
-    left: AuthorityTier,
-    right: AuthorityTier,
-) -> AuthorityTier {
-    left.max(right)
 }

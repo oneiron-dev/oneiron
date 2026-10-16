@@ -203,28 +203,7 @@ pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[
 }
 
 pub fn verify_entry_signatures(entry: &AuthorityLogEntry) -> Result<()> {
-    if verify_entry_signatures_current(entry).is_ok()
-        || verify_entry_signatures_legacy_genesis(entry).is_ok()
-    {
-        return Ok(());
-    }
-    Err(invalid_authority())
-}
-
-pub fn verify_entry_signatures_current(entry: &AuthorityLogEntry) -> Result<()> {
     let transcript = authority_transcript(entry)?;
-    if verify_entry_signatures_with_transcript(entry, &transcript) {
-        Ok(())
-    } else {
-        Err(invalid_authority())
-    }
-}
-
-pub fn verify_entry_signatures_legacy_genesis(entry: &AuthorityLogEntry) -> Result<()> {
-    if !legacy_genesis_encoding_candidate(entry) {
-        return Err(invalid_authority());
-    }
-    let transcript = authority_transcript_with_genesis_delay(entry, false)?;
     if verify_entry_signatures_with_transcript(entry, &transcript) {
         Ok(())
     } else {

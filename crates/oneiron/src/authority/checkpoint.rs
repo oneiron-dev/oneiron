@@ -27,7 +27,6 @@ pub struct AuthorityCheckpoint {
     /// Content hashes of prior checkpoints, not caller-supplied trust roots.
     pub parent_hashes: Vec<AuthorityEntryHash>,
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
-    pub tier_floor: AuthorityTier,
     pub signatures: Vec<AuthoritySignature>,
 }
 
@@ -57,10 +56,6 @@ fn body_value(checkpoint: &AuthorityCheckpoint) -> Value {
                     .map(binary_value)
                     .collect(),
             ),
-        ),
-        (
-            Value::from("tier_floor"),
-            Value::from(checkpoint.tier_floor.as_str()),
         ),
         (
             Value::from("roster"),
@@ -164,7 +159,6 @@ pub fn decode_authority_checkpoint(bytes: &[u8]) -> Result<AuthorityCheckpoint> 
             "horizon",
             "entry_hashes",
             "parent_hashes",
-            "tier_floor",
             "roster",
         ],
     )?;
@@ -203,7 +197,6 @@ pub fn decode_authority_checkpoint(bytes: &[u8]) -> Result<AuthorityCheckpoint> 
             .ok_or_else(invalid_authority)?,
         entry_hashes: decode_hash_array(required(body, "entry_hashes")?)?,
         parent_hashes: decode_hash_array(required(body, "parent_hashes")?)?,
-        tier_floor: decode_tier(required(body, "tier_floor")?)?,
         roster,
         signatures: decode_signature_array(required(outer, "signatures")?)?,
     };
@@ -271,7 +264,6 @@ impl Vault {
         let fold = self.checkpoint_fold(txn, checkpoint)?;
         if fold.vault_id != Some(checkpoint.vault_id)
             || fold.roster != checkpoint.roster
-            || fold.tier_floor != Some(checkpoint.tier_floor)
         {
             return Err(invalid_authority());
         }
@@ -283,9 +275,6 @@ impl Vault {
                 .get(&signature.public_key)
                 .filter(|device| !device.revoked && device.roles != 0)
                 .ok_or_else(invalid_authority)?;
-            if !tier_meets_floor(device.tier, checkpoint.tier_floor) {
-                return Err(invalid_authority());
-            }
             consent |= if self.privacy_posture() == crate::HostingPrivacyPosture::Hosted {
                 folded_host_device_can_consent(device)
             } else {
@@ -366,7 +355,6 @@ impl Vault {
             entry_hashes: history.keys().copied().collect(),
             parent_hashes,
             roster: fold.roster,
-            tier_floor: fold.tier_floor.ok_or_else(invalid_authority)?,
             signatures: signer_keys
                 .into_iter()
                 .map(|public_key| AuthoritySignature {

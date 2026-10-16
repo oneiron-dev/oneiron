@@ -88,11 +88,3 @@ pub fn folded_peer_device_is_consent_root(device: &FoldedDevice) -> bool {
 pub fn folded_host_device_can_consent(device: &FoldedDevice) -> bool {
     !device.revoked && (device.roles & (ROLE_OWNER | ROLE_ADMIN)) != 0
 }
-
-pub fn tier_meets_floor(tier: AuthorityTier, floor: AuthorityTier) -> bool {
-    match floor {
-        AuthorityTier::Software => true,
-        AuthorityTier::Hardware => tier == AuthorityTier::Hardware,
-        AuthorityTier::CloudCustodial => tier == AuthorityTier::CloudCustodial,
-    }
-}

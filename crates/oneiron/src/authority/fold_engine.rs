@@ -104,8 +104,8 @@ pub(super) fn fold_authority_log_inner(
 ) -> AuthorityFold {
     if local.retire_device_ops {
         // An unrelated retired sibling must not vote in a handoff probe:
-        // its tier floor could otherwise disqualify a valid rotation before
-        // the strict fold ever gets a chance to reject the sibling. Validate
+        // it could otherwise disqualify a valid rotation before the strict
+        // fold ever gets a chance to reject the sibling. Validate
         // each candidate against ONLY its own claimed signed ancestry.
         let mut candidates = verified_handoff_candidates(
             entries,
@@ -170,8 +170,8 @@ pub(super) fn fold_authority_log_inner(
 }
 
 /// Probe each signed re-root against its own causal history, and map each
-/// that stands there to that history, its line. A tier-floor or other retired
-/// sibling outside the line has zero authority to eliminate a candidate, and
+/// that stands there to that history, its line. A retired sibling outside
+/// the line has zero authority to eliminate a candidate, and
 /// neither has a local sequence floor. A floor records only which rows of a
 /// signer this vault saw first, so a sibling that arrived first would decide
 /// the settlement, and the same rows would settle differently in another
@@ -365,28 +365,15 @@ pub(super) fn fold_authority_log_once(
     let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
 
     // A handoff's predecessor stays retired on every branch, not only its own.
-    // Fences close before concurrent floors and confirmations contend, so a
-    // retired key's floor or confirmation never prunes the new root's rows.
+    // Fences close before concurrent confirmations contend, so a retired
+    // key's confirmation never prunes the new root's rows.
     let retirements = super::retired_signers::settle_handoffs(
         &mut states,
         &by_hash,
         &entry_ancestors,
         handoffs,
         &mut issues,
-        |states, present| {
-            let mut losers =
-                below_concurrent_tier_floors(states, &by_hash, &entry_ancestors, present, context);
-            let fallen = |hash: &AuthorityEntryHash| {
-                losers.contains_key(hash)
-                    || entry_ancestors
-                        .get(hash)
-                        .is_some_and(|past| losers.keys().any(|loser| past.contains(loser)))
-            };
-            let confirms =
-                federation_confirm_losers(states, &by_hash, &|hash| present(hash) && !fallen(hash));
-            losers.extend(confirms);
-            losers
-        },
+        |states, present| federation_confirm_losers(states, &by_hash, present),
     );
     super::world_refold::refold_world_edits(
         &mut states,
@@ -421,7 +408,6 @@ pub(super) fn fold_authority_log_once(
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
             closed_handoffs: BTreeSet::new(),
-            tier_floor: None,
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
@@ -448,7 +434,6 @@ pub(super) fn fold_authority_log_once(
     revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
-    revoke_facts.forget_below_concurrent_floors(&states, &by_hash, &entry_ancestors, context);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = BTreeSet::new();
     for (hash, state) in &states {

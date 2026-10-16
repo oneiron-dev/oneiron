@@ -37,13 +37,6 @@ pub enum AuthorityOp {
         device: DeviceAuthority,
         genesis_nonce: [u8; 32],
         recovery: GenesisRecoveryStep,
-        tier_floor: AuthorityTier,
-        /// Legacy signed field with no fold effect. It stays on the wire (and
-        /// in the entry hash) and keeps its 24-48h band validation so old and
-        /// new peers agree on which genesis entries are valid, but nothing
-        /// waits on it: the delayed-widen ceremony died 2026-08-05 (identity
-        /// canon, "Device-key widen ceremony (dead 2026-08-05)").
-        pending_widen_delay_secs: u64,
     },
     /// Enrolls a new authority key.
     EnrollDevice {
@@ -58,27 +51,13 @@ pub enum AuthorityOp {
         old_key: AuthorityKey,
         new_device: DeviceAuthority,
     },
-    /// Sets the vault tier floor.
-    SetTierFloor {
-        tier_floor: AuthorityTier,
-    },
-    /// In-chain host migration. Replaces the roster without a new genesis or
-    /// a floor reset.
+    /// In-chain host migration. Replaces the roster without a new genesis.
     ReRoot {
         new_device: DeviceAuthority,
     },
     /// Federation confirm that travels with authority fold verification.
     FederationConfirm(AuthorityConfirmAction),
     CriticalWriteConfirm(CriticalWriteConfirmAction),
-    /// Legacy owner veto of a pending software-tier widen. Kept so existing
-    /// signed logs still decode and hash identically; the fold always rejects
-    /// it as `oneiron::authority::AuthorityFoldIssue::InvalidEntry` because no widen is ever
-    /// pending (the delayed-broadcast-veto ceremony died 2026-08-05, ARCH-0040
-    /// ONE-AUTHLOG-F6). Nothing in this crate produces it.
-    VetoPendingWiden {
-        /// Target authority entry hash to suppress under most-restrictive-wins.
-        pending_widen_hash: AuthorityEntryHash,
-    },
     /// Federation relationship lifecycle op (OF-156, option B).
     FederationLifecycle(FederationLifecycleAction),
     /// Binds a roster authority key to a store actor entity at an EXACT actor
@@ -221,14 +200,8 @@ pub fn decode_authority_log_entry_body(bytes: &[u8]) -> Result<AuthorityLogEntry
     }
     let entry = decode_entry_value(&value)?;
     entry.validate_shape()?;
-    let current_canonical = encode_authority_log_entry_body(&entry)?;
-    if current_canonical == bytes && verify_entry_signatures_current(&entry).is_ok() {
-        return Ok(entry);
-    }
-    if let Some(legacy_canonical) = legacy_genesis_signed_entry_bytes(&entry)?
-        && legacy_canonical == bytes
-        && verify_entry_signatures_legacy_genesis(&entry).is_ok()
-    {
+    let canonical = encode_authority_log_entry_body(&entry)?;
+    if canonical == bytes && verify_entry_signatures(&entry).is_ok() {
         return Ok(entry);
     }
     Err(invalid_authority())
@@ -241,14 +214,8 @@ pub fn validate_authority_log_entry_body_bytes(bytes: &[u8]) -> Result<()> {
 
 /// BLAKE3 hash of the canonical signed authority entry.
 pub fn authority_entry_hash(entry: &AuthorityLogEntry) -> Result<AuthorityEntryHash> {
-    let current_canonical = encode_authority_log_entry_body(entry)?;
-    if verify_entry_signatures_current(entry).is_err()
-        && verify_entry_signatures_legacy_genesis(entry).is_ok()
-        && let Some(legacy_canonical) = legacy_genesis_signed_entry_bytes(entry)?
-    {
-        return Ok(*blake3::hash(&legacy_canonical).as_bytes());
-    }
-    Ok(*blake3::hash(&current_canonical).as_bytes())
+    let canonical = encode_authority_log_entry_body(entry)?;
+    Ok(*blake3::hash(&canonical).as_bytes())
 }
 
 /// Content-addressed store key for an AUTHORITY_LOG row: the first 16 bytes
@@ -281,32 +248,16 @@ pub fn genesis_vault_id(entry: &AuthorityLogEntry) -> Result<AuthorityVaultId> {
 
 /// Domain-separated signature transcript for an authority entry.
 pub fn authority_transcript(entry: &AuthorityLogEntry) -> Result<Vec<u8>> {
-    authority_transcript_with_genesis_delay(entry, true)
-}
-
-pub fn authority_transcript_with_genesis_delay(
-    entry: &AuthorityLogEntry,
-    include_genesis_delay: bool,
-) -> Result<Vec<u8>> {
-    let unsigned = encode_value(&transcript_value_with_genesis_delay(
-        entry,
-        include_genesis_delay,
-    ))?;
+    let unsigned = encode_value(&transcript_value(entry))?;
     let mut transcript = Vec::with_capacity(AUTHORITY_TRANSCRIPT_DOMAIN.len() + unsigned.len());
     transcript.extend_from_slice(AUTHORITY_TRANSCRIPT_DOMAIN);
     transcript.extend_from_slice(&unsigned);
     Ok(transcript)
 }
 
-pub fn transcript_value_with_genesis_delay(
-    entry: &AuthorityLogEntry,
-    include_genesis_delay: bool,
-) -> Value {
+pub fn transcript_value(entry: &AuthorityLogEntry) -> Value {
     Value::Map(vec![
-        (
-            Value::from("entry"),
-            entry_value_with_genesis_delay(entry, false, include_genesis_delay),
-        ),
+        (Value::from("entry"), entry_value(entry, false)),
         (Value::from(KEY_SIGNER), key_value(entry.signer_key())),
         (
             Value::from("cosign_keys"),
@@ -334,14 +285,11 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             device,
             genesis_nonce,
             recovery,
-            pending_widen_delay_secs,
-            ..
         } => {
             if genesis_nonce.iter().all(|byte| *byte == 0) {
                 return Err(invalid_authority());
             }
             recovery.validate()?;
-            validate_pending_widen_delay_secs(*pending_widen_delay_secs)?;
             device.validate()?;
             if !device.can_authority_consent() {
                 return Err(invalid_authority());
@@ -361,7 +309,6 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
-        AuthorityOp::SetTierFloor { .. } => Ok(()),
         AuthorityOp::FederationConfirm(action) => {
             if action.confirm_id == [0; 32]
                 || action.nonce == [0; 16]
@@ -389,12 +336,6 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ReRoot { new_device } => {
             new_device.validate()?;
             if !new_device.can_authority_consent() {
-                return Err(invalid_authority());
-            }
-            Ok(())
-        }
-        AuthorityOp::VetoPendingWiden { pending_widen_hash } => {
-            if pending_widen_hash.iter().all(|byte| *byte == 0) {
                 return Err(invalid_authority());
             }
             Ok(())
@@ -489,14 +430,4 @@ fn validate_federation_lifecycle_action(action: &FederationLifecycleAction) -> R
         }
     }
     Ok(())
-}
-
-fn validate_pending_widen_delay_secs(delay_secs: u64) -> Result<()> {
-    if (MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS..=MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS)
-        .contains(&delay_secs)
-    {
-        Ok(())
-    } else {
-        Err(invalid_authority())
-    }
 }

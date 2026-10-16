@@ -163,8 +163,8 @@ impl Retirements {
 /// refuse, and returns the closed fences. Only `eligible` handoffs, those
 /// valid on their own rows, take part when the fold has such a set; any other
 /// handoff is refused at once and fences nothing. `contend` names the rows
-/// that lose to a concurrent restriction (a tier floor, a confirmation
-/// collision) among the rows it is shown, with why. Fences close first, so a
+/// that lose to a concurrent restriction (a confirmation collision) among the
+/// rows it is shown, with why. Fences close first, so a
 /// fenced key's row never wins one; a handoff whose own rows then lose one is
 /// pruned, and the fold settles again without it until nothing more is.
 pub(super) fn settle_handoffs(
