@@ -1,0 +1,430 @@
+//! Trusted contact (OF-527): a person names another PERSON to hear a crisis
+//! notice. Both sides consent, the contact attests they are an adult, and
+//! either side revokes. Only a `RouteToHelp` the OF-333 gate settles for that
+//! person fires it; the contact then hears the notice both of them saw when it
+//! was named, and nothing else.
+//!
+//! The rows live in engine-private side tables, so no claim writer, agent tool
+//! or sync peer can stamp a consent: each one is written here, behind the proof
+//! of the person it belongs to.
+
+use serde::{Deserialize, Serialize};
+
+use super::trusted_contact_notice::stage_notice_in_txn;
+use crate::Vault;
+use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
+use crate::error::{Error, GateError, Result};
+use crate::side_table::{self, Named, SideTable};
+
+/// Key: (person, contact).
+pub(super) const RELATIONS: SideTable<(EntityId, EntityId), TrustedContact, Named> =
+    SideTable::new(&side_table::TRUSTED_CONTACT_RELATION);
+
+const ASKS: SideTable<EntityId, TrustedContactAsk, Named> =
+    SideTable::new(&side_table::TRUSTED_CONTACT_ASK);
+
+/// Key: the `RouteToHelp` owner row's ref.
+const TIERS: SideTable<String, TrustedContactTier, Named> =
+    SideTable::new(&side_table::TRUSTED_CONTACT_TIER);
+
+/// About two text messages: room for "having a hard night, please check in"
+/// and a name, not for an account of the night.
+const MAX_NOTICE_BYTES: usize = 280;
+
+const MAX_TARGET_BYTES: usize = 512;
+
+const MAX_ROW_REF_BYTES: usize = 256;
+
+/// Whether she asks the person before she reaches their contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustedContactDial {
+    /// She asks first on either tier.
+    AskFirst,
+    /// She reaches the contact at once on the imminent tier, and still asks
+    /// first on the concern tier.
+    JustCall,
+}
+
+/// How grave a `RouteToHelp` is. The tier belongs to this feature, not to the
+/// gate: the owner names a row imminent, and every other row is a concern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustedContactTier {
+    Concern,
+    Imminent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustedContactParty {
+    Person,
+    Contact,
+}
+
+/// Where the notice goes, on the existing outbound rails: `sender` is the
+/// actor whose channel identity speaks, `channel` and `verb` a registered
+/// outbound capability, and `target` the contact's address on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedContactReach {
+    pub sender: EntityId,
+    pub channel: String,
+    pub verb: String,
+    pub target: String,
+}
+
+/// The contact's consent, given with their word that they are an adult.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedContactAcceptance {
+    pub at: u64,
+    pub adult: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedContactRevocation {
+    pub at: u64,
+    pub by: TrustedContactParty,
+}
+
+/// One person's trusted contact. Naming it is the person's consent; the
+/// contact's is [`Self::accepted`], given to exactly this [`Self::version`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedContact {
+    pub person: EntityId,
+    pub contact: EntityId,
+    pub reach: TrustedContactReach,
+    /// The whole of what the contact receives, fixed when the person names
+    /// them and shown to the contact before they accept.
+    pub notice: String,
+    pub dial: TrustedContactDial,
+    /// Counts the times the person named this contact. Naming again changes
+    /// what the contact agreed to, so it needs their consent again.
+    pub version: u64,
+    pub named_at: u64,
+    pub accepted: Option<TrustedContactAcceptance>,
+    pub revoked: Option<TrustedContactRevocation>,
+}
+
+impl TrustedContact {
+    /// Both sides consent, the contact is an adult, and neither has revoked.
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.revoked.is_none() && self.accepted.is_some_and(|accepted| accepted.adult)
+    }
+}
+
+/// "May I reach your trusted contact?", raised by a `RouteToHelp` the
+/// person's dial or the row's tier says to ask about first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedContactAsk {
+    pub ask: EntityId,
+    pub person: EntityId,
+    pub contact: EntityId,
+    /// The relation version asked about; a yes to an older one sends nothing.
+    pub version: u64,
+    pub tier: TrustedContactTier,
+    pub asked_at: u64,
+    pub answer: Option<TrustedContactAnswer>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedContactAnswer {
+    pub yes: bool,
+    pub at: u64,
+}
+
+/// What one settled `RouteToHelp` did for its person: how many contacts were
+/// sent the notice and how many the person is asked about. The gate tells the
+/// person and the agent both.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrustedContactFire {
+    pub(crate) notified: usize,
+    pub(crate) asked: usize,
+}
+
+pub(super) fn invalid(reason: &'static str) -> Error {
+    Error::InvalidConfig(format!("trusted contact: {reason}"))
+}
+
+fn not_a_party(reason: &'static str) -> Error {
+    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
+}
+
+fn validate_naming(reach: &TrustedContactReach, notice: &str) -> Result<()> {
+    if !crate::outbound::is_canonical_outbound_verb(&reach.channel, &reach.verb) {
+        return Err(invalid("the reach names no outbound channel verb"));
+    }
+    if reach.target.trim().is_empty()
+        || reach.target.trim() != reach.target
+        || reach.target.len() > MAX_TARGET_BYTES
+    {
+        return Err(invalid("the reach target is not an address"));
+    }
+    if notice.trim().is_empty()
+        || notice.len() > MAX_NOTICE_BYTES
+        || notice.chars().any(char::is_control)
+    {
+        return Err(invalid("the notice is one short line"));
+    }
+    Ok(())
+}
+
+impl Vault {
+    /// The person names `contact`, another live PERSON, as their trusted
+    /// contact, reached on `reach` with `notice`. The relation is not live
+    /// until the contact accepts it. Naming the same contact again replaces
+    /// it, and the contact's consent with it.
+    pub fn name_trusted_contact(
+        &self,
+        person: &AuthenticatedOwner,
+        contact: EntityId,
+        reach: TrustedContactReach,
+        notice: &str,
+        dial: TrustedContactDial,
+        now: u64,
+    ) -> Result<TrustedContact> {
+        validate_naming(&reach, notice)?;
+        self.with_write_txn(|wtxn| {
+            let person = person.revalidate_person_in_txn(self, wtxn)?;
+            if contact == person || !crate::consent::person_is_live_in_txn(self, wtxn, &contact)? {
+                return Err(invalid("a trusted contact is another live person"));
+            }
+            let version = RELATIONS
+                .get(&self.store, wtxn, &(person, contact))?
+                .map_or(1, |prior| prior.version.saturating_add(1));
+            let relation = TrustedContact {
+                person,
+                contact,
+                reach,
+                notice: notice.to_owned(),
+                dial,
+                version,
+                named_at: now,
+                accepted: None,
+                revoked: None,
+            };
+            RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
+            Ok(relation)
+        })
+    }
+
+    /// The contact accepts `person`'s naming, as an adult, at the `version`
+    /// they were shown. Only the named contact's own proof accepts.
+    pub fn accept_trusted_contact(
+        &self,
+        contact: &AuthenticatedOwner,
+        person: EntityId,
+        version: u64,
+        adult: bool,
+        now: u64,
+    ) -> Result<TrustedContact> {
+        if !adult {
+            return Err(invalid("a trusted contact is an adult"));
+        }
+        self.with_write_txn(|wtxn| {
+            let contact = contact.revalidate_person_in_txn(self, wtxn)?;
+            let mut relation = RELATIONS
+                .get(&self.store, wtxn, &(person, contact))?
+                .ok_or_else(|| not_a_party("no one named this person a trusted contact"))?;
+            if relation.version != version || relation.revoked.is_some() {
+                return Err(invalid("this is not the naming the contact was shown"));
+            }
+            relation.accepted = Some(TrustedContactAcceptance { at: now, adult });
+            RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
+            Ok(relation)
+        })
+    }
+
+    /// Either side ends the relation. A revoked relation never fires, and a
+    /// notice already staged from it is not sent.
+    pub fn revoke_trusted_contact(
+        &self,
+        party: &AuthenticatedOwner,
+        person: EntityId,
+        contact: EntityId,
+        now: u64,
+    ) -> Result<TrustedContact> {
+        self.with_write_txn(|wtxn| {
+            let actor = party.revalidate_person_in_txn(self, wtxn)?;
+            let by = if actor == person {
+                TrustedContactParty::Person
+            } else if actor == contact {
+                TrustedContactParty::Contact
+            } else {
+                return Err(not_a_party("only the person or their contact revokes"));
+            };
+            let mut relation = RELATIONS
+                .get(&self.store, wtxn, &(person, contact))?
+                .ok_or_else(|| not_a_party("no such trusted contact"))?;
+            if relation.revoked.is_none() {
+                relation.revoked = Some(TrustedContactRevocation { at: now, by });
+                RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
+            }
+            Ok(relation)
+        })
+    }
+
+    /// The person changes whether she asks first. It does not change what the
+    /// contact agreed to receive, so their consent stands.
+    pub fn set_trusted_contact_dial(
+        &self,
+        person: &AuthenticatedOwner,
+        contact: EntityId,
+        dial: TrustedContactDial,
+    ) -> Result<TrustedContact> {
+        self.with_write_txn(|wtxn| {
+            let person = person.revalidate_person_in_txn(self, wtxn)?;
+            let mut relation = RELATIONS
+                .get(&self.store, wtxn, &(person, contact))?
+                .ok_or_else(|| not_a_party("no such trusted contact"))?;
+            relation.dial = dial;
+            RELATIONS.put(&self.store, wtxn, &(person, contact), &relation)?;
+            Ok(relation)
+        })
+    }
+
+    /// Every relation the proven person is a side of: those they named, and
+    /// those naming them.
+    pub fn trusted_contacts(&self, party: &AuthenticatedOwner) -> Result<Vec<TrustedContact>> {
+        let rtxn = self.store.env.read_txn()?;
+        let actor = party.revalidate_person_in_txn(self, &rtxn)?;
+        Ok(RELATIONS
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(_, relation)| relation)
+            .filter(|relation| relation.person == actor || relation.contact == actor)
+            .collect())
+    }
+
+    /// The owner names the trusted-contact tier of one `RouteToHelp` policy
+    /// row. A row the owner never names is a concern.
+    pub fn set_trusted_contact_tier(
+        &self,
+        owner: &AuthenticatedOwner,
+        row_ref: &str,
+        tier: TrustedContactTier,
+    ) -> Result<()> {
+        if row_ref.trim().is_empty() || row_ref.len() > MAX_ROW_REF_BYTES {
+            return Err(invalid("a tier names one policy row"));
+        }
+        self.with_write_txn(|wtxn| {
+            owner.revalidate_in_txn(self, wtxn)?;
+            TIERS.put(&self.store, wtxn, &row_ref.to_owned(), &tier)
+        })
+    }
+
+    /// The proven person's unanswered asks.
+    pub fn trusted_contact_asks(
+        &self,
+        person: &AuthenticatedOwner,
+    ) -> Result<Vec<TrustedContactAsk>> {
+        let rtxn = self.store.env.read_txn()?;
+        let person = person.revalidate_person_in_txn(self, &rtxn)?;
+        Ok(ASKS
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(_, ask)| ask)
+            .filter(|ask| ask.person == person && ask.answer.is_none())
+            .collect())
+    }
+
+    /// The person answers one ask, once. A yes stages the notice when the
+    /// relation is still live at the version asked about; the return says
+    /// whether a notice is on its way.
+    pub fn answer_trusted_contact_ask(
+        &self,
+        person: &AuthenticatedOwner,
+        ask: EntityId,
+        yes: bool,
+        now: u64,
+    ) -> Result<bool> {
+        self.with_write_txn(|wtxn| {
+            let person = person.revalidate_person_in_txn(self, wtxn)?;
+            let mut pending = ASKS
+                .get(&self.store, wtxn, &ask)?
+                .filter(|pending| pending.person == person)
+                .ok_or_else(|| not_a_party("this ask is not the person's"))?;
+            if pending.answer.is_some() {
+                return Err(invalid("this ask is already answered"));
+            }
+            pending.answer = Some(TrustedContactAnswer { yes, at: now });
+            ASKS.put(&self.store, wtxn, &ask, &pending)?;
+            if !yes {
+                return Ok(false);
+            }
+            let Some(relation) = RELATIONS
+                .get(&self.store, wtxn, &(pending.person, pending.contact))?
+                .filter(|relation| relation.is_live() && relation.version == pending.version)
+            else {
+                return Ok(false);
+            };
+            stage_notice_in_txn(self, wtxn, &relation, ask, now)?;
+            Ok(true)
+        })
+    }
+
+    /// Fires `person`'s trusted contacts for one `RouteToHelp` the gate
+    /// settled, in the gate's own transaction. Each live relation is notified
+    /// at once on the imminent tier with just-call, and asked about otherwise.
+    /// A proof that no longer stands binds no one: the help card still shows.
+    pub(crate) fn fire_trusted_contacts_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        person: &AuthenticatedOwner,
+        row_ref: Option<&str>,
+        now: u64,
+    ) -> Result<TrustedContactFire> {
+        let person = match person.revalidate_person_in_txn(self, wtxn) {
+            Ok(person) => person,
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => {
+                return Ok(TrustedContactFire::default());
+            }
+            Err(error) => return Err(error),
+        };
+        let tier = match row_ref {
+            Some(row_ref) => TIERS.get(&self.store, wtxn, &row_ref.to_owned())?,
+            None => None,
+        }
+        .unwrap_or(TrustedContactTier::Concern);
+        let mut fire = TrustedContactFire::default();
+        for (_, relation) in RELATIONS.scan_from(&self.store, wtxn, person.as_bytes())? {
+            if relation.person != person || !relation.is_live() {
+                continue;
+            }
+            if relation.dial == TrustedContactDial::JustCall && tier == TrustedContactTier::Imminent
+            {
+                stage_notice_in_txn(self, wtxn, &relation, EntityId::now(), now)?;
+                fire.notified += 1;
+                continue;
+            }
+            // One open ask per naming: a second crisis before the person
+            // answers is told to them, not asked twice.
+            let open = ASKS.scan(&self.store, wtxn)?.into_iter().any(|(_, ask)| {
+                ask.person == person
+                    && ask.contact == relation.contact
+                    && ask.version == relation.version
+                    && ask.answer.is_none()
+            });
+            if !open {
+                let ask = EntityId::now();
+                ASKS.put(
+                    &self.store,
+                    wtxn,
+                    &ask,
+                    &TrustedContactAsk {
+                        ask,
+                        person,
+                        contact: relation.contact,
+                        version: relation.version,
+                        tier,
+                        asked_at: now,
+                        answer: None,
+                    },
+                )?;
+            }
+            fire.asked += 1;
+        }
+        Ok(fire)
+    }
+}

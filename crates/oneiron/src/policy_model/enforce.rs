@@ -14,7 +14,8 @@ use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
 use super::notice::{
-    POLICY_MODEL_HELP_MESSAGE, default_system_notice, policy_model_rationale_notice, policy_notice,
+    POLICY_MODEL_HELP_MESSAGE, SYSTEM_NOTICE_AUDIENCE_AUDIT, default_system_notice,
+    policy_model_rationale_notice, policy_notice, trusted_contact_notices,
 };
 use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
@@ -466,6 +467,29 @@ impl Vault {
         // ruling read later could answer a policy already replaced.
         let (receipt_ref, held) = match wtxn.take() {
             Some(mut wtxn) => {
+                // A RouteToHelp this door settles reaches the concerned
+                // person's trusted contacts (OF-527) in the receipt's own
+                // transaction, and the receipt carries what it did, ahead of
+                // the audit row. A verdict another door recorded never fires.
+                if action == PolicyEnforcementAction::RouteToHelp
+                    && let Some(person) = request.concerned_person.as_ref()
+                {
+                    let row_ref = match &verdict.category {
+                        PolicyVerdictCategory::OwnerPolicy { row_ref } => Some(row_ref.as_str()),
+                        _ => None,
+                    };
+                    let fire = self.fire_trusted_contacts_in_txn(
+                        &mut wtxn,
+                        person,
+                        row_ref,
+                        crate::unix_seconds_now(),
+                    )?;
+                    let at = system_notices
+                        .iter()
+                        .position(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_AUDIT)
+                        .unwrap_or(system_notices.len());
+                    system_notices.splice(at..at, trusted_contact_notices(fire));
+                }
                 let mut reason_codes = policy_model_reason_codes(&verdict);
                 if moved {
                     reason_codes.push(OWNER_PLANE_FRONTIER_MOVED_REASON.to_owned());

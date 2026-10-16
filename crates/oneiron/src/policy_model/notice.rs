@@ -44,6 +44,10 @@ pub(super) const POLICY_MODEL_HELP_CARD_NOTICE: &str =
     "Oneiron routed this turn to a help card instead of delivering the content.";
 pub(super) const POLICY_MODEL_HELP_MESSAGE: &str =
     "Support resources should be offered alongside the reply without diagnosing the person.";
+pub(super) const SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_NOTIFIED: &str = "trusted_contact_notified";
+pub(super) const SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_ASK: &str = "trusted_contact_ask";
+const TRUSTED_CONTACT_NOTIFIED_NOTICE: &str = "Oneiron is sending this person's trusted contact the check-in notice both of them agreed to, and nothing else. Tell the person it was sent.";
+const TRUSTED_CONTACT_ASK_NOTICE: &str = "This person has a trusted contact who agreed to receive a check-in notice. Ask the person first: nothing is sent unless they say yes.";
 
 /// The hosted notice-body templates, split around the one variable part (the
 /// jurisdiction) so the registration guard can price them. They live as
@@ -132,6 +136,41 @@ fn owner_notice(
         policy_version: None,
         docs_url: None,
     }
+}
+
+/// What a `RouteToHelp` did for the person's trusted contacts, told to the
+/// person and the model alike: every fire is said, none is silent. Neither
+/// body names the contact, the row or anything the turn said.
+pub(super) fn trusted_contact_notices(
+    fire: crate::counterparty_contact::TrustedContactFire,
+) -> Vec<GateSystemNoticeRecord> {
+    [
+        (
+            fire.notified,
+            SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_NOTIFIED,
+            TRUSTED_CONTACT_NOTIFIED_NOTICE,
+        ),
+        (
+            fire.asked,
+            SYSTEM_NOTICE_TYPE_TRUSTED_CONTACT_ASK,
+            TRUSTED_CONTACT_ASK_NOTICE,
+        ),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(_, notice_type, body)| GateSystemNoticeRecord {
+        notice_type: notice_type.to_owned(),
+        channel: SYSTEM_NOTICE_CHANNEL.to_owned(),
+        voice: SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
+        audience: SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL.to_owned(),
+        body: body.to_owned(),
+        row_ref: None,
+        setting_change_offer: None,
+        policy_plane: None,
+        policy_version: None,
+        docs_url: None,
+    })
+    .collect()
 }
 
 /// A hosted-legal notice names the hosted service as the source. It never

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::consent::AuthenticatedOwner;
 use crate::llm::SafeguardModelBinding;
 use crate::store::GateSystemNoticeAction;
 
@@ -31,6 +32,11 @@ pub struct PolicyClassifyRequest {
     pub world_ref: Option<String>,
     pub project_ref: Option<String>,
     pub caller_ref: Option<String>,
+    /// The person this content is with, as the host's auth layer proved them.
+    /// Only a `RouteToHelp` this request settles reads it: it names whose
+    /// trusted contacts (OF-527) the verdict may reach. It never shapes the
+    /// verdict.
+    pub concerned_person: Option<AuthenticatedOwner>,
 }
 
 impl PolicyClassifyRequest {
@@ -42,6 +48,7 @@ impl PolicyClassifyRequest {
             world_ref: None,
             project_ref: None,
             caller_ref: None,
+            concerned_person: None,
         }
     }
 
@@ -53,6 +60,7 @@ impl PolicyClassifyRequest {
             world_ref: None,
             project_ref: None,
             caller_ref: None,
+            concerned_person: None,
         }
     }
 
@@ -71,6 +79,12 @@ impl PolicyClassifyRequest {
     #[must_use]
     pub fn with_caller_ref(mut self, caller_ref: impl Into<String>) -> Self {
         self.caller_ref = Some(caller_ref.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_concerned_person(mut self, person: AuthenticatedOwner) -> Self {
+        self.concerned_person = Some(person);
         self
     }
 }

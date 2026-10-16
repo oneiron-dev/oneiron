@@ -37,6 +37,11 @@ pub struct VoiceSessionConfig {
     pub barge_in_hold: Duration,
     pub policy_world_ref: Option<String>,
     pub policy_caller_ref: Option<String>,
+    /// The person this session is with, proved by the host auth layer, never
+    /// by a voice match or a spoken claim. A sentence the policy gate routes
+    /// to help reaches this person's trusted contacts (OF-527); without it,
+    /// it reaches no one's.
+    pub policy_person: Option<crate::consent::AuthenticatedOwner>,
 }
 
 impl VoiceSessionConfig {
@@ -49,6 +54,7 @@ impl VoiceSessionConfig {
             barge_in_hold: Duration::from_millis(120),
             policy_world_ref: None,
             policy_caller_ref: None,
+            policy_person: None,
         }
     }
 }
@@ -398,6 +404,7 @@ impl VoiceCascadeSession {
                 request: PolicyClassifyRequest {
                     world_ref: self.config.policy_world_ref.clone(),
                     caller_ref: self.config.policy_caller_ref.clone(),
+                    concerned_person: self.config.policy_person.clone(),
                     ..PolicyClassifyRequest::outbound_content(text.clone())
                 },
             })
