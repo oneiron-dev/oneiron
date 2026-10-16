@@ -46158,15 +46158,495 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnimationIndex",
+      "AnimationTarget",
+      "Connection",
+      "TargetRole",
+      "TextRange"
+     ],
+     "path": "src/deck/animation.rs",
+     "purpose": "The animation and connector index",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Colour",
+      "ColourSpec",
+      "ColourTransform",
+      "Rgba"
+     ],
+     "path": "src/deck/colour.rs",
+     "purpose": "Colours stay symbolic: a scheme slot and its ordered transforms are kept as written, and the computed colour…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deck/fingerprint.rs",
+     "purpose": "Content and render fingerprints",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deck/fixture.rs",
+     "purpose": "A synthetic ECMA-376 deck builder shared by the deck, design-plan and emission tests: the package plumbing…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deck/graph.rs",
+     "purpose": "The deck's part graph: relationship targets resolved to part names, and the presentation, slide, layout…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Affine",
+      "Ambiguity",
+      "Autofit",
+      "BodyView",
+      "Bullet",
+      "DeckError",
+      "DeckView",
+      "Dependency",
+      "Font",
+      "Geometry",
+      "ParagraphView",
+      "Placeholder",
+      "Refusal",
+      "RetainedNode",
+      "RunView",
+      "ShapeKind",
+      "ShapeView",
+      "SlideView",
+      "Source",
+      "State",
+      "TextView",
+      "Value"
+     ],
+     "path": "src/deck/mod.rs",
+     "purpose": "Typed, read-only deck views over a retained OPC package (ARCH-0077, \"The typed deck model\")",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 7,
+      "fn": 4,
+      "re-export": 3,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deck/resolve.rs",
+     "purpose": "The four property-specific resolvers (geometry, text body, paragraph, run)",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deck/shapes.rs",
+     "purpose": "The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LayoutView",
+      "MasterView",
+      "TemplateView",
+      "TextStyle"
+     ],
+     "path": "src/deck/template.rs",
+     "purpose": "The template reader: masters and their layouts, each placeholder with its resolved geometry and the…",
+     "surface": {
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/deck/tests.rs",
+     "purpose": "ONE-2527 acceptance: the four resolvers in all four states; masters, inheritance, `p:clrMapOvr`, groups and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/design_plan/assembly.rs",
+     "purpose": "Plan assembly: part names allocated above the template's high-water marks, the package row's parts and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Asset",
+      "AssetKind",
+      "Block",
+      "BlockContent",
+      "Brief",
+      "BriefError",
+      "Carrier",
+      "Cell",
+      "Column",
+      "ColumnKind",
+      "Communication",
+      "Dataset",
+      "Division",
+      "Page",
+      "Pin",
+      "Priority"
+     ],
+     "path": "src/design_plan/brief.rs",
+     "purpose": "The brief: the kept, typed outline a design is compiled from (ARCH-0077, \"Create: an approved argument, then…",
+     "surface": {
+      "enum": 8,
+      "fn": 3,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/design_plan/capability.rs",
+     "purpose": "Layout capability (ARCH-0077, \"Layout selection\"): each placeholder's role, type and index, effective bounds…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/design_plan/ladder.rs",
+     "purpose": "One page through the ladder (ARCH-0077, \"Layout selection\"): a layout chosen by capability; then a…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ApprovedInput",
+      "AssetBinding",
+      "CompileError",
+      "Composition",
+      "Content",
+      "Decision",
+      "DecisionOption",
+      "DesignPlan",
+      "Destination",
+      "Estimate",
+      "Fallback",
+      "Fit",
+      "FitPolicy",
+      "KeptBrief",
+      "MediaType",
+      "NewPart",
+      "Outcome",
+      "PackagePlan",
+      "Placement",
+      "PlannedRelationship",
+      "Rect",
+      "Shortfall",
+      "ShortfallReason",
+      "SlidePlan",
+      "TraceEntry",
+      "TraceFault",
+      "TraceOutcome",
+      "VisualChoices"
+     ],
+     "path": "src/design_plan/mod.rs",
+     "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 12,
+      "fn": 10,
+      "re-export": 1,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/design_plan/tests.rs",
+     "purpose": "ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/emit/check.rs",
+     "purpose": "The candidate checks, run on the exported bytes and independent of the writer's bookkeeping: the write set…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Candidate",
+      "CheckFault",
+      "ClaimTrace",
+      "EmitError",
+      "EmitInputs",
+      "EmittedSlide",
+      "FitTrace",
+      "FitUnverified",
+      "Names",
+      "PlacedAsset",
+      "Report",
+      "StoredAsset",
+      "Unit",
+      "Unverified"
+     ],
+     "path": "src/emit/mod.rs",
+     "purpose": "Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 \"Creation result and checks\")",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/emit/slide.rs",
+     "purpose": "Slide XML for emission: an empty slide whose root binds `p:`, `a:` and `r:`, the shapes placed into its…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/emit/tests.rs",
+     "purpose": "ONE-2536 acceptance: an end-to-end plan over the ONE-2533 template is emitted into a candidate that places…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graphic/asset.rs",
+     "purpose": "Asset admission: the binding, provenance and stored bytes, checked before any byte is interpreted; and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graphic/drawingml.rs",
+     "purpose": "A compiled drawing as DrawingML: one `p:grpSp` whose child space is the viewBox, for a slide's `p:spTree`",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graphic/geometry.rs",
+     "purpose": "Geometry for the closed subset: basic shapes as presets under a kept transform, polylines, polygons and…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AssetRecord",
+      "AssetUse",
+      "Cap",
+      "CompiledGraphic",
+      "Drawing",
+      "Extent",
+      "Frame",
+      "GenerationReceipt",
+      "Geometry",
+      "GraphicError",
+      "GraphicInput",
+      "GraphicLimits",
+      "ImageBinding",
+      "Join",
+      "NativeShape",
+      "Origin",
+      "Output",
+      "PathSpec",
+      "Preset",
+      "Pt",
+      "Refused",
+      "ReviewedRequest",
+      "Segment",
+      "Solid",
+      "Stroke"
+     ],
+     "path": "src/graphic/mod.rs",
+     "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…",
+     "surface": {
+      "const": 1,
+      "enum": 9,
+      "fn": 1,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graphic/path.rs",
+     "purpose": "SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graphic/svg.rs",
+     "purpose": "The closed SVG subset compiled to native shapes",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/graphic/tests.rs",
+     "purpose": "ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DoceditError"
      ],
      "path": "src/lib.rs",
-     "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
+     "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
       "fn": 7,
-      "mod": 3,
+      "mod": 8,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ChartData",
+      "Sequence",
+      "SeriesData"
+     ],
+     "path": "src/native_patch/chart.rs",
+     "purpose": "Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CellWrite",
+      "ChartFamily",
+      "Frame",
+      "Merge",
+      "NativeEdit",
+      "NativeRefusal",
+      "NativeReport",
+      "Target",
+      "WorkbookReport"
+     ],
+     "path": "src/native_patch/mod.rs",
+     "purpose": "Native tables and bounded classic charts (ARCH-0077 \"Creation operation\", \"Chart and table edits\")",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/table.rs",
+     "purpose": "Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/native_patch/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/workbook.rs",
+     "purpose": "The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -46212,7 +46692,22 @@
      "surface": {
       "enum": 1,
       "fn": 8,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Relationship"
+     ],
+     "path": "src/retained_opc/package/parts.rs",
+     "purpose": "The add-part door",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -46311,6 +46806,41 @@
     }
    ],
    "modules": {
+    "deck": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Typed, read-only deck views over a retained OPC package (ARCH-0077, \"The typed deck model\")"
+    },
+    "design_plan": {
+     "files": 6,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Compile a kept brief into a validated `DesignPlan` (ARCH-0077, \"Create: an approved argument, then a design\")"
+    },
+    "emit": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Emit a checked deck candidate from a `DesignPlan` (ARCH-0077 \"Creation result and checks\")"
+    },
+    "graphic": {
+     "files": 7,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
+    },
+    "native_patch": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Native tables and bounded classic charts (ARCH-0077 \"Creation operation\", \"Chart and table edits\")"
+    },
     "ooxml": {
      "files": 1,
      "impl_vault": false,
@@ -46319,7 +46849,7 @@
      "purpose": "Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks"
     },
     "retained_opc": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -46334,9 +46864,9 @@
     }
    },
    "over_bar": 1,
-   "purpose": "Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned…",
-   "source_files": 11,
-   "test_files": 5
+   "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
+   "source_files": 39,
+   "test_files": 10
   },
   "oneiron-driver": {
    "files": [
