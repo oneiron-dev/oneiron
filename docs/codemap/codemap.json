@@ -8725,6 +8725,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/served_forms.rs",
+     "purpose": "The served-form receipts a read writes (OF-329): what it served of each asset, recorded under the holder it…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -30580,9 +30590,9 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 92,
+      "crate-vis": 93,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 6
      }
     },
@@ -30605,7 +30615,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 16,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -30631,9 +30641,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/receipt/record.rs",
-     "purpose": "First-class, replicated immutable terminal outbound receipt record",
+     "purpose": "First-class, replicated immutable terminal outbound receipt record, and the served-form receipt record a…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -30644,6 +30654,20 @@
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServedForm"
+     ],
+     "path": "src/receipt/served_form.rs",
+     "purpose": "Served-form receipts (OF-329): which form of an ASSET a read served, and to which holder",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -32695,22 +32719,22 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "DetectorDecisions",
       "DetectorPolicy",
       "ProposedDiagnostic",
-      "ProposedTier",
-      "TelemetryJudge"
+      "ProposedTier"
      ],
      "path": "src/self_heal/tiered.rs",
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
       "enum": 1,
-      "fn": 3,
-      "struct": 2,
-      "trait": 1
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -41714,6 +41738,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/self_heal_telemetry_decide.rs",
+     "purpose": "DECIDE-PATH row 14: a self-heal telemetry detector asks its question through the shared decision ladder",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/session_overlay_spec.rs",
      "purpose": "ONE-1728 P4a seg-4 acceptance spec — the session overlay seen from OUTSIDE the crate (ARCH-0052 §7)",
      "surface": {}
@@ -42294,7 +42326,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43092,7 +43124,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43500,8 +43532,8 @@
    },
    "over_bar": 48,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2610,
-   "test_files": 898
+   "source_files": 2612,
+   "test_files": 899
   },
   "oneiron-android": {
    "files": [
@@ -46087,7 +46119,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 36,
+      "const": 37,
       "crate-vis": 1
      }
     },
