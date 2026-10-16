@@ -10491,7 +10491,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CodeRunAbiLayoutCheck",
@@ -10505,16 +10505,17 @@
       "CodeRunReplayGeneration",
       "CodeRunReplayRecord",
       "CodeRunResultBinding",
-      "CodeRunStepCheckpoint"
+      "CodeRunStepCheckpoint",
+      "ResultOccurrence"
      ],
      "path": "src/code_run/replay.rs",
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 8,
+      "crate-vis": 11,
       "enum": 1,
-      "fn": 20,
-      "struct": 11
+      "fn": 22,
+      "struct": 12
      }
     },
     {
@@ -10537,7 +10538,7 @@
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 4
      }
@@ -10643,7 +10644,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CodeRunModelHealCount",
@@ -49464,7 +49465,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 105,
+   "over_bar": 107,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2986,
    "test_files": 903
