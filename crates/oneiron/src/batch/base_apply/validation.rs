@@ -136,8 +136,10 @@ pub(super) fn birth_stamp_target(
         return Ok(None);
     }
     if let Some(sources) = sources {
-        return crate::federation::record_scope::asset_text::sources_birth_facet(store, txn, sources)
-            .map(Some);
+        return crate::federation::record_scope::asset_text::sources_birth_facet(
+            store, txn, sources,
+        )
+        .map(Some);
     }
     match mask {
         Some(mask) => Ok(Some(mask)),

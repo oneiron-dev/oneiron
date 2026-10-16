@@ -163,9 +163,8 @@ impl Memory<'_> {
         }
         // A text written from ASSETs is born under their one facet, with its
         // `DerivedFrom` edges (facet rule C); sources in two facets refuse it.
-        let (sources, resolved_edges): (Vec<_>, Vec<_>) = resolved_edges
-            .into_iter()
-            .partition(|(kind, _, _)| {
+        let (sources, resolved_edges): (Vec<_>, Vec<_>) =
+            resolved_edges.into_iter().partition(|(kind, _, _)| {
                 type_byte == ENTITY_TYPE_ASSET_TEXT && *kind == EdgeKind::DerivedFrom
             });
         let sources: Vec<_> = sources

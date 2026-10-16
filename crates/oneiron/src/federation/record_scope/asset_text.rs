@@ -11,7 +11,9 @@ use super::{SCOPE_RECORD, birth_facet};
 use crate::EntityId;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{
+    EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, TombstoneStoreRead,
+};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::store::ManifestDbs;
 
@@ -101,7 +103,13 @@ pub(crate) fn sources_admitted_in(
     mut admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
 ) -> Result<Option<bool>> {
     let mut sources = view
-        .port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::DerivedFrom), None)?
+        .port_edges(
+            txn,
+            id,
+            EdgeDirection::Out,
+            Some(EdgeKind::DerivedFrom),
+            None,
+        )?
         .peekable();
     if sources.peek().is_none() {
         return Ok(birth_facet(view, txn, *id)?.map(|_| false));

@@ -8325,7 +8325,13 @@ fn selector_exports_a_text_only_beside_a_source_it_reads() {
         .put(&placed, ENTITY_TYPE_ASSET, at, 1, b"image")
         .put(&backed, ENTITY_TYPE_ASSET_TEXT, at, 1, b"backed caption")
         .edge(&backed, EdgeKind::DerivedFrom, &placed, 1.0)
-        .put(&unbacked, ENTITY_TYPE_ASSET_TEXT, at, 1, b"unbacked caption")
+        .put(
+            &unbacked,
+            ENTITY_TYPE_ASSET_TEXT,
+            at,
+            1,
+            b"unbacked caption",
+        )
         .edge(&unbacked, EdgeKind::DerivedFrom, &unplaced, 1.0)
         .commit()
         .unwrap();

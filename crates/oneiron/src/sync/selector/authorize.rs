@@ -28,11 +28,11 @@ use crate::sync::window::{
 
 use super::codec::{SyncSelector, SyncSelectorWorld, selector_err};
 use super::epoch_egress::unbacked_epochs;
-use super::text_egress::{source_selected, text_backed};
 use super::scope::{
     band_filter, coreference_export_context, entity_selector_decision, facet_filter,
     facet_scope_by_source,
 };
+use super::text_egress::{source_selected, text_backed};
 
 /// Validates that a selector is backed by a matching federation grant, stays
 /// under the effective scope ceiling of every pact bound to that grant, and —

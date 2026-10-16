@@ -845,14 +845,9 @@ impl Vault {
                 .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
                 && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
                 && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "read")?
-                && self.text_fence_in(
-                    &txn,
-                    id,
-                    &raw,
-                    [selector, slip, channel],
-                    "read",
-                    |_| Ok(false),
-                )?;
+                && self.text_fence_in(&txn, id, &raw, [selector, slip, channel], "read", |_| {
+                    Ok(false)
+                })?;
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
