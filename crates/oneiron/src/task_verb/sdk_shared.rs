@@ -5,17 +5,16 @@
 //! exactly what it asks for. A server mints the proof from the request and
 //! hands in its slip issuer; an embedded handle acts as the vault's embedded
 //! owner, with no issuer.
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
+use crate::batch::export::VAULT_ARCHIVE_FORMAT;
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
-    FederationGrantRole as Role, PendingAuthorityAct, Scope, SharedActExecution,
+    FederationGrantRole as Role, PendingAuthorityAct, SharedActExecution,
     SharedActExecutionReceipt, SharedActOutcome, SharedVaultDeletion,
 };
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MemoryError, MemoryExport, MemoryResult};
 use crate::{EntityId, Vault};
 
 /// A shared vault, by the id its creation named.
@@ -117,38 +116,24 @@ pub struct HandoffAlarmRequest {
 }
 
 /// `vault.shared.execute`'s answer: the act's receipt and, for an
-/// export-first removal, the records exported for the removed Owner.
+/// export-first removal, the archive of what the removed Owner could read,
+/// in the whole-vault export's wire form, for the host to deliver to them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedActExecuted {
     pub receipt: SharedActExecutionReceipt,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub export: Vec<SharedExportedRecord>,
-}
-
-/// One record an export-first removal exported, as the export door reads it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SharedExportedRecord {
-    /// Entity id, hex.
-    pub id: String,
-    /// The full entity metadata header and body, base64.
-    pub bytes: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Scope>,
+    pub export: Option<MemoryExport>,
 }
 
 impl From<SharedActExecution> for SharedActExecuted {
     fn from(execution: SharedActExecution) -> Self {
         Self {
             receipt: execution.receipt,
-            export: execution
-                .export
-                .into_iter()
-                .map(|record| SharedExportedRecord {
-                    id: record.id.to_hex(),
-                    bytes: STANDARD.encode(&record.bytes),
-                    scope: record.scope,
-                })
-                .collect(),
+            export: execution.export.map(|archive| MemoryExport {
+                format: VAULT_ARCHIVE_FORMAT.to_owned(),
+                digest: blake3::hash(archive.bytes()).to_hex().to_string(),
+                archive: archive.bytes,
+            }),
         }
     }
 }
