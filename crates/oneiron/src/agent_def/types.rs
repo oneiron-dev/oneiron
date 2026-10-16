@@ -1,5 +1,6 @@
 //! AgentDefinition domain types, key/limit consts, and constructors.
 
+use super::optional_memory::OptionalMemoryProfile;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -58,11 +59,12 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 26] = [
 pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
 
 /// The pinned sub-map keys for a [`MemoryProfile`], in encode order.
-pub const MEMORY_PROFILE_KEYS: [&str; 4] = [
+pub const MEMORY_PROFILE_KEYS: [&str; 5] = [
     "window_token_budget",
     "budget_split",
     "compaction_backend",
     "compaction",
+    "optional_memory",
 ];
 
 /// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
@@ -147,6 +149,8 @@ pub(super) const KEY_PROFILE_BUDGET_SPLIT: &str = MEMORY_PROFILE_KEYS[1];
 pub(super) const KEY_PROFILE_COMPACTION_BACKEND: &str = MEMORY_PROFILE_KEYS[2];
 
 pub(super) const KEY_PROFILE_COMPACTION: &str = MEMORY_PROFILE_KEYS[3];
+
+pub(super) const KEY_PROFILE_OPTIONAL_MEMORY: &str = MEMORY_PROFILE_KEYS[4];
 
 pub(super) const KEY_SPLIT_CLAIMS: &str = CONTEXT_BUDGET_SPLIT_KEYS[0];
 
@@ -420,6 +424,9 @@ pub struct MemoryProfile {
     pub compaction_backend: ModelTierRef,
     /// Who compacts this agent's context WINDOW.
     pub compaction: CompactionOwnership,
+    /// The optional recall this reader takes per task family; absent = the
+    /// caller's request as sent. Separate from the window above.
+    pub optional_memory: Option<OptionalMemoryProfile>,
 }
 
 impl MemoryProfile {
@@ -434,12 +441,19 @@ impl MemoryProfile {
             budget_split: None,
             compaction_backend,
             compaction,
+            optional_memory: None,
         }
     }
 
     #[must_use]
     pub fn with_budget_split(mut self, split: ContextBudgetSplit) -> Self {
         self.budget_split = Some(split);
+        self
+    }
+
+    #[must_use]
+    pub fn with_optional_memory(mut self, optional_memory: OptionalMemoryProfile) -> Self {
+        self.optional_memory = Some(optional_memory);
         self
     }
 }

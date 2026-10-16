@@ -21,6 +21,20 @@ const REVERSE: SideTable<EntityId, Vec<u8>, side_table::Raw> =
 const BACKFILLED: SideTable<(), [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_BY_OWNER_BACKFILLED);
 
+/// Every task the forward index files under `owner`, once each, in task id
+/// order. The index is derived and may hold a stale row: a caller rechecks
+/// each task's live authority before it counts as `owner`'s.
+pub(crate) fn indexed_tasks_of_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    FORWARD
+        .iter_from(store, txn, owner.as_bytes())?
+        .map(|entry| entry.map(|((_, task, _), ())| task))
+        .collect()
+}
+
 pub(crate) fn index_owner_fact(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

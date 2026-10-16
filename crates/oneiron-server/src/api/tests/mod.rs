@@ -22,6 +22,7 @@ mod owner_secrets;
 mod owner_surfaces;
 mod slips;
 use crate::test_credentials as slip_credentials;
+mod asset_forms;
 mod billing_usage;
 mod board_host_events;
 mod board_stream_publisher;
@@ -54,6 +55,7 @@ mod mcp_tool_endpoints;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod rate_law;
 mod reactive;
+mod reader_optional_memory;
 mod recall_rerank;
 mod relay_widen;
 mod retrieval_bounds;

@@ -620,6 +620,7 @@ fn settled_task_ask_cannot_accept_standing_graph_backfill() -> Result<()> {
                 probability: Some(1.0),
                 evidence: vec![holder],
                 providers: vec![],
+                paired: Vec::new(),
                 source_frontier: [0; 32]
             },
             crate::unix_seconds_now()
