@@ -580,6 +580,7 @@ impl Vault {
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            result_body_pins: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };

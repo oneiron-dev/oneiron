@@ -144,6 +144,9 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// The result bodies this handle's readers hold, which the body
+    /// collector leaves alone (OF-597).
+    pub(crate) result_body_pins: crate::result_body::ResultBodyPins,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
