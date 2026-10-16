@@ -33046,11 +33046,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ChangeLogStoreRead",
       "DeletionFamily",
       "DeletionState",
       "EdgeStoreRead",
       "EntityStoreRead",
       "EntityTime",
+      "JobQueueRead",
       "RetrievalIndexRead",
       "ShortIdStoreRead",
       "TimeAxis",
@@ -33062,7 +33064,7 @@
      "surface": {
       "enum": 2,
       "struct": 3,
-      "trait": 5,
+      "trait": 7,
       "type": 1
      }
     },
