@@ -9,6 +9,7 @@
 mod birth_watch;
 mod entity;
 mod order;
+mod peer_import;
 mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
@@ -18,4 +19,5 @@ pub(in crate::sync) use self::entity::{
     ingest_entity_in_txn, waits_for_sibling_row,
 };
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
+pub(in crate::sync) use self::peer_import::{in_peer_import, peer_import};
 pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};

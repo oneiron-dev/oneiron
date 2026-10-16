@@ -8339,6 +8339,7 @@ dependencies = [
  "ipnet",
  "libc",
  "oneiron",
+ "oneiron-mesh-transport",
  "oneiron-organ-protocol",
  "oneiron-sandbox-contract",
  "oneiron-spawn",

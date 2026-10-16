@@ -506,12 +506,32 @@ impl Vault {
 
     /// Creates an active share only after recording an allowing external-effect decision.
     /// The transport must derive `issuer` from the authenticated principal, not request data.
-    /// Pending and denied decisions are durable but never create a grant.
+    /// Pending and denied decisions are durable but never create a grant. The brief's
+    /// born-with text stays home; [`Self::create_share_travelling`] lets the sharer send it.
     pub fn create_share(
         &self,
         share_id: &EntityId,
         issuer: &WriteActor,
         share: &Share,
+    ) -> Result<()> {
+        self.create_share_travelling(
+            share_id,
+            issuer,
+            share,
+            &crate::share_travel::TravelChoice::default_for(
+                crate::share_travel::TravelKind::Brief,
+            ),
+        )
+    }
+
+    /// [`Self::create_share`], with the born-with text of the brief the sharer
+    /// chose to send (OF-491), fixed in the transaction that admits the share.
+    pub fn create_share_travelling(
+        &self,
+        share_id: &EntityId,
+        issuer: &WriteActor,
+        share: &Share,
+        travel: &crate::share_travel::TravelChoice,
     ) -> Result<()> {
         let grant = share.grant();
         let data = encode_access_grant_body(&grant)?;
@@ -567,6 +587,7 @@ impl Vault {
         };
         self.apply_access_grant_body(&mut txn, share_id, share.created_at, data)?;
         ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
+        crate::share_travel::put_brief_travel_in_txn(self, &mut txn, share_id, travel)?;
         txn.commit()?;
         Ok(())
     }
